@@ -8,11 +8,11 @@ go_library(
     srcs = ["bazelisk.go"],
     importpath = "bz.build/cli/bazelisk",
     deps = [
-        "@com_github_bazelbuild_bazelisk//config:go_default_library",
+        "@com_github_bazelbuild_bazelisk//config",
         "@com_github_bazelbuild_bazelisk//core:go_default_library",
         "@com_github_bazelbuild_bazelisk//repositories:go_default_library",
-        "@com_github_creack_pty//:go_default_library",
-        "@com_github_mattn_go_isatty//:go_default_library",
+        "@com_github_creack_pty//:pty",
+        "@com_github_mattn_go_isatty//:go-isatty",
     ],
 )
 

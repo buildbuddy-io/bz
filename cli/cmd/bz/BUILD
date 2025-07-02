@@ -15,8 +15,7 @@ go_library(
         "//cli/command/register",
         "//cli/help",
         "//cli/log",
-        "@com_github_creack_pty//:go_default_library",
-        "@com_github_mattn_go_isatty//:go_default_library",
+        "//cli/picker",
     ],
 )
 

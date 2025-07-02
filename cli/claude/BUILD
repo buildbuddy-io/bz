@@ -5,7 +5,9 @@ go_library(
     srcs = ["claude.go"],
     importpath = "bz.build/cli/claude",
     deps = [
-        "@com_github_anthropics_anthropic_sdk_go//:go_default_library",
+        "//cli/picker",
+        "//cli/textarea",
+        "@org_golang_x_term//:term",
     ],
 )
 

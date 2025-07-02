@@ -1,9 +1,7 @@
 package main
 
 import (
-	"fmt"
 	"os"
-	"strings"
 	"time"
 
 	"bz.build/cli/arg"
@@ -12,6 +10,7 @@ import (
 	"bz.build/cli/command"
 	"bz.build/cli/help"
 	"bz.build/cli/log"
+	"bz.build/cli/picker"
 
 	"bz.build/cli/command/register"
 )
@@ -107,11 +106,11 @@ func handleBazelCommand(start time.Time, args []string, originalArgs []string) (
 	}
 
 	if exitCode != 0 {
-		fmt.Print("Would you like help fixing this error? [y/N/i] ")
-		var response string
-		fmt.Scanln(&response)
+		response, err := showErrorPicker()
+		if err != nil {
+			return 1, err
+		}
 
-		response = strings.ToLower(response)
 		if response == "y" || response == "i" {
 			outputFile, err := os.Open(logFileName)
 			if err != nil {
@@ -124,4 +123,14 @@ func handleBazelCommand(start time.Time, args []string, originalArgs []string) (
 	}
 
 	return exitCode, nil
+}
+
+func showErrorPicker() (string, error) {
+	options := []picker.Option{
+		{Label: "Yes, fix it for me automatically", Value: "y"},
+		{Label: "Yes, let's fix it together interactively", Value: "i"},
+		{Label: "No, I'll fix it myself", Value: "n"},
+	}
+
+	return picker.ShowPicker("Want help fixing this error?", options)
 }
