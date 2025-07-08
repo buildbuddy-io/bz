@@ -149,7 +149,7 @@ jobs:
 
   publish-release:
     runs-on: ubuntu-22.04
-    needs: [push-tag, sync-plugins, build-artifacts]
+    needs: [push-tag, build-artifacts]
     steps:
       - name: Publish release
         # env:
