@@ -46,10 +46,6 @@ jobs:
         with:
           path: bz
 
-      - name: Restore caches
-        id: cache-restore
-        uses: ./bz/.github/actions/cache-restore
-
       - name: Build Artifacts
         id: build
         env:
@@ -93,13 +89,6 @@ jobs:
             "${{ github.event.inputs.version }}" \
             "${{ steps.build.outputs.BINARY }}" \
             "${{ steps.build.outputs.BINARY }}.sha256"
-
-      - name: Save cache
-        uses: ./bz/.github/actions/cache-save
-        with:
-          repo-cache-dir: ${{ steps.cache-restore.outputs.repo-cache-dir }}
-          go-mod-cache-dir: ${{ steps.cache-restore.outputs.go-mod-cache-dir }}
-          yarn-cache-dir: ${{ steps.cache-restore.outputs.yarn-cache-dir }}
 
   publish-release:
     runs-on: ubuntu-22.04
