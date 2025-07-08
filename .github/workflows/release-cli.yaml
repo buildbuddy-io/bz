@@ -67,6 +67,8 @@ jobs:
           fi
           VERSION=${{ github.event.inputs.version }}
 
+          cd bz
+
           bazelisk build \
               --repository_cache='~/repo-cache/' \
               # --remote_header=x-buildbuddy-api-key=${{ secrets.BUILDBUDDY_ORG_API_KEY }} \
