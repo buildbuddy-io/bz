@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"bz.build/cli/picker"
 	// "bz.build/cli/spinner" // Uncomment when spinner code is enabled
@@ -20,9 +21,7 @@ import (
 func Run(stdin *os.File, extraArgs []string, interactive bool) (int, error) {
 	claudeArgs := []string{}
 
-	// var currentSpinner *spinner.Spinner
-	// currentSpinner = spinner.NewSpinner("Thinking...")
-	// currentSpinner.Start()
+	renderThinking()
 	// todo add gemini and openai and amp support
 
 	systemPrompt := "You are a Bazel expert and you are helping the user fix a Bazel error. " +
@@ -97,12 +96,7 @@ func Run(stdin *os.File, extraArgs []string, interactive bool) (int, error) {
 
 		if response.Message != nil {
 			for _, content := range response.Message.Content {
-				// currentSpinner.Stop()
-				// // Stop spinner if it's running
-				// if currentSpinner != nil {
-				// 	currentSpinner.Stop()
-				// 	currentSpinner = nil
-				// }
+				renderDone()
 				if content.Name != "" {
 					bullet, numLines := renderBullet(renderToolUse(content), "  ", "\033[1m⏺\033[0m ", true)
 					fmt.Printf("%s", bullet)
@@ -163,31 +157,19 @@ func Run(stdin *os.File, extraArgs []string, interactive bool) (int, error) {
 				if content.Content != "" {
 					if toolLine, ok := toolUseLines[content.ToolUseID]; ok {
 						if content.IsError {
-							fmt.Printf("%s", renderColoredBullet(currentNumLines-toolLine-1, "red"))
+							fmt.Printf("%s", renderColoredBullet(currentNumLines-toolLine-1, "red", "⏺", ""))
 						} else {
-							fmt.Printf("%s", renderColoredBullet(currentNumLines-toolLine-1, "green"))
+							fmt.Printf("%s", renderColoredBullet(currentNumLines-toolLine-1, "green", "⏺", ""))
 						}
 					}
 				}
 			}
 		}
 
-		// currentSpinner.Start()
-
-		// // Start spinner for next message if needed
-		// if response.Message != nil && response.Message.StopReason == nil {
-		// 	// Message is not complete, show spinner
-		// 	currentSpinner = spinner.NewSpinner("Thinking...")
-		// 	currentSpinner.Start()
-		// }
+		renderThinking()
 	}
 
-	// currentSpinner.Stop()
-
-	// // Stop any remaining spinner
-	// if currentSpinner != nil {
-	// 	currentSpinner.Stop()
-	// }
+	renderDone()
 
 	if err := scanner.Err(); err != nil {
 		log.Printf("Error reading stdout: %v", err)
@@ -307,20 +289,56 @@ func renderBullet(text string, indent string, bulletPrefix string, newLine bool)
 	return result.String(), numLines
 }
 
-func renderColoredBullet(height int, color string) string {
+func renderColoredBullet(height int, color string, bullet string, suffix string) string {
 	// ANSI escape codes
 	greenColor := "\033[32m"
 	redColor := "\033[31m"
+	blueColor := "\033[96m"
 	resetColor := "\033[0m"
 
 	if color == "green" {
 		color = greenColor
 	} else if color == "red" {
 		color = redColor
+	} else if color == "blue" {
+		color = blueColor
 	}
 
 	// Move up N lines, back to start, replace bullet, then move back down N lines
-	return fmt.Sprintf("\033[%dA\r%s⏺%s\033[%dB\r", height, color, resetColor, height)
+	return fmt.Sprintf("\033[s\033[%dA\r%s%s%s%s\033[u", height, color, bullet, resetColor, suffix)
+}
+
+var isThinking = false
+var stopThinking = make(chan bool)
+
+func renderThinking() {
+	if isThinking {
+		return
+	}
+	isThinking = true
+	fmt.Print("\n\r\033[36m⣿\033[0m  Thinking...\n\n")
+
+	go func() {
+		spinChars := []rune{'⣾', '⣽', '⣻', '⢿', '⡿', '⣟', '⣯', '⣷'}
+		i := 0
+		for {
+			select {
+			case <-stopThinking:
+				return
+			case <-time.After(66 * time.Millisecond):
+				numDots := (i / 10) % 4
+				dots := strings.Repeat(".", numDots)
+				fmt.Printf("%s", renderColoredBullet(2, "blue", fmt.Sprintf("%c", spinChars[i%len(spinChars)]), fmt.Sprintf("  Thinking%s   ", dots)))
+				i = (i + 1)
+			}
+		}
+	}()
+}
+
+func renderDone() {
+	stopThinking <- true
+	fmt.Print("\033[1A\033[K\033[1A\033[K\033[1A\033[K")
+	isThinking = false
 }
 
 type LogLine struct {
