@@ -235,7 +235,30 @@ func renderToolUse(content Part) string {
 		content.Name = "Find"
 	} else if content.Name == "TodoWrite" {
 		content.Name = "Update Todos"
-		// render inputs nicely
+		var todoItems []string
+		// jsonMap["todos"] contains the array of todo items
+		if todosArray, ok := jsonMap["todos"].([]interface{}); ok {
+			for _, todo := range todosArray {
+				todoMap, ok := todo.(map[string]interface{})
+				if !ok {
+					log.Printf("Failed to unmarshal todo: %v", todo)
+					continue
+				}
+				content := todoMap["content"].(string)
+				status := todoMap["status"].(string)
+
+				item := content
+				if status == "completed" {
+					item = fmt.Sprintf("☒ \033[9m%s\033[0m", item)
+				} else {
+					item = fmt.Sprintf("☐ %s", item)
+				}
+				todoItems = append(todoItems, item)
+			}
+		} else {
+			log.Printf("Failed to get todos array from jsonMap: %v", jsonMap)
+		}
+		inputs = fmt.Sprintf("\n%s", strings.Join(todoItems, "\n"))
 	} else if content.Name == "Read" {
 		inputs = fmt.Sprintf("(%s)", renderPath(jsonMap["file_path"].(string)))
 	} else if content.Name == "Bash" {
