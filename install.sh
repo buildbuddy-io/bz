@@ -32,7 +32,7 @@ install_cli() (
   curl -fSL "$latest_binary_url" -o "$tempfile"
   chmod 0755 "$tempfile"
   echo >&2 "Will write the CLI to /usr/local/bin - this may ask for your password."
-  sudo mv "$tempfile" /usr/local/bin/bb
+  sudo mv "$tempfile" /usr/local/bin/bz
 )
 
 install_cli "$@"
