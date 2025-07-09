@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	cliName = "bb"
+	cliName = "bz"
 )
 
 var (
@@ -26,13 +26,13 @@ var (
 )
 
 // HandleHelp Valid cases to trigger help:
-// * bb (no additional command passed)
-// * bb help
-// * bb help `command name`
-// * bb -h `command name`
-// * bb `command name` -h
-// * bb --help `command name`
-// * bb `command name` --help
+// * bz (no additional command passed)
+// * bz help
+// * bz help `command name`
+// * bz -h `command name`
+// * bz `command name` -h
+// * bz --help `command name`
+// * bz `command name` --help
 func HandleHelp(args []string) (exitCode int, err error) {
 	args, _ = arg.SplitExecutableArgs(args)
 
@@ -117,7 +117,7 @@ func showHelp(subcommand string, modifiers []string) (exitCode int, err error) {
 }
 
 func printBBCommands() {
-	fmt.Println("bb commands:")
+	fmt.Println("bz commands:")
 	for _, c := range command.Commands {
 		fmt.Printf("  %s  %s\n", padEnd(c.Name, 18), c.Help)
 	}
