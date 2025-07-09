@@ -58,6 +58,23 @@ func Run(stdin *os.File, extraArgs []string, interactive bool) (int, error) {
 		cmd.Stdin = stdin
 	}
 
+	// Create ~/.bz directory if it doesn't exist
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return 1, fmt.Errorf("failed to get home directory: %v", err)
+	}
+	bzDir := filepath.Join(homeDir, ".bz")
+	if err := os.MkdirAll(bzDir, 0755); err != nil {
+		return 1, fmt.Errorf("failed to create .bz directory: %v", err)
+	}
+
+	// Create output file for stream-json
+	outputFile, err := os.Create(filepath.Join(bzDir, "output.json"))
+	if err != nil {
+		return 1, fmt.Errorf("failed to create output file: %v", err)
+	}
+	defer outputFile.Close()
+
 	if err := cmd.Start(); err != nil {
 		return 1, err
 	}
@@ -76,9 +93,11 @@ func Run(stdin *os.File, extraArgs []string, interactive bool) (int, error) {
 	currentNumLines := 0
 
 	for scanner.Scan() {
-
 		line := scanner.Text()
 		var response LogLine
+
+		// Write raw output to file
+		fmt.Fprintln(outputFile, line)
 
 		// fmt.Printf("line: %s\n", line)
 
