@@ -30,7 +30,7 @@ func Run(stdin *os.File, extraArgs []string, interactive bool) (int, error) {
 	// todo add gemini and openai and amp support
 
 	systemPrompt := "You are a Bazel expert and you are helping the user fix a Bazel error. " +
-		"If no workspace is found, you will help the user migrate the project to Bazel. " +
+		"If no workspace is found, you will help the user migrate the project to Bazel using bzlmod. " +
 		"If the fix is not straightforward, think of 3 possible fixes and present them to the user using the <select><option>...</option></select> syntax. " +
 		"If asking the user a yes/no question, use the <select><option>...</option></select> syntax. "
 
