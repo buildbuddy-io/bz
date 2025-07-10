@@ -356,9 +356,10 @@ var isThinking = false
 var stopThinking = make(chan bool)
 
 func renderThinking() {
-	if isThinking {
+	if isThinking || !term.IsTerminal(int(os.Stdout.Fd())) {
 		return
 	}
+
 	isThinking = true
 	fmt.Print("\n\r\033[36m⣿\033[0m  Thinking...\n\n")
 
@@ -380,6 +381,10 @@ func renderThinking() {
 }
 
 func renderDone() {
+	if !term.IsTerminal(int(os.Stdout.Fd())) {
+		return
+	}
+
 	stopThinking <- true
 	fmt.Print("\033[1A\033[K\033[1A\033[K\033[1A\033[K")
 	isThinking = false
