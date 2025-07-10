@@ -134,12 +134,14 @@ func Run(stdin *os.File, extraArgs []string, interactive bool) (int, error) {
 							selectContent := match[1]
 							options := []picker.Option{}
 
-							// Extract options
-							optionMatches := regexp.MustCompile(`<option>(.*?)</option>`).FindAllStringSubmatch(selectContent, -1)
+							// Extract options with attributes - match anything between <option and > for attributes
+							optionMatches := regexp.MustCompile(`<option([^>]*)>([^<]+)</option>`).FindAllStringSubmatch(selectContent, -1)
 							for _, opt := range optionMatches {
+								label := opt[2]
+
 								options = append(options, picker.Option{
-									Label: opt[1],
-									Value: opt[1],
+									Label: label,
+									Value: label,
 								})
 							}
 
