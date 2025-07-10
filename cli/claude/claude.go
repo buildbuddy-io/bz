@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,10 +19,14 @@ import (
 	"golang.org/x/term"
 )
 
+var usedTokens int = 0
+var startTime time.Time = time.Now()
+
 func Run(stdin *os.File, extraArgs []string, interactive bool) (int, error) {
 	claudeArgs := []string{}
+	startTime = time.Now()
 
-	renderThinking()
+	renderThinking(0)
 	// todo add gemini and openai and amp support
 
 	systemPrompt := "You are a Bazel expert and you are helping the user fix a Bazel error. " +
@@ -187,7 +192,11 @@ func Run(stdin *os.File, extraArgs []string, interactive bool) (int, error) {
 			}
 		}
 
-		renderThinking()
+		if response.Message != nil && response.Message.Usage != nil {
+			usedTokens += response.Message.Usage.InputTokens + response.Message.Usage.OutputTokens
+		}
+
+		renderThinking(usedTokens)
 	}
 
 	renderDone()
@@ -354,27 +363,49 @@ func renderColoredBullet(height int, color string, bullet string, suffix string)
 
 var isThinking = false
 var stopThinking = make(chan bool)
+var renderedTokenCount int = 0
+var tickCount int = 0
 
-func renderThinking() {
+func renderThinkingString(thinkingString string, dots string, spaces string, renderedTokenCount int) string {
+	tokensString := fmt.Sprintf(" (%s)", time.Since(startTime).Round(time.Second))
+	if renderedTokenCount > 0 {
+		tokensString = fmt.Sprintf(" (%s, %d tokens)", time.Since(startTime).Round(time.Second), renderedTokenCount)
+	}
+
+	return fmt.Sprintf("  %s%s%s%s\033[K", thinkingString, dots, spaces, tokensString)
+}
+
+var thinkingIndex int = 0
+
+func renderThinking(tokens int) {
 	if isThinking || !term.IsTerminal(int(os.Stdout.Fd())) {
 		return
 	}
 
+	thinkingStringOptions := []string{
+		"Thinking", "Reticulating", "Building", "Analyzing", "Querying", "Optimizing", "Refactoring", "Debugging", "Checking", "Fixing", "Enhancing", "Testing", "Validating", "Improving",
+	}
+
 	isThinking = true
-	fmt.Print("\n\r\033[36m⣿\033[0m  Thinking...\n\n")
+	fmt.Printf("\n\r\033[36m⣿\033[0m%s\n\n", renderThinkingString(thinkingStringOptions[thinkingIndex], "...", "", renderedTokenCount))
 
 	go func() {
 		spinChars := []rune{'⣾', '⣽', '⣻', '⢿', '⡿', '⣟', '⣯', '⣷'}
-		i := 0
 		for {
 			select {
 			case <-stopThinking:
 				return
 			case <-time.After(66 * time.Millisecond):
-				numDots := (i / 10) % 4
+				if renderedTokenCount < usedTokens {
+					renderedTokenCount += int(math.Max(1, float64((tokens-renderedTokenCount)/50)))
+				}
+				numDots := (tickCount / 10) % 4
+				thinkingIndex = (tickCount / 80) % len(thinkingStringOptions)
+
 				dots := strings.Repeat(".", numDots)
-				fmt.Printf("%s", renderColoredBullet(2, "blue", fmt.Sprintf("%c", spinChars[i%len(spinChars)]), fmt.Sprintf("  Thinking%s   ", dots)))
-				i = (i + 1)
+				spaces := strings.Repeat(" ", 3-numDots)
+				fmt.Printf("%s", renderColoredBullet(2, "blue", fmt.Sprintf("%c", spinChars[tickCount%len(spinChars)]), renderThinkingString(thinkingStringOptions[thinkingIndex], dots, spaces, renderedTokenCount)))
+				tickCount = (tickCount + 1)
 			}
 		}
 	}()
