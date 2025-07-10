@@ -71,6 +71,7 @@ jobs:
 
           bazelisk build \
               --repository_cache='~/repo-cache/' \
+              --//cli/version:cli_version="$VERSION" \
               //cli/cmd/bz
 
           BINARY="bz-${VERSION}-${OS}-${ARCH}"
