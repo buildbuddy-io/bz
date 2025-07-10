@@ -8,6 +8,7 @@ go_library(
     deps = [
         "//cli/command",
         "//cli/please",
+        "//cli/version",
     ],
 )
 

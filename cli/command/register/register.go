@@ -5,6 +5,7 @@ import (
 
 	"bz.build/cli/command"
 	"bz.build/cli/please"
+	"bz.build/cli/version"
 )
 
 // Register registers all known cli commands in the structures laid out in
@@ -22,6 +23,12 @@ func register() {
 			Name:    "please",
 			Help:    "Asks bz to perform a task.",
 			Handler: please.HandleAsk,
+			Aliases: []string{},
+		},
+		{
+			Name:    "version",
+			Help:    "Prints the version of bz.",
+			Handler: version.HandleVersion,
 			Aliases: []string{},
 		},
 	}
