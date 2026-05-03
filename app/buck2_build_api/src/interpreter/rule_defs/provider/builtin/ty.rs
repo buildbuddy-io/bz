@@ -70,6 +70,7 @@ impl<'v, P: StarlarkValue<'v> + ProviderLike<'v>, C: StarlarkValue<'v> + Provide
                     TyStarlarkValue::new::<P>(),
                     None,
                     SortedMap::new(),
+                    false,
                 )
                 .unwrap()
             })

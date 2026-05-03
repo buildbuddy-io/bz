@@ -31,7 +31,7 @@ JuliaLibrary = record(
     src_labels = typing.Any,
     srcs = typing.Any,
     project_toml = typing.Any,
-    label = field(Label),
+    label = field(ConfiguredProvidersLabel),
     jll = field([JllInfo, None]),
 )
 
@@ -56,7 +56,7 @@ JuliaLibraryInfo = provider(fields = {
 
 def create_julia_library_info(
         actions: AnalysisActions,
-        label: Label,
+        label: ConfiguredProvidersLabel,
         uuid: str = "",
         src_labels: typing.Any = [],
         project_toml: typing.Any = None,

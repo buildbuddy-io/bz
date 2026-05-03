@@ -14,7 +14,7 @@ ResourceInfo = provider(fields = {
     # A map containing all resources from transitive dependencies.  The keys
     # are rule labels and the values are maps of resource names (the name used
     # to lookup the resource at runtime) and the actual resource artifact.
-    "resources": provider_field(dict[Label, dict[str, ArtifactOutputs]]),
+    "resources": provider_field(dict[ConfiguredProvidersLabel, dict[str, ArtifactOutputs]]),
 })
 
 def create_relocatable_resources_info(
@@ -72,9 +72,9 @@ def create_relocatable_resources_info(
     return (packaged_resources_json, resources_dir)
 
 def gather_resources(
-        label: Label,
+        label: ConfiguredProvidersLabel,
         resources: dict[str, ArtifactOutputs] = {},
-        deps: list[Dependency] = []) -> dict[Label, dict[str, ArtifactOutputs]]:
+        deps: list[Dependency] = []) -> dict[ConfiguredProvidersLabel, dict[str, ArtifactOutputs]]:
     """
     Return the resources for this rule and its transitive deps.
     """

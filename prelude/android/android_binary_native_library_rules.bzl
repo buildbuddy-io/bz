@@ -293,7 +293,7 @@ def get_android_binary_native_library_info(
             get_deps_debug_data = apk_module_graph.get_deps_debug_data
 
         split_groups = None
-        merged_shared_lib_targets_by_platform = {}  # dict[str, dict[Label, str]]
+        merged_shared_lib_targets_by_platform = {}  # dict[str, dict[ConfiguredProvidersLabel, str]]
         if has_native_merging:
             native_library_merge_debug_outputs = {}
 
@@ -698,7 +698,7 @@ def _link_library_subtargets(
         lib_outputs_by_platform: dict[str, dict[str, _NativeLibSubtargetArtifacts]],  # dict[platform, dict[soname,  _NativeLibSubtargetArtifacts]]
         original_shared_libs_by_platform: dict[str, dict[str, SharedLibrary]],
         final_shared_libs_by_platform: dict[str, dict[str, SharedLibrary]],
-        merged_shared_lib_targets_by_platform: dict[str, dict[Label, str]],
+        merged_shared_lib_targets_by_platform: dict[str, dict[ConfiguredProvidersLabel, str]],
         split_groups: dict[str, str] | None,
         native_merge_debug,
         unrelinked: bool = False):
@@ -1130,12 +1130,12 @@ _LinkableSharedNode = record(
     soname = field(str | None),
     labels = field(list[str], []),
     # Linkable deps of this target.
-    deps = field(list[Label], []),
+    deps = field(list[ConfiguredProvidersLabel], []),
     can_be_asset = field(bool),
     force_static = field(bool),
 )
 
-def encode_linkable_graph_for_mergemap(graph_node_map_by_platform: dict[str, dict[Label, LinkableNode]]) -> dict[str, dict[Label, _LinkableSharedNode]]:
+def encode_linkable_graph_for_mergemap(graph_node_map_by_platform: dict[str, dict[ConfiguredProvidersLabel, LinkableNode]]) -> dict[str, dict[ConfiguredProvidersLabel, _LinkableSharedNode]]:
     return {
         platform: {
             target: _LinkableSharedNode(
@@ -1157,7 +1157,7 @@ MergedLinkablesDebugInfo = record(
     unmerged_statics = list[str],
     group_debug = dict[str, typing.Any],
     with_default_soname = list[typing.Any],
-    missing_default_solibs = list[Label],
+    missing_default_solibs = list[ConfiguredProvidersLabel],
 )
 
 # As shared lib output of the linkables merge process. This is not necessarily an actually merged node (there
@@ -1169,15 +1169,15 @@ MergedSharedLibrary = record(
     # this only includes solib constituents that are included in the android merge map
     solib_constituents = list[str],
     # targets that correspond to solib_constituents (i.e., targets with include_in_android_mergemap = True)
-    solib_constituent_targets = list[Label],
+    solib_constituent_targets = list[ConfiguredProvidersLabel],
     is_actually_merged = bool,
-    primary_constituents = list[Label],
+    primary_constituents = list[ConfiguredProvidersLabel],
 )
 
 # information about a link group derived from the merge mapping
 LinkGroupData = record(
-    group_name = [str, Label],
-    constituents = list[Label],
+    group_name = [str, ConfiguredProvidersLabel],
+    constituents = list[ConfiguredProvidersLabel],
     apk_module = str,
 )
 
@@ -1304,9 +1304,9 @@ def _platform_output_path(path: str, platform: [str, None] = None):
     return path
 
 def _transitive_has_non_prebuilt_linkable_deps(
-        target: Label,
-        linkable_nodes: dict[Label, LinkableNode],
-        transitive_linkable_cache: dict[Label, bool]) -> bool:
+        target: ConfiguredProvidersLabel,
+        linkable_nodes: dict[ConfiguredProvidersLabel, LinkableNode],
+        transitive_linkable_cache: dict[ConfiguredProvidersLabel, bool]) -> bool:
     if target in transitive_linkable_cache:
         return transitive_linkable_cache[target]
 
@@ -1332,10 +1332,10 @@ def _transitive_has_non_prebuilt_linkable_deps(
 def _shared_lib_for_prebuilt_shared(
         ctx: AnalysisContext,
         cxx_toolchain: CxxToolchainInfo,
-        target: Label,
+        target: ConfiguredProvidersLabel,
         node_data: LinkableNode,
-        linkable_nodes: dict[Label, LinkableNode],
-        transitive_linkable_cache: dict[Label, bool],
+        linkable_nodes: dict[ConfiguredProvidersLabel, LinkableNode],
+        transitive_linkable_cache: dict[ConfiguredProvidersLabel, bool],
         platform: [str, None] = None) -> SharedLibrary:
     expect(
         len(node_data.shared_libs.libraries) == 1,
@@ -1370,9 +1370,9 @@ def _get_merged_linkables_for_platform(
         cxx_toolchain: CxxToolchainInfo,
         native_library_merge_linker_args_all: list,
         platform: str | None,
-        glue_linkable: [(Label, LinkInfo), None],
+        glue_linkable: [(ConfiguredProvidersLabel, LinkInfo), None],
         default_shared_libs: dict[str, SharedLibrary],
-        linkable_nodes: dict[Label, LinkableNode],
+        linkable_nodes: dict[ConfiguredProvidersLabel, LinkableNode],
         merge_map: dict[str, [str, None]],
         merge_linker_args: dict[str, typing.Any],
         apk_module_graph: typing.Callable) -> (dict[str, MergedSharedLibrary], MergedLinkablesDebugInfo):
@@ -1683,7 +1683,7 @@ def _get_merged_linkables_for_platform(
 def _create_all_relinkable_links(
         ctx: AnalysisContext,
         platform_to_original_native_linkables: dict[str, dict[str, SharedLibrary]],
-        graph_node_map_by_platform: dict[str, dict[Label, LinkableNode]]) -> (dict[str, dict[str, SharedLibrary]], dict[str, typing.Any]):
+        graph_node_map_by_platform: dict[str, dict[ConfiguredProvidersLabel, LinkableNode]]) -> (dict[str, dict[str, SharedLibrary]], dict[str, typing.Any]):
     final_platform_to_native_linkables = {}
     link_graphs_by_platform = {}
     for platform in platform_to_original_native_linkables:
@@ -1741,8 +1741,8 @@ def _create_relinkable_links(
         ctx: AnalysisContext,
         *,
         cxx_toolchain: CxxToolchainInfo,
-        linkable_nodes: dict[Label, LinkableNode],
-        platform: str) -> (dict[str, SharedLibrary], dict[Label, dict[Label, list[Label]]]):
+        linkable_nodes: dict[ConfiguredProvidersLabel, LinkableNode],
+        platform: str) -> (dict[str, SharedLibrary], dict[ConfiguredProvidersLabel, dict[ConfiguredProvidersLabel, list[ConfiguredProvidersLabel]]]):
     linkable_nodes_graph = {target: value.deps + value.exported_deps for target, value in linkable_nodes.items()}
     shared_libs = {}
     shared_lib_overrides = {}
@@ -1791,10 +1791,10 @@ def _create_relinkable_links(
 def _create_link_args(
         *,
         cxx_toolchain: CxxToolchainInfo,
-        root_target: Label,
+        root_target: ConfiguredProvidersLabel,
         node: LinkableNode,
-        graph: dict[Label, LinkableNode],
-        shared_lib_overrides: dict[Label, LinkInfo] | None = None) -> (LinkArgs, list[Label], dict[Label, list[Label]]):
+        graph: dict[ConfiguredProvidersLabel, LinkableNode],
+        shared_lib_overrides: dict[ConfiguredProvidersLabel, LinkInfo] | None = None) -> (LinkArgs, list[ConfiguredProvidersLabel], dict[ConfiguredProvidersLabel, list[ConfiguredProvidersLabel]]):
     if LinkOrdering(cxx_toolchain.linker_info.link_ordering) != LinkOrdering("topological"):
         fail("don't yet support link ordering {}".format(cxx_toolchain.linker_info.link_ordering))
 
@@ -1805,7 +1805,7 @@ def _create_link_args(
 
     link_traversal_cache = {}
 
-    def link_traversal(label: Label) -> list[Label]:
+    def link_traversal(label: ConfiguredProvidersLabel) -> list[ConfiguredProvidersLabel]:
         def link_traversal_deps(label):
             node = graph[label]
             if label == root_target:
@@ -2136,7 +2136,7 @@ def create_shared_lib(
         link_args: list[LinkArgs],
         cxx_toolchain: CxxToolchainInfo,
         shared_lib_deps: list[str],
-        label: Label,
+        label: ConfiguredProvidersLabel,
         can_be_asset: bool,
         extra_linker_outputs_factory: typing.Callable | None = None,
         extra_linker_outputs_flags_factory: typing.Callable | None = None) -> SharedLibrary:

@@ -15,7 +15,7 @@ load("@prelude//python:python.bzl", "PythonLibraryInfo")
 # binaries in `bin/`, native libs in `lib/`, and Python modules under
 # `lib/python*/site-packages`).
 UnixEnv = record(
-    label = field(Label),
+    label = field(ConfiguredProvidersLabel),
     # Third-party builds to install into the env (non-transitive).
     third_party_builds = field(list[ArtifactExt], []),
     # Python libraries to install (non-transitive).

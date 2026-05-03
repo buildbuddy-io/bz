@@ -1458,7 +1458,7 @@ _CxxSharedLibraryResult = record(
 
 def cxx_compile_srcs(
         actions: AnalysisActions,
-        target_label: Label,
+        target_label: ConfiguredProvidersLabel,
         cxx_toolchain_info: CxxToolchainInfo,
         impl_params: CxxRuleConstructorParams,
         own_preprocessors: list[CPreprocessor],
@@ -1940,8 +1940,8 @@ def _get_shared_library_links(
         ctx: AnalysisContext,
         reduce_linkable_graph_func: typing.Callable[[], ReducedLinkableGraph],
         link_group: [str, None],
-        link_group_mappings: [dict[Label, str], None],
-        link_group_preferred_linkage: dict[Label, Linkage],
+        link_group_mappings: [dict[ConfiguredProvidersLabel, str], None],
+        link_group_preferred_linkage: dict[ConfiguredProvidersLabel, Linkage],
         link_group_libs: dict[str, LinkGroupLib],
         exported_deps: list[Dependency],
         non_exported_deps: list[Dependency],

@@ -28,6 +28,7 @@ pub(crate) fn ty_provider(
     // Use default matcher from `StarlarkValue` if `None`.
     matcher: Option<TypeMatcherFactory>,
     fields: SortedMap<String, Ty>,
+    unknown_fields: bool,
 ) -> buck2_error::Result<Ty> {
     Ok(Ty::custom(TyUser::new(
         name.to_owned(),
@@ -38,7 +39,7 @@ pub(crate) fn ty_provider(
             matcher,
             fields: TyUserFields {
                 known: fields,
-                unknown: false,
+                unknown: unknown_fields,
             },
             ..TyUserParams::default()
         },

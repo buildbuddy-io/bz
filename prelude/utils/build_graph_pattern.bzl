@@ -13,8 +13,8 @@ _BuildGraphPatternKind = enum(
 )
 
 BuildGraphInfo = record(
-    root = Label,
-    first_order_deps = set[Label],
+    root = ConfiguredProvidersLabel,
+    first_order_deps = set[ConfiguredProvidersLabel],
 )
 
 def new_build_graph_info(ctx: AnalysisContext, deps: list[Dependency]) -> BuildGraphInfo:
@@ -24,13 +24,13 @@ def new_build_graph_info(ctx: AnalysisContext, deps: list[Dependency]) -> BuildG
     )
 
 BuildGraphPattern = record(
-    matches = field(typing.Callable[[Label, BuildGraphInfo], bool]),
+    matches = field(typing.Callable[[ConfiguredProvidersLabel, BuildGraphInfo], bool]),
 )
 
 def parse_build_graph_pattern(pattern: str) -> BuildGraphPattern:
     kind = _BuildGraphPatternKind(pattern)
 
-    def matches(label: Label, info: BuildGraphInfo) -> bool:
+    def matches(label: ConfiguredProvidersLabel, info: BuildGraphInfo) -> bool:
         if kind == _BuildGraphPatternKind("root"):
             return label == info.root
         elif kind == _BuildGraphPatternKind("first_order_deps"):

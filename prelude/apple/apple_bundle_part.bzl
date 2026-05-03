@@ -553,7 +553,7 @@ def _should_embed_provisioning_profile(ctx: AnalysisContext, codesign_type: Code
 
     return False
 
-def _convert_bundle_manifest_to_json_object(manifest: AppleBundleManifest) -> dict[Label, typing.Any]:
+def _convert_bundle_manifest_to_json_object(manifest: AppleBundleManifest) -> dict[ConfiguredProvidersLabel, typing.Any]:
     manifest_dict = {}
     for target_label, logs in manifest.log_file_map.items():
         manifest_dict[target_label] = {

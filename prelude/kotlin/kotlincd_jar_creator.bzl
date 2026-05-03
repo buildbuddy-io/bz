@@ -56,7 +56,7 @@ def create_jar_artifact_kotlincd(
         abi_generation_mode: [AbiGenerationMode, None],
         java_toolchain: JavaToolchainInfo,
         kotlin_toolchain: KotlinToolchainInfo,
-        label: Label,
+        label: ConfiguredProvidersLabel,
         srcs: list[Artifact],
         remove_classes: list[str],
         resources: list[Artifact],
@@ -363,7 +363,7 @@ def _encode_kotlin_extra_params(
     )
 
 def _command_builder(
-        label: Label,
+        label: ConfiguredProvidersLabel,
         srcs: list[Artifact],
         remove_classes: list[str],
         annotation_processor_properties: AnnotationProcessorProperties,
@@ -396,7 +396,7 @@ def _command_builder(
     )
 
 def _encode_kotlin_command(
-        label: Label,
+        label: ConfiguredProvidersLabel,
         srcs: list[Artifact],
         remove_classes: list[str],
         annotation_processor_properties: AnnotationProcessorProperties,

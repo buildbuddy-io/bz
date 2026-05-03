@@ -367,7 +367,7 @@ def process_native_linking(
         package_style,
         allow_cache_upload) -> (
     list[(SharedLibrary, str)],
-    dict[str, (LinkedObject, Label)],
+    dict[str, (LinkedObject, ConfiguredProvidersLabel)],
     list[LinkArgs],
     dict[str, typing.Any],
     dict[str, typing.Any],

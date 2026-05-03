@@ -129,7 +129,7 @@ EnhancementContext = record(
     ctx = AnalysisContext,
     actions = AnalysisActions,
     attrs = typing.Any,
-    label = Label,
+    label = ConfiguredProvidersLabel,
 
     # methods
     debug_output = typing.Callable,

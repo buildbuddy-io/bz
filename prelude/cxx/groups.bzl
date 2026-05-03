@@ -214,7 +214,7 @@ def _parse_filter_from_mapping(entry: [list[str | Dependency], str, Dependency, 
         return [_parse_filter(entry)]
     return []
 
-def compute_mappings(groups_map: dict[str, Group], graph_map: dict[Label, typing.Any]) -> dict[Label, str]:
+def compute_mappings(groups_map: dict[str, Group], graph_map: dict[ConfiguredProvidersLabel, typing.Any]) -> dict[ConfiguredProvidersLabel, str]:
     """
     Returns the group mappings {target label -> group name} based on the provided groups_map and graph.
     """
@@ -262,7 +262,7 @@ def compute_mappings(groups_map: dict[str, Group], graph_map: dict[Label, typing
 
     return target_to_group_map
 
-def get_dedupped_roots_from_groups(groups: list[Group]) -> list[Label]:
+def get_dedupped_roots_from_groups(groups: list[Group]) -> list[ConfiguredProvidersLabel]:
     roots = {}
     for group in groups:
         for mapping in group.mappings:
@@ -275,8 +275,8 @@ def get_dedupped_roots_from_groups(groups: list[Group]) -> list[Label]:
     return list(roots.keys())
 
 def _find_targets_in_mapping(
-        graph_map: dict[Label, typing.Any],
-        mapping: GroupMapping) -> list[Label]:
+        graph_map: dict[ConfiguredProvidersLabel, typing.Any],
+        mapping: GroupMapping) -> list[ConfiguredProvidersLabel]:
     # If we have no filtering, we don't need to do any traversal to find targets to include.
     if not mapping.filters:
         if not mapping.roots:
@@ -303,7 +303,7 @@ def _find_targets_in_mapping(
     # Else find all dependencies that match the filter.
     matching_targets = {}
 
-    def populate_matching_targets(node, root = None):  # Label -> bool:
+    def populate_matching_targets(node, root = None):  # ConfiguredProvidersLabel -> bool:
         graph_node = graph_map[node]
 
         # This callsite was migrated away from `lazy.is_any()`
@@ -326,13 +326,13 @@ def _find_targets_in_mapping(
             return False
         return True
 
-    def populate_matching_targets_bfs_wrapper(node):  # (Label) -> list
+    def populate_matching_targets_bfs_wrapper(node):  # (ConfiguredProvidersLabel) -> list
         if populate_matching_targets(node):
             graph_node = graph_map[node]
             return graph_node.deps + graph_node.exported_deps
         return []
 
-    def populate_matching_targets_with_root(root, node):  # (Label, Label) -> list
+    def populate_matching_targets_with_root(root, node):  # (ConfiguredProvidersLabel, ConfiguredProvidersLabel) -> list
         if populate_matching_targets(node, root = root):
             graph_node = graph_map[node]
             return graph_node.deps + graph_node.exported_deps
@@ -376,7 +376,7 @@ def _assign_target_to_group(
         group,  #  Group,
         groups_map,  # {str: Group}
         mapping,  # GroupMapping
-        target,  # Label
+        target,  # ConfiguredProvidersLabel
         node_traversal):  # bool
     # If the target hasn't already been assigned to a group, assign it to the
     # first group claiming the target. Return whether the target was already assigned.
@@ -395,10 +395,10 @@ def _assign_target_to_group(
 
 # Extracted from `_update_target_to_group_mapping` to avoid function allocations inside the loop
 def _transitively_add_targets_to_group_mapping(
-        assign_target_to_group,  # (Label, bool) -> bool
+        assign_target_to_group,  # (ConfiguredProvidersLabel, bool) -> bool
         node_traversed_targets,  #: {"label": None}
         graph_map,  # {"label": "_b"}
-        node):  # ([Label]) -> None
+        node):  # ([ConfiguredProvidersLabel]) -> None
     previously_processed = assign_target_to_group(node, False)
 
     # If the node has been previously processed, and it was via tree (not node), all child nodes have been assigned
@@ -415,9 +415,9 @@ def _update_target_to_group_mapping(
         group,  #  Group,
         groups_map,  # {str: Group}
         mapping,  # GroupMapping
-        target):  # Label
-    assign_target_to_group = partial(_assign_target_to_group, target_to_group_map, node_traversed_targets, group, groups_map, mapping)  # (Label, bool) -> bool
-    transitively_add_targets_to_group_mapping = partial(_transitively_add_targets_to_group_mapping, assign_target_to_group, node_traversed_targets, graph_map)  # (Label) -> list[Label]
+        target):  # ConfiguredProvidersLabel
+    assign_target_to_group = partial(_assign_target_to_group, target_to_group_map, node_traversed_targets, group, groups_map, mapping)  # (ConfiguredProvidersLabel, bool) -> bool
+    transitively_add_targets_to_group_mapping = partial(_transitively_add_targets_to_group_mapping, assign_target_to_group, node_traversed_targets, graph_map)  # (ConfiguredProvidersLabel) -> list[ConfiguredProvidersLabel]
 
     if mapping.traversal in _TRAVERSALS_TO_ASSIGN_NODE:
         assign_target_to_group(target, True)
@@ -428,8 +428,8 @@ def _add_to_implicit_link_group(
         generated_group_name,  # str
         group,  # Group
         groups_map,  # {str: Group}
-        target_to_group_map,  # {Label: str}
-        target):  # Label
+        target_to_group_map,  # {ConfiguredProvidersLabel: str}
+        target):  # ConfiguredProvidersLabel
     target_to_group_map[target] = generated_group_name
     if generated_group_name not in groups_map:
         groups_map[generated_group_name] = create_group(
@@ -489,7 +489,7 @@ def _make_json_info_for_group(group: Group) -> dict[str, typing.Any]:
         "name": group.name,
     }
 
-def make_info_subtarget_providers(ctx: AnalysisContext, groups: list[Group], mappings: dict[Label, str]) -> list[Provider]:
+def make_info_subtarget_providers(ctx: AnalysisContext, groups: list[Group], mappings: dict[ConfiguredProvidersLabel, str]) -> list[Provider]:
     info_json = {
         "groups": {group.name: _make_json_info_for_group(group) for group in groups},
         "mappings": mappings,

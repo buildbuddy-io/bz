@@ -17,6 +17,6 @@ AppleLibraryInfo = provider(
         "provider_type": provider_field(str, default = "AppleLibraryInfo"),
         "public_framework_headers": ArtifactTSet,
         "swift_header": [Artifact, None],
-        "target": Label,
+        "target": ConfiguredProvidersLabel,
     },
 )

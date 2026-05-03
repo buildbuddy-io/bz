@@ -66,7 +66,7 @@ load(
 
 CxxLibraryInfo = provider(
     fields = dict(
-        target = provider_field(Label),
+        target = provider_field(ConfiguredProvidersLabel),
         labels = provider_field(list[str]),
     ),
 )

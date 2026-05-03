@@ -514,6 +514,9 @@ def _prebuilt_apple_xcframework_macro_stub(**kwargs):
         **kwargs
     )
 
+def _repo_name():
+    return None
+
 # TODO(cjhopman): These macro wrappers should be handled in prelude/rules.bzl+rule_impl.bzl.
 # Probably good if they were defined to take in the base rule that
 # they are wrapping and return the wrapped one.
@@ -567,7 +570,7 @@ __shimmed_native__.update(_user_rules)
 
 # Should come after the rules which are macro overridden
 __shimmed_native__.update(__extra_rules__)
-__shimmed_native__.update({"cxx": _cxx, "python": _python})
+__shimmed_native__.update({"cxx": _cxx, "python": _python, "repo_name": _repo_name})
 __shimmed_native__.update({
     "__internal_autodeps_hacks__": struct(
         rust_link_info = RustLinkInfo,

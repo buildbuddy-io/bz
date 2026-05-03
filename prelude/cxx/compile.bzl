@@ -207,7 +207,7 @@ def get_header_language_mode(source_extension: CxxExtension) -> str | None:
 
 def create_compile_cmds(
         actions: AnalysisActions,
-        target_label: Label,
+        target_label: ConfiguredProvidersLabel,
         toolchain: CxxToolchainInfo,
         impl_params: CxxRuleConstructorParams,
         own_preprocessors: list[CPreprocessor],
@@ -548,7 +548,7 @@ def _prepare_cxx_compilation(
 
 def _compile_single_cxx(
         actions: AnalysisActions,
-        label: Label,
+        label: ConfiguredProvidersLabel,
         toolchain: CxxToolchainInfo,
         bitcode_args: list,
         flavors: set[CxxCompileFlavor],
@@ -890,7 +890,7 @@ def build_flavor_flags(flavor_flags: dict[str, list[str]], compiler_type: str) -
 
 def _cxx_dynamic_compile(
         actions: AnalysisActions,
-        label: Label,
+        label: ConfiguredProvidersLabel,
         toolchain: CxxToolchainInfo,
         bitcode_args: list[str],
         flavors: list[CxxCompileFlavor],
@@ -994,7 +994,7 @@ _dynamic_compile_rule = dynamic_actions(
         "index_store": dynattrs.list(dynattrs.option(dynattrs.output())),
         "infos": dynattrs.list(dynattrs.value(CxxCompileInfo)),
         "json_error": dynattrs.list(dynattrs.option(dynattrs.output())),
-        "label": dynattrs.value(Label),
+        "label": dynattrs.value(ConfiguredProvidersLabel),
         "object": dynattrs.list(dynattrs.output()),
         "pch_object": dynattrs.list(dynattrs.option(dynattrs.output())),
         "precompiled_header": dynattrs.option(dynattrs.value(Dependency)),
@@ -1006,7 +1006,7 @@ _dynamic_compile_rule = dynamic_actions(
 
 def compile_cxx(
         actions: AnalysisActions,
-        target_label: Label,
+        target_label: ConfiguredProvidersLabel,
         toolchain: CxxToolchainInfo,
         src_compile_cmds: list[CxxSrcCompileCommand],
         flavors: set[CxxCompileFlavor],
@@ -1128,14 +1128,14 @@ def _compiler_supports_header_units(compiler_info: typing.Any):
     return ("clang" in compiler_info.compiler_type and
             compiler_info.supports_two_phase_compilation)
 
-def _get_module_name(target_label: Label, group_name: str) -> str:
+def _get_module_name(target_label: ConfiguredProvidersLabel, group_name: str) -> str:
     return paths.normalize(paths.join(
         "__header_units__",
         target_label.package,
         "{}{}.h".format(target_label.name, group_name),
     ))
 
-def _get_import_filename(target_label: Label, group_name: str) -> str:
+def _get_import_filename(target_label: ConfiguredProvidersLabel, group_name: str) -> str:
     return paths.normalize(paths.join(
         target_label.package,
         "__import__{}{}.h".format(target_label.name, group_name),
@@ -1155,7 +1155,7 @@ def _is_standalone_header(header: CHeader) -> bool:
     return True
 
 def _convert_raw_header(
-        target_label: Label,
+        target_label: ConfiguredProvidersLabel,
         raw_header: Artifact,
         include_dirs: list[CellPath]) -> CHeader:
     package_prefix = str(target_label.path)
@@ -1176,7 +1176,7 @@ def _convert_raw_header(
 
 def _create_precompile_cmd(
         actions: AnalysisActions,
-        target_label: Label,
+        target_label: ConfiguredProvidersLabel,
         compiler_info: typing.Any,
         preprocessors: list[CPreprocessor],
         header_group: str | None,
@@ -1288,7 +1288,7 @@ module "{}" {{
 
 def _precompile_single_cxx(
         actions: AnalysisActions,
-        target_label: Label,
+        target_label: ConfiguredProvidersLabel,
         toolchain: CxxToolchainInfo,
         impl_params: CxxRuleConstructorParams,
         group_name: str,
@@ -1400,7 +1400,7 @@ def _precompile_single_cxx(
 
 def precompile_cxx(
         actions: AnalysisActions,
-        target_label: Label,
+        target_label: ConfiguredProvidersLabel,
         toolchain: CxxToolchainInfo,
         impl_params: CxxRuleConstructorParams,
         preprocessors: list[CPreprocessor],
@@ -1524,7 +1524,7 @@ def cxx_objects_sub_targets(outs: list[CxxCompileOutput]) -> dict[str, list[Prov
         )]
     return objects_sub_targets
 
-def _validate_target_headers(label: Label, preprocessor: list[CPreprocessor]):
+def _validate_target_headers(label: ConfiguredProvidersLabel, preprocessor: list[CPreprocessor]):
     path_to_artifact = {}
     all_headers = flatten([x.headers for x in preprocessor])
     for header in all_headers:
@@ -1629,7 +1629,7 @@ def _add_compiler_info_flags(compiler_info: typing.Any) -> list:
 
     return cmd
 
-def _add_compiler_type_flags(target_label: Label, compiler_type: str, ext: CxxExtension) -> list:
+def _add_compiler_type_flags(target_label: ConfiguredProvidersLabel, compiler_type: str, ext: CxxExtension) -> list:
     cmd = []
     cmd.append(get_flags_for_reproducible_build(target_label, compiler_type))
 
@@ -1729,7 +1729,7 @@ _filter_precompile_argsfile_anon_rule = anon_rule(
 
 def _mk_argsfiles(
         actions: AnalysisActions,
-        target_label: Label,
+        target_label: ConfiguredProvidersLabel,
         impl_params: CxxRuleConstructorParams,
         compiler_info: typing.Any,
         preprocessor: CPreprocessorInfo,
@@ -2048,7 +2048,7 @@ def get_compiler_type(ctx: AnalysisContext, ext: CxxExtension) -> typing.Any:
 
 def _generate_base_compile_command(
         actions: AnalysisActions,
-        target_label: Label,
+        target_label: ConfiguredProvidersLabel,
         toolchain: CxxToolchainInfo,
         impl_params: CxxRuleConstructorParams,
         pre: CPreprocessorInfo,

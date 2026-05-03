@@ -37,11 +37,11 @@ OmnibusMetadataInfo = provider(
 def process_omnibus_linking(
         ctx: AnalysisContext,
         deps: list[Dependency],
-        extensions: dict[str, (LinkedObject, Label)],
+        extensions: dict[str, (LinkedObject, ConfiguredProvidersLabel)],
         python_toolchain: PythonToolchainInfo,
         extra: dict[str, typing.Any]) -> (
     list[(SharedLibrary, str)],
-    dict[str, (LinkedObject, Label)],
+    dict[str, (LinkedObject, ConfiguredProvidersLabel)],
 ):
     # If we're using omnibus linking, re-link libraries and extensions and
     # update the libraries we'll pull into the final binary.

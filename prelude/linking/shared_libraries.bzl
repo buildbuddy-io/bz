@@ -48,7 +48,7 @@ SharedLibrary = record(
     can_be_asset = field(bool, False),
     for_primary_apk = field(bool, False),
     soname = field(Soname),
-    label = field(Label),
+    label = field(ConfiguredProvidersLabel),
     extra_outputs = field(dict[str, list[DefaultInfo]], default = {}),
 )
 
@@ -78,7 +78,7 @@ def create_shlib(
     )
 
 SharedLibraries = record(
-    label = field(Label | None, None),
+    label = field(ConfiguredProvidersLabel | None, None),
     # A mapping of shared library SONAME (e.g. `libfoo.so.2`) to the artifact.
     # Since the SONAME is what the dynamic loader uses to uniquely identify
     # libraries, using this as the key allows easily detecting conflicts from

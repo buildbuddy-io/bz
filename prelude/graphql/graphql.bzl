@@ -38,7 +38,7 @@ GraphQLInfo = provider(
         "is_test_target": provider_field(bool),
         "platform_config": provider_field(GraphQLAndroidInfo | GraphQLCxxInfo | GraphQLiOSInfo),
         "srcs": provider_field(list[Artifact]),
-        "target": provider_field(Label),
+        "target": provider_field(ConfiguredProvidersLabel),
     },
 )
 
@@ -54,7 +54,7 @@ GraphQLMobileConfigInput = provider(
     },
 )
 
-def _graphql_info_provider(label: Label, deps: list[Dependency]) -> list[Provider]:
+def _graphql_info_provider(label: ConfiguredProvidersLabel, deps: list[Dependency]) -> list[Provider]:
     return [dep[GraphQLInfo] for dep in deps if GraphQLInfo in dep and dep[GraphQLInfo].target == label]
 
 def graphql_codegen_sets(deps: list[Dependency]) -> list[ArtifactTSet]:

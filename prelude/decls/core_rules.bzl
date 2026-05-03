@@ -735,7 +735,10 @@ genrule = prelude_rule(
                  the `OUT` environment variable. Only one of `out`
                  or `outs` may be present.
             """),
-            "outs": attrs.option(attrs.dict(key = attrs.string(), value = attrs.set(attrs.string(), sorted = False), sorted = False), default = None, doc = """
+            "outs": attrs.option(attrs.one_of(
+                attrs.dict(key = attrs.string(), value = attrs.set(attrs.string(), sorted = False), sorted = False),
+                attrs.list(attrs.string()),
+            ), default = None, doc = """
                 Mapping defining `named outputs`
                   to output paths relative to the rule's output directory. Only one of
                   `out` or `outs` may be present.
@@ -809,6 +812,8 @@ genrule = prelude_rule(
                 Only valid if the `outs` arg is present. Dictates which of those named outputs are marked as
                 executable.
             """),
+            "output_to_bindir": attrs.option(attrs.one_of(attrs.bool(), attrs.int()), default = None),
+            "tools": attrs.list(attrs.string(), default = []),
         } |
         _has_content_based_path_attr() |
         genrule_common.env_arg() |

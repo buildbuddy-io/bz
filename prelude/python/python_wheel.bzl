@@ -62,17 +62,17 @@ load(
 load("@prelude//utils:utils.bzl", "value_or")
 
 def _link_deps(
-        link_infos: dict[Label, LinkableNode],
-        deps: list[Label],
+        link_infos: dict[ConfiguredProvidersLabel, LinkableNode],
+        deps: list[ConfiguredProvidersLabel],
         link_strategy: LinkStrategy,
-        pic_behavior: PicBehavior) -> list[Label]:
+        pic_behavior: PicBehavior) -> list[ConfiguredProvidersLabel]:
     """
     Return transitive deps required to link dynamically against the given deps.
     This will following through deps of statically linked inputs and exported
     deps of everything else (see https://fburl.com/diffusion/rartsbkw from v1).
     """
 
-    def find_deps(node: Label):
+    def find_deps(node: ConfiguredProvidersLabel):
         return get_deps_for_link(link_infos[node], link_strategy, pic_behavior)
 
     return depth_first_traversal_by(link_infos, deps, find_deps)

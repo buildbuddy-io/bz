@@ -76,7 +76,7 @@ def resource_group_map_impl(ctx: AnalysisContext) -> list[Provider]:
         ),
     ]
 
-def _fixup_mapping_to_only_include_roots_in_the_map(mapping: GroupMapping, node_map: dict[Label, ResourceGraphNode]) -> GroupMapping | None:
+def _fixup_mapping_to_only_include_roots_in_the_map(mapping: GroupMapping, node_map: dict[ConfiguredProvidersLabel, ResourceGraphNode]) -> GroupMapping | None:
     if not mapping.roots:
         return mapping
 

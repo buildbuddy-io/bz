@@ -24,6 +24,7 @@ use crate::cells::name::CellName;
 pub enum ExternalCellOrigin {
     Bundled(CellName),
     Git(GitCellSetup),
+    Bzlmod(BzlmodCellSetup),
 }
 
 #[derive(
@@ -45,11 +46,42 @@ pub struct GitCellSetup {
     pub object_format: Option<GitObjectFormat>,
 }
 
+#[derive(
+    Debug,
+    derive_more::Display,
+    Clone,
+    Dupe,
+    allocative::Allocative,
+    PartialEq,
+    Eq,
+    Hash,
+    Pagable
+)]
+#[display("bzlmod({}@{})", module_name, version)]
+pub struct BzlmodCellSetup {
+    pub module_name: Arc<str>,
+    pub version: Arc<str>,
+    pub canonical_repo_name: Arc<str>,
+    pub url: Arc<str>,
+    pub integrity: Arc<str>,
+    pub strip_prefix: Option<Arc<str>>,
+    pub archive_type: Option<Arc<str>>,
+    pub patches: Arc<Vec<BzlmodPatch>>,
+    pub patch_strip: u32,
+}
+
+#[derive(Debug, Clone, allocative::Allocative, PartialEq, Eq, Hash, Pagable)]
+pub struct BzlmodPatch {
+    pub url: Arc<str>,
+    pub integrity: Arc<str>,
+}
+
 impl fmt::Display for ExternalCellOrigin {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Bundled(cell) => write!(f, "bundled({cell})"),
             Self::Git(git) => write!(f, "{git}"),
+            Self::Bzlmod(bzlmod) => write!(f, "{bzlmod}"),
         }
     }
 }

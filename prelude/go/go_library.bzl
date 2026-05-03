@@ -55,13 +55,22 @@ def go_library_impl(ctx: AnalysisContext) -> list[Provider]:
 
     coverage_mode = GoCoverageMode(ctx.attrs._coverage_mode) if ctx.attrs._coverage_mode else None
     cgo_build_context = get_cgo_build_context(ctx)
+    srcs = list(ctx.attrs.srcs)
+    deps = list(ctx.attrs.deps)
+    if ctx.attrs.embed:
+        if len(ctx.attrs.embed) == 1 and ctx.attrs.package_name == None:
+            pkg_import_path = ctx.attrs.embed[0][GoTestInfo].pkg_import_path
+        for embedded in ctx.attrs.embed:
+            info = embedded[GoTestInfo]
+            srcs += info.srcs
+            deps += info.deps
 
     pkg, pkg_info, _ = declare_package_build(
         ctx = ctx,
         pkg_import_path = pkg_import_path,
         main = False,
         sources = GoSourceInputs(
-            srcs = ctx.attrs.srcs + ctx.attrs.headers,
+            srcs = srcs + ctx.attrs.headers,
             embed_srcs = from_named_set(ctx.attrs.embed_srcs),
             package_root = ctx.attrs.package_root,
         ),
@@ -74,7 +83,7 @@ def go_library_impl(ctx: AnalysisContext) -> list[Provider]:
             coverage_mode = coverage_mode,
             cgo_enabled = evaluate_cgo_enabled(cxx_toolchain_available, ctx.attrs._cgo_enabled, ctx.attrs.override_cgo_enabled),
         ),
-        deps = ctx.attrs.deps,
+        deps = deps,
     )
 
     default_output = _combine_package(ctx, pkg_import_path, pkg.archive_file, pkg.export_file)
@@ -89,20 +98,20 @@ def go_library_impl(ctx: AnalysisContext) -> list[Provider]:
         GoPkgCompileInfo(pkgs = pkgs),
         GoPkgLinkInfo(pkgs = merge_pkgs([
             pkgs,
-            get_inherited_link_pkgs(ctx.attrs.deps),
+            get_inherited_link_pkgs(deps),
         ])),
         GoTestInfo(
-            deps = ctx.attrs.deps,
-            srcs = ctx.attrs.srcs,
+            deps = deps,
+            srcs = srcs,
             pkg_import_path = pkg_import_path,
             coverage_enabled = ctx.attrs.coverage_enabled,
         ),
-        create_merged_link_info_for_propagation(ctx, filter(None, [d.get(MergedLinkInfo) for d in ctx.attrs.deps])),
+        create_merged_link_info_for_propagation(ctx, filter(None, [d.get(MergedLinkInfo) for d in deps])),
         merge_shared_libraries(
             ctx.actions,
-            deps = filter(None, map_idx(SharedLibraryInfo, ctx.attrs.deps)),
+            deps = filter(None, map_idx(SharedLibraryInfo, deps)),
         ),
-        merge_link_group_lib_info(deps = ctx.attrs.deps),
+        merge_link_group_lib_info(deps = deps),
         create_linkable_graph(
             ctx,
             # Linkable graph nodes must be present for link_groups operation (even if there are nothing to provide).
@@ -117,9 +126,9 @@ def go_library_impl(ctx: AnalysisContext) -> list[Provider]:
                     link_infos = _get_empty_link_infos(),
                 ),
             ),
-            deps = ctx.attrs.deps,
+            deps = deps,
         ),
-        cxx_merge_cpreprocessors(ctx.actions, own_exported_preprocessors, cxx_inherited_preprocessor_infos(ctx.attrs.deps)),
+        cxx_merge_cpreprocessors(ctx.actions, own_exported_preprocessors, cxx_inherited_preprocessor_infos(deps)),
         pkg_info,
     ]
 

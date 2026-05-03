@@ -38,14 +38,14 @@ AppleDebuggableInfo = provider(
         # b. the owning bundle target to filtered artifacts
         "debug_info_tset": provider_field(ArtifactTSet),
         # In the case of b above, contains the map of library target to artifacts, else None
-        "filtered_map": provider_field([dict[Label, list[Artifact]], None], default = None),
+        "filtered_map": provider_field([dict[ConfiguredProvidersLabel, list[Artifact]], None], default = None),
         "selective_metadata": provider_field(list[AppleSelectiveDebuggableMetadata], default = []),
     },
 )
 
 _AppleDebugInfo = record(
     debug_info_tset = ArtifactTSet,
-    filtered_map = field([dict[Label, list[Artifact]], None]),
+    filtered_map = field([dict[ConfiguredProvidersLabel, list[Artifact]], None]),
 )
 
 AggregatedAppleDebugInfo = record(

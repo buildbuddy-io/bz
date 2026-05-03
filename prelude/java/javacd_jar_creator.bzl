@@ -221,7 +221,7 @@ def create_jar_artifact_javacd(
     return result
 
 def _command_builder(
-        label: Label,
+        label: ConfiguredProvidersLabel,
         srcs: list[Artifact],
         remove_classes: list[str],
         annotation_processor_properties: AnnotationProcessorProperties,

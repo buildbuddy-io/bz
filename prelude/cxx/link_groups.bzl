@@ -137,7 +137,7 @@ LinkGroupLinkInfo = record(
 
     # Where this link info is originated from.
     # Either target label or link group name
-    link_name = field(Label | str),
+    link_name = field(ConfiguredProvidersLabel | str),
 )
 
 LinkGroupLibSpec = record(
@@ -154,7 +154,7 @@ LinkGroupLibSpec = record(
     root = field([LinkableRootInfo, None], None),
     # The link group to link.
     group = field(Group),
-    label = field(Label | None, None),
+    label = field(ConfiguredProvidersLabel | None, None),
 )
 
 _LinkedLinkGroup = record(
@@ -168,7 +168,7 @@ _LinkedLinkGroups = record(
     symbol_ldflags = field(list[typing.Any], []),
     libs_debug_info = field(dict[typing.Any, typing.Any]),
     # Mapping from a target to a link group name it was linked into.
-    targets_consumed_by_link_groups = field(dict[Label, str]),
+    targets_consumed_by_link_groups = field(dict[ConfiguredProvidersLabel, str]),
 )
 
 def get_link_group(ctx: AnalysisContext) -> [str, None]:
@@ -255,7 +255,7 @@ def _get_link_group_info_from_definitions(
         min_node_count = getattr(ctx.attrs, "link_group_min_binary_node_count", 0),
     )
 
-def get_link_group_preferred_linkage(link_groups: list[Group]) -> dict[Label, Linkage]:
+def get_link_group_preferred_linkage(link_groups: list[Group]) -> dict[ConfiguredProvidersLabel, Linkage]:
     root_to_linkage = {}
     for group in link_groups:
         for mapping in group.mappings:
@@ -274,19 +274,19 @@ def get_link_group_preferred_linkage(link_groups: list[Group]) -> dict[Label, Li
     return root_to_linkage
 
 LinkGroupContext = record(
-    link_group_mappings = field([dict[Label, str], None]),
+    link_group_mappings = field([dict[ConfiguredProvidersLabel, str], None]),
     # TODO(nga): before, `Any` was `_LinkedLinkGroup`,
     #   which was treated as `Any`, because name starts with underscore.
     #   Put proper type here.
     link_group_libs = field(dict[str, typing.Any]),
-    link_group_preferred_linkage = field(dict[Label, Linkage]),
-    labels_to_links_map = field(dict[Label, LinkGroupLinkInfo]),
+    link_group_preferred_linkage = field(dict[ConfiguredProvidersLabel, Linkage]),
+    labels_to_links_map = field(dict[ConfiguredProvidersLabel, LinkGroupLinkInfo]),
     # Mapping from a target to a link group name it was linked into.
-    targets_consumed_by_link_groups = field(dict[Label, str]),
+    targets_consumed_by_link_groups = field(dict[ConfiguredProvidersLabel, str]),
 )
 
 def is_link_group_shlib(
-        label: Label,
+        label: ConfiguredProvidersLabel,
         ctx: LinkGroupContext):
     # If this maps to a link group which we have a `LinkGroupLibInfo` for,
     # then we'll handle this outside of this function
@@ -306,13 +306,13 @@ def is_link_group_shlib(
     return False
 
 def _transitively_update_shared_linkage(
-        linkable_graph_node_map: dict[Label, LinkableNode],
+        linkable_graph_node_map: dict[ConfiguredProvidersLabel, LinkableNode],
         link_group: [str, None],
         link_strategy: LinkStrategy,
-        link_group_preferred_linkage: dict[Label, Linkage],
-        link_group_roots: dict[Label, str],
+        link_group_preferred_linkage: dict[ConfiguredProvidersLabel, Linkage],
+        link_group_roots: dict[ConfiguredProvidersLabel, str],
         pic_behavior: PicBehavior,
-        link_group_mappings: [dict[Label, str], None]):
+        link_group_mappings: [dict[ConfiguredProvidersLabel, str], None]):
     # Identify targets whose shared linkage style may be propagated to
     # dependencies. Implicitly created root libraries are skipped.
     shared_lib_roots = []
@@ -329,7 +329,7 @@ def _transitively_update_shared_linkage(
                 shared_lib_roots.append(target)
 
     # buildifier: disable=uninitialized
-    def process_dependency(node: Label) -> list[Label] | None:
+    def process_dependency(node: ConfiguredProvidersLabel) -> list[ConfiguredProvidersLabel] | None:
         if link_group_mappings and link_group_mappings.get(node) == NO_MATCH_LABEL:
             # Do not propagate shared linkage via nodes that are excluded from link groups.
             return None
@@ -345,8 +345,8 @@ def _transitively_update_shared_linkage(
     )
 
 def create_debug_linkable_entries(
-        labels_to_links_map: dict[Label, LinkGroupLinkInfo],
-        root: Label | None) -> list[LinkGroupsDebugLinkableEntry]:
+        labels_to_links_map: dict[ConfiguredProvidersLabel, LinkGroupLinkInfo],
+        root: ConfiguredProvidersLabel | None) -> list[LinkGroupsDebugLinkableEntry]:
     entries = []
     if root:
         root_entry = LinkGroupsDebugLinkableEntry(
@@ -368,16 +368,16 @@ def create_debug_linkable_entries(
 # that maps to linker.argsfile for link group or final binary.
 FinalLabelsToLinks = record(
     # Static archives and shared libraries inputs.
-    map = field(dict[Label, LinkGroupLinkInfo]),
+    map = field(dict[ConfiguredProvidersLabel, LinkGroupLinkInfo]),
 )
 
 def _collect_all_linkables(
         linkable_graph: ReducedLinkableGraph,
         is_executable_link: bool,
         link_strategy: LinkStrategy,
-        link_group_preferred_linkage: dict[Label, Linkage],
+        link_group_preferred_linkage: dict[ConfiguredProvidersLabel, Linkage],
         pic_behavior: PicBehavior,
-        link_group_roots: dict[str, set[Label]]) -> dict[str, list[Label]]:
+        link_group_roots: dict[str, set[ConfiguredProvidersLabel]]) -> dict[str, list[ConfiguredProvidersLabel]]:
     """
     Given a dict of direct roots (that should be linked as archive) for each link group collects
     all linkables for link groups that should be linked as archive and dynamically
@@ -400,10 +400,10 @@ def collect_linkables(
         linkable_graph: ReducedLinkableGraph,
         is_executable_link: bool,
         link_strategy: LinkStrategy,
-        link_group_preferred_linkage: dict[Label, Linkage],
+        link_group_preferred_linkage: dict[ConfiguredProvidersLabel, Linkage],
         pic_behavior: PicBehavior,
-        roots: set[Label]) -> list[Label]:
-    def get_potential_linkables(node: Label) -> list[Label]:
+        roots: set[ConfiguredProvidersLabel]) -> list[ConfiguredProvidersLabel]:
+    def get_potential_linkables(node: ConfiguredProvidersLabel) -> list[ConfiguredProvidersLabel]:
         linkable_node = linkable_graph.nodes[node]
         if not is_executable_link and node in roots:
             return linkable_node.all_deps
@@ -443,15 +443,15 @@ def _should_fixup_link_order(link_strategy: LinkStrategy) -> bool:
     return link_strategy == LinkStrategy("shared")
 
 BuildLinkGroupsContext = record(
-    public_nodes = field(set[Label] | None),
+    public_nodes = field(set[ConfiguredProvidersLabel] | None),
     linkable_graph = field(ReducedLinkableGraph),
     link_groups = field(dict[str, Group]),
-    link_group_mappings = field(dict[Label, str] | None),
-    link_group_preferred_linkage = field(dict[Label, Linkage]),
+    link_group_mappings = field(dict[ConfiguredProvidersLabel, str] | None),
+    link_group_preferred_linkage = field(dict[ConfiguredProvidersLabel, Linkage]),
     link_strategy = field(LinkStrategy),
     pic_behavior = field(PicBehavior),
-    link_group_libs = field(dict[str, ([Label, None], LinkInfos)]),
-    link_group_roots = field(dict[str, Label] | None, None),  # If none, derived from link_group_libs
+    link_group_libs = field(dict[str, ([ConfiguredProvidersLabel, None], LinkInfos)]),
+    link_group_roots = field(dict[str, ConfiguredProvidersLabel] | None, None),  # If none, derived from link_group_libs
     prefer_stripped = field(bool, False),
     prefer_optimized = field(bool, False),
     transformation_spec_context = field(TransformationSpecContext | None, None),
@@ -459,7 +459,7 @@ BuildLinkGroupsContext = record(
 
 def get_filtered_labels_to_links_map(
         link_group: str | None,
-        linkables: list[Label],
+        linkables: list[ConfiguredProvidersLabel],
         is_executable_link: bool,
         build_context: BuildLinkGroupsContext,
         force_static_follows_dependents: bool = True,
@@ -501,7 +501,7 @@ def get_filtered_labels_to_links_map(
     link_group_added = set()
     group_srcs = {}
 
-    def add_link(target: Label, output_style: LibOutputStyle):
+    def add_link(target: ConfiguredProvidersLabel, output_style: LibOutputStyle):
         infos = build_context.linkable_graph.nodes[target].link_infos[output_style]
 
         if build_context.transformation_spec_context:
@@ -524,7 +524,7 @@ def get_filtered_labels_to_links_map(
             link_name = target,
         )
 
-    def add_link_group(target: Label, target_group: str):
+    def add_link_group(target: ConfiguredProvidersLabel, target_group: str):
         link_group_spec = build_context.link_groups.get(target_group, None)
         if link_group_spec and link_group_spec.attrs.prohibit_file_duplicates and build_context.public_nodes and target in build_context.public_nodes:
             if target_group not in group_srcs:
@@ -656,10 +656,10 @@ def get_filtered_labels_to_links_map(
 # Find all link group libraries that are first order deps or exported deps of
 # the exectuble or another link group's libs
 def get_public_link_group_nodes(
-        linkable_graph_node_map: dict[Label, LinkableNode],
-        link_group_mappings: [dict[Label, str], None],
-        executable_deps: list[Label],
-        root_link_group: [str, None]) -> set[Label]:
+        linkable_graph_node_map: dict[ConfiguredProvidersLabel, LinkableNode],
+        link_group_mappings: [dict[ConfiguredProvidersLabel, str], None],
+        executable_deps: list[ConfiguredProvidersLabel],
+        root_link_group: [str, None]) -> set[ConfiguredProvidersLabel]:
     external_link_group_nodes = set()
 
     # TODO(@christylee): do we need to traverse root link group and NO_MATCH_LABEL exported deps?
@@ -704,7 +704,7 @@ def get_public_link_group_nodes(
     # executable. We need to force export those symbols to avoid undefined symbls.
 
     # buildifier: disable=uninitialized
-    def discover_link_group_linkables(node: Label) -> list[Label]:
+    def discover_link_group_linkables(node: ConfiguredProvidersLabel) -> list[ConfiguredProvidersLabel]:
         exported_deps = []
         for exported_dep in linkable_graph_node_map[node].exported_deps:
             group = link_group_mappings.get(exported_dep)
@@ -724,8 +724,8 @@ def get_public_link_group_nodes(
     return external_link_group_nodes
 
 def get_filtered_links(
-        labels_to_links_map: dict[Label, LinkGroupLinkInfo],
-        public_link_group_nodes: [set[Label], None] = None) -> list[LinkInfo]:
+        labels_to_links_map: dict[ConfiguredProvidersLabel, LinkGroupLinkInfo],
+        public_link_group_nodes: [set[ConfiguredProvidersLabel], None] = None) -> list[LinkInfo]:
     if public_link_group_nodes == None:
         return [link_group_info.link_info for link_group_info in labels_to_links_map.values()]
     infos = []
@@ -737,7 +737,7 @@ def get_filtered_links(
             infos.append(info)
     return infos
 
-def get_filtered_targets(labels_to_links_map: dict[Label, LinkGroupLinkInfo]):
+def get_filtered_targets(labels_to_links_map: dict[ConfiguredProvidersLabel, LinkGroupLinkInfo]):
     # labels_to_links_map will include entries for shared link group libraries
     # as well as libraries being statically linked into this link unit.
     statically_linked_targets = []
@@ -753,10 +753,10 @@ def get_link_group_map_json(ctx: AnalysisContext, targets: list[TargetLabel]) ->
 
 def _find_all_relevant_roots(
         specs: list[LinkGroupLibSpec],
-        link_group_mappings: dict[Label, str],  # target label to link group name
-        roots: list[Label],
+        link_group_mappings: dict[ConfiguredProvidersLabel, str],  # target label to link group name
+        roots: list[ConfiguredProvidersLabel],
         link_strategy: LinkStrategy,
-        linkable_graph_node_map: dict[Label, LinkableNode]) -> dict[str, set[Label]]:
+        linkable_graph_node_map: dict[ConfiguredProvidersLabel, LinkableNode]) -> dict[str, set[ConfiguredProvidersLabel]]:
     relevant_roots = {}
     link_groups_for_full_traversal = set()  # list[str]
 
@@ -774,7 +774,7 @@ def _find_all_relevant_roots(
             if has_empty_root or always_traverse_all_roots:
                 link_groups_for_full_traversal.add(spec.group.name)
 
-    def collect_and_traverse_roots(node_target: Label) -> list[Label]:
+    def collect_and_traverse_roots(node_target: ConfiguredProvidersLabel) -> list[ConfiguredProvidersLabel]:
         node = linkable_graph_node_map.get(node_target)
         if node.preferred_linkage == Linkage("static") and not node.ignore_force_static_follows_dependents:
             return node.all_deps
@@ -808,13 +808,13 @@ def _find_all_relevant_roots(
 
 def find_relevant_roots(
         link_group: [str, None] = None,
-        linkable_graph_node_map: dict[Label, LinkableNode] = {},
-        link_group_mappings: dict[Label, str] = {},
-        roots: list[Label] = []):
+        linkable_graph_node_map: dict[ConfiguredProvidersLabel, LinkableNode] = {},
+        link_group_mappings: dict[ConfiguredProvidersLabel, str] = {},
+        roots: list[ConfiguredProvidersLabel] = []):
     # Walk through roots looking for the first node which maps to the current
     # link group.
 
-    def collect_and_traverse_roots(roots, node_target: Label) -> list[Label] | None:
+    def collect_and_traverse_roots(roots, node_target: ConfiguredProvidersLabel) -> list[ConfiguredProvidersLabel] | None:
         node = linkable_graph_node_map.get(node_target)
         if node.preferred_linkage == Linkage("static") and not node.ignore_force_static_follows_dependents:
             return node.all_deps
@@ -849,7 +849,7 @@ def find_relevant_roots(
 
 def _get_roots_from_mappings(
         spec: LinkGroupLibSpec,
-        linkable_graph_node_map: dict[Label, LinkableNode]) -> (list[Label], bool):
+        linkable_graph_node_map: dict[ConfiguredProvidersLabel, LinkableNode]) -> (list[ConfiguredProvidersLabel], bool):
     roots = []
     has_empty_root = False
     for mapping in spec.group.mappings:
@@ -882,7 +882,7 @@ _CreateLinkGroupParams = record(
 def _create_link_group(
         ctx: AnalysisContext,
         spec: LinkGroupLibSpec,
-        linkables: list[Label],
+        linkables: list[ConfiguredProvidersLabel],
         linker_flags: list[typing.Any],
         params: _CreateLinkGroupParams) -> _CreatedLinkGroup | None:
     """
@@ -1075,17 +1075,17 @@ def _symbol_flags_for_link_groups(
 
 def create_link_groups(
         ctx: AnalysisContext,
-        public_nodes: set[Label],
+        public_nodes: set[ConfiguredProvidersLabel],
         link_strategy: LinkStrategy,
         linkable_graph: ReducedLinkableGraph,
         link_groups: dict[str, Group] = {},
         link_group_specs: list[LinkGroupLibSpec] = [],
-        executable_deps: list[Label] = [],
-        other_roots: list[Label] = [],
+        executable_deps: list[ConfiguredProvidersLabel] = [],
+        other_roots: list[ConfiguredProvidersLabel] = [],
         linker_flags: list[typing.Any] = [],
         prefer_stripped_objects: bool = False,
-        link_group_preferred_linkage: dict[Label, Linkage] = {},
-        link_group_mappings: [dict[Label, str], None] = None,
+        link_group_preferred_linkage: dict[ConfiguredProvidersLabel, Linkage] = {},
+        link_group_mappings: [dict[ConfiguredProvidersLabel, str], None] = None,
         anonymous: bool = False,
         allow_cache_upload = False,
         transformation_spec_context: TransformationSpecContext | None = None,
@@ -1282,9 +1282,9 @@ def create_link_groups(
     )
 
 def get_transitive_deps_matching_labels(
-        linkable_graph_node_map: dict[Label, LinkableNode],
-        roots: list[Label],
-        label: str) -> list[Label]:
+        linkable_graph_node_map: dict[ConfiguredProvidersLabel, LinkableNode],
+        roots: list[ConfiguredProvidersLabel],
+        label: str) -> list[ConfiguredProvidersLabel]:
     # NOTE: Our Haskell DLL support impl currently links transitive haskell
     # deps needed by DLLs which get linked into the main executable as link-
     # whole.  To emulate this, we mark Haskell rules with a special label

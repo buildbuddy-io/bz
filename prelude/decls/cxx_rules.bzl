@@ -1330,7 +1330,7 @@ transformation_spec = prelude_rule(
     name = "transformation_spec",
     docs = """
         A `transformation_spec()` rule declares a list of transformation
-        rules that map targets (by `Label`, by build target pattern, or
+        rules that map targets (by `ConfiguredProvidersLabel`, by build target pattern, or
         by build graph pattern) to a `TransformationKind`
         (`debug` or `optimized`). Other rules can reference a
         `transformation_spec()` via a `transformation_spec` attribute to

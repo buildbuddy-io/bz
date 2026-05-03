@@ -1116,7 +1116,10 @@ where
         pattern,
     } = lex;
 
-    let pattern = if infer_target {
+    // Bazel treats `//some/package` as shorthand for `//some/package:package`.
+    // Keep relative Buck patterns precise, but accept that shorthand when the
+    // pattern explicitly names a cell via `//` or `@cell//`.
+    let pattern = if infer_target || cell_alias.is_some() {
         pattern.infer_target()?
     } else {
         pattern.reject_ambiguity()?
@@ -2013,6 +2016,30 @@ mod tests {
             )?
         );
         Ok(())
+    }
+
+    #[test]
+    fn parse_bazel_package_shorthand_as_target() {
+        assert_eq!(
+            mk_target("root", "package/path", "path"),
+            ParsedPattern::<TargetPatternExtra>::parse_precise(
+                "//package/path",
+                CellName::testing_new("root"),
+                &resolver(),
+                &alias_resolver(),
+            )
+            .unwrap()
+        );
+        assert_eq!(
+            mk_providers("cell2", "package/path", "path", None),
+            ParsedPattern::<ProvidersPatternExtra>::parse_precise(
+                "@alias2//package/path",
+                CellName::testing_new("root"),
+                &resolver(),
+                &alias_resolver(),
+            )
+            .unwrap()
+        );
     }
 
     #[test_case(PhantomData::< TargetPatternExtra >; "parsing TargetPattern")]

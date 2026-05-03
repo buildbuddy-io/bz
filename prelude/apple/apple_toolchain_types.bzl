@@ -26,7 +26,7 @@ AppleToolchainInfo = provider(
         "dwarfdump": provider_field(RunInfo | None, default = None),
         "extra_linker_outputs": provider_field(list[str]),
         "ibtool": provider_field(RunInfo),
-        "installer": provider_field(Label),
+        "installer": provider_field(ConfiguredProvidersLabel),
         "installer_tool": provider_field(RunInfo),
         "libtool": provider_field(RunInfo),
         "lipo": provider_field(RunInfo),

@@ -21,12 +21,12 @@ ArtifactInfoTag = enum(
 )
 
 ArtifactInfo = record(
-    label = field(Label),
+    label = field(ConfiguredProvidersLabel),
     artifacts = field(list[Artifact]),
     tags = field(list[ArtifactInfoTag]),
 )
 
-def stringify_artifact_label(value: Label | str) -> str:
+def stringify_artifact_label(value: ConfiguredProvidersLabel | str) -> str:
     if type(value) == "string":
         return value
     return str(value.raw_target())
@@ -50,7 +50,7 @@ EmptyArtifactTSet = ArtifactTSet()
 def make_artifact_tset(
         actions: AnalysisActions,
         # Must be non-`None` if artifacts are passed in to `artifacts`.
-        label: Label | None = None,
+        label: ConfiguredProvidersLabel | None = None,
         artifacts: list[Artifact] = [],
         infos: list[ArtifactInfo] = [],
         children: list[ArtifactTSet] = [],

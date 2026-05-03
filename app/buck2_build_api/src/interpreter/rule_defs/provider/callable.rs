@@ -63,6 +63,7 @@ use starlark::values::dict::DictRef;
 use starlark::values::list::AllocList;
 use starlark::values::list::ListRef;
 use starlark::values::list_or_tuple::UnpackListOrTuple;
+use starlark::values::none::NoneOr;
 use starlark::values::starlark_value;
 use starlark::values::typing::TypeCompiled;
 use starlark::values::typing::TypeInstanceId;
@@ -207,28 +208,75 @@ impl Hasher for StarlarkHasherSmallPromote {
     }
 }
 
+pub(crate) type UserProviderFields =
+    IndexMap<String, UserProviderField, StarlarkHasherSmallPromoteBuilder>;
+
+#[derive(Debug, Clone, Trace, Allocative)]
+pub(crate) enum UserProviderSchema {
+    Schema(UserProviderFields),
+    Schemaless,
+}
+
+impl UserProviderSchema {
+    fn field_names_for_error(self) -> SmallSet<String> {
+        match self {
+            UserProviderSchema::Schema(fields) => {
+                fields.into_iter().map(|(name, _)| name).collect()
+            }
+            UserProviderSchema::Schemaless => SmallSet::new(),
+        }
+    }
+
+    fn fields(&self) -> Option<&UserProviderFields> {
+        match self {
+            UserProviderSchema::Schema(fields) => Some(fields),
+            UserProviderSchema::Schemaless => None,
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.fields().map_or(0, UserProviderFields::len)
+    }
+
+    fn field_names(&self) -> Vec<&str> {
+        match self {
+            UserProviderSchema::Schema(fields) => fields.keys().map(|name| name.as_str()).collect(),
+            UserProviderSchema::Schemaless => Vec::new(),
+        }
+    }
+
+    fn is_schemaless(&self) -> bool {
+        matches!(self, UserProviderSchema::Schemaless)
+    }
+}
+
 fn create_callable_function_signature(
     function_name: &str,
-    fields: &IndexMap<String, UserProviderField, StarlarkHasherSmallPromoteBuilder>,
+    fields: &UserProviderSchema,
     ret_ty: Ty,
 ) -> buck2_error::Result<(ParametersSpec<FrozenValue>, TyCallable)> {
-    let (parameters_spec, param_spec) = param_specs(
-        function_name,
-        [],
-        [],
-        None,
-        fields.iter().map(|(name, field)| {
-            (
-                name.as_str(),
-                match field.default {
-                    None => ParametersSpecParam::Required,
-                    Some(default) => ParametersSpecParam::Defaulted(default),
-                },
-                field.ty.as_ty().dupe(),
-            )
-        }),
-        None,
-    )
+    let (parameters_spec, param_spec) = match fields {
+        UserProviderSchema::Schema(fields) => param_specs(
+            function_name,
+            [],
+            [],
+            None,
+            fields.iter().map(|(name, field)| {
+                (
+                    name.as_str(),
+                    match field.default {
+                        None => ParametersSpecParam::Required,
+                        Some(default) => ParametersSpecParam::Defaulted(default),
+                    },
+                    field.ty.as_ty().dupe(),
+                )
+            }),
+            None,
+        ),
+        UserProviderSchema::Schemaless => {
+            param_specs(function_name, [], [], None, [], Some(Ty::any()))
+        }
+    }
     .internal_error("Must have created correct signature")?;
 
     Ok((parameters_spec, TyCallable::new(param_spec, ret_ty)))
@@ -239,7 +287,7 @@ pub(crate) struct UserProviderCallableData {
     pub(crate) provider_id: Arc<ProviderId>,
     /// Type id of provider callable instance.
     pub(crate) ty_provider_type_instance_id: TypeInstanceId,
-    pub(crate) fields: IndexMap<String, UserProviderField, StarlarkHasherSmallPromoteBuilder>,
+    pub(crate) fields: UserProviderSchema,
 }
 
 register_starlark_any!(UserProviderCallableData);
@@ -321,33 +369,40 @@ pub struct UserProviderCallable {
     path: CellPath,
     /// The docstring for this provider
     docs: Option<DocString>,
-    /// The names of the fields used in `callable`
-    fields: IndexMap<String, UserProviderField, StarlarkHasherSmallPromoteBuilder>,
+    /// The field schema used in `callable`, or schemaless Bazel provider behavior.
+    fields: UserProviderSchema,
     /// Field is initialized after the provider is assigned to a variable.
     callable: OnceCell<UserProviderCallableNamed>,
 }
 
 fn user_provider_callable_display(
     id: Option<&Arc<ProviderId>>,
-    fields: &IndexMap<String, UserProviderField, StarlarkHasherSmallPromoteBuilder>,
+    fields: &UserProviderSchema,
     f: &mut Formatter,
 ) -> fmt::Result {
     write!(f, "provider")?;
     if let Some(id) = id {
         write!(f, "[{}]", id.name)?;
     }
-    write!(f, "(fields={{")?;
-    for (i, (name, ty)) in fields.iter().enumerate() {
-        if i != 0 {
-            write!(f, ", ")?;
+    match fields {
+        UserProviderSchema::Schema(fields) => {
+            write!(f, "(fields={{")?;
+            for (i, (name, ty)) in fields.iter().enumerate() {
+                if i != 0 {
+                    write!(f, ", ")?;
+                }
+                write!(f, "\"{}\": provider_field({}", name, ty.ty)?;
+                if let Some(default) = ty.default {
+                    write!(f, ", default={default}")?;
+                }
+                write!(f, ")")?;
+            }
+            write!(f, "}})")?;
         }
-        write!(f, "\"{}\": provider_field({}", name, ty.ty)?;
-        if let Some(default) = ty.default {
-            write!(f, ", default={default}")?;
+        UserProviderSchema::Schemaless => {
+            write!(f, "()")?;
         }
-        write!(f, ")")?;
     }
-    write!(f, "}})")?;
     Ok(())
 }
 
@@ -358,11 +413,7 @@ impl Display for UserProviderCallable {
 }
 
 impl UserProviderCallable {
-    fn new(
-        path: CellPath,
-        docs: Option<DocString>,
-        fields: IndexMap<String, UserProviderField, StarlarkHasherSmallPromoteBuilder>,
-    ) -> Self {
+    fn new(path: CellPath, docs: Option<DocString>, fields: UserProviderSchema) -> Self {
         Self {
             callable: OnceCell::new(),
             path,
@@ -397,10 +448,8 @@ impl Freeze for UserProviderCallable {
                 // Unfortunately we have no name or location for the provider at this point,
                 // so reproduce the fields so that the provider can be identified.
                 return Err(FreezeError::new(
-                    ProviderCallableError::ProviderNotAssigned(
-                        self.fields.into_iter().map(|(name, _)| name).collect(),
-                    )
-                    .to_string(),
+                    ProviderCallableError::ProviderNotAssigned(self.fields.field_names_for_error())
+                        .to_string(),
                 ));
             }
         };
@@ -456,9 +505,12 @@ impl<'v> StarlarkValue<'v> for UserProviderCallable {
                     type_instance_id: ty_provider_type_instance_id,
                 })),
                 self.fields
-                    .iter()
+                    .fields()
+                    .into_iter()
+                    .flatten()
                     .map(|(name, field)| (name.to_owned(), field.ty.as_ty().dupe()))
                     .collect(),
+                self.fields.is_schemaless(),
             )?;
             let (signature, creator_func) = create_callable_function_signature(
                 &provider_id.name,
@@ -513,7 +565,7 @@ impl<'v> StarlarkValue<'v> for UserProviderCallable {
                 typ: Ty::any(),
             }));
         };
-        let field_names: Vec<_> = self.fields.keys().map(|x| x.as_str()).collect();
+        let field_names = self.fields.field_names();
         provider_callable_documentation(
             None,
             ProviderMembersSource::FromFields {
@@ -536,8 +588,8 @@ impl<'v> StarlarkValue<'v> for UserProviderCallable {
 pub struct FrozenUserProviderCallable {
     /// The docstring for this provider
     docs: Option<DocString>,
-    /// The names of the fields used in `callable`
-    fields: IndexMap<String, UserProviderField, StarlarkHasherSmallPromoteBuilder>,
+    /// The field schema used in `callable`, or schemaless Bazel provider behavior.
+    fields: UserProviderSchema,
     /// The actual callable that creates instances of `UserProvider`
     callable: UserProviderCallableNamed,
 }
@@ -552,7 +604,7 @@ impl Display for FrozenUserProviderCallable {
 impl FrozenUserProviderCallable {
     fn new(
         docs: Option<DocString>,
-        fields: IndexMap<String, UserProviderField, StarlarkHasherSmallPromoteBuilder>,
+        fields: UserProviderSchema,
         callable: UserProviderCallableNamed,
     ) -> Self {
         Self {
@@ -588,7 +640,7 @@ impl<'v> StarlarkValue<'v> for FrozenUserProviderCallable {
 
     fn documentation(&self) -> DocItem {
         let return_types = vec![Ty::any(); self.fields.len()];
-        let field_names: Vec<_> = self.fields.keys().map(|x| x.as_str()).collect();
+        let field_names = self.fields.field_names();
         provider_callable_documentation(
             None,
             ProviderMembersSource::FromFields {
@@ -678,23 +730,21 @@ pub fn register_provider(builder: &mut GlobalsBuilder) {
     ///
     /// For providers that accumulate upwards a transitive set is often a good choice.
     fn provider<'v>(
-        #[starlark(require=named, default = "")] doc: &str,
-        #[starlark(require=named)] fields: Either<
-            UnpackListOrTuple<String>,
-            SmallMap<String, Value<'v>>,
+        #[starlark(require=named, default = NoneOr::None)] doc: NoneOr<&str>,
+        #[starlark(require=named, default = NoneOr::None)] fields: NoneOr<
+            Either<UnpackListOrTuple<String>, SmallMap<String, Value<'v>>>,
         >,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<UserProviderCallable> {
-        let docstring = DocString::from_docstring(DocStringKind::Starlark, doc);
+        let docstring = doc
+            .into_option()
+            .and_then(|doc| DocString::from_docstring(DocStringKind::Starlark, doc));
         let path = starlark_path_from_build_context(eval)?.path();
 
         let fields = match fields {
-            Either::Left(fields) => {
-                let new_fields: IndexMap<
-                    String,
-                    UserProviderField,
-                    StarlarkHasherSmallPromoteBuilder,
-                > = fields
+            NoneOr::None => UserProviderSchema::Schemaless,
+            NoneOr::Other(Either::Left(fields)) => {
+                let new_fields: UserProviderFields = fields
                     .items
                     .iter()
                     .map(|name| (name.clone(), UserProviderField::default()))
@@ -707,9 +757,9 @@ pub fn register_provider(builder: &mut GlobalsBuilder) {
                         .into(),
                     );
                 }
-                new_fields
+                UserProviderSchema::Schema(new_fields)
             }
-            Either::Right(fields) => {
+            NoneOr::Other(Either::Right(fields)) => {
                 let mut new_fields = IndexMap::with_capacity_and_hasher(
                     fields.len(),
                     StarlarkHasherSmallPromoteBuilder::default(),
@@ -717,13 +767,15 @@ pub fn register_provider(builder: &mut GlobalsBuilder) {
                 for (name, field) in fields {
                     if let Some(field) = field.downcast_ref::<UserProviderField>() {
                         new_fields.insert(name, field.dupe());
+                    } else if field.unpack_str().is_some() {
+                        new_fields.insert(name, UserProviderField::default());
                     } else {
                         let ty = provider_field_parse_type(field, eval)
                             .with_buck_error_context(|| format!("Field `{name}` type `{field}` is not created with `provider_field`, and cannot be evaluated as a type"))?;
                         new_fields.insert(name, UserProviderField { ty, default: None });
                     }
                 }
-                new_fields
+                UserProviderSchema::Schema(new_fields)
             }
         };
         Ok(UserProviderCallable::new(

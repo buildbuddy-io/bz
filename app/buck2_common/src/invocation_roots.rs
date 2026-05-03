@@ -29,7 +29,7 @@ use crate::invocation_paths_result::InvocationPathsResult;
 #[derive(Debug, buck2_error::Error)]
 enum BuckCliError {
     #[error(
-        "Couldn't find a buck project root for directory `{}`. Expected to find a .buckconfig file.", _0.path().display()
+        "Couldn't find a buck project root for directory `{}`. Expected to find a .buckconfig, MODULE.bazel, WORKSPACE.bazel, or WORKSPACE file.", _0.path().display()
     )]
     #[buck2(tag = NoBuckRoot)]
     NoBuckRoot(AbsWorkingDir),
@@ -69,6 +69,7 @@ impl InvocationRoots {
 /// The contents of the .buckroot file is entirely ignored.
 fn get_roots(from: &AbsWorkingDir) -> buck2_error::Result<Option<InvocationRoots>> {
     let mut project_root = None;
+    let mut bazel_project_root = None;
 
     let home_dir = dirs::home_dir();
     for curr in from.path().ancestors() {
@@ -83,10 +84,20 @@ fn get_roots(from: &AbsWorkingDir) -> buck2_error::Result<Option<InvocationRoots
             project_root = Some(curr.to_owned());
         }
 
+        if bazel_project_root.is_none()
+            && (fs_util::try_exists(curr.join(FileName::unchecked_new("MODULE.bazel")))?
+                || fs_util::try_exists(curr.join(FileName::unchecked_new("WORKSPACE.bazel")))?
+                || fs_util::try_exists(curr.join(FileName::unchecked_new("WORKSPACE")))?)
+        {
+            bazel_project_root = Some(curr.to_owned());
+        }
+
         if fs_util::try_exists(curr.join(FileName::unchecked_new(".buckroot")))? {
             break;
         }
     }
+
+    let project_root = project_root.or(bazel_project_root);
 
     #[allow(clippy::manual_map)]
     Ok(match project_root {
@@ -152,4 +163,61 @@ pub(crate) fn home_buck_dir() -> buck2_error::Result<&'static AbsNormPath> {
     static DIR: Lazy<buck2_error::Result<AbsNormPathBuf>> = Lazy::new(find_dir);
 
     Ok(Lazy::force(&DIR).as_ref().map_err(dupe::Dupe::dupe)?)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::path::Path;
+
+    use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
+
+    use super::*;
+
+    fn working_dir(path: &Path) -> buck2_error::Result<AbsWorkingDir> {
+        Ok(AbsWorkingDir::unchecked_new(AbsNormPathBuf::new(
+            path.canonicalize()?,
+        )?))
+    }
+
+    #[test]
+    fn module_bazel_is_project_root_without_buckconfig() -> buck2_error::Result<()> {
+        let dir = tempfile::tempdir()?;
+        fs::write(
+            dir.path().join("MODULE.bazel"),
+            "module(name = \"example\")\n",
+        )?;
+        fs::create_dir_all(dir.path().join("a/b"))?;
+
+        let roots = get_roots(&working_dir(&dir.path().join("a/b"))?)?.unwrap();
+
+        assert_eq!(
+            dir.path().canonicalize()?,
+            roots.project_root.root().as_path()
+        );
+        assert_eq!("a/b", roots.cwd.as_str());
+
+        Ok(())
+    }
+
+    #[test]
+    fn buckconfig_takes_precedence_over_nested_bazel_root() -> buck2_error::Result<()> {
+        let dir = tempfile::tempdir()?;
+        fs::write(dir.path().join(".buckconfig"), "[cells]\nroot = .\n")?;
+        fs::create_dir_all(dir.path().join("nested/a"))?;
+        fs::write(
+            dir.path().join("nested/MODULE.bazel"),
+            "module(name = \"nested\")\n",
+        )?;
+
+        let roots = get_roots(&working_dir(&dir.path().join("nested/a"))?)?.unwrap();
+
+        assert_eq!(
+            dir.path().canonicalize()?,
+            roots.project_root.root().as_path()
+        );
+        assert_eq!("nested/a", roots.cwd.as_str());
+
+        Ok(())
+    }
 }

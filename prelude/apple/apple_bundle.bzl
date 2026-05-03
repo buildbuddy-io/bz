@@ -145,7 +145,7 @@ def _get_binary(ctx: AnalysisContext) -> AppleBundleBinaryOutput:
 def _get_bundle_dsym_name(ctx: AnalysisContext) -> str:
     return paths.replace_extension(get_bundle_dir_name(ctx), ".dSYM")
 
-def _scrub_binary(ctx, binary: Artifact, binary_execution_preference_info: None | LinkExecutionPreferenceInfo, focused_targets_labels: list[Label] = [], identifier: None | str = None) -> Artifact:
+def _scrub_binary(ctx, binary: Artifact, binary_execution_preference_info: None | LinkExecutionPreferenceInfo, focused_targets_labels: list[ConfiguredProvidersLabel] = [], identifier: None | str = None) -> Artifact:
     # If fast adhoc code signing is enabled, we need to resign the binary as it won't be signed later.
     code_signing_configuration = get_code_signing_configuration_attr_value(ctx)
     if code_signing_configuration == CodeSignConfiguration("fast-adhoc"):

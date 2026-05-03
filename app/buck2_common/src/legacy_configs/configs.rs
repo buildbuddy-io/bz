@@ -8,6 +8,7 @@
  * above-listed licenses.
  */
 
+use std::collections::BTreeMap;
 use std::fmt;
 use std::fmt::Display;
 use std::io::BufRead;
@@ -137,9 +138,24 @@ pub(crate) struct ConfigValue {
     pub(crate) source: Location,
 }
 
-#[derive(Debug, Default, Allocative, Pagable)]
+#[derive(Debug, Default, Clone, Allocative, Pagable)]
 pub struct LegacyBuckConfigSection {
     pub(crate) values: SortedMap<String, ConfigValue>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct BazelCompatExternalModule {
+    pub cell_name: String,
+    pub aliases: Vec<String>,
+    pub module_name: String,
+    pub version: String,
+    pub canonical_repo_name: String,
+    pub url: String,
+    pub integrity: String,
+    pub strip_prefix: Option<String>,
+    pub archive_type: Option<String>,
+    pub patches_json: String,
+    pub patch_strip: u32,
 }
 
 impl ConfigValue {
@@ -241,6 +257,147 @@ impl LegacyBuckConfig {
     pub fn empty() -> Self {
         Self(Arc::new(ConfigData {
             values: SortedMap::new(),
+        }))
+    }
+
+    pub(crate) fn with_bazel_compat_defaults(
+        &self,
+        root_module_aliases: &[String],
+        external_modules: &[BazelCompatExternalModule],
+    ) -> Self {
+        const BAZEL_COMPAT_DEFAULTS: &[(&str, &[(&str, &str)])] = &[
+            ("cells", &[("root", "."), ("prelude", "prelude")]),
+            (
+                "cell_aliases",
+                &[
+                    ("config", "prelude"),
+                    ("ovr_config", "prelude"),
+                    ("bazel_tools", "prelude"),
+                    ("fbcode", "prelude"),
+                    ("fbcode_macros", "prelude"),
+                    ("fbsource", "prelude"),
+                    ("toolchains", "prelude"),
+                ],
+            ),
+            ("external_cells", &[("prelude", "bundled")]),
+            (
+                "buildfile",
+                &[
+                    ("name_v2", "BUILD.bazel,BUILD"),
+                    ("includes", "prelude//bazel/prelude.bzl"),
+                ],
+            ),
+            (
+                "parser",
+                &[(
+                    "target_platform_detector_spec",
+                    "target:root//...->prelude//platforms:default",
+                )],
+            ),
+        ];
+
+        fn synthetic_config_value(raw_value: &str) -> ConfigValue {
+            ConfigValue {
+                raw_value: raw_value.to_owned(),
+                resolved_value: ResolvedValue::Literal,
+                source: Location::CommandLineArgument,
+            }
+        }
+
+        let mut values: BTreeMap<String, LegacyBuckConfigSection> = self
+            .0
+            .values
+            .iter()
+            .map(|(section, section_data)| (section.clone(), section_data.clone()))
+            .collect();
+        for (section_name, section_defaults) in BAZEL_COMPAT_DEFAULTS {
+            let is_cell_aliases = *section_name == "cell_aliases";
+            let section = values.entry((*section_name).to_owned()).or_default();
+            let mut section_values: BTreeMap<String, ConfigValue> = section
+                .values
+                .iter()
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect();
+            for (key, value) in *section_defaults {
+                section_values
+                    .entry((*key).to_owned())
+                    .or_insert_with(|| synthetic_config_value(value));
+            }
+            if *section_name == "cells" {
+                for module in external_modules {
+                    section_values
+                        .entry(module.cell_name.clone())
+                        .or_insert_with(|| {
+                            synthetic_config_value(&format!(
+                                "buck-out/v2/external_cells/bzlmod/{}",
+                                module.canonical_repo_name
+                            ))
+                        });
+                }
+            }
+            if is_cell_aliases {
+                for alias in root_module_aliases {
+                    section_values
+                        .entry(alias.clone())
+                        .or_insert_with(|| synthetic_config_value("root"));
+                }
+                for module in external_modules {
+                    for alias in &module.aliases {
+                        section_values
+                            .entry(alias.clone())
+                            .or_insert_with(|| synthetic_config_value(&module.cell_name));
+                    }
+                }
+            }
+            if *section_name == "external_cells" {
+                for module in external_modules {
+                    section_values
+                        .entry(module.cell_name.clone())
+                        .or_insert_with(|| synthetic_config_value("bzlmod"));
+                }
+            }
+            section.values = SortedMap::from_iter(section_values);
+        }
+
+        for module in external_modules {
+            let section = values
+                .entry(format!("external_cell_{}", module.cell_name))
+                .or_default();
+            let mut section_values: BTreeMap<String, ConfigValue> = section
+                .values
+                .iter()
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect();
+            for (key, value) in [
+                ("module_name", module.module_name.as_str()),
+                ("version", module.version.as_str()),
+                ("canonical_repo_name", module.canonical_repo_name.as_str()),
+                ("url", module.url.as_str()),
+                ("integrity", module.integrity.as_str()),
+                ("patches", module.patches_json.as_str()),
+            ] {
+                section_values
+                    .entry(key.to_owned())
+                    .or_insert_with(|| synthetic_config_value(value));
+            }
+            if let Some(strip_prefix) = &module.strip_prefix {
+                section_values
+                    .entry("strip_prefix".to_owned())
+                    .or_insert_with(|| synthetic_config_value(strip_prefix));
+            }
+            if let Some(archive_type) = &module.archive_type {
+                section_values
+                    .entry("archive_type".to_owned())
+                    .or_insert_with(|| synthetic_config_value(archive_type));
+            }
+            section_values
+                .entry("patch_strip".to_owned())
+                .or_insert_with(|| synthetic_config_value(&module.patch_strip.to_string()));
+            section.values = SortedMap::from_iter(section_values);
+        }
+
+        Self(Arc::new(ConfigData {
+            values: SortedMap::from_iter(values),
         }))
     }
 

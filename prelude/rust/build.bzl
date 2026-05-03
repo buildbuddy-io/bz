@@ -816,7 +816,7 @@ def dependency_args(
         dep_link_strategy: LinkStrategy,
         dep_metadata_kind: MetadataKind,
         is_rustdoc_test: bool,
-        cwd: Artifact | None = None) -> (cmd_args, cmd_args, list[(CrateName, Label)]):
+        cwd: Artifact | None = None) -> (cmd_args, cmd_args, list[(CrateName, ConfiguredProvidersLabel)]):
     args = cmd_args()
     transitive_deps = []
     crate_targets = []
@@ -1258,7 +1258,7 @@ def _compute_common_args(
 # duplicate names, but it doesn't matter if they collide.
 def _metadata(
         compile_ctx: CompileContext,
-        label: Label,
+        label: ConfiguredProvidersLabel,
         is_rustdoc_test: bool) -> (str, str):
     raw_target = str(label.raw_target())
     configuration_hash = compile_ctx.toolchain_info.configuration_hash or label.configured_target().config().hash
@@ -1505,7 +1505,7 @@ def _rustc_invoke(
         infallible_diagnostics: bool,
         allow_cache_upload: bool,
         incremental_enabled: bool,
-        crate_map: list[(CrateName, Label)],
+        crate_map: list[(CrateName, ConfiguredProvidersLabel)],
         env: dict[str, str | ResolvedStringWithMacros | Artifact],
         deferred_link_cmd: cmd_args | None,
         profile_mode: ProfileMode | None) -> Invoke:

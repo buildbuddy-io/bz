@@ -422,7 +422,7 @@ def _create_jar_artifact(
         actions_identifier: [str, None],
         abi_generation_mode: [AbiGenerationMode, None],
         java_toolchain: JavaToolchainInfo,
-        label: Label,
+        label: ConfiguredProvidersLabel,
         output: Artifact | None,
         javac_tool: [typing.Any, None],
         srcs: list[Artifact],

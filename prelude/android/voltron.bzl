@@ -147,7 +147,7 @@ def get_target_to_module_mapping(ctx: AnalysisContext, deps_by_platform: dict[st
 
 def _get_base_cmd_and_output(
         actions: AnalysisActions,
-        label: Label,
+        label: ConfiguredProvidersLabel,
         android_packageable_infos: list[AndroidPackageableInfo],
         shared_libraries: list[SharedLibrary],
         android_toolchain: AndroidToolchainInfo,

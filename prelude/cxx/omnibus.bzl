@@ -93,29 +93,29 @@ OmnibusEnvironment = provider(
 Disposition = enum("root", "excluded", "body", "omitted")
 
 OmnibusGraph = record(
-    nodes = field(dict[Label, LinkableNode]),
+    nodes = field(dict[ConfiguredProvidersLabel, LinkableNode]),
     # All potential root notes for an omnibus link (e.g. C++ libraries,
     # C++ Python extensions).
-    roots = field(dict[Label, LinkableRootInfo]),
+    roots = field(dict[ConfiguredProvidersLabel, LinkableRootInfo]),
     # All nodes that should be excluded from libomnibus.
-    excluded = field(dict[Label, None]),
+    excluded = field(dict[ConfiguredProvidersLabel, None]),
 )
 
 # Bookkeeping information used to setup omnibus link rules.
 OmnibusSpec = record(
-    body = field(dict[Label, None], {}),
-    excluded = field(dict[Label, None], {}),
-    roots = field(dict[Label, LinkableRootInfo], {}),
-    exclusion_roots = field(list[Label]),
+    body = field(dict[ConfiguredProvidersLabel, None], {}),
+    excluded = field(dict[ConfiguredProvidersLabel, None], {}),
+    roots = field(dict[ConfiguredProvidersLabel, LinkableRootInfo], {}),
+    exclusion_roots = field(list[ConfiguredProvidersLabel]),
     # All link infos.
-    link_infos = field(dict[Label, LinkableNode], {}),
-    dispositions = field(dict[Label, Disposition]),
+    link_infos = field(dict[ConfiguredProvidersLabel, LinkableNode], {}),
+    dispositions = field(dict[ConfiguredProvidersLabel, Disposition]),
 )
 
 OmnibusPrivateRootProductCause = record(
     category = field(str),
     # Miss-assigned label
-    label = field([Label, None], default = None),
+    label = field([ConfiguredProvidersLabel, None], default = None),
     # Its actual disposiiton
     disposition = field([Disposition, None], default = None),
 )
@@ -130,13 +130,13 @@ OmnibusRootProduct = record(
 OmnibusSharedLibraries = record(
     omnibus = field([CxxLinkResult, None], None),
     libraries = field(list[SharedLibrary], []),
-    roots = field(dict[Label, OmnibusRootProduct], {}),
-    exclusion_roots = field(list[Label]),
-    excluded = field(list[Label]),
-    dispositions = field(dict[Label, Disposition]),
+    roots = field(dict[ConfiguredProvidersLabel, OmnibusRootProduct], {}),
+    exclusion_roots = field(list[ConfiguredProvidersLabel]),
+    excluded = field(list[ConfiguredProvidersLabel]),
+    dispositions = field(dict[ConfiguredProvidersLabel, Disposition]),
 )
 
-def get_omnibus_graph(graph: LinkableGraph, roots: dict[Label, LinkableRootInfo], excluded: dict[Label, None]) -> OmnibusGraph:
+def get_omnibus_graph(graph: LinkableGraph, roots: dict[ConfiguredProvidersLabel, LinkableRootInfo], excluded: dict[ConfiguredProvidersLabel, None]) -> OmnibusGraph:
     graph_nodes = graph.nodes.traverse()
     nodes = {}
     for node in filter(None, graph_nodes):
@@ -146,7 +146,7 @@ def get_omnibus_graph(graph: LinkableGraph, roots: dict[Label, LinkableRootInfo]
         excluded.update(node.excluded)
     return OmnibusGraph(nodes = nodes, roots = roots, excluded = excluded)
 
-def get_roots(deps: list[Dependency]) -> dict[Label, LinkableRootInfo]:
+def get_roots(deps: list[Dependency]) -> dict[ConfiguredProvidersLabel, LinkableRootInfo]:
     roots = {}
     for dep in deps:
         if LinkableRootInfo in dep:
@@ -154,7 +154,7 @@ def get_roots(deps: list[Dependency]) -> dict[Label, LinkableRootInfo]:
             roots[root.label] = root
     return roots
 
-def get_excluded(deps: list[Dependency] = []) -> dict[Label, None]:
+def get_excluded(deps: list[Dependency] = []) -> dict[ConfiguredProvidersLabel, None]:
     excluded_nodes = {}
     for dep in deps:
         dep_info = linkable_graph(dep)
@@ -163,7 +163,7 @@ def get_excluded(deps: list[Dependency] = []) -> dict[Label, None]:
     return excluded_nodes
 
 def create_linkable_root(
-        label: Label,
+        label: ConfiguredProvidersLabel,
         link_infos: LinkInfos,
         name: [str, None] = None,
         deps: list[LinkableGraph | Dependency] = []) -> LinkableRootInfo:
@@ -200,16 +200,16 @@ def create_dummy_omnibus(
     return link_result.linked_object.output
 
 def _link_deps(
-        link_infos: dict[Label, LinkableNode],
-        deps: list[Label],
-        pic_behavior: PicBehavior) -> list[Label]:
+        link_infos: dict[ConfiguredProvidersLabel, LinkableNode],
+        deps: list[ConfiguredProvidersLabel],
+        pic_behavior: PicBehavior) -> list[ConfiguredProvidersLabel]:
     """
     Return transitive deps required to link dynamically against the given deps.
     This will following through deps of statically linked inputs and exported
     deps of everything else (see https://fburl.com/diffusion/rartsbkw from v1).
     """
 
-    def find_deps(node: Label):
+    def find_deps(node: ConfiguredProvidersLabel):
         return get_deps_for_link(link_infos[node], LinkStrategy("shared"), pic_behavior)
 
     return depth_first_traversal_by(link_infos, deps, find_deps)
@@ -217,10 +217,10 @@ def _link_deps(
 def _create_root(
         ctx: AnalysisContext,
         spec: OmnibusSpec,
-        root_products: dict[Label, OmnibusRootProduct],
+        root_products: dict[ConfiguredProvidersLabel, OmnibusRootProduct],
         root: LinkableRootInfo,
-        label: Label,
-        link_deps: list[Label],
+        label: ConfiguredProvidersLabel,
+        link_deps: list[ConfiguredProvidersLabel],
         omnibus: Artifact,
         pic_behavior: PicBehavior,
         extra_ldflags: list[typing.Any] = [],
@@ -468,7 +468,7 @@ def _create_omnibus(
         ctx: AnalysisContext,
         spec: OmnibusSpec,
         omnibus_lib_name: str,
-        root_products: dict[Label, OmnibusRootProduct],
+        root_products: dict[ConfiguredProvidersLabel, OmnibusRootProduct],
         pic_behavior: PicBehavior,
         extra_ldflags: list[typing.Any] = [],
         prefer_stripped_objects: bool = False,
@@ -696,7 +696,7 @@ def _build_omnibus_spec(
 
 def _ordered_roots(
         spec: OmnibusSpec,
-        pic_behavior: PicBehavior) -> list[(Label, LinkableRootInfo, list[Label])]:
+        pic_behavior: PicBehavior) -> list[(ConfiguredProvidersLabel, LinkableRootInfo, list[ConfiguredProvidersLabel])]:
     """
     Return information needed to link the roots nodes.
     """
@@ -726,7 +726,7 @@ def create_omnibus_libraries(
         ctx: AnalysisContext,
         graph: OmnibusGraph,
         extra_ldflags: list[typing.Any] = [],
-        extra_root_ldflags: dict[Label, list[typing.Any]] = {},
+        extra_root_ldflags: dict[ConfiguredProvidersLabel, list[typing.Any]] = {},
         prefer_stripped_objects: bool = False,
         enable_distributed_thinlto = False,
         omnibus_lib_name: str = "omnibus",

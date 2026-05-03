@@ -279,7 +279,7 @@ AndroidResourceRDotInfo = provider(
 )
 
 def merge_android_packageable_info(
-        label: Label,
+        label: ConfiguredProvidersLabel,
         actions: AnalysisActions,
         deps: list[Dependency],
         build_config_info: [AndroidBuildConfigInfo, None] = None,

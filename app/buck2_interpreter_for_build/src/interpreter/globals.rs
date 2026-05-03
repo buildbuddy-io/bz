@@ -44,6 +44,7 @@ use crate::interpreter::functions::xml::register_xml;
 use crate::interpreter::natives::register_module_natives;
 use crate::interpreter::selector::register_select;
 use crate::interpreter::selector::register_select_internal;
+use crate::label::register_bazel_label;
 use crate::plugins::register_plugins;
 use crate::rule::register_rule_function;
 use crate::super_package::defs::register_package_natives;
@@ -76,6 +77,7 @@ pub fn register_load_natives(builder: &mut GlobalsBuilder) {
     register_attrs(builder);
     register_plugins(builder);
     register_providers_label(builder);
+    register_bazel_label(builder);
     register_cell_path(builder);
     register_cell_root(builder);
     register_package_path(builder);

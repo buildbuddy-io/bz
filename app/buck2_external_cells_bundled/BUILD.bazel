@@ -30,6 +30,7 @@ cargo_build_script(
     aliases = aliases(build = True, build_proc_macro = True),
     deps = all_crate_deps(build = True) + [],
     proc_macro_deps = all_crate_deps(build_proc_macro = True) + [],
+    rundir = ".",
     rustc_env = COMMON_RUSTC_ENV,
     data = glob(["**/*.proto", "**/*.lalrpop"], allow_empty = True) + [
         "//:prelude_sources",

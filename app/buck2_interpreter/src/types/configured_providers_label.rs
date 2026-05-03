@@ -326,7 +326,6 @@ fn label_methods(builder: &mut MethodsBuilder) {
 // TODO(nga): remove the `Label` alias. (T264813434)
 #[starlark_module]
 #[starlark_types(
-    StarlarkConfiguredProvidersLabel as Label,
     StarlarkProvidersLabel as ProvidersLabel,
     StarlarkConfiguredProvidersLabel as ConfiguredProvidersLabel
 )]
