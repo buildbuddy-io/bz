@@ -130,11 +130,7 @@ fn doc_string(doc: NoneOr<&str>) -> Option<String> {
 #[starlark_module]
 pub(crate) fn register_bazel_aspect(builder: &mut GlobalsBuilder) {
     fn aspect<'v>(
-        #[starlark(require = named)] implementation: StarlarkCallable<
-            'v,
-            (Value<'v>, Value<'v>),
-            Value<'v>,
-        >,
+        implementation: StarlarkCallable<'v, (Value<'v>, Value<'v>), Value<'v>>,
         #[starlark(require = named, default = AllocList::EMPTY)] attr_aspects: Value<'v>,
         #[starlark(require = named, default = AllocList::EMPTY)] toolchains_aspects: Value<'v>,
         #[starlark(require = named, default = UnpackDictEntries::default())]

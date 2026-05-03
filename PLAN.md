@@ -37,6 +37,12 @@ Completed:
 - Bazel `transition(...)` accepts `implementation`, `inputs`, and `outputs`.
 - Bazel `coverage_common.instrumented_files_info` and `InstrumentedFilesInfo` are native load-time values with Bazel depset fields.
 - Bazel `aspect(...)`, `RunEnvironmentInfo`, `platform_common.ToolchainInfo`, `configuration_field(...)`, and `proto_common_do_not_use` are native load-time values needed by real rules_go/protobuf.
+- Bazel proto fragment `configuration_field(...)` label defaults now resolve to Bazel's `ProtoConfiguration` default labels.
+- Bazel `aspect(...)` accepts the implementation function positionally, matching real rules_go call sites.
+- Bazel current-package label shorthand such as `plugin = "name"` is coerced as `:name` for BUILD-file label attrs.
+- Bazel roots now default to the bzlmod `@platforms//host:host` host platform instead of Buck's unspecified parser platform.
+- `@platforms` `host_platform` extension imports are materialized as generated external cells with host OS/CPU constraints.
+- BUILD-file `package(default_visibility = ...)`, Bazel special visibility labels, and top-level `licenses(...)` are native load-time APIs.
 - `@bazel_tools//tools/build_defs/repo:utils.bzl` is present as a Bazel builtin tool definition.
 - Gazelle `go_deps.from_file(go_mod = ...)` imports from external bzlmod modules are parsed into generated external cells.
 - Generated `go_deps` Go module repos read the parent module's `go.mod`, download the selected module with `go mod download`, copy the module source, and emit Bazel `go_library` BUILD files.
@@ -54,10 +60,11 @@ bazel-bin/app/buck2/buck2_bin --isolation-dir real-rules-go-... build //:hello
 The smoke now loads real `rules_go`, `rules_cc`, `rules_proto`, `protobuf`, `bazel_skylib`, `bazel_features`, and `gazelle` load-time Starlark from bzlmod, gets past the generated `@io_bazel_rules_nogo` repository, the first Gazelle `go_deps` aliases, and `bazel_features` generated globals, and gets through the first wave of Bazel native load-time APIs, including protobuf's private native proto API and `provider(init = ...)`. The current failure is:
 
 ```text
-unsupported Bazel configuration_field(fragment = "proto", name = "proto_compiler") as attr.label default
+Error computing transition `bzlmod_rules_go_0_57_0//go/private/rules/transition.bzl@root#go_transition`
+Missing parameter `settings` for call to `_go_transition_impl`
 ```
 
-The direct `//:hello` smoke now reaches protobuf's `proto_lang_toolchain_rule.bzl`; the next load-time gap is mapping Bazel's proto fragment late-bound label defaults.
+The direct `//:hello` smoke now reaches configured target analysis for the real `go_binary`; the next gap is invoking Bazel transition implementations with Bazel's expected `settings` and `attr` arguments.
 
 ## Constraints
 
@@ -116,7 +123,7 @@ Acceptance:
 
 ## Phase 3: Bazel Load-Time Builtins
 
-Status: native load-time API cutover is underway; the current rules_go smoke no longer fails on missing `attr`, `rule`, `repository_rule`, `tag_class`, `module_extension`, `native`, `apple_common`, `config`, `config_common`, `cc_common`, `coverage_common`, `platform_common.TemplateVariableInfo`, `platform_common.ToolchainInfo`, `OutputGroupInfo`, `CcInfo`, `RunEnvironmentInfo`, `aspect`, `configuration_field`, `proto_common_do_not_use`, `provider(init = ...)`, or Bazel transition globals.
+Status: native load-time API cutover is underway; the current rules_go smoke no longer fails on missing `attr`, `rule`, `repository_rule`, `tag_class`, `module_extension`, `native`, `apple_common`, `config`, `config_common`, `cc_common`, `coverage_common`, `platform_common.TemplateVariableInfo`, `platform_common.ToolchainInfo`, `OutputGroupInfo`, `CcInfo`, `RunEnvironmentInfo`, `aspect`, `configuration_field`, `proto_common_do_not_use`, `provider(init = ...)`, `package(default_visibility = ...)`, `licenses(...)`, or Bazel transition globals.
 
 Completed:
 
@@ -141,12 +148,16 @@ Completed:
 - Bazel-compatible `transition(...)` signature
 - `aspect(...)`
 - `configuration_field(...)` for `coverage.output_generator` label defaults
+- `configuration_field(...)` for Bazel proto fragment label defaults
 - `proto_common_do_not_use`
+- BUILD-file `package(default_visibility = ...)`
+- Bazel special visibility labels
+- `licenses(...)`
 - Initial `@bazel_tools` builtin files needed by `rules_go`
 
 Immediate target:
 
-- Add Bazel proto fragment `configuration_field(...)` defaults for `proto_compiler` and proto toolchain labels using Bazel's `ProtoConfiguration` defaults.
+- Pass Bazel transition implementation arguments (`settings`, then `attr`) when evaluating incoming transitions.
 
 Implement as failures demand:
 
@@ -178,7 +189,7 @@ Implement enough Bazel analysis surface for real rules_go:
 - executable/test rule metadata
 - implicit attrs and configurable attrs
 - aspects needed by `rules_go`
-- transitions needed by `rules_go`
+- transitions needed by `rules_go`, starting with invoking transition implementations with `settings` and `attr`
 
 Acceptance:
 

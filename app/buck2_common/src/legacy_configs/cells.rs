@@ -32,6 +32,7 @@ use buck2_core::cells::external::BzlmodGeneratedCellSetup;
 use buck2_core::cells::external::BzlmodGoDepsModuleSetup;
 use buck2_core::cells::external::BzlmodGoDepsRepositoryConfigSetup;
 use buck2_core::cells::external::BzlmodGoRegisterNogoSetup;
+use buck2_core::cells::external::BzlmodHostPlatformSetup;
 use buck2_core::cells::external::BzlmodPatch;
 use buck2_core::cells::external::ExternalCellOrigin;
 use buck2_core::cells::external::GitCellSetup;
@@ -642,6 +643,9 @@ impl BuckConfigBasedCells {
                         },
                     )
                 }
+                BzlmodGeneratedRepoConfig::HostPlatform {} => {
+                    BzlmodGeneratedCellGenerator::HostPlatform(BzlmodHostPlatformSetup {})
+                }
                 BzlmodGeneratedRepoConfig::GoRegisterNogo {
                     nogo,
                     includes,
@@ -739,6 +743,7 @@ struct DiscoveredBcrModule {
     source_json: BcrSourceJson,
     module_aliases: Vec<String>,
     use_repo_aliases: Vec<String>,
+    host_platform_extension_imports: Vec<BzlmodUseRepoImport>,
     version_extension_imports: Vec<BzlmodUseRepoImport>,
     go_deps_extensions: Vec<BzlmodGoDepsExtension>,
     deps: Vec<BazelDep>,
@@ -772,6 +777,7 @@ enum BzlmodGeneratedRepoConfig {
     BazelFeaturesVersion {
         bazel_version: String,
     },
+    HostPlatform {},
     GoRegisterNogo {
         nogo: String,
         includes: Vec<String>,
@@ -1100,6 +1106,31 @@ fn resolve_generated_bzlmod_repos(
 
         let parent_canonical_repo_name =
             bzlmod_canonical_repo_name(&module.dep.name, &module.dep.version);
+        if module.dep.name == "platforms" {
+            for import in &module.host_platform_extension_imports {
+                if import.repo_name != "host_platform" {
+                    continue;
+                }
+                let canonical_repo_name = format!(
+                    "{}+host_platform+{}",
+                    parent_canonical_repo_name, import.repo_name
+                );
+                let generator_json =
+                    serde_json::to_string(&BzlmodGeneratedRepoConfig::HostPlatform {})
+                        .buck_error_context(
+                            "Error serializing generated host_platform repo configuration",
+                        )?;
+                generated.push(BazelCompatExternalModule::Generated(
+                    BazelCompatGeneratedModule {
+                        cell_name: bzlmod_cell_name(&canonical_repo_name),
+                        aliases: vec![import.alias.clone()],
+                        canonical_repo_name,
+                        generator_json,
+                    },
+                ));
+            }
+        }
+
         if module.dep.name == "bazel_features" {
             for import in &module.version_extension_imports {
                 let generator = match import.repo_name.as_str() {
@@ -1239,6 +1270,10 @@ async fn fetch_bcr_module(
         source_json,
         module_aliases: bzlmod_module_aliases(&module_lines),
         use_repo_aliases: bzlmod_use_repo_aliases_from_lines(&module_lines),
+        host_platform_extension_imports: bzlmod_extension_imports_from_lines(
+            &module_lines,
+            "host_platform",
+        ),
         version_extension_imports: bzlmod_extension_imports_from_lines(
             &module_lines,
             "version_extension",

@@ -8,6 +8,7 @@
  * above-listed licenses.
  */
 
+use std::cell::Ref;
 use std::cell::RefCell;
 use std::cell::RefMut;
 use std::fmt;
@@ -29,6 +30,7 @@ use buck2_node::nodes::unconfigured::TargetNode;
 use buck2_node::oncall::Oncall;
 use buck2_node::package::Package;
 use buck2_node::super_package::SuperPackage;
+use buck2_node::visibility::VisibilitySpecification;
 use dupe::Dupe;
 use starlark::environment::FrozenModule;
 use starlark::values::OwnedFrozenValue;
@@ -50,7 +52,12 @@ impl From<ModuleInternals> for EvaluationResult {
             State::BeforeTargets(_) => TargetsRecorder::new(),
             State::RecordingTargets(RecordingTargets { recorder, .. }) => recorder,
         };
-        EvaluationResult::new(buildfile_path, imports, super_package, recorder.take())
+        EvaluationResult::new(
+            buildfile_path,
+            imports,
+            super_package.into_inner(),
+            recorder.take(),
+        )
     }
 }
 
@@ -91,7 +98,8 @@ pub struct ModuleInternals {
     skip_targets_with_duplicate_names: bool,
     /// The files owned by this directory. Is `None` for .bzl files.
     package_listing: PackageListing,
-    pub(crate) super_package: SuperPackage,
+    super_package: RefCell<SuperPackage>,
+    bazel_package_declared: RefCell<bool>,
 }
 
 #[derive(Debug)]
@@ -124,6 +132,15 @@ enum OncallErrors {
     AfterReadOncall,
 }
 
+#[derive(Debug, buck2_error::Error)]
+#[buck2(input)]
+enum BazelPackageError {
+    #[error("'package' can only be used once per BUILD file")]
+    AtMostOnce,
+    #[error("package() must be called before targets are declared")]
+    AfterTargets,
+}
+
 impl ModuleInternals {
     pub(crate) fn new(
         attr_coercion_context: BuildAttrCoercionContext,
@@ -144,7 +161,8 @@ impl ModuleInternals {
             record_target_call_stacks,
             skip_targets_with_duplicate_names,
             package_listing,
-            super_package,
+            super_package: RefCell::new(super_package),
+            bazel_package_declared: RefCell::new(false),
         }
     }
 
@@ -223,6 +241,37 @@ impl ModuleInternals {
 
     pub fn buildfile_path(&self) -> &Arc<BuildFilePath> {
         &self.buildfile_path
+    }
+
+    pub(crate) fn super_package(&self) -> Ref<'_, SuperPackage> {
+        self.super_package.borrow()
+    }
+
+    pub(crate) fn set_bazel_package_default_visibility(
+        &self,
+        visibility: VisibilitySpecification,
+    ) -> buck2_error::Result<()> {
+        let mut declared = self.bazel_package_declared.borrow_mut();
+        if *declared {
+            return Err(BazelPackageError::AtMostOnce.into());
+        }
+        *declared = true;
+
+        if matches!(&*self.state.borrow(), State::RecordingTargets(_)) {
+            return Err(BazelPackageError::AfterTargets.into());
+        }
+
+        let current = self.super_package.borrow();
+        let next = SuperPackage::new(
+            current.package_values().clone(),
+            visibility,
+            current.within_view().to_owned(),
+            current.cfg_constructor().cloned(),
+            current.test_config_unification_rollout(),
+        )?;
+        drop(current);
+        *self.super_package.borrow_mut() = next;
+        Ok(())
     }
 
     pub fn package(&self) -> Arc<Package> {

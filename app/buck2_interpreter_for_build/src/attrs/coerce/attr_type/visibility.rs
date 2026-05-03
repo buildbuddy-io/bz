@@ -13,7 +13,6 @@ use buck2_node::attrs::attr_type::visibility::VisibilityAttrType;
 use buck2_node::attrs::coerced_attr::CoercedAttr;
 use buck2_node::attrs::coercion_context::AttrCoercionContext;
 use buck2_node::attrs::configurable::AttrIsConfigurable;
-use buck2_node::visibility::VisibilityPattern;
 use buck2_node::visibility::VisibilityWithinViewBuilder;
 use starlark::values::Value;
 
@@ -21,6 +20,7 @@ use crate::attrs::coerce::AttrTypeCoerce;
 use crate::attrs::coerce::attr_type::AttrTypeExt;
 use crate::attrs::coerce::attr_type::list::coerce_list;
 use crate::attrs::coerce::attr_type::ty_maybe_select::TyMaybeSelect;
+use crate::bazel_visibility::add_visibility_pattern;
 use crate::interpreter::selector::StarlarkSelector;
 
 #[derive(Debug, buck2_error::Error)]
@@ -79,12 +79,7 @@ pub(crate) fn parse_visibility_with_view(
             return Err(VisibilityAttrTypeCoerceError::WrongType(attr.to_repr()).into());
         };
 
-        if item == VisibilityPattern::PUBLIC {
-            // TODO(cjhopman): We should probably enforce that this is the only entry.
-            builder.add_public();
-        } else {
-            builder.add(VisibilityPattern(ctx.coerce_target_pattern(item)?));
-        }
+        add_visibility_pattern(&mut builder, ctx, item)?;
     }
     Ok(builder)
 }

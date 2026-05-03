@@ -328,7 +328,7 @@ impl LegacyBuckConfig {
                 "parser",
                 &[(
                     "target_platform_detector_spec",
-                    "target:root//...->prelude//platforms:default",
+                    "target:root//...->platforms//host:host",
                 )],
             ),
         ];

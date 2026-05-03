@@ -109,6 +109,7 @@ pub struct BzlmodGeneratedCellSetup {
 pub enum BzlmodGeneratedCellGenerator {
     BazelFeaturesGlobals(BzlmodBazelFeaturesGlobalsSetup),
     BazelFeaturesVersion(BzlmodBazelFeaturesVersionSetup),
+    HostPlatform(BzlmodHostPlatformSetup),
     GoRegisterNogo(BzlmodGoRegisterNogoSetup),
     GoDepsModule(BzlmodGoDepsModuleSetup),
     GoDepsRepositoryConfig(BzlmodGoDepsRepositoryConfigSetup),
@@ -142,6 +143,18 @@ pub struct BzlmodBazelFeaturesGlobalsSetup {
 pub struct BzlmodBazelFeaturesVersionSetup {
     pub bazel_version: Arc<str>,
 }
+
+#[derive(
+    Debug,
+    Clone,
+    Dupe,
+    allocative::Allocative,
+    PartialEq,
+    Eq,
+    Hash,
+    Pagable
+)]
+pub struct BzlmodHostPlatformSetup {}
 
 #[derive(
     Debug,

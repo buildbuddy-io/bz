@@ -208,7 +208,17 @@ impl BuildAttrCoercionContext {
 
     fn coerce_label_no_cache(&self, value: &str) -> buck2_error::Result<ProvidersLabel> {
         // TODO(nmj): Make this take an import path / package
-        match self.parse_pattern::<ProvidersPatternExtra>(value)? {
+        let pattern = match self.parse_pattern::<ProvidersPatternExtra>(value) {
+            Ok(pattern) => pattern,
+            Err(_)
+                if self.enclosing_package.is_some()
+                    && is_bazel_relative_target_shorthand(value) =>
+            {
+                self.parse_pattern::<ProvidersPatternExtra>(&format!(":{value}"))?
+            }
+            Err(e) => return Err(e),
+        };
+        match pattern {
             ParsedPattern::Target(package, target_name, providers) => {
                 Ok(providers.into_providers_label(package, target_name.as_ref()))
             }
@@ -224,6 +234,15 @@ impl BuildAttrCoercionContext {
             BuildAttrCoercionContextError::NotBuildFileContext(msg.to_owned()).into()
         })
     }
+}
+
+fn is_bazel_relative_target_shorthand(value: &str) -> bool {
+    !value.is_empty()
+        && !value.starts_with(['@', ':', '/', '.'])
+        && !value.contains('/')
+        && !value.contains(':')
+        && !value.contains('[')
+        && !value.contains(']')
 }
 
 impl AttrCoercionContext for BuildAttrCoercionContext {

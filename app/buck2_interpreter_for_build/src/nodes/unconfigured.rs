@@ -63,7 +63,10 @@ impl TargetNodeExt for TargetNode {
             param_parser.next_opt::<Value>()?;
         }
 
-        let package_cfg_modifiers = internals.super_package.cfg_modifiers().duped();
+        let super_package = internals.super_package();
+        let package_cfg_modifiers = super_package.cfg_modifiers().duped();
+        let test_config_unification_rollout = super_package.test_config_unification_rollout();
+        drop(super_package);
         let label = TargetLabel::new(internals.buildfile_path().package().dupe(), name);
         Ok(TargetNode::new(
             rule.dupe(),
@@ -73,7 +76,7 @@ impl TargetNodeExt for TargetNode {
             CoercedDeps::default(),
             None,
             package_cfg_modifiers,
-            internals.super_package.test_config_unification_rollout(),
+            test_config_unification_rollout,
         ))
     }
 
@@ -109,7 +112,10 @@ impl TargetNodeExt for TargetNode {
             a.traverse(label.pkg(), &mut deps_cache)?;
         }
 
-        let package_cfg_modifiers = internals.super_package.cfg_modifiers().duped();
+        let super_package = internals.super_package();
+        let package_cfg_modifiers = super_package.cfg_modifiers().duped();
+        let test_config_unification_rollout = super_package.test_config_unification_rollout();
+        drop(super_package);
 
         Ok(TargetNode::new(
             rule,
@@ -121,7 +127,7 @@ impl TargetNodeExt for TargetNode {
                 .map(StarlarkCallStackWrapper)
                 .map(StarlarkCallStack::new),
             package_cfg_modifiers,
-            internals.super_package.test_config_unification_rollout(),
+            test_config_unification_rollout,
         ))
     }
 }

@@ -150,7 +150,10 @@ fn bazel_attr<'v>(
     )?))
 }
 
-fn bazel_label_default<'v>(default: Option<Value<'v>>) -> buck2_error::Result<Option<Value<'v>>> {
+fn bazel_label_default<'v>(
+    eval: &mut Evaluator<'v, '_, '_>,
+    default: Option<Value<'v>>,
+) -> buck2_error::Result<Option<Value<'v>>> {
     let Some(default) = default else {
         return Ok(None);
     };
@@ -164,6 +167,19 @@ fn bazel_label_default<'v>(default: Option<Value<'v>>) -> buck2_error::Result<Op
         // Bazel resolves this late-bound label to None outside `bazel coverage`; Buck2 does
         // not have a Bazel coverage command mode yet, so normal builds use that value.
         return Ok(Some(Value::new_none()));
+    }
+
+    let label = match (configuration_field.fragment(), configuration_field.name()) {
+        ("proto", "proto_compiler") => Some("@bazel_tools//tools/proto:protoc"),
+        ("proto", "proto_toolchain_for_java") => Some("@bazel_tools//tools/proto:java_toolchain"),
+        ("proto", "proto_toolchain_for_java_lite") => {
+            Some("@bazel_tools//tools/proto:javalite_toolchain")
+        }
+        ("proto", "proto_toolchain_for_cc") => Some("@bazel_tools//tools/proto:cc_toolchain"),
+        _ => None,
+    };
+    if let Some(label) = label {
+        return Ok(Some(eval.heap().alloc(label)));
     }
 
     Err(AttrError::UnsupportedBazelConfigurationField {
@@ -867,7 +883,7 @@ fn bazel_attr_module(registry: &mut GlobalsBuilder) {
         } else {
             AttrType::option(inner)
         };
-        let default = bazel_label_default(default)?;
+        let default = bazel_label_default(eval, default)?;
         Ok(bazel_attr(
             eval,
             default,

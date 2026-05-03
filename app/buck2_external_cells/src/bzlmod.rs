@@ -36,6 +36,7 @@ use buck2_core::cells::external::BzlmodGeneratedCellSetup;
 use buck2_core::cells::external::BzlmodGoDepsModuleSetup;
 use buck2_core::cells::external::BzlmodGoDepsRepositoryConfigSetup;
 use buck2_core::cells::external::BzlmodGoRegisterNogoSetup;
+use buck2_core::cells::external::BzlmodHostPlatformSetup;
 use buck2_core::cells::external::ExternalCellOrigin;
 use buck2_core::cells::name::CellName;
 use buck2_core::cells::paths::CellRelativePath;
@@ -168,6 +169,9 @@ impl IoRequest for BzlmodGeneratedIoRequest {
             BzlmodGeneratedCellGenerator::BazelFeaturesVersion(setup) => {
                 write_bazel_features_version_repo(&dest, setup)?;
             }
+            BzlmodGeneratedCellGenerator::HostPlatform(setup) => {
+                write_host_platform_repo(&dest, setup)?;
+            }
             BzlmodGeneratedCellGenerator::GoRegisterNogo(setup) => {
                 write_go_register_nogo_repo(&dest, setup)?;
             }
@@ -219,6 +223,66 @@ fn write_bazel_features_version_repo(
     )
     .categorize_internal()?;
     Ok(())
+}
+
+fn write_host_platform_repo(
+    dest: &AbsNormPath,
+    _setup: &BzlmodHostPlatformSetup,
+) -> buck2_error::Result<()> {
+    write_generated_module_file(dest, "host_platform")?;
+    fs_util::write(
+        dest.join(ForwardRelativePath::new("BUILD.bazel")?),
+        "# DO NOT EDIT: automatically generated BUILD file\nexports_files([\"constraints.bzl\"])\n",
+    )
+    .categorize_internal()?;
+
+    let mut constraints = Vec::new();
+    if let Some(cpu) = host_platform_cpu_constraint() {
+        constraints.push(format!("    '@platforms//cpu:{cpu}',"));
+    }
+    if let Some(os) = host_platform_os_constraint() {
+        constraints.push(format!("    '@platforms//os:{os}',"));
+    }
+    let constraints = if constraints.is_empty() {
+        String::new()
+    } else {
+        format!("\n{}\n", constraints.join("\n"))
+    };
+    fs_util::write(
+        dest.join(ForwardRelativePath::new("constraints.bzl")?),
+        format!(
+            "# DO NOT EDIT: automatically generated constraints list\nHOST_CONSTRAINTS = [{}]\n",
+            constraints
+        ),
+    )
+    .categorize_internal()?;
+    Ok(())
+}
+
+fn host_platform_cpu_constraint() -> Option<&'static str> {
+    match std::env::consts::ARCH {
+        "x86" | "i386" | "i486" | "i586" | "i686" | "i786" => Some("x86_32"),
+        "x86_64" => Some("x86_64"),
+        "powerpc" | "powerpc64" => Some("ppc"),
+        "powerpc64le" => Some("ppc64le"),
+        "arm" | "armv7" => Some("arm"),
+        "aarch64" => Some("aarch64"),
+        "s390x" => Some("s390x"),
+        "mips64" => Some("mips64"),
+        "riscv64" => Some("riscv64"),
+        _ => None,
+    }
+}
+
+fn host_platform_os_constraint() -> Option<&'static str> {
+    match std::env::consts::OS {
+        "macos" => Some("osx"),
+        "freebsd" => Some("freebsd"),
+        "openbsd" => Some("openbsd"),
+        "linux" => Some("linux"),
+        "windows" => Some("windows"),
+        _ => None,
+    }
 }
 
 fn write_bazel_features_globals_repo(

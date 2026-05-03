@@ -8,9 +8,6 @@
 
 load("@prelude//:native.bzl", "native")
 
-def package(**_kwargs):
-    pass
-
 def exports_files(srcs, visibility = None, **_kwargs):
     for src in srcs:
         native.export_file(

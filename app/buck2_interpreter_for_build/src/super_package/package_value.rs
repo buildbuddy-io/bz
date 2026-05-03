@@ -284,7 +284,7 @@ pub(crate) fn register_read_package_value(globals: &mut GlobalsBuilder) {
                 }
             })?;
 
-        match SuperPackageValuesImpl::get(&**build_ctx.super_package.package_values())?
+        match SuperPackageValuesImpl::get(&**build_ctx.super_package().package_values())?
             .values
             .get(key)
         {

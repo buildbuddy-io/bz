@@ -144,14 +144,16 @@ impl AttributeSpecExt for AttributeSpec {
 
                 if attr_is_visibility {
                     if coerced == CoercedValue::Default {
+                        let super_package = internals.super_package();
                         coerced = CoercedValue::Custom(CoercedAttr::Visibility(
-                            internals.super_package.visibility().dupe(),
+                            super_package.visibility().dupe(),
                         ));
                     }
                 } else if attr_is_within_view {
                     if coerced == CoercedValue::Default {
+                        let super_package = internals.super_package();
                         coerced = CoercedValue::Custom(CoercedAttr::WithinView(
-                            internals.super_package.within_view().dupe(),
+                            super_package.within_view().dupe(),
                         ));
                     }
                 }
@@ -164,14 +166,16 @@ impl AttributeSpecExt for AttributeSpec {
                     CoercedValue::Default => {}
                 }
             } else if attr_is_visibility {
+                let super_package = internals.super_package();
                 attr_values.push_sorted(
                     attr_idx,
-                    CoercedAttr::Visibility(internals.super_package.visibility().dupe()),
+                    CoercedAttr::Visibility(super_package.visibility().dupe()),
                 );
             } else if attr_is_within_view {
+                let super_package = internals.super_package();
                 attr_values.push_sorted(
                     attr_idx,
-                    CoercedAttr::WithinView(internals.super_package.within_view().dupe()),
+                    CoercedAttr::WithinView(super_package.within_view().dupe()),
                 );
             }
         }
