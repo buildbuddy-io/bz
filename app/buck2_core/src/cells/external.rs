@@ -20,6 +20,8 @@ use pagable::Pagable;
 
 use crate::cells::name::CellName;
 
+pub const BZLMOD_BAZEL_COMPAT_VERSION: &str = "9.1.0";
+
 #[derive(Debug, Clone, Dupe, Allocative, PartialEq, Eq, Pagable)]
 pub enum ExternalCellOrigin {
     Bundled(CellName),
@@ -105,9 +107,40 @@ pub struct BzlmodGeneratedCellSetup {
     Pagable
 )]
 pub enum BzlmodGeneratedCellGenerator {
+    BazelFeaturesGlobals(BzlmodBazelFeaturesGlobalsSetup),
+    BazelFeaturesVersion(BzlmodBazelFeaturesVersionSetup),
     GoRegisterNogo(BzlmodGoRegisterNogoSetup),
     GoDepsModule(BzlmodGoDepsModuleSetup),
     GoDepsRepositoryConfig(BzlmodGoDepsRepositoryConfigSetup),
+}
+
+#[derive(
+    Debug,
+    Clone,
+    Dupe,
+    allocative::Allocative,
+    PartialEq,
+    Eq,
+    Hash,
+    Pagable
+)]
+pub struct BzlmodBazelFeaturesGlobalsSetup {
+    pub parent_canonical_repo_name: Arc<str>,
+    pub bazel_version: Arc<str>,
+}
+
+#[derive(
+    Debug,
+    Clone,
+    Dupe,
+    allocative::Allocative,
+    PartialEq,
+    Eq,
+    Hash,
+    Pagable
+)]
+pub struct BzlmodBazelFeaturesVersionSetup {
+    pub bazel_version: Arc<str>,
 }
 
 #[derive(

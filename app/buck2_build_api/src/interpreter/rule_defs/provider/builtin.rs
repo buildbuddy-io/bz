@@ -24,6 +24,7 @@ pub mod external_runner_test_info;
 pub mod install_info;
 pub mod local_resource_info;
 pub mod output_group_info;
+pub mod package_specification_info;
 pub mod platform_info;
 pub mod run_environment_info;
 pub mod run_info;

@@ -8,8 +8,11 @@
  */
 
 use starlark::environment::GlobalsBuilder;
+use starlark::values::none::NoneType;
 
 pub(crate) fn register_bazel_cc_common(builder: &mut GlobalsBuilder) {
+    builder.set("CcSharedLibraryInfo", NoneType);
+    builder.set("CcSharedLibraryHintInfo", NoneType);
     builder.namespace("cc_common", |cc_common| {
         cc_common.set("CcToolchainInfo", "CcToolchainInfo");
     });

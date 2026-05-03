@@ -23,6 +23,9 @@ use buck2_core::cells::CellResolver;
 use buck2_core::cells::alias::NonEmptyCellAlias;
 use buck2_core::cells::cell_root_path::CellRootPath;
 use buck2_core::cells::cell_root_path::CellRootPathBuf;
+use buck2_core::cells::external::BZLMOD_BAZEL_COMPAT_VERSION;
+use buck2_core::cells::external::BzlmodBazelFeaturesGlobalsSetup;
+use buck2_core::cells::external::BzlmodBazelFeaturesVersionSetup;
 use buck2_core::cells::external::BzlmodCellSetup;
 use buck2_core::cells::external::BzlmodGeneratedCellGenerator;
 use buck2_core::cells::external::BzlmodGeneratedCellSetup;
@@ -623,6 +626,22 @@ impl BuckConfigBasedCells {
                 serde_json::from_str(get_config(section, "generator")?)
                     .buck_error_context("Invalid generated bzlmod repo configuration")?;
             let generator = match generator {
+                BzlmodGeneratedRepoConfig::BazelFeaturesGlobals {
+                    parent_canonical_repo_name,
+                    bazel_version,
+                } => BzlmodGeneratedCellGenerator::BazelFeaturesGlobals(
+                    BzlmodBazelFeaturesGlobalsSetup {
+                        parent_canonical_repo_name: Arc::from(parent_canonical_repo_name),
+                        bazel_version: Arc::from(bazel_version),
+                    },
+                ),
+                BzlmodGeneratedRepoConfig::BazelFeaturesVersion { bazel_version } => {
+                    BzlmodGeneratedCellGenerator::BazelFeaturesVersion(
+                        BzlmodBazelFeaturesVersionSetup {
+                            bazel_version: Arc::from(bazel_version),
+                        },
+                    )
+                }
                 BzlmodGeneratedRepoConfig::GoRegisterNogo {
                     nogo,
                     includes,
@@ -720,6 +739,7 @@ struct DiscoveredBcrModule {
     source_json: BcrSourceJson,
     module_aliases: Vec<String>,
     use_repo_aliases: Vec<String>,
+    version_extension_imports: Vec<BzlmodUseRepoImport>,
     go_deps_extensions: Vec<BzlmodGoDepsExtension>,
     deps: Vec<BazelDep>,
 }
@@ -745,6 +765,13 @@ struct BzlmodPatchConfig {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 enum BzlmodGeneratedRepoConfig {
+    BazelFeaturesGlobals {
+        parent_canonical_repo_name: String,
+        bazel_version: String,
+    },
+    BazelFeaturesVersion {
+        bazel_version: String,
+    },
     GoRegisterNogo {
         nogo: String,
         includes: Vec<String>,
@@ -1073,6 +1100,43 @@ fn resolve_generated_bzlmod_repos(
 
         let parent_canonical_repo_name =
             bzlmod_canonical_repo_name(&module.dep.name, &module.dep.version);
+        if module.dep.name == "bazel_features" {
+            for import in &module.version_extension_imports {
+                let generator = match import.repo_name.as_str() {
+                    "bazel_features_globals" => {
+                        Some(BzlmodGeneratedRepoConfig::BazelFeaturesGlobals {
+                            parent_canonical_repo_name: parent_canonical_repo_name.clone(),
+                            bazel_version: BZLMOD_BAZEL_COMPAT_VERSION.to_owned(),
+                        })
+                    }
+                    "bazel_features_version" => {
+                        Some(BzlmodGeneratedRepoConfig::BazelFeaturesVersion {
+                            bazel_version: BZLMOD_BAZEL_COMPAT_VERSION.to_owned(),
+                        })
+                    }
+                    _ => None,
+                };
+                let Some(generator) = generator else {
+                    continue;
+                };
+                let canonical_repo_name = format!(
+                    "{}+{}+version_extension+{}",
+                    module.dep.name, module.dep.version, import.repo_name
+                );
+                let generator_json = serde_json::to_string(&generator).buck_error_context(
+                    "Error serializing generated bazel_features repo configuration",
+                )?;
+                generated.push(BazelCompatExternalModule::Generated(
+                    BazelCompatGeneratedModule {
+                        cell_name: bzlmod_cell_name(&canonical_repo_name),
+                        aliases: vec![import.alias.clone()],
+                        canonical_repo_name,
+                        generator_json,
+                    },
+                ));
+            }
+        }
+
         for extension in &module.go_deps_extensions {
             let mut deps_files = vec![extension.go_mod.clone()];
             if extension.go_mod.ends_with("go.mod") {
@@ -1175,6 +1239,10 @@ async fn fetch_bcr_module(
         source_json,
         module_aliases: bzlmod_module_aliases(&module_lines),
         use_repo_aliases: bzlmod_use_repo_aliases_from_lines(&module_lines),
+        version_extension_imports: bzlmod_extension_imports_from_lines(
+            &module_lines,
+            "version_extension",
+        ),
         go_deps_extensions: bzlmod_go_deps_extensions_from_lines(&module_lines),
         deps: bzlmod_deps_from_lines(&module_lines, true),
     })
@@ -1251,15 +1319,7 @@ fn bzlmod_go_deps_extensions_from_lines(lines: &[String]) -> Vec<BzlmodGoDepsExt
         go_mods.sort();
         go_mods.dedup();
 
-        let imports = collect_bzl_calls(lines, "use_repo(")
-            .into_iter()
-            .filter(|call| {
-                bzl_call_args(call)
-                    .first()
-                    .is_some_and(|arg| arg.trim() == extension_name)
-            })
-            .flat_map(|call| bzl_use_repo_imports(&call))
-            .collect::<Vec<_>>();
+        let imports = bzlmod_extension_imports(lines, &extension_name);
 
         for go_mod in go_mods {
             extensions.push(BzlmodGoDepsExtension {
@@ -1269,6 +1329,28 @@ fn bzlmod_go_deps_extensions_from_lines(lines: &[String]) -> Vec<BzlmodGoDepsExt
         }
     }
     extensions
+}
+
+fn bzlmod_extension_imports_from_lines(
+    lines: &[String],
+    extension: &str,
+) -> Vec<BzlmodUseRepoImport> {
+    bzl_use_extension_bindings(lines, extension)
+        .into_iter()
+        .flat_map(|extension_name| bzlmod_extension_imports(lines, &extension_name))
+        .collect()
+}
+
+fn bzlmod_extension_imports(lines: &[String], extension_name: &str) -> Vec<BzlmodUseRepoImport> {
+    collect_bzl_calls(lines, "use_repo(")
+        .into_iter()
+        .filter(|call| {
+            bzl_call_args(call)
+                .first()
+                .is_some_and(|arg| arg.trim() == extension_name)
+        })
+        .flat_map(|call| bzl_use_repo_imports(&call))
+        .collect()
 }
 
 fn bzl_use_extension_bindings(lines: &[String], extension: &str) -> Vec<String> {

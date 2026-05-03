@@ -7,6 +7,7 @@
  * You may select, at your option, one of the above-listed licenses.
  */
 
+use buck2_core::cells::external::BZLMOD_BAZEL_COMPAT_VERSION;
 use starlark::environment::GlobalsBuilder;
 use starlark::eval::Evaluator;
 use starlark::starlark_module;
@@ -44,7 +45,7 @@ fn bazel_native_module(builder: &mut GlobalsBuilder) {
 
 pub(crate) fn register_bazel_native(builder: &mut GlobalsBuilder) {
     builder.namespace("native", |globals| {
-        globals.set("bazel_version", "9.1.0");
+        globals.set("bazel_version", BZLMOD_BAZEL_COMPAT_VERSION);
         bazel_native_module(globals);
     });
 }

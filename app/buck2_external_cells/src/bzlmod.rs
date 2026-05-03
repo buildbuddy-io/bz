@@ -8,6 +8,7 @@
  * above-listed licenses.
  */
 
+use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::process::Command;
@@ -27,6 +28,8 @@ use buck2_common::http::HasHttpClient;
 use buck2_common::io::IoProvider;
 use buck2_common::io::fs::FsIoProvider;
 use buck2_core::cells::cell_path::CellPath;
+use buck2_core::cells::external::BzlmodBazelFeaturesGlobalsSetup;
+use buck2_core::cells::external::BzlmodBazelFeaturesVersionSetup;
 use buck2_core::cells::external::BzlmodCellSetup;
 use buck2_core::cells::external::BzlmodGeneratedCellGenerator;
 use buck2_core::cells::external::BzlmodGeneratedCellSetup;
@@ -106,6 +109,8 @@ enum BzlmodError {
     GoModDownloadMissingDir { module: String },
     #[error("Invalid generated bzlmod repo path `{0}`")]
     InvalidGeneratedRepoPath(String),
+    #[error("Could not find `{dict}` in bazel_features globals at `{path}`")]
+    MissingBazelFeaturesGlobalsDict { path: String, dict: &'static str },
 }
 
 struct BzlmodExtractIoRequest {
@@ -157,6 +162,12 @@ impl IoRequest for BzlmodGeneratedIoRequest {
         let dest = project_fs.resolve(&self.dest);
         fs_util::create_dir_all(dest.clone())?;
         match &self.setup.generator {
+            BzlmodGeneratedCellGenerator::BazelFeaturesGlobals(setup) => {
+                write_bazel_features_globals_repo(project_fs, &self.dest, &dest, setup)?;
+            }
+            BzlmodGeneratedCellGenerator::BazelFeaturesVersion(setup) => {
+                write_bazel_features_version_repo(&dest, setup)?;
+            }
             BzlmodGeneratedCellGenerator::GoRegisterNogo(setup) => {
                 write_go_register_nogo_repo(&dest, setup)?;
             }
@@ -190,6 +201,187 @@ fn write_go_register_nogo_repo(
     fs_util::write(dest.join(ForwardRelativePath::new("scope.bzl")?), scope)
         .categorize_internal()?;
     Ok(())
+}
+
+fn write_bazel_features_version_repo(
+    dest: &AbsNormPath,
+    setup: &BzlmodBazelFeaturesVersionSetup,
+) -> buck2_error::Result<()> {
+    write_generated_module_file(dest, "bazel_features_version")?;
+    fs_util::write(
+        dest.join(ForwardRelativePath::new("BUILD.bazel")?),
+        "load(\"@bazel_skylib//:bzl_library.bzl\", \"bzl_library\")\n\nexports_files([\"version.bzl\"])\n\nbzl_library(\n    name = \"version\",\n    srcs = [\"version.bzl\"],\n    visibility = [\"//visibility:public\"],\n)\n",
+    )
+    .categorize_internal()?;
+    fs_util::write(
+        dest.join(ForwardRelativePath::new("version.bzl")?),
+        format!("version = {:?}\n", setup.bazel_version.as_ref()),
+    )
+    .categorize_internal()?;
+    Ok(())
+}
+
+fn write_bazel_features_globals_repo(
+    project_fs: &ProjectRoot,
+    dest_rel: &ProjectRelativePath,
+    dest: &AbsNormPath,
+    setup: &BzlmodBazelFeaturesGlobalsSetup,
+) -> buck2_error::Result<()> {
+    let Some((external_cells_root, _)) = dest_rel.as_str().split_once("/bzlmod_generated/") else {
+        return Err(BzlmodError::InvalidGeneratedRepoPath(dest_rel.to_string()).into());
+    };
+    let globals_path = ProjectRelativePathBuf::unchecked_new(format!(
+        "{external_cells_root}/bzlmod/{}/private/globals.bzl",
+        setup.parent_canonical_repo_name
+    ));
+    let globals_text = fs_util::read_to_string(project_fs.resolve(&globals_path))
+        .categorize_internal()
+        .with_buck_error_context(|| {
+            format!("Error reading bazel_features globals `{}`", globals_path)
+        })?;
+    let globals = parse_bazel_features_string_dict(&globals_text, "GLOBALS", &globals_path)?;
+    let legacy_globals =
+        parse_bazel_features_string_dict(&globals_text, "LEGACY_GLOBALS", &globals_path)?;
+
+    write_generated_module_file(dest, "bazel_features_globals")?;
+    fs_util::write(
+        dest.join(ForwardRelativePath::new("BUILD.bazel")?),
+        "load(\"@bazel_skylib//:bzl_library.bzl\", \"bzl_library\")\n\nexports_files([\"globals.bzl\"])\n\nbzl_library(\n    name = \"globals\",\n    srcs = [\"globals.bzl\"],\n    visibility = [\"//visibility:public\"],\n)\n",
+    )
+    .categorize_internal()?;
+
+    let mut globals_bzl = String::from("globals = struct(\n");
+    for (global, version) in globals {
+        let value = if bazel_version_ge(&setup.bazel_version, &version) {
+            global.as_str()
+        } else {
+            "None"
+        };
+        globals_bzl.push_str(&format!("    {global} = {value},\n"));
+    }
+    for (global, version) in legacy_globals {
+        let value = if bazel_version_lt(&setup.bazel_version, &version) {
+            format!("getattr(getattr(native, 'legacy_globals', None), {global:?}, {global})")
+        } else {
+            "None".to_owned()
+        };
+        globals_bzl.push_str(&format!("    {global} = {value},\n"));
+    }
+    globals_bzl.push_str(")\n");
+    fs_util::write(
+        dest.join(ForwardRelativePath::new("globals.bzl")?),
+        globals_bzl,
+    )
+    .categorize_internal()?;
+    Ok(())
+}
+
+fn parse_bazel_features_string_dict(
+    text: &str,
+    dict: &'static str,
+    path: &ProjectRelativePath,
+) -> buck2_error::Result<BTreeMap<String, String>> {
+    let mut values = BTreeMap::new();
+    let mut in_dict = false;
+    let start = format!("{dict} = {{");
+
+    for line in text.lines() {
+        let line = strip_starlark_line_comment(line).trim();
+        if !in_dict {
+            if line == start {
+                in_dict = true;
+            }
+            continue;
+        }
+        if line.starts_with('}') {
+            return Ok(values);
+        }
+        let Some((key, value)) = line.split_once(':') else {
+            continue;
+        };
+        let Some(key) = parse_simple_bzl_string(key.trim()) else {
+            continue;
+        };
+        let value = value.trim().trim_end_matches(',');
+        let Some(value) = parse_simple_bzl_string(value) else {
+            continue;
+        };
+        values.insert(key, value);
+    }
+
+    Err(BzlmodError::MissingBazelFeaturesGlobalsDict {
+        path: path.to_string(),
+        dict,
+    }
+    .into())
+}
+
+fn strip_starlark_line_comment(line: &str) -> &str {
+    let mut in_string = false;
+    let mut quote = '\0';
+    let mut escaped = false;
+
+    for (idx, ch) in line.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if in_string {
+            if ch == '\\' {
+                escaped = true;
+            } else if ch == quote {
+                in_string = false;
+            }
+            continue;
+        }
+        if ch == '"' || ch == '\'' {
+            in_string = true;
+            quote = ch;
+            continue;
+        }
+        if ch == '#' {
+            return &line[..idx];
+        }
+    }
+
+    line
+}
+
+fn parse_simple_bzl_string(value: &str) -> Option<String> {
+    let quote = value.chars().next()?;
+    if quote != '"' && quote != '\'' {
+        return None;
+    }
+    let value = value.strip_prefix(quote)?.strip_suffix(quote)?;
+    Some(value.to_owned())
+}
+
+fn bazel_version_ge(current: &str, required: &str) -> bool {
+    bazel_version_cmp(current, required) != Ordering::Less
+}
+
+fn bazel_version_lt(current: &str, required: &str) -> bool {
+    bazel_version_cmp(current, required) == Ordering::Less
+}
+
+fn bazel_version_cmp(a: &str, b: &str) -> Ordering {
+    let a = bazel_version_numbers(a);
+    let b = bazel_version_numbers(b);
+    for (a, b) in a.iter().zip(b.iter()) {
+        match a.cmp(b) {
+            Ordering::Equal => {}
+            ordering => return ordering,
+        }
+    }
+    a.len().cmp(&b.len())
+}
+
+fn bazel_version_numbers(version: &str) -> Vec<u64> {
+    version
+        .split(|ch: char| !ch.is_ascii_digit())
+        .filter(|part| !part.is_empty())
+        .filter_map(|part| part.parse().ok())
+        .collect()
 }
 
 fn scope_list_repr(scopes: &[Arc<str>]) -> String {

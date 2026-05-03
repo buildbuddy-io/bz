@@ -41,6 +41,7 @@ Completed:
 - Gazelle `go_deps.from_file(go_mod = ...)` imports from external bzlmod modules are parsed into generated external cells.
 - Generated `go_deps` Go module repos read the parent module's `go.mod`, download the selected module with `go mod download`, copy the module source, and emit Bazel `go_library` BUILD files.
 - Generated `go_deps` repository config repos emit `config.json` and Bazel buildfile markers.
+- The `bazel_features` `version_extension` generated repos are materialized as real Buck external cells from their bzlmod `use_repo(...)` imports.
 
 Latest smoke:
 
@@ -50,13 +51,13 @@ BUCK2_HARD_ERROR=false \
 bazel-bin/app/buck2/buck2_bin --isolation-dir real-rules-go-... build //:hello
 ```
 
-The smoke now loads real `rules_go`, `rules_cc`, `rules_proto`, `protobuf`, `bazel_skylib`, and `gazelle` load-time Starlark from bzlmod, gets past the generated `@io_bazel_rules_nogo` repository and the first Gazelle `go_deps` aliases, and gets through the first wave of Bazel native load-time APIs, including protobuf's private native proto API and `provider(init = ...)`. The current failure is:
+The smoke now loads real `rules_go`, `rules_cc`, `rules_proto`, `protobuf`, `bazel_skylib`, `bazel_features`, and `gazelle` load-time Starlark from bzlmod, gets past the generated `@io_bazel_rules_nogo` repository, the first Gazelle `go_deps` aliases, and `bazel_features` generated globals, and gets through the first wave of Bazel native load-time APIs, including protobuf's private native proto API and `provider(init = ...)`. The current failure is:
 
 ```text
-unknown cell alias: `bazel_features_globals`
+unsupported Bazel configuration_field(fragment = "proto", name = "proto_compiler") as attr.label default
 ```
 
-The direct `//:hello` smoke now reaches `@bazel_features//:features.bzl`, which loads `@bazel_features_globals//:globals.bzl`. That alias is missing from the generated repo mapping for the `bazel_features` module.
+The direct `//:hello` smoke now reaches protobuf's `proto_lang_toolchain_rule.bzl`; the next load-time gap is mapping Bazel's proto fragment late-bound label defaults.
 
 ## Constraints
 
@@ -84,7 +85,7 @@ Acceptance:
 
 ## Phase 2: Module Extensions and Generated Repos
 
-Status: generated repo imports for external-module `go_deps.from_file(...)` are parsed and materialized for Go module repos; full extension evaluation and scoped repo mappings still remaining.
+Status: generated repo imports for external-module `go_deps.from_file(...)` and `bazel_features` `version_extension` are parsed and materialized; full extension evaluation and scoped repo mappings still remaining.
 
 Implement:
 
@@ -106,7 +107,6 @@ Immediate target:
 
 - Replace the current parsed generated-repo extraction with real `module_extension(...)` evaluation and repository rule execution.
 - Preserve per-module repo mappings so aliases imported by `rules_go` and `gazelle` no longer collide in the global alias superset.
-- Add real repo mapping generation for module-extension repos that are imported by external modules; the immediate blocker is `@bazel_features_globals` from the `bazel_features` module.
 - Replace parsed `go_deps` materialization with real Starlark `module_extension(...)` evaluation.
 
 Acceptance:
@@ -143,6 +143,10 @@ Completed:
 - `configuration_field(...)` for `coverage.output_generator` label defaults
 - `proto_common_do_not_use`
 - Initial `@bazel_tools` builtin files needed by `rules_go`
+
+Immediate target:
+
+- Add Bazel proto fragment `configuration_field(...)` defaults for `proto_compiler` and proto toolchain labels using Bazel's `ProtoConfiguration` defaults.
 
 Implement as failures demand:
 
