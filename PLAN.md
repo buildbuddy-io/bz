@@ -37,6 +37,9 @@ Completed:
 - Bazel `transition(...)` accepts `implementation`, `inputs`, and `outputs`.
 - Bazel `coverage_common.instrumented_files_info` and `InstrumentedFilesInfo` are native load-time values with Bazel depset fields.
 - `@bazel_tools//tools/build_defs/repo:utils.bzl` is present as a Bazel builtin tool definition.
+- Gazelle `go_deps.from_file(go_mod = ...)` imports from external bzlmod modules are parsed into generated external cells.
+- Generated `go_deps` Go module repos read the parent module's `go.mod`, download the selected module with `go mod download`, copy the module source, and emit Bazel `go_library` BUILD files.
+- Generated `go_deps` repository config repos emit `config.json` and Bazel buildfile markers.
 
 Latest smoke:
 
@@ -46,14 +49,13 @@ BUCK2_HARD_ERROR=false \
 bazel-bin/app/buck2/buck2_bin --isolation-dir real-rules-go-... build //:hello
 ```
 
-The smoke now loads real `rules_go`, `rules_cc`, `bazel_skylib`, and `gazelle` load-time Starlark from bzlmod, gets past the generated `@io_bazel_rules_nogo` repository, and gets through the first wave of Bazel native load-time APIs. The current failure is:
+The smoke now loads real `rules_go`, `rules_cc`, `bazel_skylib`, and `gazelle` load-time Starlark from bzlmod, gets past the generated `@io_bazel_rules_nogo` repository and the first Gazelle `go_deps` aliases, and gets through the first wave of Bazel native load-time APIs. The current failure is:
 
 ```text
-Error coercing "@com_github_pmezard_go_difflib//difflib:go_default_library"
-unknown cell alias: `com_github_pmezard_go_difflib`.
+Variable `aspect` not found
 ```
 
-That is the next hard cutover point into real module-extension generated repositories. `rules_go` imports `com_github_pmezard_go_difflib` from Gazelle's `go_deps` module extension, so Buck2 must evaluate `go_deps.from_file(...)`, execute the generated repository rules, and materialize those generated repos as external cells.
+The canonical generated target `bzlmod_rules_go_0_57_0_go_deps_com_github_pmezard_go_difflib//difflib:go_default_library` now materializes and reaches the same missing `aspect(...)` load-time blocker through its generated BUILD file.
 
 ## Constraints
 
@@ -81,7 +83,7 @@ Acceptance:
 
 ## Phase 2: Module Extensions and Generated Repos
 
-Status: parsed generated repo imports for the first rules_go repository are implemented; full extension evaluation still remaining.
+Status: generated repo imports for external-module `go_deps.from_file(...)` are parsed and materialized for Go module repos; full extension evaluation and scoped repo mappings still remaining.
 
 Implement:
 
@@ -101,12 +103,13 @@ Implement:
 Immediate target:
 
 - Replace the current parsed generated-repo extraction with real `module_extension(...)` evaluation and repository rule execution.
-- Materialize Gazelle `go_deps` repos imported by `rules_go`, starting with `com_github_pmezard_go_difflib`.
+- Preserve per-module repo mappings so aliases imported by `rules_go` and `gazelle` no longer collide in the global alias superset.
+- Replace parsed `go_deps` materialization with real Starlark `module_extension(...)` evaluation.
 
 Acceptance:
 
 - The simple `rules_go` fixture gets past module-extension generated repo loading.
-- `go_toolchains`, `go_host_compatible_sdk_label`, and `io_bazel_rules_nogo` are real generated repos/cells when imported by `use_repo(...)`.
+- `go_toolchains`, `go_host_compatible_sdk_label`, `io_bazel_rules_nogo`, and Gazelle `go_deps` repos are real generated repos/cells when imported by `use_repo(...)`.
 
 ## Phase 3: Bazel Load-Time Builtins
 
@@ -141,6 +144,7 @@ Implement as failures demand:
 - `exports_files`
 - `glob`
 - `select`
+- `aspect(...)`
 - `visibility` constants
 - missing `native.*` load-time functions
 

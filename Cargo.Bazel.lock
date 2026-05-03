@@ -2263,6 +2263,8 @@ dependencies = [
  "dupe",
  "hex",
  "pagable",
+ "serde",
+ "serde_json",
  "tokio",
 ]
 

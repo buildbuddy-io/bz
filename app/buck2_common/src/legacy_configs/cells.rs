@@ -26,6 +26,8 @@ use buck2_core::cells::cell_root_path::CellRootPathBuf;
 use buck2_core::cells::external::BzlmodCellSetup;
 use buck2_core::cells::external::BzlmodGeneratedCellGenerator;
 use buck2_core::cells::external::BzlmodGeneratedCellSetup;
+use buck2_core::cells::external::BzlmodGoDepsModuleSetup;
+use buck2_core::cells::external::BzlmodGoDepsRepositoryConfigSetup;
 use buck2_core::cells::external::BzlmodGoRegisterNogoSetup;
 use buck2_core::cells::external::BzlmodPatch;
 use buck2_core::cells::external::ExternalCellOrigin;
@@ -630,6 +632,24 @@ impl BuckConfigBasedCells {
                     includes: Arc::new(includes.into_iter().map(Arc::from).collect()),
                     excludes: Arc::new(excludes.into_iter().map(Arc::from).collect()),
                 }),
+                BzlmodGeneratedRepoConfig::GoDepsModule {
+                    parent_canonical_repo_name,
+                    go_mod,
+                    repo_name,
+                } => BzlmodGeneratedCellGenerator::GoDepsModule(BzlmodGoDepsModuleSetup {
+                    parent_canonical_repo_name: Arc::from(parent_canonical_repo_name),
+                    go_mod: Arc::from(go_mod),
+                    repo_name: Arc::from(repo_name),
+                }),
+                BzlmodGeneratedRepoConfig::GoDepsRepositoryConfig {
+                    go_env_json,
+                    deps_files,
+                } => BzlmodGeneratedCellGenerator::GoDepsRepositoryConfig(
+                    BzlmodGoDepsRepositoryConfigSetup {
+                        go_env_json: Arc::from(go_env_json),
+                        deps_files: Arc::new(deps_files.into_iter().map(Arc::from).collect()),
+                    },
+                ),
             };
             Ok(ExternalCellOrigin::BzlmodGenerated(
                 BzlmodGeneratedCellSetup {
@@ -700,7 +720,20 @@ struct DiscoveredBcrModule {
     source_json: BcrSourceJson,
     module_aliases: Vec<String>,
     use_repo_aliases: Vec<String>,
+    go_deps_extensions: Vec<BzlmodGoDepsExtension>,
     deps: Vec<BazelDep>,
+}
+
+#[derive(Clone, Debug)]
+struct BzlmodGoDepsExtension {
+    go_mod: String,
+    imports: Vec<BzlmodUseRepoImport>,
+}
+
+#[derive(Clone, Debug)]
+struct BzlmodUseRepoImport {
+    alias: String,
+    repo_name: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -716,6 +749,15 @@ enum BzlmodGeneratedRepoConfig {
         nogo: String,
         includes: Vec<String>,
         excludes: Vec<String>,
+    },
+    GoDepsModule {
+        parent_canonical_repo_name: String,
+        go_mod: String,
+        repo_name: String,
+    },
+    GoDepsRepositoryConfig {
+        go_env_json: String,
+        deps_files: Vec<String>,
     },
 }
 
@@ -1028,6 +1070,51 @@ fn resolve_generated_bzlmod_repos(
                 },
             ));
         }
+
+        let parent_canonical_repo_name =
+            bzlmod_canonical_repo_name(&module.dep.name, &module.dep.version);
+        for extension in &module.go_deps_extensions {
+            let mut deps_files = vec![extension.go_mod.clone()];
+            if extension.go_mod.ends_with("go.mod") {
+                deps_files.push(format!(
+                    "{}go.sum",
+                    extension.go_mod.strip_suffix("go.mod").unwrap_or("")
+                ));
+            }
+
+            for import in &extension.imports {
+                let canonical_repo_name = format!(
+                    "{}+{}+go_deps+{}",
+                    module.dep.name, module.dep.version, import.repo_name
+                );
+                let generator_json = if import.repo_name == "bazel_gazelle_go_repository_config" {
+                    serde_json::to_string(&BzlmodGeneratedRepoConfig::GoDepsRepositoryConfig {
+                        go_env_json: "{}".to_owned(),
+                        deps_files: deps_files.clone(),
+                    })
+                    .buck_error_context(
+                        "Error serializing generated go_deps config repo configuration",
+                    )?
+                } else {
+                    serde_json::to_string(&BzlmodGeneratedRepoConfig::GoDepsModule {
+                        parent_canonical_repo_name: parent_canonical_repo_name.clone(),
+                        go_mod: extension.go_mod.clone(),
+                        repo_name: import.repo_name.clone(),
+                    })
+                    .buck_error_context(
+                        "Error serializing generated go_deps module repo configuration",
+                    )?
+                };
+                generated.push(BazelCompatExternalModule::Generated(
+                    BazelCompatGeneratedModule {
+                        cell_name: bzlmod_cell_name(&canonical_repo_name),
+                        aliases: vec![import.alias.clone()],
+                        canonical_repo_name,
+                        generator_json,
+                    },
+                ));
+            }
+        }
     }
     Ok(generated)
 }
@@ -1088,6 +1175,7 @@ async fn fetch_bcr_module(
         source_json,
         module_aliases: bzlmod_module_aliases(&module_lines),
         use_repo_aliases: bzlmod_use_repo_aliases_from_lines(&module_lines),
+        go_deps_extensions: bzlmod_go_deps_extensions_from_lines(&module_lines),
         deps: bzlmod_deps_from_lines(&module_lines, true),
     })
 }
@@ -1149,6 +1237,58 @@ fn bzlmod_use_repo_aliases_from_lines(lines: &[String]) -> Vec<String> {
     collect_bzl_calls(lines, "use_repo(")
         .into_iter()
         .flat_map(|call| bzl_use_repo_aliases(&call))
+        .collect()
+}
+
+fn bzlmod_go_deps_extensions_from_lines(lines: &[String]) -> Vec<BzlmodGoDepsExtension> {
+    let mut extensions = Vec::new();
+    for extension_name in bzl_use_extension_bindings(lines, "go_deps") {
+        let mut go_mods = collect_bzl_calls(lines, &format!("{extension_name}.from_file("))
+            .into_iter()
+            .filter_map(|call| bzl_string_arg(&call, "go_mod"))
+            .filter_map(|label| module_include_to_path("MODULE.bazel", &label))
+            .collect::<Vec<_>>();
+        go_mods.sort();
+        go_mods.dedup();
+
+        let imports = collect_bzl_calls(lines, "use_repo(")
+            .into_iter()
+            .filter(|call| {
+                bzl_call_args(call)
+                    .first()
+                    .is_some_and(|arg| arg.trim() == extension_name)
+            })
+            .flat_map(|call| bzl_use_repo_imports(&call))
+            .collect::<Vec<_>>();
+
+        for go_mod in go_mods {
+            extensions.push(BzlmodGoDepsExtension {
+                go_mod,
+                imports: imports.clone(),
+            });
+        }
+    }
+    extensions
+}
+
+fn bzl_use_extension_bindings(lines: &[String], extension: &str) -> Vec<String> {
+    lines
+        .iter()
+        .filter_map(|line| {
+            let line = strip_bzl_comment(line);
+            let (name, value) = line.split_once('=')?;
+            let name = name.trim();
+            if !is_bzl_identifier(name) || !value.trim_start().starts_with("use_extension(") {
+                return None;
+            }
+            let args = bzl_call_args(value);
+            let extension_name = args.get(1).and_then(|arg| bzl_string_value(arg.trim()))?;
+            if extension_name == extension {
+                Some(name.to_owned())
+            } else {
+                None
+            }
+        })
         .collect()
 }
 
@@ -1475,23 +1615,38 @@ fn bzl_first_string_arg(call: &str) -> Option<String> {
 }
 
 fn bzl_use_repo_aliases(call: &str) -> Vec<String> {
+    bzl_use_repo_imports(call)
+        .into_iter()
+        .map(|import| import.alias)
+        .collect()
+}
+
+fn bzl_use_repo_imports(call: &str) -> Vec<BzlmodUseRepoImport> {
     let args = bzl_call_args(call);
-    let mut aliases = Vec::new();
+    let mut imports = Vec::new();
     for arg in args.into_iter().skip(1) {
         let arg = arg.trim();
         if arg.is_empty() {
             continue;
         }
-        if let Some((alias, _actual)) = bzl_top_level_assignment(arg) {
+        if let Some((alias, actual)) = bzl_top_level_assignment(arg) {
             let alias = alias.trim();
             if alias != "dev_dependency" && is_bzl_identifier(alias) {
-                aliases.push(alias.to_owned());
+                if let Some(repo_name) = bzl_string_value(actual.trim()) {
+                    imports.push(BzlmodUseRepoImport {
+                        alias: alias.to_owned(),
+                        repo_name,
+                    });
+                }
             }
         } else if let Some(alias) = bzl_string_value(arg) {
-            aliases.push(alias);
+            imports.push(BzlmodUseRepoImport {
+                alias: alias.clone(),
+                repo_name: alias,
+            });
         }
     }
-    aliases
+    imports
 }
 
 fn bzl_use_repo_rule_names(lines: &[String]) -> Vec<String> {

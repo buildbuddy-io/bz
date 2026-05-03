@@ -18,6 +18,8 @@ async-trait = { workspace = true }
 blake3 = { workspace = true }
 derive_more = { workspace = true }
 pagable = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
 tokio = { workspace = true }
 
 buck2_build_api = { workspace = true }

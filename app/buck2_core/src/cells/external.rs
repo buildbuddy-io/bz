@@ -106,6 +106,8 @@ pub struct BzlmodGeneratedCellSetup {
 )]
 pub enum BzlmodGeneratedCellGenerator {
     GoRegisterNogo(BzlmodGoRegisterNogoSetup),
+    GoDepsModule(BzlmodGoDepsModuleSetup),
+    GoDepsRepositoryConfig(BzlmodGoDepsRepositoryConfigSetup),
 }
 
 #[derive(
@@ -122,6 +124,37 @@ pub struct BzlmodGoRegisterNogoSetup {
     pub nogo: Arc<str>,
     pub includes: Arc<Vec<Arc<str>>>,
     pub excludes: Arc<Vec<Arc<str>>>,
+}
+
+#[derive(
+    Debug,
+    Clone,
+    Dupe,
+    allocative::Allocative,
+    PartialEq,
+    Eq,
+    Hash,
+    Pagable
+)]
+pub struct BzlmodGoDepsModuleSetup {
+    pub parent_canonical_repo_name: Arc<str>,
+    pub go_mod: Arc<str>,
+    pub repo_name: Arc<str>,
+}
+
+#[derive(
+    Debug,
+    Clone,
+    Dupe,
+    allocative::Allocative,
+    PartialEq,
+    Eq,
+    Hash,
+    Pagable
+)]
+pub struct BzlmodGoDepsRepositoryConfigSetup {
+    pub go_env_json: Arc<str>,
+    pub deps_files: Arc<Vec<Arc<str>>>,
 }
 
 impl fmt::Display for ExternalCellOrigin {

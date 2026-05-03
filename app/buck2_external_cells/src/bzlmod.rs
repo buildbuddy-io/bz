@@ -8,6 +8,8 @@
  * above-listed licenses.
  */
 
+use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::process::Command;
 use std::process::ExitStatus;
 use std::process::Stdio;
@@ -28,6 +30,8 @@ use buck2_core::cells::cell_path::CellPath;
 use buck2_core::cells::external::BzlmodCellSetup;
 use buck2_core::cells::external::BzlmodGeneratedCellGenerator;
 use buck2_core::cells::external::BzlmodGeneratedCellSetup;
+use buck2_core::cells::external::BzlmodGoDepsModuleSetup;
+use buck2_core::cells::external::BzlmodGoDepsRepositoryConfigSetup;
 use buck2_core::cells::external::BzlmodGoRegisterNogoSetup;
 use buck2_core::cells::external::ExternalCellOrigin;
 use buck2_core::cells::name::CellName;
@@ -53,6 +57,7 @@ use buck2_execute::materialize::materializer::Materializer;
 use buck2_fs::error::IoResultExt;
 use buck2_fs::fs_util;
 use buck2_fs::paths::abs_norm_path::AbsNormPath;
+use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
 use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
 use cmp_any::PartialEqAny;
 use dice::CancellationContext;
@@ -63,6 +68,7 @@ use dice::ValueSerialize;
 use dupe::Dupe;
 use pagable::Pagable;
 use pagable::pagable_typetag;
+use serde::Deserialize;
 
 #[derive(buck2_error::Error, Debug)]
 #[buck2(tag = Tier0)]
@@ -85,6 +91,21 @@ enum BzlmodError {
     NoDirectory,
     #[error("Invalid bzlmod integrity `{0}`")]
     InvalidIntegrity(String),
+    #[error("Generated go_deps repo `{repo_name}` was not found in `{go_mod}`")]
+    GoDepsRepoNotFound { repo_name: String, go_mod: String },
+    #[error(
+        "Error downloading Go module `{module}` with `go mod download`, exit code: {exit_code:?}, stdout:\n{stdout}\nstderr:\n{stderr}"
+    )]
+    GoModDownloadFailed {
+        module: String,
+        exit_code: ExitStatus,
+        stdout: String,
+        stderr: String,
+    },
+    #[error("`go mod download -json {module}` did not return a module directory")]
+    GoModDownloadMissingDir { module: String },
+    #[error("Invalid generated bzlmod repo path `{0}`")]
+    InvalidGeneratedRepoPath(String),
 }
 
 struct BzlmodExtractIoRequest {
@@ -139,6 +160,12 @@ impl IoRequest for BzlmodGeneratedIoRequest {
             BzlmodGeneratedCellGenerator::GoRegisterNogo(setup) => {
                 write_go_register_nogo_repo(&dest, setup)?;
             }
+            BzlmodGeneratedCellGenerator::GoDepsModule(setup) => {
+                write_go_deps_module_repo(project_fs, &self.dest, &dest, setup)?;
+            }
+            BzlmodGeneratedCellGenerator::GoDepsRepositoryConfig(setup) => {
+                write_go_deps_repository_config_repo(&dest, setup)?;
+            }
         }
         Ok(())
     }
@@ -148,6 +175,7 @@ fn write_go_register_nogo_repo(
     dest: &AbsNormPath,
     setup: &BzlmodGoRegisterNogoSetup,
 ) -> buck2_error::Result<()> {
+    write_generated_module_file(dest, "io_bazel_rules_nogo")?;
     let build = format!(
         "package(default_visibility = [\"//visibility:public\"])\n\nalias(\n    name = \"nogo\",\n    actual = \"{}\",\n)\n\nexports_files([\"scope.bzl\"])\n",
         setup.nogo
@@ -178,6 +206,407 @@ fn scope_list_repr(scopes: &[Arc<str>]) -> String {
         })
         .collect::<Vec<_>>();
     format!("[{}]", labels.join(", "))
+}
+
+#[derive(Debug, Clone)]
+struct GoRequire {
+    path: String,
+    version: String,
+}
+
+#[derive(Deserialize)]
+struct GoModDownload {
+    #[serde(rename = "Dir")]
+    dir: Option<String>,
+    #[serde(rename = "Error")]
+    error: Option<String>,
+}
+
+fn write_go_deps_module_repo(
+    project_fs: &ProjectRoot,
+    dest_rel: &ProjectRelativePath,
+    dest: &AbsNormPath,
+    setup: &BzlmodGoDepsModuleSetup,
+) -> buck2_error::Result<()> {
+    let Some((external_cells_root, _)) = dest_rel.as_str().split_once("/bzlmod_generated/") else {
+        return Err(BzlmodError::InvalidGeneratedRepoPath(dest_rel.to_string()).into());
+    };
+    let parent_go_mod = ProjectRelativePathBuf::unchecked_new(format!(
+        "{external_cells_root}/bzlmod/{}/{}",
+        setup.parent_canonical_repo_name, setup.go_mod
+    ));
+    let go_mod_text = fs_util::read_to_string(project_fs.resolve(&parent_go_mod))
+        .categorize_internal()
+        .with_buck_error_context(|| format!("Error reading parent go.mod `{}`", parent_go_mod))?;
+    let requires = parse_go_mod_requires(&go_mod_text);
+    let Some(module) = requires
+        .iter()
+        .find(|require| go_module_repo_name(&require.path) == setup.repo_name.as_ref())
+        .cloned()
+    else {
+        return Err(BzlmodError::GoDepsRepoNotFound {
+            repo_name: setup.repo_name.to_string(),
+            go_mod: setup.go_mod.to_string(),
+        }
+        .into());
+    };
+
+    let module_dir = go_mod_download(&module)?;
+    copy_dir_contents(&module_dir, dest)?;
+    write_generated_module_file(dest, &setup.repo_name)?;
+    write_go_module_build_files(dest, &module.path, &requires)?;
+    Ok(())
+}
+
+fn write_go_deps_repository_config_repo(
+    dest: &AbsNormPath,
+    setup: &BzlmodGoDepsRepositoryConfigSetup,
+) -> buck2_error::Result<()> {
+    write_generated_module_file(dest, "bazel_gazelle_go_repository_config")?;
+    let go_env: serde_json::Value = serde_json::from_str(&setup.go_env_json)
+        .buck_error_context("Invalid go_env_json for go_deps repository config")?;
+    let config = serde_json::json!({
+        "go_env": go_env,
+        "dep_files": setup.deps_files.iter().map(|file| file.as_ref()).collect::<Vec<_>>(),
+    });
+    let config_json = serde_json::to_string_pretty(&config)
+        .buck_error_context("Error serializing go_deps repository config")?;
+    fs_util::write(
+        dest.join(ForwardRelativePath::new("config.json")?),
+        config_json,
+    )
+    .categorize_internal()?;
+    fs_util::write(
+        dest.join(ForwardRelativePath::new("BUILD.bazel")?),
+        "package(default_visibility = [\"//visibility:public\"])\n\nexports_files([\"config.json\"])\n",
+    )
+    .categorize_internal()?;
+    Ok(())
+}
+
+fn write_generated_module_file(dest: &AbsNormPath, name: &str) -> buck2_error::Result<()> {
+    fs_util::write(
+        dest.join(ForwardRelativePath::new("MODULE.bazel")?),
+        format!("module(name = {name:?})\n"),
+    )
+    .categorize_internal()?;
+    Ok(())
+}
+
+fn go_mod_download(module: &GoRequire) -> buck2_error::Result<AbsNormPathBuf> {
+    let module_arg = format!("{}@{}", module.path, module.version);
+    let output = Command::new("go")
+        .arg("mod")
+        .arg("download")
+        .arg("-json")
+        .arg(&module_arg)
+        .stderr(Stdio::piped())
+        .stdout(Stdio::piped())
+        .output()
+        .buck_error_context("Could not run `go mod download` for go_deps generated repo")?;
+
+    if !output.status.success() {
+        return Err(BzlmodError::GoModDownloadFailed {
+            module: module_arg,
+            exit_code: output.status,
+            stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+            stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+        }
+        .into());
+    }
+
+    let download: GoModDownload = serde_json::from_slice(&output.stdout)
+        .with_buck_error_context(|| format!("Invalid JSON from `go mod download {module_arg}`"))?;
+    if let Some(error) = download.error {
+        return Err(BzlmodError::GoModDownloadFailed {
+            module: module_arg,
+            exit_code: output.status,
+            stdout: error,
+            stderr: String::new(),
+        }
+        .into());
+    }
+    let Some(dir) = download.dir else {
+        return Err(BzlmodError::GoModDownloadMissingDir { module: module_arg }.into());
+    };
+    Ok(AbsNormPath::new(&dir)?.to_owned())
+}
+
+fn parse_go_mod_requires(go_mod: &str) -> Vec<GoRequire> {
+    let mut requires = Vec::new();
+    let mut in_block = false;
+
+    for line in go_mod.lines() {
+        let line = line.split("//").next().unwrap_or("").trim();
+        if line.is_empty() {
+            continue;
+        }
+        if in_block {
+            if line == ")" {
+                in_block = false;
+                continue;
+            }
+            push_go_require(line, &mut requires);
+            continue;
+        }
+        if line == "require (" {
+            in_block = true;
+            continue;
+        }
+        if let Some(rest) = line.strip_prefix("require ") {
+            push_go_require(rest, &mut requires);
+        }
+    }
+
+    requires
+}
+
+fn push_go_require(line: &str, requires: &mut Vec<GoRequire>) {
+    let mut parts = line.split_whitespace();
+    let Some(path) = parts.next() else {
+        return;
+    };
+    let Some(version) = parts.next() else {
+        return;
+    };
+    requires.push(GoRequire {
+        path: path.to_owned(),
+        version: version.to_owned(),
+    });
+}
+
+fn go_module_repo_name(module_path: &str) -> String {
+    let mut parts = module_path.split('/');
+    let mut repo_parts = Vec::new();
+    if let Some(domain) = parts.next() {
+        repo_parts.extend(domain.split('.').rev().map(sanitize_go_repo_part));
+    }
+    repo_parts.extend(parts.map(sanitize_go_repo_part));
+    repo_parts
+        .into_iter()
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join("_")
+}
+
+fn sanitize_go_repo_part(part: &str) -> String {
+    let mut out = String::new();
+    let mut previous_was_separator = false;
+    for ch in part.chars() {
+        if ch == '_' || ch.is_ascii_alphanumeric() {
+            out.push(ch.to_ascii_lowercase());
+            previous_was_separator = false;
+        } else if !previous_was_separator {
+            out.push('_');
+            previous_was_separator = true;
+        }
+    }
+    out.trim_matches('_').to_owned()
+}
+
+fn write_go_module_build_files(
+    repo_root: &AbsNormPath,
+    module_path: &str,
+    requires: &[GoRequire],
+) -> buck2_error::Result<()> {
+    let mut packages = Vec::new();
+    collect_go_package_dirs(repo_root, "", &mut packages)?;
+    let require_repos = requires
+        .iter()
+        .map(|require| (require.path.clone(), go_module_repo_name(&require.path)))
+        .collect::<BTreeMap<_, _>>();
+
+    for package in packages {
+        write_go_package_build(repo_root, &package, module_path, &require_repos)?;
+    }
+    Ok(())
+}
+
+fn collect_go_package_dirs(
+    dir: &AbsNormPath,
+    relative: &str,
+    packages: &mut Vec<String>,
+) -> buck2_error::Result<()> {
+    let mut has_go_src = false;
+    let mut children = Vec::new();
+    for entry in fs_util::read_dir(dir).categorize_internal()? {
+        let entry = entry?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let file_type = entry.file_type()?;
+        if file_type.is_dir() {
+            if name == "vendor" || name == "testdata" || name.starts_with('.') {
+                continue;
+            }
+            children.push(name);
+        } else if file_type.is_file() && is_go_library_source(&name) {
+            has_go_src = true;
+        }
+    }
+
+    if has_go_src {
+        packages.push(relative.to_owned());
+    }
+
+    children.sort();
+    for child in children {
+        let child_relative = if relative.is_empty() {
+            child.clone()
+        } else {
+            format!("{relative}/{child}")
+        };
+        collect_go_package_dirs(
+            &dir.join(ForwardRelativePath::new(&child)?),
+            &child_relative,
+            packages,
+        )?;
+    }
+
+    Ok(())
+}
+
+fn write_go_package_build(
+    repo_root: &AbsNormPath,
+    package: &str,
+    module_path: &str,
+    require_repos: &BTreeMap<String, String>,
+) -> buck2_error::Result<()> {
+    let package_dir = if package.is_empty() {
+        repo_root.to_owned()
+    } else {
+        repo_root.join(ForwardRelativePath::new(package)?)
+    };
+    let mut srcs = Vec::new();
+    let mut imports = BTreeSet::new();
+
+    for entry in fs_util::read_dir(&package_dir).categorize_internal()? {
+        let entry = entry?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if entry.file_type()?.is_file() && is_go_library_source(&name) {
+            srcs.push(name.clone());
+            let source = fs_util::read_to_string(entry.path()).categorize_internal()?;
+            imports.extend(parse_go_imports(&source));
+        }
+    }
+
+    srcs.sort();
+    let importpath = if package.is_empty() {
+        module_path.to_owned()
+    } else {
+        format!("{module_path}/{package}")
+    };
+    let deps = imports
+        .into_iter()
+        .filter_map(|import| go_import_dep_label(&import, &importpath, module_path, require_repos))
+        .collect::<BTreeSet<_>>();
+
+    let mut build = String::new();
+    build.push_str("load(\"@io_bazel_rules_go//go:def.bzl\", \"go_library\")\n\n");
+    build.push_str("go_library(\n");
+    build.push_str("    name = \"go_default_library\",\n");
+    build.push_str("    srcs = [\n");
+    for src in srcs {
+        build.push_str(&format!("        {src:?},\n"));
+    }
+    build.push_str("    ],\n");
+    build.push_str(&format!("    importpath = {importpath:?},\n"));
+    if !deps.is_empty() {
+        build.push_str("    deps = [\n");
+        for dep in deps {
+            build.push_str(&format!("        {dep:?},\n"));
+        }
+        build.push_str("    ],\n");
+    }
+    build.push_str("    visibility = [\"//visibility:public\"],\n");
+    build.push_str(")\n");
+
+    fs_util::write(
+        package_dir.join(ForwardRelativePath::new("BUILD.bazel")?),
+        build,
+    )
+    .categorize_internal()?;
+    Ok(())
+}
+
+fn is_go_library_source(name: &str) -> bool {
+    name.ends_with(".go") && !name.ends_with("_test.go")
+}
+
+fn parse_go_imports(source: &str) -> BTreeSet<String> {
+    let mut imports = BTreeSet::new();
+    let mut in_block = false;
+
+    for line in source.lines() {
+        let line = line.split("//").next().unwrap_or("").trim();
+        if in_block {
+            if line.starts_with(')') {
+                in_block = false;
+            } else if let Some(import) = go_import_string(line) {
+                imports.insert(import);
+            }
+            continue;
+        }
+        if line == "import (" {
+            in_block = true;
+            continue;
+        }
+        if let Some(rest) = line.strip_prefix("import ") {
+            if let Some(import) = go_import_string(rest.trim()) {
+                imports.insert(import);
+            }
+        }
+    }
+
+    imports
+}
+
+fn go_import_string(line: &str) -> Option<String> {
+    let start = line.find(['"', '`'])?;
+    let quote = line[start..].chars().next()?;
+    let rest = &line[start + quote.len_utf8()..];
+    let end = rest.find(quote)?;
+    Some(rest[..end].to_owned())
+}
+
+fn go_import_dep_label(
+    import: &str,
+    current_importpath: &str,
+    module_path: &str,
+    require_repos: &BTreeMap<String, String>,
+) -> Option<String> {
+    if import == current_importpath || !go_import_is_external(import) {
+        return None;
+    }
+    if import == module_path || import.starts_with(&format!("{module_path}/")) {
+        let package = import
+            .strip_prefix(module_path)
+            .unwrap_or("")
+            .trim_matches('/');
+        return Some(if package.is_empty() {
+            "//:go_default_library".to_owned()
+        } else {
+            format!("//{package}:go_default_library")
+        });
+    }
+
+    let (module, repo) = require_repos
+        .iter()
+        .filter(|(module, _)| {
+            import == module.as_str() || import.starts_with(&format!("{}/", module))
+        })
+        .max_by_key(|(module, _)| module.len())?;
+    let package = import.strip_prefix(module).unwrap_or("").trim_matches('/');
+    Some(if package.is_empty() {
+        format!("@{repo}//:go_default_library")
+    } else {
+        format!("@{repo}//{package}:go_default_library")
+    })
+}
+
+fn go_import_is_external(import: &str) -> bool {
+    import
+        .split('/')
+        .next()
+        .is_some_and(|first| first.contains('.'))
 }
 
 fn extract_archive(
