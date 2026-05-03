@@ -68,6 +68,8 @@ enum TransitionError {
     OnlyBzl,
     #[error("Non-unique list of attrs")]
     NonUniqueAttrs,
+    #[error("`transition` requires exactly one implementation function")]
+    MissingOrConflictingImplementation,
 }
 
 /// Wrapper for `ProvidersTargetLabel` which is `Trace`.
@@ -259,17 +261,41 @@ fn validate_transition_impl(
 #[starlark_module]
 fn register_transition_function(builder: &mut GlobalsBuilder) {
     fn transition<'v>(
-        #[starlark(require = named)] r#impl: StarlarkCallableChecked<
-            'v,
-            TransitionImplParams,
-            Either<ImplSingleReturnTy, ImplSplitReturnTy>,
+        #[starlark(require = named)] r#impl: Option<
+            StarlarkCallableChecked<
+                'v,
+                TransitionImplParams,
+                Either<ImplSingleReturnTy, ImplSplitReturnTy>,
+            >,
         >,
-        #[starlark(require = named)] refs: UnpackDictEntries<StringValue<'v>, StringValue<'v>>,
+        #[starlark(require = named)] implementation: Option<
+            StarlarkCallableChecked<
+                'v,
+                TransitionImplParams,
+                Either<ImplSingleReturnTy, ImplSplitReturnTy>,
+            >,
+        >,
+        #[starlark(require = named, default = UnpackDictEntries::default())]
+        refs: UnpackDictEntries<StringValue<'v>, StringValue<'v>>,
         #[starlark(require = named)] attrs: Option<UnpackListOrTuple<StringValue<'v>>>,
+        #[starlark(require = named, default = UnpackListOrTuple::default())]
+        inputs: UnpackListOrTuple<Value<'v>>,
+        #[starlark(require = named, default = UnpackListOrTuple::default())]
+        outputs: UnpackListOrTuple<Value<'v>>,
         #[starlark(require = named, default = false)] split: bool,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Transition<'v>> {
-        let implementation = r#impl.0;
+        let (implementation, is_bazel_transition) = match (r#impl, implementation) {
+            (Some(r#impl), None) => (r#impl.0, false),
+            (None, Some(implementation)) => (implementation.0, true),
+            _ => {
+                return Err(buck2_error::Error::from(
+                    TransitionError::MissingOrConflictingImplementation,
+                )
+                .into());
+            }
+        };
+        let _unused = (inputs, outputs);
 
         let refs = refs
             .entries
@@ -294,7 +320,9 @@ fn register_transition_function(builder: &mut GlobalsBuilder) {
             }
         };
 
-        validate_transition_impl(implementation, attrs.is_some(), split)?;
+        if !is_bazel_transition {
+            validate_transition_impl(implementation, attrs.is_some(), split)?;
+        }
 
         Ok(Transition {
             id: RefCell::new(None),

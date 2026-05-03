@@ -10,9 +10,11 @@
 
 //! Builtin providers.
 
+pub mod cc_info;
 pub mod configuration_info;
 pub mod constraint_setting_info;
 pub mod constraint_value_info;
+pub mod coverage_info;
 pub mod default_info;
 pub mod dep_only_incompatible_info;
 pub mod dep_only_incompatible_rollout;
@@ -21,9 +23,11 @@ pub mod execution_platform_registration_info;
 pub mod external_runner_test_info;
 pub mod install_info;
 pub mod local_resource_info;
+pub mod output_group_info;
 pub mod platform_info;
 pub mod run_info;
 pub mod template_placeholder_info;
+pub mod template_variable_info;
 pub mod ty;
 pub mod validation_info;
 pub mod worker_info;

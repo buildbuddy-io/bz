@@ -202,6 +202,24 @@ fn check_element_type(element_type: &mut Option<String>, value: Value) -> buck2_
     }
 }
 
+pub(crate) fn bazel_depset_from_direct<'v>(
+    direct: Vec<Value<'v>>,
+) -> starlark::Result<BazelDepset<'v>> {
+    let mut element_type = None;
+
+    for value in &direct {
+        check_element_type(&mut element_type, *value)?;
+    }
+
+    Ok(BazelDepset {
+        direct: direct.into_boxed_slice(),
+        transitive: Vec::new().into_boxed_slice(),
+        order: BazelDepsetOrder::Default,
+        element_type,
+        _marker: PhantomData,
+    })
+}
+
 #[starlark_module]
 fn bazel_depset_methods(builder: &mut MethodsBuilder) {
     fn to_list<'v>(this: &BazelDepset<'v>, heap: Heap<'v>) -> starlark::Result<Value<'v>> {
@@ -224,11 +242,8 @@ pub fn register_bazel_depset(builder: &mut GlobalsBuilder) {
         let order = BazelDepsetOrder::parse(order)?;
         let direct = direct.into_option().unwrap_or_default().items;
         let transitive = transitive.into_option().unwrap_or_default().items;
-        let mut element_type = None;
-
-        for value in &direct {
-            check_element_type(&mut element_type, *value)?;
-        }
+        let mut depset = bazel_depset_from_direct(direct)?;
+        let mut element_type = depset.element_type.clone();
 
         for value in &transitive {
             let transitive_depset = depset_from_value(*value)?;
@@ -255,12 +270,10 @@ pub fn register_bazel_depset(builder: &mut GlobalsBuilder) {
             }
         }
 
-        Ok(BazelDepset {
-            direct: direct.into_boxed_slice(),
-            transitive: transitive.into_boxed_slice(),
-            order,
-            element_type,
-            _marker: PhantomData,
-        })
+        depset.transitive = transitive.into_boxed_slice();
+        depset.order = order;
+        depset.element_type = element_type;
+
+        Ok(depset)
     }
 }

@@ -36,7 +36,10 @@ use starlark::values::Value;
 use starlark::values::ValueError;
 use starlark::values::ValueOf;
 use starlark::values::ValueTypedComplex;
+use starlark::values::dict::AllocDict;
+use starlark::values::list::AllocList;
 use starlark::values::list_or_tuple::UnpackListOrTuple;
+use starlark::values::none::NoneOr;
 use starlark::values::tuple::UnpackTuple;
 
 use crate::attrs::coerce::attr_type::AttrTypeExt;
@@ -60,6 +63,8 @@ enum AttrError {
     OptionDefaultNone(String),
     #[error("`attrs.default_only` argument must have a default")]
     DefaultOnlyMustHaveDefault,
+    #[error("unsupported Bazel attr cfg string `{0}`")]
+    UnsupportedBazelAttrCfg(String),
 }
 
 pub(crate) trait AttributeExt {
@@ -96,6 +101,94 @@ impl AttributeExt for Attribute {
             default, doc, coercer,
         )?))
     }
+}
+
+fn bazel_configurable(configurable: Option<bool>) -> AttrIsConfigurable {
+    match configurable {
+        Some(false) => AttrIsConfigurable::No,
+        Some(true) | None => AttrIsConfigurable::Yes,
+    }
+}
+
+fn bazel_doc(doc: NoneOr<&str>) -> &str {
+    doc.into_option().unwrap_or("")
+}
+
+fn bazel_attr<'v>(
+    eval: &mut Evaluator<'v, '_, '_>,
+    default: Option<Value<'v>>,
+    fallback: Value<'v>,
+    mandatory: bool,
+    doc: &str,
+    coercer: AttrType,
+    configurable: Option<bool>,
+) -> buck2_error::Result<StarlarkAttribute> {
+    let default = if mandatory {
+        None
+    } else {
+        Some(default.unwrap_or(fallback))
+    };
+    let default = match default {
+        None => None,
+        Some(x) => Some(Arc::new(
+            coercer
+                .coerce(
+                    bazel_configurable(configurable),
+                    &attr_coercion_context_for_bzl(eval)?,
+                    x,
+                )
+                .buck_error_context("Error coercing Bazel attribute default")?,
+        )),
+    };
+    Ok(StarlarkAttribute::new(Attribute::new(
+        default, doc, coercer,
+    )?))
+}
+
+fn bazel_attr_required<'v>(
+    _eval: &mut Evaluator<'v, '_, '_>,
+    doc: &str,
+    coercer: AttrType,
+) -> buck2_error::Result<StarlarkAttribute> {
+    Ok(StarlarkAttribute::new(Attribute::new(None, doc, coercer)?))
+}
+
+fn bazel_label_allows_files(allow_files: Option<Value>, allow_single_file: Option<Value>) -> bool {
+    allow_files.is_some_and(|v| v.to_bool()) || allow_single_file.is_some_and(|v| v.to_bool())
+}
+
+fn bazel_dep_attr_type<'v>(
+    required_providers: ProviderIdSet,
+    cfg: Option<Value<'v>>,
+) -> buck2_error::Result<AttrType> {
+    match cfg {
+        None => Ok(AttrType::dep(required_providers, PluginKindSet::EMPTY)),
+        Some(cfg) if cfg.is_none() => Ok(AttrType::dep(required_providers, PluginKindSet::EMPTY)),
+        Some(cfg) => match cfg.unpack_str() {
+            Some("target") => Ok(AttrType::dep(required_providers, PluginKindSet::EMPTY)),
+            Some("exec") => Ok(AttrType::exec_dep(required_providers)),
+            Some(other) => Err(AttrError::UnsupportedBazelAttrCfg(other.to_owned()).into()),
+            None => Ok(AttrType::transition_dep(
+                required_providers,
+                Some(transition_id_from_value(cfg)?),
+            )),
+        },
+    }
+}
+
+fn bazel_label_attr_type<'v>(
+    providers: UnpackListOrTuple<Value<'v>>,
+    allow_files: Option<Value<'v>>,
+    allow_single_file: Option<Value<'v>>,
+    cfg: Option<Value<'v>>,
+    list: bool,
+) -> buck2_error::Result<AttrType> {
+    let inner = if bazel_label_allows_files(allow_files, allow_single_file) {
+        AttrType::source(false)
+    } else {
+        bazel_dep_attr_type(dep_like_attr_handle_providers_arg(providers.items)?, cfg)?
+    };
+    Ok(if list { AttrType::list(inner) } else { inner })
 }
 
 /// Coerction context for evaluating bzl files (attr default, transition rules).
@@ -600,7 +693,393 @@ fn attr_module(registry: &mut GlobalsBuilder) {
     }
 }
 
+#[starlark_module]
+fn bazel_attr_module(registry: &mut GlobalsBuilder) {
+    fn string<'v>(
+        #[starlark(require = named)] default: Option<Value<'v>>,
+        #[starlark(require = named, default = false)] mandatory: bool,
+        #[starlark(require = named, default = NoneOr::None)] doc: NoneOr<&str>,
+        #[starlark(require = named)] configurable: Option<bool>,
+        #[starlark(require = named, default = UnpackListOrTuple::default())]
+        values: UnpackListOrTuple<String>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<StarlarkAttribute> {
+        let coercer = if values.items.is_empty() {
+            AttrType::string()
+        } else {
+            AttrType::enumeration(values.items)?
+        };
+        let fallback = eval.heap().alloc("");
+        Ok(bazel_attr(
+            eval,
+            default,
+            fallback,
+            mandatory,
+            bazel_doc(doc),
+            coercer,
+            configurable,
+        )?)
+    }
+
+    fn int<'v>(
+        #[starlark(require = named)] default: Option<Value<'v>>,
+        #[starlark(require = named, default = false)] mandatory: bool,
+        #[starlark(require = named, default = NoneOr::None)] doc: NoneOr<&str>,
+        #[starlark(require = named)] configurable: Option<bool>,
+        #[starlark(require = named, default = UnpackListOrTuple::default())]
+        values: UnpackListOrTuple<Value<'v>>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<StarlarkAttribute> {
+        let _unused = values;
+        let fallback = eval.heap().alloc(0);
+        Ok(bazel_attr(
+            eval,
+            default,
+            fallback,
+            mandatory,
+            bazel_doc(doc),
+            AttrType::int(),
+            configurable,
+        )?)
+    }
+
+    fn bool<'v>(
+        #[starlark(require = named)] default: Option<Value<'v>>,
+        #[starlark(require = named, default = false)] mandatory: bool,
+        #[starlark(require = named, default = NoneOr::None)] doc: NoneOr<&str>,
+        #[starlark(require = named)] configurable: Option<bool>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<StarlarkAttribute> {
+        Ok(bazel_attr(
+            eval,
+            default,
+            Value::new_bool(false),
+            mandatory,
+            bazel_doc(doc),
+            AttrType::bool(),
+            configurable,
+        )?)
+    }
+
+    fn string_list<'v>(
+        #[starlark(require = named)] default: Option<Value<'v>>,
+        #[starlark(require = named, default = false)] mandatory: bool,
+        #[starlark(require = named, default = true)] allow_empty: bool,
+        #[starlark(require = named, default = NoneOr::None)] doc: NoneOr<&str>,
+        #[starlark(require = named)] configurable: Option<bool>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<StarlarkAttribute> {
+        let _unused = allow_empty;
+        let fallback = eval.heap().alloc(AllocList::EMPTY);
+        Ok(bazel_attr(
+            eval,
+            default,
+            fallback,
+            mandatory,
+            bazel_doc(doc),
+            AttrType::list(AttrType::string()),
+            configurable,
+        )?)
+    }
+
+    fn int_list<'v>(
+        #[starlark(require = named)] default: Option<Value<'v>>,
+        #[starlark(require = named, default = false)] mandatory: bool,
+        #[starlark(require = named, default = true)] allow_empty: bool,
+        #[starlark(require = named, default = NoneOr::None)] doc: NoneOr<&str>,
+        #[starlark(require = named)] configurable: Option<bool>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<StarlarkAttribute> {
+        let _unused = allow_empty;
+        let fallback = eval.heap().alloc(AllocList::EMPTY);
+        Ok(bazel_attr(
+            eval,
+            default,
+            fallback,
+            mandatory,
+            bazel_doc(doc),
+            AttrType::list(AttrType::int()),
+            configurable,
+        )?)
+    }
+
+    fn label<'v>(
+        #[starlark(require = named)] default: Option<Value<'v>>,
+        #[starlark(require = named, default = false)] mandatory: bool,
+        #[starlark(require = named, default = NoneOr::None)] doc: NoneOr<&str>,
+        #[starlark(require = named)] configurable: Option<bool>,
+        #[starlark(require = named, default = false)] executable: bool,
+        #[starlark(require = named)] allow_files: Option<Value<'v>>,
+        #[starlark(require = named)] allow_single_file: Option<Value<'v>>,
+        #[starlark(require = named, default = UnpackListOrTuple::default())]
+        providers: UnpackListOrTuple<Value<'v>>,
+        #[starlark(require = named)] cfg: Option<Value<'v>>,
+        #[starlark(require = named, default = UnpackListOrTuple::default())]
+        aspects: UnpackListOrTuple<Value<'v>>,
+        #[starlark(require = named, default = UnpackListOrTuple::default())]
+        flags: UnpackListOrTuple<Value<'v>>,
+        #[starlark(require = named)] allow_rules: Option<Value<'v>>,
+        #[starlark(require = named, default = false)] skip_validations: bool,
+        #[starlark(require = named)] for_dependency_resolution: Option<Value<'v>>,
+        #[starlark(require = named)] materializer: Option<Value<'v>>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<StarlarkAttribute> {
+        let _unused = (
+            executable,
+            aspects,
+            flags,
+            allow_rules,
+            skip_validations,
+            for_dependency_resolution,
+            materializer,
+        );
+        let inner = bazel_label_attr_type(providers, allow_files, allow_single_file, cfg, false)?;
+        let coercer = if mandatory {
+            inner
+        } else {
+            AttrType::option(inner)
+        };
+        Ok(bazel_attr(
+            eval,
+            default,
+            Value::new_none(),
+            mandatory,
+            bazel_doc(doc),
+            coercer,
+            configurable,
+        )?)
+    }
+
+    fn label_list<'v>(
+        #[starlark(require = named)] default: Option<Value<'v>>,
+        #[starlark(require = named, default = false)] mandatory: bool,
+        #[starlark(require = named, default = true)] allow_empty: bool,
+        #[starlark(require = named, default = NoneOr::None)] doc: NoneOr<&str>,
+        #[starlark(require = named)] configurable: Option<bool>,
+        #[starlark(require = named)] allow_files: Option<Value<'v>>,
+        #[starlark(require = named)] allow_rules: Option<Value<'v>>,
+        #[starlark(require = named, default = UnpackListOrTuple::default())]
+        providers: UnpackListOrTuple<Value<'v>>,
+        #[starlark(require = named)] cfg: Option<Value<'v>>,
+        #[starlark(require = named, default = UnpackListOrTuple::default())]
+        aspects: UnpackListOrTuple<Value<'v>>,
+        #[starlark(require = named, default = UnpackListOrTuple::default())]
+        flags: UnpackListOrTuple<Value<'v>>,
+        #[starlark(require = named, default = false)] skip_validations: bool,
+        #[starlark(require = named)] for_dependency_resolution: Option<Value<'v>>,
+        #[starlark(require = named)] materializer: Option<Value<'v>>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<StarlarkAttribute> {
+        let _unused = (
+            allow_empty,
+            allow_rules,
+            aspects,
+            flags,
+            skip_validations,
+            for_dependency_resolution,
+            materializer,
+        );
+        let coercer = bazel_label_attr_type(providers, allow_files, None, cfg, true)?;
+        let fallback = eval.heap().alloc(AllocList::EMPTY);
+        Ok(bazel_attr(
+            eval,
+            default,
+            fallback,
+            mandatory,
+            bazel_doc(doc),
+            coercer,
+            configurable,
+        )?)
+    }
+
+    fn output<'v>(
+        #[starlark(require = named, default = false)] mandatory: bool,
+        #[starlark(require = named, default = NoneOr::None)] doc: NoneOr<&str>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<StarlarkAttribute> {
+        if mandatory {
+            Ok(bazel_attr_required(
+                eval,
+                bazel_doc(doc),
+                AttrType::string(),
+            )?)
+        } else {
+            Ok(bazel_attr(
+                eval,
+                None,
+                Value::new_none(),
+                false,
+                bazel_doc(doc),
+                AttrType::option(AttrType::string()),
+                Some(false),
+            )?)
+        }
+    }
+
+    fn output_list<'v>(
+        #[starlark(require = named, default = false)] mandatory: bool,
+        #[starlark(require = named, default = true)] allow_empty: bool,
+        #[starlark(require = named, default = NoneOr::None)] doc: NoneOr<&str>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<StarlarkAttribute> {
+        let _unused = allow_empty;
+        let fallback = eval.heap().alloc(AllocList::EMPTY);
+        Ok(bazel_attr(
+            eval,
+            None,
+            fallback,
+            mandatory,
+            bazel_doc(doc),
+            AttrType::list(AttrType::string()),
+            Some(false),
+        )?)
+    }
+
+    fn string_dict<'v>(
+        #[starlark(require = named)] default: Option<Value<'v>>,
+        #[starlark(require = named, default = false)] mandatory: bool,
+        #[starlark(require = named, default = true)] allow_empty: bool,
+        #[starlark(require = named, default = NoneOr::None)] doc: NoneOr<&str>,
+        #[starlark(require = named)] configurable: Option<bool>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<StarlarkAttribute> {
+        let _unused = allow_empty;
+        let fallback = eval.heap().alloc(AllocDict::EMPTY);
+        Ok(bazel_attr(
+            eval,
+            default,
+            fallback,
+            mandatory,
+            bazel_doc(doc),
+            AttrType::dict(AttrType::string(), AttrType::string(), false),
+            configurable,
+        )?)
+    }
+
+    fn string_list_dict<'v>(
+        #[starlark(require = named)] default: Option<Value<'v>>,
+        #[starlark(require = named, default = false)] mandatory: bool,
+        #[starlark(require = named, default = true)] allow_empty: bool,
+        #[starlark(require = named, default = NoneOr::None)] doc: NoneOr<&str>,
+        #[starlark(require = named)] configurable: Option<bool>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<StarlarkAttribute> {
+        let _unused = allow_empty;
+        let fallback = eval.heap().alloc(AllocDict::EMPTY);
+        Ok(bazel_attr(
+            eval,
+            default,
+            fallback,
+            mandatory,
+            bazel_doc(doc),
+            AttrType::dict(
+                AttrType::string(),
+                AttrType::list(AttrType::string()),
+                false,
+            ),
+            configurable,
+        )?)
+    }
+
+    fn string_keyed_label_dict<'v>(
+        #[starlark(require = named)] default: Option<Value<'v>>,
+        #[starlark(require = named, default = false)] mandatory: bool,
+        #[starlark(require = named, default = true)] allow_empty: bool,
+        #[starlark(require = named, default = NoneOr::None)] doc: NoneOr<&str>,
+        #[starlark(require = named)] configurable: Option<bool>,
+        #[starlark(require = named)] allow_files: Option<Value<'v>>,
+        #[starlark(require = named)] allow_rules: Option<Value<'v>>,
+        #[starlark(require = named, default = UnpackListOrTuple::default())]
+        providers: UnpackListOrTuple<Value<'v>>,
+        #[starlark(require = named)] cfg: Option<Value<'v>>,
+        #[starlark(require = named, default = UnpackListOrTuple::default())]
+        aspects: UnpackListOrTuple<Value<'v>>,
+        #[starlark(require = named, default = UnpackListOrTuple::default())]
+        flags: UnpackListOrTuple<Value<'v>>,
+        #[starlark(require = named)] for_dependency_resolution: Option<Value<'v>>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<StarlarkAttribute> {
+        let _unused = (
+            allow_empty,
+            allow_rules,
+            aspects,
+            flags,
+            for_dependency_resolution,
+        );
+        let value = bazel_label_attr_type(providers, allow_files, None, cfg, false)?;
+        let fallback = eval.heap().alloc(AllocDict::EMPTY);
+        Ok(bazel_attr(
+            eval,
+            default,
+            fallback,
+            mandatory,
+            bazel_doc(doc),
+            AttrType::dict(AttrType::string(), value, false),
+            configurable,
+        )?)
+    }
+
+    fn label_keyed_string_dict<'v>(
+        #[starlark(require = named)] default: Option<Value<'v>>,
+        #[starlark(require = named, default = false)] mandatory: bool,
+        #[starlark(require = named, default = true)] allow_empty: bool,
+        #[starlark(require = named, default = NoneOr::None)] doc: NoneOr<&str>,
+        #[starlark(require = named)] configurable: Option<bool>,
+        #[starlark(require = named)] allow_files: Option<Value<'v>>,
+        #[starlark(require = named)] allow_rules: Option<Value<'v>>,
+        #[starlark(require = named, default = UnpackListOrTuple::default())]
+        providers: UnpackListOrTuple<Value<'v>>,
+        #[starlark(require = named)] cfg: Option<Value<'v>>,
+        #[starlark(require = named, default = UnpackListOrTuple::default())]
+        aspects: UnpackListOrTuple<Value<'v>>,
+        #[starlark(require = named, default = UnpackListOrTuple::default())]
+        flags: UnpackListOrTuple<Value<'v>>,
+        #[starlark(require = named, default = false)] skip_validations: bool,
+        #[starlark(require = named)] for_dependency_resolution: Option<Value<'v>>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<StarlarkAttribute> {
+        let _unused = (
+            allow_empty,
+            allow_rules,
+            aspects,
+            flags,
+            skip_validations,
+            for_dependency_resolution,
+        );
+        let key = bazel_label_attr_type(providers, allow_files, None, cfg, false)?;
+        let fallback = eval.heap().alloc(AllocDict::EMPTY);
+        Ok(bazel_attr(
+            eval,
+            default,
+            fallback,
+            mandatory,
+            bazel_doc(doc),
+            AttrType::dict(key, AttrType::string(), false),
+            configurable,
+        )?)
+    }
+
+    fn license<'v>(
+        #[starlark(require = named)] default: Option<Value<'v>>,
+        #[starlark(require = named, default = false)] mandatory: bool,
+        #[starlark(require = named, default = NoneOr::None)] doc: NoneOr<&str>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<StarlarkAttribute> {
+        let fallback = eval.heap().alloc(AllocList::EMPTY);
+        Ok(bazel_attr(
+            eval,
+            default,
+            fallback,
+            mandatory,
+            bazel_doc(doc),
+            AttrType::list(AttrType::string()),
+            Some(false),
+        )?)
+    }
+}
+
 pub(crate) fn register_attrs(globals: &mut GlobalsBuilder) {
+    globals.namespace("attr", bazel_attr_module);
     globals.namespace("attrs", attr_module);
     register_attr_type(globals);
 }

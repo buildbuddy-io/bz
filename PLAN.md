@@ -29,6 +29,14 @@ Completed:
 - Bazel-style `provider()` now supports `fields = None`/omitted schemaless providers with arbitrary keyword fields.
 - `@io_bazel_rules_nogo` is generated as a bzlmod external cell from the `rules_go` module's imported repos.
 - The first `@bazel_tools` builtin Starlark files needed by `rules_go` are present as Bazel tool definitions, not rules_go compatibility shims.
+- Bazel `attr.*` constructors are native load-time globals.
+- Bazel `rule(...)` accepts Bazel's implementation/metadata signature and records Buck rule specs directly.
+- Bazel `repository_rule(...)`, `tag_class(...)`, and `module_extension(...)` are native first-class load-time values.
+- Bazel `native`, `apple_common`, `config`, `config_common`, `cc_common`, `platform_common.TemplateVariableInfo`, `OutputGroupInfo`, and `CcInfo` load-time surfaces are present where real rules_go/rules_cc/bazel_skylib currently require them.
+- Bazel `Label(...)` defaults now coerce through label/dependency/source attrs.
+- Bazel `transition(...)` accepts `implementation`, `inputs`, and `outputs`.
+- Bazel `coverage_common.instrumented_files_info` and `InstrumentedFilesInfo` are native load-time values with Bazel depset fields.
+- `@bazel_tools//tools/build_defs/repo:utils.bzl` is present as a Bazel builtin tool definition.
 
 Latest smoke:
 
@@ -38,13 +46,14 @@ BUCK2_HARD_ERROR=false \
 bazel-bin/app/buck2/buck2_bin --isolation-dir real-rules-go-... build //:hello
 ```
 
-The smoke now loads real `rules_go` from bzlmod, gets past the generated `@io_bazel_rules_nogo` repository, loads the initial `@bazel_tools` builtin files, and gets past `depset(...)`. The current failure is:
+The smoke now loads real `rules_go`, `rules_cc`, `bazel_skylib`, and `gazelle` load-time Starlark from bzlmod, gets past the generated `@io_bazel_rules_nogo` repository, and gets through the first wave of Bazel native load-time APIs. The current failure is:
 
 ```text
-Variable `attr` not found, did you mean `Attr`?
+Error coercing "@com_github_pmezard_go_difflib//difflib:go_default_library"
+unknown cell alias: `com_github_pmezard_go_difflib`.
 ```
 
-That is the next hard cutover point into Bazel's real load-time rule API: `attr.*` and `rule(...)` must be native Bazel-compatible globals, not compatibility macros.
+That is the next hard cutover point into real module-extension generated repositories. `rules_go` imports `com_github_pmezard_go_difflib` from Gazelle's `go_deps` module extension, so Buck2 must evaluate `go_deps.from_file(...)`, execute the generated repository rules, and materialize those generated repos as external cells.
 
 ## Constraints
 
@@ -72,7 +81,7 @@ Acceptance:
 
 ## Phase 2: Module Extensions and Generated Repos
 
-Status: first generated repo implemented; full extension evaluation still remaining.
+Status: parsed generated repo imports for the first rules_go repository are implemented; full extension evaluation still remaining.
 
 Implement:
 
@@ -91,7 +100,8 @@ Implement:
 
 Immediate target:
 
-- Replace the current parsed `rules_go` generated-repo extraction with real `module_extension(...)` evaluation and repository rule execution.
+- Replace the current parsed generated-repo extraction with real `module_extension(...)` evaluation and repository rule execution.
+- Materialize Gazelle `go_deps` repos imported by `rules_go`, starting with `com_github_pmezard_go_difflib`.
 
 Acceptance:
 
@@ -100,19 +110,30 @@ Acceptance:
 
 ## Phase 3: Bazel Load-Time Builtins
 
-Status: partial.
+Status: native load-time API cutover is underway; the current rules_go smoke no longer fails on missing `attr`, `rule`, `repository_rule`, `tag_class`, `module_extension`, `native`, `apple_common`, `config`, `config_common`, `cc_common`, `coverage_common`, `platform_common.TemplateVariableInfo`, `OutputGroupInfo`, `CcInfo`, or Bazel transition globals.
 
 Completed:
 
 - `Label(...)`
 - `depset(...)` and `.to_list()`
 - Bazel-compatible schemaless `provider()`
-- Initial `@bazel_tools//tools/cpp:toolchain_utils.bzl` and `@bazel_tools//tools/build_defs/cc:action_names.bzl` builtin files needed by `rules_go`
+- `attr.*`
+- Bazel-compatible load-time `rule(...)` signature
+- `repository_rule(...)`, `tag_class(...)`, and `module_extension(...)` load-time values
+- `native.bazel_version`, `native.existing_rule`, and `native.existing_rules`
+- `apple_common.platform` and `apple_common.platform_type`
+- `config.*` build-setting descriptors and `config_common.toolchain_type`
+- `cc_common.CcToolchainInfo`
+- `coverage_common.instrumented_files_info`
+- `InstrumentedFilesInfo`
+- `platform_common.TemplateVariableInfo`
+- `OutputGroupInfo`
+- `CcInfo`
+- Bazel-compatible `transition(...)` signature
+- Initial `@bazel_tools` builtin files needed by `rules_go`
 
 Implement as failures demand:
 
-- `attr.*`
-- `rule(...)`
 - `module_name`
 - `module_version`
 - `repo_name`
@@ -130,14 +151,13 @@ Acceptance:
 
 ## Phase 4: Bazel Rule API Compatibility
 
-Status: current blocker.
+Status: load-time rule declaration is partially implemented; rule analysis semantics are still ahead.
 
 Implement enough Bazel analysis surface for real rules_go:
 
-- `attr.*` constructors with Bazel-compatible defaults, configurability, providers, cfg, mandatory, allow_files/allow_single_file, executable, and label coercion.
-- `rule(...)` with implementation binding, attrs schema capture, outputs, executable/test flags, fragments/toolchains metadata, and analysis invocation through Buck2's configured target machinery.
+- Complete `attr.*` semantics beyond load-time schema capture: configurability, providers, cfg, mandatory, allow_files/allow_single_file, executable, and label coercion edge cases.
+- Complete `rule(...)` analysis semantics: outputs, executable/test flags, fragments/toolchains metadata, and analysis invocation through Buck2's configured target machinery.
 - `DefaultInfo`
-- `OutputGroupInfo`
 - provider indexing and membership behavior
 - executable/test rule metadata
 - implicit attrs and configurable attrs

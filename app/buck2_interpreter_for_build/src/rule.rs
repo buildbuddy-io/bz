@@ -17,7 +17,6 @@ use buck2_core::plugins::PluginKind;
 use buck2_error::internal_error;
 use buck2_interpreter::late_binding_ty::AnalysisContextReprLate;
 use buck2_interpreter::late_binding_ty::ProviderReprLate;
-use buck2_interpreter::late_binding_ty::TransitionReprLate;
 use buck2_interpreter::starlark_promise::StarlarkPromise;
 use buck2_interpreter::types::rule::FROZEN_PROMISE_ARTIFACT_MAPPINGS_GET_IMPL;
 use buck2_interpreter::types::rule::FROZEN_RULE_GET_IMPL;
@@ -63,7 +62,6 @@ use starlark::values::StarlarkValue;
 use starlark::values::StringValue;
 use starlark::values::Trace;
 use starlark::values::Value;
-use starlark::values::ValueOfUnchecked;
 use starlark::values::dict::UnpackDictEntries;
 use starlark::values::list::ListType;
 use starlark::values::list::UnpackList;
@@ -164,6 +162,8 @@ enum RuleError {
     CfgAndSupportsIncomingTransition,
     #[error("{0} rules do not support incoming transitions")]
     RuleDoesNotSupportIncomingTransition(&'static str),
+    #[error("`rule` requires exactly one implementation function")]
+    MissingOrConflictingImplementation,
 }
 
 impl<'v> AllocValue<'v> for StarlarkRuleCallable<'v> {
@@ -592,25 +592,89 @@ pub fn register_rule_function(builder: &mut GlobalsBuilder) {
     /// })
     /// ```
     fn rule<'v>(
-        #[starlark(require = named)] r#impl: StarlarkCallableChecked<
-            'v,
-            (AnalysisContextReprLate,),
-            Either<ListType<ProviderReprLate>, StarlarkPromise>,
+        r#impl: Option<
+            StarlarkCallableChecked<
+                'v,
+                (AnalysisContextReprLate,),
+                Either<ListType<ProviderReprLate>, StarlarkPromise<'v>>,
+            >,
         >,
-        #[starlark(require = named)] attrs: UnpackDictEntries<&'v str, &'v StarlarkAttribute>,
-        #[starlark(require = named)] cfg: Option<ValueOfUnchecked<'v, TransitionReprLate>>,
+        #[starlark(require = named)] implementation: Option<
+            StarlarkCallableChecked<
+                'v,
+                (AnalysisContextReprLate,),
+                Either<ListType<ProviderReprLate>, StarlarkPromise<'v>>,
+            >,
+        >,
+        #[starlark(require = named, default = UnpackDictEntries::default())]
+        attrs: UnpackDictEntries<&'v str, &'v StarlarkAttribute>,
+        #[starlark(require = named)] cfg: Option<Value<'v>>,
         #[starlark(require = named)] supports_incoming_transition: Option<bool>,
         #[starlark(require = named, default = "")] doc: &str,
         #[starlark(require = named, default = false)] is_configuration_rule: bool,
         #[starlark(require = named, default = false)] is_toolchain_rule: bool,
+        #[starlark(require = named, default = false)] executable: bool,
+        #[starlark(require = named)] test: Option<bool>,
+        #[starlark(require = named)] outputs: Option<Value<'v>>,
+        #[starlark(require = named, default = false)] output_to_genfiles: bool,
+        #[starlark(require = named, default = UnpackListOrTuple::default())]
+        fragments: UnpackListOrTuple<Value<'v>>,
+        #[starlark(require = named, default = UnpackListOrTuple::default())]
+        host_fragments: UnpackListOrTuple<Value<'v>>,
+        #[starlark(require = named, default = false)] _skylark_testable: bool,
+        #[starlark(require = named, default = UnpackListOrTuple::default())]
+        toolchains: UnpackListOrTuple<Value<'v>>,
+        #[starlark(require = named, default = UnpackListOrTuple::default())]
+        provides: UnpackListOrTuple<Value<'v>>,
+        #[starlark(require = named, default = false)] dependency_resolution_rule: bool,
+        #[starlark(require = named, default = UnpackListOrTuple::default())]
+        exec_compatible_with: UnpackListOrTuple<Value<'v>>,
+        #[starlark(require = named, default = false)] analysis_test: bool,
+        #[starlark(require = named)] build_setting: Option<Value<'v>>,
+        #[starlark(require = named)] exec_groups: Option<Value<'v>>,
+        #[starlark(require = named)] initializer: Option<Value<'v>>,
+        #[starlark(require = named)] parent: Option<Value<'v>>,
+        #[starlark(require = named)] extendable: Option<Value<'v>>,
+        #[starlark(require = named, default = UnpackListOrTuple::default())]
+        subrules: UnpackListOrTuple<Value<'v>>,
         #[starlark(require = named, default = UnpackListOrTuple::default())]
         uses_plugins: UnpackListOrTuple<PluginKindArg>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<StarlarkRuleCallable<'v>> {
+        let _unused = (
+            executable,
+            test,
+            outputs,
+            output_to_genfiles,
+            fragments,
+            host_fragments,
+            _skylark_testable,
+            toolchains,
+            provides,
+            dependency_resolution_rule,
+            exec_compatible_with,
+            analysis_test,
+            build_setting,
+            exec_groups,
+            initializer,
+            parent,
+            extendable,
+            subrules,
+        );
+        let implementation = match (r#impl, implementation) {
+            (Some(r#impl), None) => r#impl,
+            (None, Some(implementation)) => implementation,
+            _ => {
+                return Err(buck2_error::Error::from(
+                    RuleError::MissingOrConflictingImplementation,
+                )
+                .into());
+            }
+        };
         Ok(StarlarkRuleCallable::new(
-            RuleImpl::BuildRule(StarlarkCallable::unchecked_new(r#impl.0)),
+            RuleImpl::BuildRule(StarlarkCallable::unchecked_new(implementation.0)),
             attrs,
-            cfg.map(|v| v.get()),
+            cfg.filter(|cfg| !cfg.is_none()),
             supports_incoming_transition,
             doc,
             is_configuration_rule,

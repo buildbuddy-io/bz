@@ -16,6 +16,7 @@ use starlark::typing::Ty;
 use starlark::values::Value;
 
 use crate::attrs::coerce::AttrTypeCoerce;
+use crate::attrs::coerce::attr_type::coerce_providers_label_from_value;
 use crate::attrs::coerce::attr_type::ty_maybe_select::TyMaybeSelect;
 
 #[derive(Debug, buck2_error::Error)]
@@ -41,6 +42,10 @@ impl AttrTypeCoerce for SourceAttrType {
         ctx: &dyn AttrCoercionContext,
         value: Value,
     ) -> buck2_error::Result<CoercedAttr> {
+        if value.unpack_str().is_none() {
+            return coerce_providers_label_from_value(ctx, value).map(CoercedAttr::SourceLabel);
+        }
+
         let source_label = value.unpack_str_err()?;
 
         let label_err = if source_label.contains(':') {
