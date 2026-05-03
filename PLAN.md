@@ -26,7 +26,7 @@ Completed:
 - Bazel-style `Label(...)` is available at load time.
 - Bazel-style `depset(...)` is available at load time with order validation, transitive depset validation, element type checks, and `.to_list()`.
 - Buck's `Label` type references in prelude were renamed to `ConfiguredProvidersLabel`.
-- Bazel-style `provider()` now supports `fields = None`/omitted schemaless providers with arbitrary keyword fields.
+- Bazel-style `provider()` now supports `fields = None`/omitted schemaless providers with arbitrary keyword fields and Bazel `init = ...` raw constructor tuples.
 - `@io_bazel_rules_nogo` is generated as a bzlmod external cell from the `rules_go` module's imported repos.
 - The first `@bazel_tools` builtin Starlark files needed by `rules_go` are present as Bazel tool definitions, not rules_go compatibility shims.
 - Bazel `attr.*` constructors are native load-time globals.
@@ -36,7 +36,7 @@ Completed:
 - Bazel `Label(...)` defaults now coerce through label/dependency/source attrs.
 - Bazel `transition(...)` accepts `implementation`, `inputs`, and `outputs`.
 - Bazel `coverage_common.instrumented_files_info` and `InstrumentedFilesInfo` are native load-time values with Bazel depset fields.
-- Bazel `aspect(...)`, `RunEnvironmentInfo`, `platform_common.ToolchainInfo`, and `configuration_field(...)` are native load-time values needed by real rules_go.
+- Bazel `aspect(...)`, `RunEnvironmentInfo`, `platform_common.ToolchainInfo`, `configuration_field(...)`, and `proto_common_do_not_use` are native load-time values needed by real rules_go/protobuf.
 - `@bazel_tools//tools/build_defs/repo:utils.bzl` is present as a Bazel builtin tool definition.
 - Gazelle `go_deps.from_file(go_mod = ...)` imports from external bzlmod modules are parsed into generated external cells.
 - Generated `go_deps` Go module repos read the parent module's `go.mod`, download the selected module with `go mod download`, copy the module source, and emit Bazel `go_library` BUILD files.
@@ -50,13 +50,13 @@ BUCK2_HARD_ERROR=false \
 bazel-bin/app/buck2/buck2_bin --isolation-dir real-rules-go-... build //:hello
 ```
 
-The smoke now loads real `rules_go`, `rules_cc`, `rules_proto`, `protobuf`, `bazel_skylib`, and `gazelle` load-time Starlark from bzlmod, gets past the generated `@io_bazel_rules_nogo` repository and the first Gazelle `go_deps` aliases, and gets through the first wave of Bazel native load-time APIs. The current failure is:
+The smoke now loads real `rules_go`, `rules_cc`, `rules_proto`, `protobuf`, `bazel_skylib`, and `gazelle` load-time Starlark from bzlmod, gets past the generated `@io_bazel_rules_nogo` repository and the first Gazelle `go_deps` aliases, and gets through the first wave of Bazel native load-time APIs, including protobuf's private native proto API and `provider(init = ...)`. The current failure is:
 
 ```text
-Variable `proto_common_do_not_use` not found
+unknown cell alias: `bazel_features_globals`
 ```
 
-The direct `//:hello` smoke now reaches protobuf's native proto API surface through real `rules_proto` and `protobuf` bzlmod modules.
+The direct `//:hello` smoke now reaches `@bazel_features//:features.bzl`, which loads `@bazel_features_globals//:globals.bzl`. That alias is missing from the generated repo mapping for the `bazel_features` module.
 
 ## Constraints
 
@@ -91,6 +91,7 @@ Implement:
 - Parse `use_extension(...)` bindings from `MODULE.bazel`.
 - Parse extension tag calls such as `go_sdk.from_file(...)` and `go_sdk.nogo(...)`.
 - Parse `use_repo(...)` imports, including aliasing syntax.
+- Preserve `use_repo(...)` imports from non-root modules such as `bazel_features_globals`.
 - Load and evaluate real `module_extension(...)` definitions.
 - Provide `module_ctx`, `tag_class`, `extension_metadata`, and the module/tag data model needed by rules_go and Gazelle.
 - Execute repository rules emitted by module extensions into generated external cells.
@@ -105,6 +106,7 @@ Immediate target:
 
 - Replace the current parsed generated-repo extraction with real `module_extension(...)` evaluation and repository rule execution.
 - Preserve per-module repo mappings so aliases imported by `rules_go` and `gazelle` no longer collide in the global alias superset.
+- Add real repo mapping generation for module-extension repos that are imported by external modules; the immediate blocker is `@bazel_features_globals` from the `bazel_features` module.
 - Replace parsed `go_deps` materialization with real Starlark `module_extension(...)` evaluation.
 
 Acceptance:
@@ -114,13 +116,14 @@ Acceptance:
 
 ## Phase 3: Bazel Load-Time Builtins
 
-Status: native load-time API cutover is underway; the current rules_go smoke no longer fails on missing `attr`, `rule`, `repository_rule`, `tag_class`, `module_extension`, `native`, `apple_common`, `config`, `config_common`, `cc_common`, `coverage_common`, `platform_common.TemplateVariableInfo`, `platform_common.ToolchainInfo`, `OutputGroupInfo`, `CcInfo`, `RunEnvironmentInfo`, `aspect`, `configuration_field`, or Bazel transition globals.
+Status: native load-time API cutover is underway; the current rules_go smoke no longer fails on missing `attr`, `rule`, `repository_rule`, `tag_class`, `module_extension`, `native`, `apple_common`, `config`, `config_common`, `cc_common`, `coverage_common`, `platform_common.TemplateVariableInfo`, `platform_common.ToolchainInfo`, `OutputGroupInfo`, `CcInfo`, `RunEnvironmentInfo`, `aspect`, `configuration_field`, `proto_common_do_not_use`, `provider(init = ...)`, or Bazel transition globals.
 
 Completed:
 
 - `Label(...)`
 - `depset(...)` and `.to_list()`
 - Bazel-compatible schemaless `provider()`
+- Bazel-compatible `provider(init = ...)`
 - `attr.*`
 - Bazel-compatible load-time `rule(...)` signature
 - `repository_rule(...)`, `tag_class(...)`, and `module_extension(...)` load-time values
@@ -138,6 +141,7 @@ Completed:
 - Bazel-compatible `transition(...)` signature
 - `aspect(...)`
 - `configuration_field(...)` for `coverage.output_generator` label defaults
+- `proto_common_do_not_use`
 - Initial `@bazel_tools` builtin files needed by `rules_go`
 
 Implement as failures demand:
@@ -149,7 +153,6 @@ Implement as failures demand:
 - `exports_files`
 - `glob`
 - `select`
-- `proto_common_do_not_use`
 - `visibility` constants
 - missing `native.*` load-time functions
 

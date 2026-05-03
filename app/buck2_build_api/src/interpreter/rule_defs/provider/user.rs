@@ -51,6 +51,8 @@ enum UserProviderError {
     MismatchedType(String, Ty, String),
     #[error("Required parameter `{0}` is missing")]
     MissingParameter(String),
+    #[error("Unexpected field `{0}` in provider constructor")]
+    UnexpectedField(String),
 }
 
 /// The result of calling the output of `provider()`. This is just a simple data structure of
@@ -211,7 +213,6 @@ pub(crate) fn user_provider_creator<'v>(
     eval: &Evaluator<'v, '_, '_>,
     param_parser: &mut ParametersParser<'v, '_>,
 ) -> buck2_error::Result<Value<'v>> {
-    let heap = eval.heap();
     let callable_data: &UserProviderCallableData = &callable;
     let (values, attribute_names) = match &callable_data.fields {
         UserProviderSchema::Schema(fields) => {
@@ -248,6 +249,71 @@ pub(crate) fn user_provider_creator<'v>(
             (values.into_boxed_slice(), Some(names.into_boxed_slice()))
         }
     };
+    user_provider_creator_from_values(callable, eval, values, attribute_names)
+}
+
+pub(crate) fn user_provider_creator_from_kwargs<'v>(
+    callable: FrozenAnyValue<UserProviderCallableData>,
+    eval: &Evaluator<'v, '_, '_>,
+    kwargs: SmallMap<String, Value<'v>>,
+) -> buck2_error::Result<Value<'v>> {
+    let callable_data: &UserProviderCallableData = &callable;
+    let (values, attribute_names) = match &callable_data.fields {
+        UserProviderSchema::Schema(fields) => {
+            for (name, _) in &kwargs {
+                if !fields.contains_key(name) {
+                    return Err(UserProviderError::UnexpectedField(name.to_owned()).into());
+                }
+            }
+            let values = fields
+                .iter()
+                .map(|(name, field)| {
+                    match kwargs
+                        .iter()
+                        .find_map(|(candidate, value)| (candidate == name).then_some(*value))
+                    {
+                        Some(value) => {
+                            if !field.ty.matches(value) {
+                                return Err(UserProviderError::MismatchedType(
+                                    name.to_owned(),
+                                    field.ty.as_ty().dupe(),
+                                    value.to_repr(),
+                                )
+                                .into());
+                            }
+                            Ok(value)
+                        }
+                        None => match field.default {
+                            Some(default) => Ok(default.to_value()),
+                            None => {
+                                Err(UserProviderError::MissingParameter(name.to_owned()).into())
+                            }
+                        },
+                    }
+                })
+                .collect::<buck2_error::Result<Box<[Value]>>>()?;
+            (values, None)
+        }
+        UserProviderSchema::Schemaless => {
+            let mut names = Vec::with_capacity(kwargs.len());
+            let mut values = Vec::with_capacity(kwargs.len());
+            for (name, value) in kwargs {
+                names.push(name);
+                values.push(value);
+            }
+            (values.into_boxed_slice(), Some(names.into_boxed_slice()))
+        }
+    };
+    user_provider_creator_from_values(callable, eval, values, attribute_names)
+}
+
+fn user_provider_creator_from_values<'v>(
+    callable: FrozenAnyValue<UserProviderCallableData>,
+    eval: &Evaluator<'v, '_, '_>,
+    values: Box<[Value<'v>]>,
+    attribute_names: Option<Box<[String]>>,
+) -> buck2_error::Result<Value<'v>> {
+    let heap = eval.heap();
     Ok(heap.alloc(UserProvider {
         callable,
         attributes: values,

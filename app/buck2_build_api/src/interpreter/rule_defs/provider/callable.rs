@@ -8,13 +8,13 @@
  * above-listed licenses.
  */
 
-use std::cell::OnceCell;
 use std::fmt;
 use std::fmt::Display;
 use std::fmt::Formatter;
 use std::hash::BuildHasher;
 use std::hash::Hasher;
 use std::sync::Arc;
+use std::sync::OnceLock;
 
 use allocative::Allocative;
 use buck2_core::cells::cell_path::CellPath;
@@ -65,6 +65,8 @@ use starlark::values::list::ListRef;
 use starlark::values::list_or_tuple::UnpackListOrTuple;
 use starlark::values::none::NoneOr;
 use starlark::values::starlark_value;
+use starlark::values::tuple::AllocTuple;
+use starlark::values::typing::StarlarkCallable;
 use starlark::values::typing::TypeCompiled;
 use starlark::values::typing::TypeInstanceId;
 use starlark::values::typing::TypeMatcher;
@@ -81,6 +83,7 @@ use crate::interpreter::rule_defs::provider::ty::provider::ty_provider;
 use crate::interpreter::rule_defs::provider::ty::provider_callable::ty_provider_callable;
 use crate::interpreter::rule_defs::provider::user::UserProvider;
 use crate::interpreter::rule_defs::provider::user::user_provider_creator;
+use crate::interpreter::rule_defs::provider::user::user_provider_creator_from_kwargs;
 
 #[derive(Debug, buck2_error::Error)]
 #[buck2(tag = Input)]
@@ -99,6 +102,10 @@ enum ProviderCallableError {
     InvalidDefaultValue,
     #[error("Default value `{0}` (type `{1}`) does not match field type `{2}`")]
     InvalidDefaultValueType(String, &'static str, Ty),
+    #[error("Provider `init` returned `{0}` (type `{1}`), expected a dict")]
+    InitReturnedNonDict(String, String),
+    #[error("Provider `init` returned a dict with non-string key `{0}`")]
+    InitReturnedNonStringKey(String),
 }
 
 /// `Hashed` from starlark contains the small hash,
@@ -293,7 +300,7 @@ pub(crate) struct UserProviderCallableData {
 register_starlark_any!(UserProviderCallableData);
 
 /// Initialized after the name is assigned to the provider.
-#[derive(Debug, Trace, Allocative)]
+#[derive(Debug, Trace, Allocative, Clone)]
 struct UserProviderCallableNamed {
     /// The name of this provider, filled in by `export_as()`. This must be set before this
     /// object can be called and Providers created.
@@ -311,12 +318,38 @@ impl UserProviderCallableNamed {
     fn invoke<'v>(
         &self,
         args: &Arguments<'v, '_>,
+        init: Option<Value<'v>>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {
+        if let Some(init) = init {
+            let init_result = init.invoke(args, eval)?;
+            let kwargs = init_result_to_kwargs(init_result)?;
+            return Ok(user_provider_creator_from_kwargs(self.data, eval, kwargs)?);
+        }
+
         self.signature.parser(args, eval, |parser, eval| {
             user_provider_creator(self.data, eval, parser).map_err(Into::into)
         })
     }
+}
+
+fn init_result_to_kwargs<'v>(
+    init_result: Value<'v>,
+) -> buck2_error::Result<SmallMap<String, Value<'v>>> {
+    let dict = DictRef::from_value(init_result).ok_or_else(|| {
+        ProviderCallableError::InitReturnedNonDict(
+            init_result.to_repr(),
+            init_result.get_type().to_owned(),
+        )
+    })?;
+    let mut kwargs = SmallMap::with_capacity(dict.len());
+    for (key, value) in dict.iter() {
+        let key = key
+            .unpack_str()
+            .ok_or_else(|| ProviderCallableError::InitReturnedNonStringKey(key.to_repr()))?;
+        kwargs.insert(key.to_owned(), value);
+    }
+    Ok(kwargs)
 }
 
 #[derive(Debug, Trace, Allocative, ProvidesStaticType, NoSerialize, Clone, Dupe)]
@@ -372,7 +405,12 @@ pub struct UserProviderCallable {
     /// The field schema used in `callable`, or schemaless Bazel provider behavior.
     fields: UserProviderSchema,
     /// Field is initialized after the provider is assigned to a variable.
-    callable: OnceCell<UserProviderCallableNamed>,
+    callable: Arc<OnceLock<UserProviderCallableNamed>>,
+    /// Optional Bazel provider initializer. When set, public calls are routed through this callable
+    /// and its returned dict is passed to the raw provider constructor.
+    init: Option<FrozenValue>,
+    /// Raw constructors share the public provider identity but skip the initializer.
+    raw_constructor: bool,
 }
 
 fn user_provider_callable_display(
@@ -413,12 +451,30 @@ impl Display for UserProviderCallable {
 }
 
 impl UserProviderCallable {
-    fn new(path: CellPath, docs: Option<DocString>, fields: UserProviderSchema) -> Self {
+    fn new(
+        path: CellPath,
+        docs: Option<DocString>,
+        fields: UserProviderSchema,
+        init: Option<FrozenValue>,
+    ) -> Self {
         Self {
-            callable: OnceCell::new(),
+            callable: Arc::new(OnceLock::new()),
             path,
             docs,
             fields,
+            init,
+            raw_constructor: false,
+        }
+    }
+
+    fn raw_constructor(&self) -> Self {
+        Self {
+            callable: self.callable.dupe(),
+            path: self.path.clone(),
+            docs: self.docs.clone(),
+            fields: self.fields.clone(),
+            init: None,
+            raw_constructor: true,
         }
     }
 }
@@ -441,9 +497,8 @@ impl<'v> AllocValue<'v> for UserProviderCallable {
 impl Freeze for UserProviderCallable {
     type Frozen = FrozenUserProviderCallable;
     fn freeze(self, _freezer: &Freezer) -> FreezeResult<Self::Frozen> {
-        let callable = self.callable.into_inner();
-        let callable = match callable {
-            Some(x) => x,
+        let callable = match self.callable.get() {
+            Some(x) => x.clone(),
             None => {
                 // Unfortunately we have no name or location for the provider at this point,
                 // so reproduce the fields so that the provider can be identified.
@@ -458,7 +513,72 @@ impl Freeze for UserProviderCallable {
             self.docs,
             self.fields,
             callable,
+            self.init,
         ))
+    }
+}
+
+#[derive(Debug, ProvidesStaticType, Trace, NoSerialize, Allocative)]
+pub struct UserProviderCallableWithInit<'v> {
+    provider: UserProviderCallable,
+    init: StarlarkCallable<'v>,
+}
+
+impl<'v> Display for UserProviderCallableWithInit<'v> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        Display::fmt(&self.provider, f)
+    }
+}
+
+impl<'v> AllocValue<'v> for UserProviderCallableWithInit<'v> {
+    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
+        heap.alloc_complex(self)
+    }
+}
+
+impl<'v> Freeze for UserProviderCallableWithInit<'v> {
+    type Frozen = FrozenUserProviderCallable;
+
+    fn freeze(self, freezer: &Freezer) -> FreezeResult<Self::Frozen> {
+        let init = self.init.0.freeze(freezer)?;
+        let mut provider = self.provider.freeze(freezer)?;
+        provider.init = Some(init);
+        Ok(provider)
+    }
+}
+
+#[starlark_value(type = "ProviderCallable")]
+impl<'v> StarlarkValue<'v> for UserProviderCallableWithInit<'v> {
+    type Canonical = FrozenUserProviderCallable;
+
+    fn export_as(
+        &self,
+        variable_name: &str,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<()> {
+        self.provider.export_as(variable_name, eval)
+    }
+
+    fn invoke(
+        &self,
+        _me: Value<'v>,
+        args: &Arguments<'v, '_>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<Value<'v>> {
+        match self.provider.callable.get() {
+            Some(callable) => callable.invoke(args, Some(self.init.0), eval),
+            None => Err(buck2_error::Error::from(ProviderCallableError::NotBound).into()),
+        }
+    }
+
+    fn provide(&'v self, demand: &mut Demand<'_, 'v>) {
+        demand.provide_value::<&dyn ProviderCallableLike>(self);
+    }
+}
+
+impl<'v> ProviderCallableLike for UserProviderCallableWithInit<'v> {
+    fn id(&self) -> buck2_error::Result<&Arc<ProviderId>> {
+        self.provider.id()
     }
 }
 
@@ -490,6 +610,9 @@ impl<'v> StarlarkValue<'v> for UserProviderCallable {
         variable_name: &str,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<()> {
+        if self.raw_constructor {
+            return Ok(());
+        }
         // First export wins
         self.callable.get_or_try_init(|| {
             let provider_id = Arc::new(ProviderId {
@@ -542,7 +665,7 @@ impl<'v> StarlarkValue<'v> for UserProviderCallable {
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {
         match self.callable.get() {
-            Some(callable) => callable.invoke(args, eval),
+            Some(callable) => callable.invoke(args, self.init.map(|init| init.to_value()), eval),
             None => Err(buck2_error::Error::from(ProviderCallableError::NotBound).into()),
         }
     }
@@ -592,6 +715,8 @@ pub struct FrozenUserProviderCallable {
     fields: UserProviderSchema,
     /// The actual callable that creates instances of `UserProvider`
     callable: UserProviderCallableNamed,
+    /// Optional Bazel provider initializer for public constructor calls.
+    init: Option<FrozenValue>,
 }
 starlark_simple_value!(FrozenUserProviderCallable);
 
@@ -606,11 +731,13 @@ impl FrozenUserProviderCallable {
         docs: Option<DocString>,
         fields: UserProviderSchema,
         callable: UserProviderCallableNamed,
+        init: Option<FrozenValue>,
     ) -> Self {
         Self {
             docs,
             fields,
             callable,
+            init,
         }
     }
 }
@@ -631,7 +758,8 @@ impl<'v> StarlarkValue<'v> for FrozenUserProviderCallable {
         args: &Arguments<'v, '_>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {
-        self.callable.invoke(args, eval)
+        self.callable
+            .invoke(args, self.init.map(|init| init.to_value()), eval)
     }
 
     fn provide(&'v self, demand: &mut Demand<'_, 'v>) {
@@ -734,12 +862,14 @@ pub fn register_provider(builder: &mut GlobalsBuilder) {
         #[starlark(require=named, default = NoneOr::None)] fields: NoneOr<
             Either<UnpackListOrTuple<String>, SmallMap<String, Value<'v>>>,
         >,
+        #[starlark(require=named, default = NoneOr::None)] init: NoneOr<StarlarkCallable<'v>>,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<UserProviderCallable> {
+    ) -> starlark::Result<Value<'v>> {
         let docstring = doc
             .into_option()
             .and_then(|doc| DocString::from_docstring(DocStringKind::Starlark, doc));
         let path = starlark_path_from_build_context(eval)?.path();
+        let init = init.into_option();
 
         let fields = match fields {
             NoneOr::None => UserProviderSchema::Schemaless,
@@ -778,10 +908,18 @@ pub fn register_provider(builder: &mut GlobalsBuilder) {
                 UserProviderSchema::Schema(new_fields)
             }
         };
-        Ok(UserProviderCallable::new(
-            path.into_owned(),
-            docstring,
-            fields,
-        ))
+        let provider = UserProviderCallable::new(path.into_owned(), docstring, fields, None);
+        if let Some(init) = init {
+            let raw_constructor = provider.raw_constructor();
+            let public_constructor = eval
+                .heap()
+                .alloc(UserProviderCallableWithInit { provider, init });
+            let raw_constructor = eval.heap().alloc(raw_constructor);
+            Ok(eval
+                .heap()
+                .alloc(AllocTuple([public_constructor, raw_constructor])))
+        } else {
+            Ok(eval.heap().alloc(provider))
+        }
     }
 }

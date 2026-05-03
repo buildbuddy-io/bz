@@ -34,6 +34,7 @@ use crate::bazel_cc::register_bazel_cc_common;
 use crate::bazel_config::register_bazel_config;
 use crate::bazel_configuration_field::register_bazel_configuration_field;
 use crate::bazel_native::register_bazel_native;
+use crate::bazel_proto::register_bazel_proto_common;
 use crate::bazel_repository::register_bazel_repository_globals;
 use crate::interpreter::functions::dedupe::register_dedupe;
 use crate::interpreter::functions::host_info::register_host_info;
@@ -88,6 +89,7 @@ pub fn register_load_natives(builder: &mut GlobalsBuilder) {
     register_bazel_cc_common(builder);
     register_bazel_config(builder);
     register_bazel_configuration_field(builder);
+    register_bazel_proto_common(builder);
     register_attrs(builder);
     register_plugins(builder);
     register_providers_label(builder);
