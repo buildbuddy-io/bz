@@ -46,6 +46,7 @@ use crate::attrs::coerce::attr_type::AttrTypeExt;
 use crate::attrs::coerce::ctx::BuildAttrCoercionContext;
 use crate::attrs::starlark_attribute::StarlarkAttribute;
 use crate::attrs::starlark_attribute::register_attr_type;
+use crate::bazel_configuration_field::BazelConfigurationField;
 use crate::interpreter::build_context::BuildContext;
 use crate::interpreter::selector::StarlarkSelector;
 use crate::plugins::AllPlugins;
@@ -65,6 +66,10 @@ enum AttrError {
     DefaultOnlyMustHaveDefault,
     #[error("unsupported Bazel attr cfg string `{0}`")]
     UnsupportedBazelAttrCfg(String),
+    #[error(
+        "unsupported Bazel configuration_field(fragment = {fragment:?}, name = {name:?}) as attr.label default"
+    )]
+    UnsupportedBazelConfigurationField { fragment: String, name: String },
 }
 
 pub(crate) trait AttributeExt {
@@ -143,6 +148,29 @@ fn bazel_attr<'v>(
     Ok(StarlarkAttribute::new(Attribute::new(
         default, doc, coercer,
     )?))
+}
+
+fn bazel_label_default<'v>(default: Option<Value<'v>>) -> buck2_error::Result<Option<Value<'v>>> {
+    let Some(default) = default else {
+        return Ok(None);
+    };
+    let Some(configuration_field) = BazelConfigurationField::from_value(default) else {
+        return Ok(Some(default));
+    };
+
+    if configuration_field.fragment() == "coverage"
+        && configuration_field.name() == "output_generator"
+    {
+        // Bazel resolves this late-bound label to None outside `bazel coverage`; Buck2 does
+        // not have a Bazel coverage command mode yet, so normal builds use that value.
+        return Ok(Some(Value::new_none()));
+    }
+
+    Err(AttrError::UnsupportedBazelConfigurationField {
+        fragment: configuration_field.fragment().to_owned(),
+        name: configuration_field.name().to_owned(),
+    }
+    .into())
 }
 
 fn bazel_attr_required<'v>(
@@ -839,6 +867,7 @@ fn bazel_attr_module(registry: &mut GlobalsBuilder) {
         } else {
             AttrType::option(inner)
         };
+        let default = bazel_label_default(default)?;
         Ok(bazel_attr(
             eval,
             default,

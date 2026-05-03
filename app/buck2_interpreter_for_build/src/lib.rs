@@ -17,8 +17,10 @@ use std::sync::Once;
 
 pub mod attrs;
 pub(crate) mod bazel_apple;
+pub(crate) mod bazel_aspect;
 pub(crate) mod bazel_cc;
 pub(crate) mod bazel_config;
+pub(crate) mod bazel_configuration_field;
 pub(crate) mod bazel_native;
 pub(crate) mod bazel_repository;
 pub mod call_stack;

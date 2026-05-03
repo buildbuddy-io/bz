@@ -36,6 +36,7 @@ Completed:
 - Bazel `Label(...)` defaults now coerce through label/dependency/source attrs.
 - Bazel `transition(...)` accepts `implementation`, `inputs`, and `outputs`.
 - Bazel `coverage_common.instrumented_files_info` and `InstrumentedFilesInfo` are native load-time values with Bazel depset fields.
+- Bazel `aspect(...)`, `RunEnvironmentInfo`, `platform_common.ToolchainInfo`, and `configuration_field(...)` are native load-time values needed by real rules_go.
 - `@bazel_tools//tools/build_defs/repo:utils.bzl` is present as a Bazel builtin tool definition.
 - Gazelle `go_deps.from_file(go_mod = ...)` imports from external bzlmod modules are parsed into generated external cells.
 - Generated `go_deps` Go module repos read the parent module's `go.mod`, download the selected module with `go mod download`, copy the module source, and emit Bazel `go_library` BUILD files.
@@ -49,13 +50,13 @@ BUCK2_HARD_ERROR=false \
 bazel-bin/app/buck2/buck2_bin --isolation-dir real-rules-go-... build //:hello
 ```
 
-The smoke now loads real `rules_go`, `rules_cc`, `bazel_skylib`, and `gazelle` load-time Starlark from bzlmod, gets past the generated `@io_bazel_rules_nogo` repository and the first Gazelle `go_deps` aliases, and gets through the first wave of Bazel native load-time APIs. The current failure is:
+The smoke now loads real `rules_go`, `rules_cc`, `rules_proto`, `protobuf`, `bazel_skylib`, and `gazelle` load-time Starlark from bzlmod, gets past the generated `@io_bazel_rules_nogo` repository and the first Gazelle `go_deps` aliases, and gets through the first wave of Bazel native load-time APIs. The current failure is:
 
 ```text
-Variable `aspect` not found
+Variable `proto_common_do_not_use` not found
 ```
 
-The canonical generated target `bzlmod_rules_go_0_57_0_go_deps_com_github_pmezard_go_difflib//difflib:go_default_library` now materializes and reaches the same missing `aspect(...)` load-time blocker through its generated BUILD file.
+The direct `//:hello` smoke now reaches protobuf's native proto API surface through real `rules_proto` and `protobuf` bzlmod modules.
 
 ## Constraints
 
@@ -113,7 +114,7 @@ Acceptance:
 
 ## Phase 3: Bazel Load-Time Builtins
 
-Status: native load-time API cutover is underway; the current rules_go smoke no longer fails on missing `attr`, `rule`, `repository_rule`, `tag_class`, `module_extension`, `native`, `apple_common`, `config`, `config_common`, `cc_common`, `coverage_common`, `platform_common.TemplateVariableInfo`, `OutputGroupInfo`, `CcInfo`, or Bazel transition globals.
+Status: native load-time API cutover is underway; the current rules_go smoke no longer fails on missing `attr`, `rule`, `repository_rule`, `tag_class`, `module_extension`, `native`, `apple_common`, `config`, `config_common`, `cc_common`, `coverage_common`, `platform_common.TemplateVariableInfo`, `platform_common.ToolchainInfo`, `OutputGroupInfo`, `CcInfo`, `RunEnvironmentInfo`, `aspect`, `configuration_field`, or Bazel transition globals.
 
 Completed:
 
@@ -130,9 +131,13 @@ Completed:
 - `coverage_common.instrumented_files_info`
 - `InstrumentedFilesInfo`
 - `platform_common.TemplateVariableInfo`
+- `platform_common.ToolchainInfo`
 - `OutputGroupInfo`
 - `CcInfo`
+- `RunEnvironmentInfo`
 - Bazel-compatible `transition(...)` signature
+- `aspect(...)`
+- `configuration_field(...)` for `coverage.output_generator` label defaults
 - Initial `@bazel_tools` builtin files needed by `rules_go`
 
 Implement as failures demand:
@@ -144,7 +149,7 @@ Implement as failures demand:
 - `exports_files`
 - `glob`
 - `select`
-- `aspect(...)`
+- `proto_common_do_not_use`
 - `visibility` constants
 - missing `native.*` load-time functions
 

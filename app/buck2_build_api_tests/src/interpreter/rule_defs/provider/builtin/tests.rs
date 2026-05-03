@@ -38,3 +38,28 @@ fn test_equals() -> buck2_error::Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn test_run_environment_info() -> buck2_error::Result<()> {
+    let mut tester = Tester::new()?;
+
+    tester.additional_globals(register_builtin_providers);
+
+    tester.run_starlark_bzl_test(indoc!(
+        r#"
+            def test():
+                default = RunEnvironmentInfo()
+                assert_eq({}, default.environment)
+                assert_eq([], default.inherited_environment)
+
+                env = RunEnvironmentInfo(
+                    environment = {"GOOS": "darwin"},
+                    inherited_environment = ("PATH", "HOME"),
+                )
+                assert_eq({"GOOS": "darwin"}, env.environment)
+                assert_eq(["PATH", "HOME"], env.inherited_environment)
+        "#
+    ))?;
+
+    Ok(())
+}
