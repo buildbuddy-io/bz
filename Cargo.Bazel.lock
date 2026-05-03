@@ -3174,6 +3174,7 @@ dependencies = [
  "buck2_analysis",
  "buck2_build_api",
  "buck2_build_api_derive",
+ "buck2_common",
  "buck2_core",
  "buck2_error",
  "buck2_events",

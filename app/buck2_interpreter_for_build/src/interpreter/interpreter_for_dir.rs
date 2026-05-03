@@ -572,9 +572,9 @@ impl InterpreterForDir {
         BuckStarlarkModule::with_profiling(|env| {
             let env = self.create_env(env, starlark_path.into(), &loaded_modules)?;
             let extra_context = match starlark_path {
-                StarlarkModulePath::LoadFile(bzl) => PerFileTypeContext::Bzl(BzlEvalCtx {
-                    bzl_path: bzl.clone(),
-                }),
+                StarlarkModulePath::LoadFile(bzl) => {
+                    PerFileTypeContext::Bzl(BzlEvalCtx::new(bzl.clone()))
+                }
                 StarlarkModulePath::BxlFile(bxl) => PerFileTypeContext::Bxl(bxl.clone()),
                 StarlarkModulePath::JsonFile(j) => PerFileTypeContext::Json(j.clone()),
                 StarlarkModulePath::TomlFile(t) => PerFileTypeContext::Toml(t.clone()),

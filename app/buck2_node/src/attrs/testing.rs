@@ -83,6 +83,7 @@ pub fn configuration_ctx() -> impl AttrConfigurationContext {
             "cfg_for//:testing_exec".to_owned(),
             ConfigurationDataData {
                 constraints: BTreeMap::new(),
+                build_settings: BTreeMap::new(),
             },
             false,
         )
@@ -93,6 +94,7 @@ pub fn configuration_ctx() -> impl AttrConfigurationContext {
                 ConfigurationNode::new(Some(ConfigSettingData {
                     constraints: BTreeMap::new(),
                     buckconfigs: BTreeMap::new(),
+                    build_settings: BTreeMap::new(),
                 })),
             ),
             (

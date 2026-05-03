@@ -164,6 +164,8 @@ sh_test = prelude_rule(
                 Either the path to the script (relative to the build file), or a `build target`.
                  This file must be executable in order to be run.
             """),
+            "srcs": attrs.list(attrs.one_of(attrs.dep(), attrs.source()), default = []),
+            "data": attrs.list(attrs.one_of(attrs.dep(), attrs.source()), default = []),
             "args": attrs.list(attrs.arg(), default = [], doc = """
                 The list of arguments to invoke this script with. These are literal values, and no shell interpolation is done.
 
@@ -186,6 +188,7 @@ sh_test = prelude_rule(
             "run_args": attrs.list(attrs.string(), default = []),
             "run_env": attrs.dict(key = attrs.string(), value = attrs.string(), sorted = False, default = {}),
             "run_test_separately": attrs.bool(default = False),
+            "size": attrs.option(attrs.string(), default = None),
             "test_rule_timeout_ms": attrs.option(attrs.int(), default = None),
         } |
         buck.licenses_arg() |

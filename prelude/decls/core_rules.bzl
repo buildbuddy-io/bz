@@ -235,6 +235,7 @@ config_setting = prelude_rule(
         {
             "constraint_values": attrs.list(attrs.configuration_label(), default = []),
             "values": attrs.dict(key = attrs.string(), value = attrs.string(), sorted = False, default = {}),
+            "flag_values": attrs.dict(key = attrs.label(), value = attrs.string(), sorted = False, default = {}),
         }
     ),
 )

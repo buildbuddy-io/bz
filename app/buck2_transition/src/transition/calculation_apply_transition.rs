@@ -8,6 +8,9 @@
  * above-listed licenses.
  */
 
+use std::collections::BTreeMap;
+use std::hash::Hash;
+use std::hash::Hasher;
 use std::sync::Arc;
 
 use allocative::Allocative;
@@ -18,21 +21,32 @@ use buck2_build_api::analysis::calculation::RuleAnalysisCalculation;
 use buck2_build_api::interpreter::rule_defs::provider::builtin::platform_info::PlatformInfo;
 use buck2_build_api::interpreter::rule_defs::provider::collection::FrozenProviderCollectionValue;
 use buck2_build_api::transition::TRANSITION_CALCULATION;
+use buck2_build_api::transition::TransitionAttrs;
 use buck2_build_api::transition::TransitionCalculation;
+use buck2_common::dice::cells::HasCellResolver;
 use buck2_core::configuration::cfg_diff::cfg_diff;
+use buck2_core::configuration::data::BazelBuildSettingValue;
 use buck2_core::configuration::data::ConfigurationData;
+use buck2_core::configuration::data::ConfigurationDataData;
 use buck2_core::configuration::transition::applied::TransitionApplied;
 use buck2_core::configuration::transition::id::TransitionId;
 use buck2_core::provider::label::ProvidersLabel;
+use buck2_core::target::label::label::TargetLabel;
 use buck2_error::BuckErrorContext;
 use buck2_events::dispatch::get_dispatcher;
+use buck2_hash::BuckHasher;
 use buck2_interpreter::dice::starlark_provider::StarlarkEvalKind;
 use buck2_interpreter::factory::BuckStarlarkModule;
 use buck2_interpreter::factory::StarlarkEvaluatorProvider;
 use buck2_interpreter::print_handler::EventDispatcherPrintHandler;
 use buck2_interpreter::soft_error::Buck2StarlarkSoftErrorHandler;
+use buck2_interpreter::types::configured_providers_label::StarlarkProvidersLabel;
+use buck2_interpreter::types::target_label::StarlarkTargetLabel;
+use buck2_node::attrs::coerced_attr::CoercedAttr;
 use buck2_node::attrs::configured_attr::ConfiguredAttr;
 use buck2_node::attrs::display::AttrDisplayWithContextExt;
+use buck2_node::attrs::inspect_options::AttrInspectOptions;
+use buck2_node::nodes::frontend::TargetGraphCalculation;
 use derive_more::Display;
 use dice::DiceComputations;
 use dice::Key;
@@ -47,7 +61,11 @@ use pagable::pagable_typetag;
 use starlark::eval::Evaluator;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
+use starlark::values::ValueLike;
+use starlark::values::dict::AllocDict;
+use starlark::values::dict::DictRef;
 use starlark::values::dict::UnpackDictEntries;
+use starlark::values::list::ListRef;
 use starlark::values::structs::AllocStruct;
 use starlark_map::ordered_map::OrderedMap;
 use starlark_map::sorted_map::SortedMap;
@@ -67,21 +85,240 @@ enum ApplyTransitionError {
         did not produce identical `PlatformInfo`, the diff:\n{0}"
     )]
     SplitTransitionAgainDifferentPlatformInfo(String),
-    #[error(
-        "Transition object is not consistent with transition computation params, \
-        this may happen because of how DICE recomputation works, \
-        a user should never see this message"
-    )]
-    InconsistentTransitionAndComputation,
+    #[error("Bazel transition function returned `{0}`, expected a dict of build settings")]
+    BazelTransitionMustReturnDict(String),
+    #[error("unsupported default value for Bazel build setting `{0}`: `{1}`")]
+    UnsupportedBazelBuildSettingDefault(String, String),
+}
+
+fn bazel_transition_input_value<'v>(
+    key: &str,
+    transition: &TransitionData,
+    defaults: &BTreeMap<String, BazelBuildSettingValue>,
+    conf: &ConfigurationData,
+    eval: &mut Evaluator<'v, '_, '_>,
+) -> buck2_error::Result<Value<'v>> {
+    if key == "//command_line_option:platforms" {
+        let value = match conf.data()?.build_settings.get(key) {
+            Some(BazelBuildSettingValue::String(value)) => value.as_str(),
+            _ => conf.label()?,
+        };
+        Ok(eval.heap().alloc(value).to_value())
+    } else if let Some(value) = conf
+        .data()?
+        .build_settings
+        .get(&transition.bazel_canonical_build_setting_key(key))
+        .or_else(|| defaults.get(&transition.bazel_canonical_build_setting_key(key)))
+    {
+        Ok(bazel_build_setting_value_to_starlark(value, eval))
+    } else {
+        Ok(Value::new_none())
+    }
+}
+
+fn bazel_build_setting_value_to_starlark<'v>(
+    value: &BazelBuildSettingValue,
+    eval: &mut Evaluator<'v, '_, '_>,
+) -> Value<'v> {
+    match value {
+        BazelBuildSettingValue::Bool(value) => eval.heap().alloc(*value).to_value(),
+        BazelBuildSettingValue::String(value) => eval.heap().alloc(value.as_str()).to_value(),
+        BazelBuildSettingValue::StringList(values) => {
+            let values = values.iter().map(String::as_str).collect::<Vec<_>>();
+            eval.heap().alloc(values).to_value()
+        }
+    }
+}
+
+fn bazel_build_setting_value_from_attr(value: &CoercedAttr) -> Option<BazelBuildSettingValue> {
+    match value {
+        CoercedAttr::OneOf(value, _) => bazel_build_setting_value_from_attr(value),
+        CoercedAttr::Bool(value) => Some(BazelBuildSettingValue::Bool(value.0)),
+        CoercedAttr::String(value) | CoercedAttr::EnumVariant(value) => {
+            Some(BazelBuildSettingValue::String(value.0.to_string()))
+        }
+        CoercedAttr::Label(value) | CoercedAttr::Dep(value) | CoercedAttr::SourceLabel(value) => {
+            Some(BazelBuildSettingValue::String(value.to_string()))
+        }
+        CoercedAttr::List(values) => Some(BazelBuildSettingValue::StringList(
+            values
+                .iter()
+                .map(bazel_build_setting_value_from_attr)
+                .collect::<Option<Vec<_>>>()?
+                .into_iter()
+                .map(|value| value.as_config_setting_value())
+                .collect(),
+        )),
+        CoercedAttr::None => None,
+        _ => None,
+    }
+}
+
+async fn bazel_transition_input_defaults(
+    ctx: &mut DiceComputations<'_>,
+    transition: &TransitionData,
+) -> buck2_error::Result<BTreeMap<String, BazelBuildSettingValue>> {
+    let cell_resolver = ctx.get_cell_resolver().await?;
+    let cell_alias_resolver = ctx
+        .get_cell_alias_resolver(cell_resolver.root_cell())
+        .await?;
+    let mut defaults = BTreeMap::new();
+    for input in transition.bazel_inputs() {
+        let key = transition.bazel_canonical_build_setting_key(input.as_str());
+        if key.starts_with("//command_line_option:") {
+            continue;
+        }
+        let target = TargetLabel::parse(
+            &key,
+            cell_resolver.root_cell(),
+            &cell_resolver,
+            &cell_alias_resolver,
+        )?;
+        let node = ctx.get_target_node(&target).await?;
+        let default_attr = node
+            .attr_or_none("build_setting_default", AttrInspectOptions::All)
+            .or_else(|| node.attr_or_none("actual", AttrInspectOptions::All));
+        let Some(default_attr) = default_attr else {
+            continue;
+        };
+        let Some(default) = bazel_build_setting_value_from_attr(default_attr.value) else {
+            return Err(ApplyTransitionError::UnsupportedBazelBuildSettingDefault(
+                key,
+                default_attr.value.as_display_no_ctx().to_string(),
+            )
+            .into());
+        };
+        defaults.insert(key, default);
+    }
+    Ok(defaults)
+}
+
+fn bazel_transition_setting_key(
+    key: Value,
+    transition: &TransitionData,
+) -> buck2_error::Result<String> {
+    if let Some(key) = key.unpack_str() {
+        return Ok(transition.bazel_canonical_build_setting_key(key));
+    }
+    if let Some(label) = StarlarkProvidersLabel::from_value(key) {
+        return Ok(label.label().to_string());
+    }
+    if let Some(label) = StarlarkTargetLabel::from_value(key) {
+        return Ok(label.label().to_string());
+    }
+    Err(ApplyTransitionError::BazelTransitionMustReturnDict(key.get_type().to_owned()).into())
+}
+
+fn bazel_transition_setting_value(value: Value) -> BazelBuildSettingValue {
+    if let Some(label) = StarlarkProvidersLabel::from_value(value) {
+        BazelBuildSettingValue::String(label.label().to_string())
+    } else if let Some(label) = StarlarkTargetLabel::from_value(value) {
+        BazelBuildSettingValue::String(label.label().to_string())
+    } else if let Some(value) = value.unpack_str() {
+        BazelBuildSettingValue::String(value.to_owned())
+    } else if let Some(value) = value.unpack_bool() {
+        BazelBuildSettingValue::Bool(value)
+    } else if let Some(values) = ListRef::from_value(value) {
+        BazelBuildSettingValue::StringList(
+            values
+                .iter()
+                .map(|value| {
+                    if let Some(value) = value.unpack_str() {
+                        value.to_owned()
+                    } else if let Some(label) = StarlarkProvidersLabel::from_value(value) {
+                        label.label().to_string()
+                    } else if let Some(label) = StarlarkTargetLabel::from_value(value) {
+                        label.label().to_string()
+                    } else {
+                        value.to_repr()
+                    }
+                })
+                .collect(),
+        )
+    } else {
+        BazelBuildSettingValue::String(value.to_repr())
+    }
+}
+
+fn bazel_transitioned_label(
+    data: &ConfigurationDataData,
+    is_marked_as_exec_platform: bool,
+) -> String {
+    let mut hasher = BuckHasher::default();
+    "bazel_transition".hash(&mut hasher);
+    data.hash(&mut hasher);
+    is_marked_as_exec_platform.hash(&mut hasher);
+    format!("bazeltr-{:016x}", hasher.finish())
+}
+
+fn bazel_transition_result_to_configuration(
+    result: Value,
+    conf: &ConfigurationData,
+    transition: &TransitionData,
+) -> buck2_error::Result<TransitionApplied> {
+    if result.is_none() {
+        return Ok(TransitionApplied::Single(conf.dupe()));
+    }
+
+    let Some(dict) = DictRef::from_value(result) else {
+        return Err(ApplyTransitionError::BazelTransitionMustReturnDict(
+            result.get_type().to_owned(),
+        )
+        .into());
+    };
+    if dict.is_empty() {
+        return Ok(TransitionApplied::Single(conf.dupe()));
+    }
+
+    let original_data = conf.data()?.clone();
+    let mut data = conf.data()?.clone();
+    for (key, value) in dict.iter() {
+        let key = bazel_transition_setting_key(key.to_value(), transition)?;
+        data.build_settings
+            .insert(key, bazel_transition_setting_value(value.to_value()));
+    }
+    if data == original_data {
+        return Ok(TransitionApplied::Single(conf.dupe()));
+    }
+    let label = bazel_transitioned_label(&data, conf.is_marked_as_exec_platform());
+    Ok(TransitionApplied::Single(ConfigurationData::from_platform(
+        label,
+        data,
+        conf.is_marked_as_exec_platform(),
+    )?))
 }
 
 fn call_transition_function<'v>(
     transition: &TransitionData,
+    defaults: &BTreeMap<String, BazelBuildSettingValue>,
     conf: &ConfigurationData,
     refs: Value<'v>,
     attrs: Option<Value<'v>>,
     eval: &mut Evaluator<'v, '_, '_>,
 ) -> buck2_error::Result<TransitionApplied> {
+    if transition.is_bazel() {
+        let mut settings = Vec::new();
+        for input in transition.bazel_inputs() {
+            settings.push((
+                input.as_str(),
+                bazel_transition_input_value(input.as_str(), transition, defaults, conf, eval)?,
+            ));
+        }
+        let settings = eval.heap().alloc(AllocDict(settings));
+        let attrs =
+            attrs.unwrap_or_else(|| eval.heap().alloc(AllocStruct(Vec::<(&str, Value)>::new())));
+        let impl_ = match transition {
+            TransitionData::MagicObject(v) => v.implementation.to_value(),
+            TransitionData::Target(_) => {
+                unreachable!("target transitions are not Bazel transitions")
+            }
+        };
+        let result = eval
+            .eval_function(impl_, &[settings, attrs], &[])
+            .map_err(buck2_error::Error::from)?;
+        return bazel_transition_result_to_configuration(result, conf, transition);
+    }
+
     let mut args = vec![(
         "platform",
         eval.heap()
@@ -128,12 +365,17 @@ fn call_transition_function<'v>(
 
 async fn do_apply_transition(
     ctx: &mut DiceComputations<'_>,
-    attrs: Option<&[Option<Arc<ConfiguredAttr>>]>,
+    attrs: Option<&[(String, Option<Arc<ConfiguredAttr>>)]>,
     conf: &ConfigurationData,
     transition_id: &TransitionId,
     cancellation: &CancellationContext,
 ) -> buck2_error::Result<TransitionApplied> {
     let transition = ctx.fetch_transition(transition_id).await?;
+    let bazel_defaults = if transition.is_bazel() {
+        bazel_transition_input_defaults(ctx, &transition).await?
+    } else {
+        BTreeMap::new()
+    };
     let mut refs = Vec::new();
     let mut refs_refs = Vec::new();
     for (s, t) in transition.refs() {
@@ -154,10 +396,10 @@ async fn do_apply_transition(
                 eval.set_print_handler(&print);
                 eval.set_soft_error_handler(&Buck2StarlarkSoftErrorHandler);
                 let refs = module.heap().alloc(AllocStruct(refs));
-                let attrs = match (transition.attr_names(), attrs) {
-                    (Some(names), Some(values)) => {
+                let attrs = match attrs {
+                    Some(values) => {
                         let mut attrs = Vec::new();
-                        for (name, value) in names.into_iter().zip_eq(values.iter()) {
+                        for (name, value) in values {
                             let value = match value {
                                 Some(value) => (CONFIGURED_ATTR_TO_VALUE.get()?)(
                                     value,
@@ -173,31 +415,42 @@ async fn do_apply_transition(
                                 })?,
                                 None => Value::new_none(),
                             };
-                            attrs.push((name, value));
+                            attrs.push((name.as_str(), value));
                         }
                         Some(module.heap().alloc(AllocStruct(attrs)))
                     }
-                    (None, None) => None,
-                    (Some(_), None) | (None, Some(_)) => {
-                        return Err(
-                            ApplyTransitionError::InconsistentTransitionAndComputation.into()
-                        );
-                    }
+                    None => None,
                 };
-                match call_transition_function(&transition, conf, refs, attrs, eval)? {
+                let applied = call_transition_function(
+                    &transition,
+                    &bazel_defaults,
+                    conf,
+                    refs,
+                    attrs,
+                    eval,
+                )?;
+                if transition.is_bazel() {
+                    return Ok(applied);
+                }
+                match applied {
                     TransitionApplied::Single(new) => {
-                        let new_2 =
-                            match call_transition_function(&transition, &new, refs, attrs, eval)
-                                .buck_error_context(
-                                    "applying transition again on transition output",
-                                )? {
-                                TransitionApplied::Single(new_2) => new_2,
-                                TransitionApplied::Split(_) => {
-                                    unreachable!(
-                                        "split transition filtered out in call_transition_function"
-                                    )
-                                }
-                            };
+                        let new_2 = match call_transition_function(
+                            &transition,
+                            &bazel_defaults,
+                            &new,
+                            refs,
+                            attrs,
+                            eval,
+                        )
+                        .buck_error_context("applying transition again on transition output")?
+                        {
+                            TransitionApplied::Single(new_2) => new_2,
+                            TransitionApplied::Split(_) => {
+                                unreachable!(
+                                    "split transition filtered out in call_transition_function"
+                                )
+                            }
+                        };
                         if let Err(diff) = cfg_diff(&new, &new_2) {
                             return Err(
                                 ApplyTransitionError::SplitTransitionAgainDifferentPlatformInfo(
@@ -261,11 +514,10 @@ impl TransitionCalculation for TransitionCalculationImpl {
         struct TransitionKey {
             cfg: ConfigurationData,
             transition_id: TransitionId,
-            /// Attributes which requested by transition function, not all attributes.
-            /// The attr value index is the index of attribute in transition object.
+            /// Attributes requested by the transition function.
             /// Attributes are added here so multiple targets with the equal attributes
             /// (e.g. the same `java_version = 14`) share the transition computation.
-            attrs: Option<Vec<Option<Arc<ConfiguredAttr>>>>,
+            attrs: Option<Vec<(String, Option<Arc<ConfiguredAttr>>)>>,
         }
 
         impl TransitionKey {
@@ -275,11 +527,11 @@ impl TransitionCalculation for TransitionCalculationImpl {
                         " [{}]",
                         attrs
                             .iter()
-                            .map(|a| {
+                            .map(|(name, a)| {
                                 if let Some(attr) = a {
-                                    attr.as_display_no_ctx().to_string()
+                                    format!("{name}={}", attr.as_display_no_ctx())
                                 } else {
-                                    "None".to_owned()
+                                    format!("{name}=None")
                                 }
                             })
                             .join(", ")
@@ -330,16 +582,20 @@ impl TransitionCalculation for TransitionCalculationImpl {
 
         let transition = ctx.fetch_transition(transition_id).await?;
 
-        #[allow(clippy::manual_map)]
-        let attrs = if let Some(attrs) = transition.attr_names() {
-            Some(
+        let attrs = match transition.attrs() {
+            TransitionAttrs::None => None,
+            TransitionAttrs::Listed(attrs) => Some(
                 attrs
-                    .into_iter()
-                    .map(|attr| configured_attrs.get(attr).duped())
+                    .iter()
+                    .map(|attr| (attr.clone(), configured_attrs.get(attr.as_str()).duped()))
                     .collect(),
-            )
-        } else {
-            None
+            ),
+            TransitionAttrs::All => Some(
+                configured_attrs
+                    .iter()
+                    .map(|(name, value)| ((*name).to_owned(), Some(value.dupe())))
+                    .collect(),
+            ),
         };
 
         let key = TransitionKey {

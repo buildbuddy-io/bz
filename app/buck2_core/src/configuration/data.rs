@@ -203,6 +203,7 @@ impl ConfigurationData {
                 BoundConfigurationLabel::new("<testing>".to_owned()).unwrap(),
                 ConfigurationDataData {
                     constraints: BTreeMap::new(),
+                    build_settings: BTreeMap::new(),
                 },
                 false,
             ),
@@ -359,11 +360,47 @@ impl ConfigurationPlatform {
     }
 }
 
+#[derive(
+    Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Allocative, StrongHash, Pagable
+)]
+pub enum BazelBuildSettingValue {
+    Bool(bool),
+    String(String),
+    StringList(Vec<String>),
+}
+
+impl BazelBuildSettingValue {
+    pub fn as_config_setting_value(&self) -> String {
+        match self {
+            BazelBuildSettingValue::Bool(value) => {
+                if *value {
+                    "True".to_owned()
+                } else {
+                    "False".to_owned()
+                }
+            }
+            BazelBuildSettingValue::String(value) => value.clone(),
+            BazelBuildSettingValue::StringList(values) => {
+                format!(
+                    "[{}]",
+                    values
+                        .iter()
+                        .map(|v| format!("{v:?}"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            }
+        }
+    }
+}
+
 /// A set of values used in configuration-related contexts.
-#[derive(Debug, Eq, PartialEq, Ord, PartialOrd, Allocative, StrongHash, Pagable)]
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Allocative, Pagable)]
 pub struct ConfigurationDataData {
     // contains the full specification of the platform configuration
     pub constraints: BTreeMap<ConstraintKey, ConstraintValue>,
+    // contains Bazel build setting values keyed by canonical label string
+    pub build_settings: BTreeMap<String, BazelBuildSettingValue>,
 }
 
 /// We don't use derive(Hash) here because we build Buck 2 on two different versions of Rustc at
@@ -375,6 +412,26 @@ impl Hash for ConfigurationDataData {
         for elt in self.constraints.iter() {
             elt.hash(state);
         }
+        if !self.build_settings.is_empty() {
+            "bazel_build_settings".hash(state);
+            for elt in self.build_settings.iter() {
+                elt.hash(state);
+            }
+        }
+    }
+}
+
+impl StrongHash for ConfigurationDataData {
+    fn strong_hash<H: Hasher>(&self, state: &mut H) {
+        for elt in self.constraints.iter() {
+            elt.strong_hash(state);
+        }
+        if !self.build_settings.is_empty() {
+            "bazel_build_settings".strong_hash(state);
+            for elt in self.build_settings.iter() {
+                elt.strong_hash(state);
+            }
+        }
     }
 }
 
@@ -382,11 +439,15 @@ impl ConfigurationDataData {
     pub fn empty() -> Self {
         Self {
             constraints: Default::default(),
+            build_settings: Default::default(),
         }
     }
 
     pub fn new(constraints: BTreeMap<ConstraintKey, ConstraintValue>) -> Self {
-        Self { constraints }
+        Self {
+            constraints,
+            build_settings: Default::default(),
+        }
     }
 
     pub fn get_constraint_value(&self, key: &ConstraintKey) -> Option<&ConstraintValue> {
@@ -400,6 +461,12 @@ impl ConfigurationDataData {
                 .constraints
                 .entry(k.dupe())
                 .or_insert_with(|| v.dupe());
+        }
+        for (k, v) in &self.build_settings {
+            other
+                .build_settings
+                .entry(k.clone())
+                .or_insert_with(|| v.clone());
         }
         other
     }
@@ -490,6 +557,7 @@ mod tests {
                         ConstraintValue::testing_new("foo//qux:vx", None),
                     ),
                 ]),
+                build_settings: BTreeMap::new(),
             },
             false,
         )
@@ -519,6 +587,7 @@ mod tests {
                         ConstraintValue::testing_new("foo//qux:vx", None),
                     ),
                 ]),
+                build_settings: BTreeMap::new(),
             },
             false,
         )

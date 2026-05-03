@@ -14,6 +14,7 @@ use async_trait::async_trait;
 use buck2_build_api::analysis::calculation::RuleAnalysisCalculation;
 use buck2_build_api::transition::TRANSITION_ATTRS_PROVIDER;
 use buck2_build_api::transition::TransitionAttrProvider;
+use buck2_build_api::transition::TransitionAttrs;
 use buck2_core::configuration::transition::id::TransitionId;
 use buck2_core::provider::label::ProvidersLabel;
 use buck2_interpreter::load_module::InterpreterCalculation;
@@ -47,14 +48,33 @@ impl TransitionData {
         .into_iter()
     }
 
-    pub(crate) fn attr_names(&self) -> Option<impl IntoIterator<Item = &str>> {
+    pub(crate) fn attrs(&self) -> TransitionAttrs {
         match self {
-            TransitionData::MagicObject(v) => Some(Either::Left(
-                v.attrs_names.as_ref()?.iter().map(|s| s.as_str()),
-            )),
-            TransitionData::Target(v) => {
-                Some(Either::Right(v.as_ref().get_attrs_names()?.into_iter()))
-            }
+            TransitionData::MagicObject(v) if v.is_bazel => TransitionAttrs::All,
+            TransitionData::MagicObject(v) => v
+                .attrs_names
+                .as_ref()
+                .map(|attrs| {
+                    TransitionAttrs::Listed(
+                        attrs
+                            .iter()
+                            .map(|s| s.as_str().to_owned())
+                            .collect::<Arc<[_]>>(),
+                    )
+                })
+                .unwrap_or(TransitionAttrs::None),
+            TransitionData::Target(v) => v
+                .as_ref()
+                .get_attrs_names()
+                .map(|attrs| {
+                    TransitionAttrs::Listed(
+                        attrs
+                            .into_iter()
+                            .map(|s| s.to_owned())
+                            .collect::<Arc<[_]>>(),
+                    )
+                })
+                .unwrap_or(TransitionAttrs::None),
         }
     }
 
@@ -62,6 +82,35 @@ impl TransitionData {
         match self {
             TransitionData::MagicObject(v) => v.split,
             TransitionData::Target(_) => false,
+        }
+    }
+
+    pub(crate) fn is_bazel(&self) -> bool {
+        match self {
+            TransitionData::MagicObject(v) => v.is_bazel,
+            TransitionData::Target(_) => false,
+        }
+    }
+
+    pub(crate) fn bazel_inputs(&self) -> &[starlark::values::FrozenStringValue] {
+        match self {
+            TransitionData::MagicObject(v) if v.is_bazel => &v.inputs,
+            _ => &[],
+        }
+    }
+
+    pub(crate) fn bazel_canonical_build_setting_key(&self, key: &str) -> String {
+        if key.starts_with("//command_line_option:") {
+            return key.to_owned();
+        }
+        match self {
+            TransitionData::MagicObject(v) if v.is_bazel && key.starts_with("//") => {
+                match v.id.as_ref() {
+                    TransitionId::MagicObject { path, .. } => format!("{}{}", path.cell(), key),
+                    TransitionId::Target(_) => key.to_owned(),
+                }
+            }
+            _ => key.to_owned(),
         }
     }
 }
@@ -140,18 +189,14 @@ struct TransitionAttrsKey(TransitionId);
 
 #[async_trait]
 impl Key for TransitionAttrsKey {
-    type Value = buck2_error::Result<Option<Arc<[String]>>>;
+    type Value = buck2_error::Result<TransitionAttrs>;
 
     async fn compute(
         &self,
         ctx: &mut DiceComputations,
         _cancellation: &dice::CancellationContext,
     ) -> Self::Value {
-        Ok(ctx
-            .fetch_transition(&self.0)
-            .await?
-            .attr_names()
-            .map(|n| n.into_iter().map(|s| s.to_owned()).collect()))
+        Ok(ctx.fetch_transition(&self.0).await?.attrs())
     }
 
     fn equality(x: &Self::Value, y: &Self::Value) -> bool {
@@ -175,7 +220,7 @@ impl TransitionAttrProvider for TransitionGetAttrs {
         &self,
         ctx: &mut DiceComputations<'_>,
         transition_id: &TransitionId,
-    ) -> buck2_error::Result<Option<Arc<[String]>>> {
+    ) -> buck2_error::Result<TransitionAttrs> {
         let k = TransitionAttrsKey::ref_cast(transition_id);
         ctx.compute(k).await?
     }

@@ -114,6 +114,15 @@ async fn configuration_matches(
         }
     }
 
+    let build_settings = &cfg.data()?.build_settings;
+    for (setting, expected) in &constraints_and_configs.build_settings {
+        match build_settings.get(setting) {
+            Some(actual) if actual.as_config_setting_value() == *expected => {}
+            None if expected == "False" => {}
+            _ => return Ok(false),
+        }
+    }
+
     Ok(true)
 }
 

@@ -78,9 +78,7 @@ impl CoercedAttrExr for CoercedAttr {
             match *selector {
                 StarlarkSelectorGen::Primary(v) => {
                     if let Some(dict) = DictRef::from_value(v.get()) {
-                        let has_default = dict.get_str("DEFAULT").is_some();
-                        let mut entries =
-                            Vec::with_capacity(dict.len().saturating_sub(has_default as usize));
+                        let mut entries = Vec::with_capacity(dict.len());
 
                         let mut default = None;
                         for (k, v) in dict.iter() {
@@ -115,10 +113,10 @@ impl CoercedAttrExr for CoercedAttr {
                                     }
                                 },
                             };
-                            if k == "DEFAULT" {
+                            if is_select_default_key(k) {
                                 if default.is_some() {
                                     return Err(internal_error!(
-                                        "duplicate `\"DEFAULT\"` key in `select()`"
+                                        "duplicate default key in `select()`"
                                     ));
                                 }
                                 default = Some(v);
@@ -127,8 +125,6 @@ impl CoercedAttrExr for CoercedAttr {
                                 entries.push((ConfigurationSettingKey(label), v));
                             }
                         }
-
-                        assert_eq!(entries.capacity(), entries.len());
 
                         Ok(CoercedAttr::Selector(Box::new(CoercedSelector::new(
                             ctx.intern_select(entries),
@@ -167,4 +163,8 @@ impl CoercedAttrExr for CoercedAttr {
                 .with_buck_error_context(|| format!("Error coercing {value}"))?)
         }
     }
+}
+
+fn is_select_default_key(key: &str) -> bool {
+    key == "DEFAULT" || key == "//conditions:default"
 }

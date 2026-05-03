@@ -18,21 +18,28 @@ def sh_test_impl(ctx: AnalysisContext) -> list[Provider]:
     args_args = []
     args_hidden = []
 
-    if ctx.attrs.test != None:
-        if isinstance(ctx.attrs.test, Artifact):
-            args_args.append(ctx.attrs.test)
-        elif isinstance(ctx.attrs.test, Dependency):
-            run_info = ctx.attrs.test.get(RunInfo)
+    test = ctx.attrs.test
+    if test == None and ctx.attrs.srcs:
+        if len(ctx.attrs.srcs) != 1:
+            fail("sh_test expected exactly one item in `srcs`, got {}".format(len(ctx.attrs.srcs)))
+        test = ctx.attrs.srcs[0]
+
+    if test != None:
+        if isinstance(test, Artifact):
+            args_args.append(test)
+        elif isinstance(test, Dependency):
+            run_info = test.get(RunInfo)
             if run_info != None:
                 args_args.append(run_info.args)
             else:
-                info = ctx.attrs.test[DefaultInfo]
+                info = test[DefaultInfo]
                 args_args.append(info.default_outputs)
                 args_hidden.append(info.other_outputs)
         else:
             fail("Unexpected type for test attribute")
 
     args_hidden.append(ctx.attrs.resources)
+    args_hidden.append(ctx.attrs.data)
 
     deps = []
     for dep in ctx.attrs.deps:

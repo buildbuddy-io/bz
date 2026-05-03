@@ -858,7 +858,7 @@ pub fn register_provider(builder: &mut GlobalsBuilder) {
     ///
     /// For providers that accumulate upwards a transitive set is often a good choice.
     fn provider<'v>(
-        #[starlark(require=named, default = NoneOr::None)] doc: NoneOr<&str>,
+        #[starlark(default = NoneOr::None)] doc: NoneOr<&str>,
         #[starlark(require=named, default = NoneOr::None)] fields: NoneOr<
             Either<UnpackListOrTuple<String>, SmallMap<String, Value<'v>>>,
         >,

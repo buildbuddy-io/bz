@@ -48,6 +48,11 @@ Completed:
 - Generated `go_deps` Go module repos read the parent module's `go.mod`, download the selected module with `go mod download`, copy the module source, and emit Bazel `go_library` BUILD files.
 - Generated `go_deps` repository config repos emit `config.json` and Bazel buildfile markers.
 - The `bazel_features` `version_extension` generated repos are materialized as real Buck external cells from their bzlmod `use_repo(...)` imports.
+- Bazel `rule(..., build_setting = config.*(...))` injects native `build_setting_default` attrs and build setting values participate in configuration identity.
+- Bazel incoming transitions now invoke implementations as `implementation(settings, attr)`, preserve bool/string/string-list outputs, read default values from build-setting targets, store command-line option outputs in the configuration, and converge when the resulting `BuildOptions` equivalent is unchanged.
+- `select({"//conditions:default": ...})` is treated as Bazel's default arm.
+- Bazel common implicit rule attrs such as `deprecation`, `tags`, `testonly`, and `features` are present when rules omit them.
+- Bazel `.bzl` `visibility(...)` is recorded at load time for later enforcement.
 
 Latest smoke:
 
@@ -57,14 +62,20 @@ BUCK2_HARD_ERROR=false \
 bazel-bin/app/buck2/buck2_bin --isolation-dir real-rules-go-... build //:hello
 ```
 
-The smoke now loads real `rules_go`, `rules_cc`, `rules_proto`, `protobuf`, `bazel_skylib`, `bazel_features`, and `gazelle` load-time Starlark from bzlmod, gets past the generated `@io_bazel_rules_nogo` repository, the first Gazelle `go_deps` aliases, and `bazel_features` generated globals, and gets through the first wave of Bazel native load-time APIs, including protobuf's private native proto API and `provider(init = ...)`. The current failure is:
+The smoke now loads real `rules_go`, `rules_cc`, `rules_proto`, `protobuf`, `bazel_skylib`, `bazel_features`, and `gazelle` load-time Starlark from bzlmod, gets past the generated `@io_bazel_rules_nogo` repository, Gazelle `go_deps` aliases, `bazel_features` generated globals, Bazel build-setting defaults, and rules_go's incoming Go transitions. The current failure is in rules_go CGo context analysis when a real rules_go attr resolves Bazel's bundled tools:
 
 ```text
-Error computing transition `bzlmod_rules_go_0_57_0//go/private/rules/transition.bzl@root#go_transition`
-Missing parameter `settings` for call to `_go_transition_impl`
+root//:hello
+-> root//:hello_lib
+-> @rules_go//:go_context_data
+-> @rules_go//:stdlib
+-> @rules_go//:cgo_context_data
+-> @bazel_tools//tools/osx:current_xcode_config
+
+package `prelude//tools/osx:` does not exist
 ```
 
-The direct `//:hello` smoke now reaches configured target analysis for the real `go_binary`; the next gap is invoking Bazel transition implementations with Bazel's expected `settings` and `attr` arguments.
+The direct `//:hello` smoke now reaches configured target analysis through the real `go_binary`, `go_library`, Go configuration transition, standard-library transition, and CGo context setup. The next gap is cutting over Bazel's bundled `@bazel_tools` target surface and toolchain context APIs so rules_go can ask for optional C++ and Xcode toolchains using normal Bazel labels.
 
 ## Constraints
 
@@ -146,6 +157,7 @@ Completed:
 - `CcInfo`
 - `RunEnvironmentInfo`
 - Bazel-compatible `transition(...)` signature
+- Bazel transition invocation with `settings` and `attr`
 - `aspect(...)`
 - `configuration_field(...)` for `coverage.output_generator` label defaults
 - `configuration_field(...)` for Bazel proto fragment label defaults
@@ -154,10 +166,15 @@ Completed:
 - Bazel special visibility labels
 - `licenses(...)`
 - Initial `@bazel_tools` builtin files needed by `rules_go`
+- Common implicit rule attrs
+- `//conditions:default` select key handling
+- load-time `.bzl` `visibility(...)` recording
 
 Immediate target:
 
-- Pass Bazel transition implementation arguments (`settings`, then `attr`) when evaluating incoming transitions.
+- Move `@bazel_tools` from an incidental prelude alias to a first-class bundled Bazel tools cell with real Bazel package targets such as `//tools/osx:current_xcode_config`, `//tools/cpp:toolchain_type`, and `//tools/cpp:optional_current_cc_toolchain`.
+- Add the Bazel toolchain context surface needed by rules_go/rules_cc: `ctx.toolchains[...]`, optional toolchain misses returning `None`, and `cc_common.is_cc_toolchain_resolution_enabled_do_not_use(ctx = ctx)`.
+- Add Apple/Xcode provider constructors exposed by Bazel's `apple_common` only when real rules request them.
 
 Implement as failures demand:
 
@@ -189,7 +206,8 @@ Implement enough Bazel analysis surface for real rules_go:
 - executable/test rule metadata
 - implicit attrs and configurable attrs
 - aspects needed by `rules_go`
-- transitions needed by `rules_go`, starting with invoking transition implementations with `settings` and `attr`
+- enforce `.bzl` load visibility recorded by `visibility(...)`
+- transitions needed by `rules_go`, including platform label semantics for `//command_line_option:platforms`
 
 Acceptance:
 

@@ -8,6 +8,8 @@
  * above-listed licenses.
  */
 
+use buck2_interpreter::types::configured_providers_label::StarlarkProvidersLabel;
+use buck2_interpreter::types::target_label::StarlarkTargetLabel;
 use buck2_node::attrs::attr_type::AttrType;
 use buck2_node::attrs::attr_type::visibility::VisibilityAttrType;
 use buck2_node::attrs::coerced_attr::CoercedAttr;
@@ -72,7 +74,16 @@ pub(crate) fn parse_visibility_with_view(
 
     let mut builder = VisibilityWithinViewBuilder::with_capacity(list.len());
     for item in list {
-        let Some(item) = item.unpack_str() else {
+        let item_as_label;
+        let item = if let Some(item) = item.unpack_str() {
+            item
+        } else if let Some(label) = StarlarkProvidersLabel::from_value(*item) {
+            item_as_label = label.label().to_string();
+            &item_as_label
+        } else if let Some(label) = StarlarkTargetLabel::from_value(*item) {
+            item_as_label = label.label().to_string();
+            &item_as_label
+        } else {
             if StarlarkSelector::from_value(*item).is_some() {
                 return Err(VisibilityAttrTypeCoerceError::NotConfigurable(attr.to_repr()).into());
             }

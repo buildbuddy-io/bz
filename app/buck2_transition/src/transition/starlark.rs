@@ -91,16 +91,24 @@ pub(crate) struct Transition<'v> {
     attrs: Option<Vec<StringValue<'v>>>,
     /// Is this split transition? I. e. transition to multiple configurations.
     split: bool,
+    /// Whether this transition was declared through Bazel's `implementation = ...`
+    /// form and should be invoked with Bazel's `(settings, attr)` API.
+    is_bazel: bool,
+    inputs: Vec<StringValue<'v>>,
+    outputs: Vec<StringValue<'v>>,
 }
 
 #[derive(Debug, Display, ProvidesStaticType, NoSerialize, Allocative)]
 #[display("transition")]
 pub(crate) struct FrozenTransition {
-    id: Arc<TransitionId>,
+    pub(crate) id: Arc<TransitionId>,
     pub(crate) implementation: FrozenValue,
     pub(crate) refs: SmallMap<FrozenStringValue, ProvidersLabel>,
     pub(crate) attrs_names: Option<Vec<FrozenStringValue>>,
     pub(crate) split: bool,
+    pub(crate) is_bazel: bool,
+    pub(crate) inputs: Vec<FrozenStringValue>,
+    pub(crate) outputs: Vec<FrozenStringValue>,
 }
 
 #[starlark_value(type = "Transition")]
@@ -154,12 +162,17 @@ impl Freeze for Transition<'_> {
             .map(|a| a.into_try_map(|a| a.freeze(freezer)))
             .transpose()?;
         let split = self.split;
+        let inputs = self.inputs.into_try_map(|i| i.freeze(freezer))?;
+        let outputs = self.outputs.into_try_map(|o| o.freeze(freezer))?;
         Ok(FrozenTransition {
             id,
             implementation,
             refs,
             attrs_names: attrs,
             split,
+            is_bazel: self.is_bazel,
+            inputs,
+            outputs,
         })
     }
 }
@@ -279,9 +292,9 @@ fn register_transition_function(builder: &mut GlobalsBuilder) {
         refs: UnpackDictEntries<StringValue<'v>, StringValue<'v>>,
         #[starlark(require = named)] attrs: Option<UnpackListOrTuple<StringValue<'v>>>,
         #[starlark(require = named, default = UnpackListOrTuple::default())]
-        inputs: UnpackListOrTuple<Value<'v>>,
+        inputs: UnpackListOrTuple<StringValue<'v>>,
         #[starlark(require = named, default = UnpackListOrTuple::default())]
-        outputs: UnpackListOrTuple<Value<'v>>,
+        outputs: UnpackListOrTuple<StringValue<'v>>,
         #[starlark(require = named, default = false)] split: bool,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Transition<'v>> {
@@ -295,7 +308,6 @@ fn register_transition_function(builder: &mut GlobalsBuilder) {
                 .into());
             }
         };
-        let _unused = (inputs, outputs);
 
         let refs = refs
             .entries
@@ -331,6 +343,9 @@ fn register_transition_function(builder: &mut GlobalsBuilder) {
             refs,
             attrs: attrs.map(|a| a.items),
             split,
+            is_bazel: is_bazel_transition,
+            inputs: inputs.items,
+            outputs: outputs.items,
         })
     }
 }

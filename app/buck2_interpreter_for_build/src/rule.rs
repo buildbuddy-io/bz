@@ -22,6 +22,11 @@ use buck2_interpreter::types::rule::FROZEN_PROMISE_ARTIFACT_MAPPINGS_GET_IMPL;
 use buck2_interpreter::types::rule::FROZEN_RULE_GET_IMPL;
 use buck2_interpreter::types::transition::transition_id_from_value;
 use buck2_node::attrs::attr::Attribute;
+use buck2_node::attrs::attr_type::AttrType;
+use buck2_node::attrs::attr_type::bool::BoolLiteral;
+use buck2_node::attrs::attr_type::list::ListLiteral;
+use buck2_node::attrs::attr_type::string::StringLiteral;
+use buck2_node::attrs::coerced_attr::CoercedAttr;
 use buck2_node::attrs::display::AttrDisplayWithContextExt;
 use buck2_node::attrs::spec::AttributeSpec;
 use buck2_node::bzl_or_bxl_path::BzlOrBxlPath;
@@ -31,6 +36,8 @@ use buck2_node::rule::Rule;
 use buck2_node::rule::RuleIncomingTransition;
 use buck2_node::rule_type::RuleType;
 use buck2_node::rule_type::StarlarkRuleType;
+use buck2_util::arc_str::ArcSlice;
+use buck2_util::arc_str::ArcStr;
 use derive_more::Display;
 use dupe::Dupe;
 use either::Either;
@@ -67,6 +74,7 @@ use starlark::values::list::ListType;
 use starlark::values::list::UnpackList;
 use starlark::values::list_or_tuple::UnpackListOrTuple;
 use starlark::values::starlark_value;
+use starlark::values::structs::StructRef;
 use starlark::values::typing::FrozenStarlarkCallable;
 use starlark::values::typing::StarlarkCallable;
 use starlark::values::typing::StarlarkCallableChecked;
@@ -164,6 +172,84 @@ enum RuleError {
     RuleDoesNotSupportIncomingTransition(&'static str),
     #[error("`rule` requires exactly one implementation function")]
     MissingOrConflictingImplementation,
+    #[error("Bazel `build_setting` must be created by `config.*`, got `{0}`")]
+    InvalidBazelBuildSetting(String),
+    #[error("unsupported Bazel build setting type `{0}`")]
+    UnsupportedBazelBuildSettingType(String),
+}
+
+fn bazel_build_setting_default_attr(
+    build_setting: Option<Value<'_>>,
+) -> buck2_error::Result<Option<(String, Attribute)>> {
+    let Some(build_setting_value) = build_setting else {
+        return Ok(None);
+    };
+    let Some(build_setting) = StructRef::from_value(build_setting_value) else {
+        return Err(RuleError::InvalidBazelBuildSetting(build_setting_value.to_repr()).into());
+    };
+    let kind = build_setting
+        .iter()
+        .find_map(|(name, value)| (name.as_str() == "type").then_some(value))
+        .and_then(|value| value.unpack_str())
+        .ok_or_else(|| RuleError::InvalidBazelBuildSetting(build_setting_value.to_repr()))?;
+    let attr_type = match kind {
+        "int" => AttrType::int(),
+        "bool" => AttrType::bool(),
+        "string" => AttrType::string(),
+        "string_list" => AttrType::list(AttrType::string()),
+        other => return Err(RuleError::UnsupportedBazelBuildSettingType(other.to_owned()).into()),
+    };
+    Ok(Some((
+        "build_setting_default".to_owned(),
+        Attribute::new(None, "", attr_type)?,
+    )))
+}
+
+fn add_bazel_common_implicit_attrs(
+    attrs: &mut Vec<(String, Attribute)>,
+) -> buck2_error::Result<()> {
+    fn add_if_absent(
+        attrs: &mut Vec<(String, Attribute)>,
+        name: &str,
+        default: CoercedAttr,
+        attr_type: AttrType,
+    ) -> buck2_error::Result<()> {
+        if attrs.iter().any(|(existing, _)| existing == name) {
+            return Ok(());
+        }
+        attrs.push((
+            name.to_owned(),
+            Attribute::new(Some(Arc::new(default)), "", attr_type)?,
+        ));
+        Ok(())
+    }
+
+    add_if_absent(
+        attrs,
+        "deprecation",
+        CoercedAttr::String(StringLiteral(ArcStr::from(""))),
+        AttrType::string(),
+    )?;
+    add_if_absent(
+        attrs,
+        "tags",
+        CoercedAttr::List(ListLiteral(ArcSlice::new([]))),
+        AttrType::list(AttrType::string()),
+    )?;
+    add_if_absent(
+        attrs,
+        "testonly",
+        CoercedAttr::Bool(BoolLiteral(false)),
+        AttrType::bool(),
+    )?;
+    add_if_absent(
+        attrs,
+        "features",
+        CoercedAttr::List(ListLiteral(ArcSlice::new([]))),
+        AttrType::list(AttrType::string()),
+    )?;
+    attrs.sort_by(|(a, _), (b, _)| a.cmp(b));
+    Ok(())
 }
 
 impl<'v> AllocValue<'v> for StarlarkRuleCallable<'v> {
@@ -182,6 +268,7 @@ impl<'v> StarlarkRuleCallable<'v> {
         is_configuration_rule: bool,
         is_toolchain_rule: bool,
         uses_plugins: Vec<PluginKind>,
+        build_setting: Option<Value<'v>>,
         artifact_promise_mappings: Option<ArtifactPromiseMappings<'v>>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> buck2_error::Result<StarlarkRuleCallable<'v>> {
@@ -203,7 +290,7 @@ impl<'v> StarlarkRuleCallable<'v> {
             ),
         };
 
-        let sorted_validated_attrs = attrs
+        let mut sorted_validated_attrs = attrs
             .entries
             .into_iter()
             .sorted_by(|(k1, _), (k2, _)| Ord::cmp(k1, k2))
@@ -215,6 +302,11 @@ impl<'v> StarlarkRuleCallable<'v> {
                 }
             })
             .collect::<buck2_error::Result<Vec<(String, Attribute)>>>()?;
+        if let Some(attr) = bazel_build_setting_default_attr(build_setting)? {
+            sorted_validated_attrs.push(attr);
+            sorted_validated_attrs.sort_by(|(a, _), (b, _)| a.cmp(b));
+        }
+        add_bazel_common_implicit_attrs(&mut sorted_validated_attrs)?;
 
         let cfg = match (cfg, supports_incoming_transition) {
             (Some(_), Some(_)) => return Err(RuleError::CfgAndSupportsIncomingTransition.into()),
@@ -285,6 +377,7 @@ impl<'v> StarlarkRuleCallable<'v> {
             false,
             false,
             Vec::new(),
+            None,
             Some(ArtifactPromiseMappings {
                 mappings: artifact_promise_mappings
                     .iter()
@@ -654,7 +747,6 @@ pub fn register_rule_function(builder: &mut GlobalsBuilder) {
             dependency_resolution_rule,
             exec_compatible_with,
             analysis_test,
-            build_setting,
             exec_groups,
             initializer,
             parent,
@@ -684,6 +776,7 @@ pub fn register_rule_function(builder: &mut GlobalsBuilder) {
                 .into_iter()
                 .map(|PluginKindArg { plugin_kind }| plugin_kind)
                 .collect(),
+            build_setting,
             None,
             eval,
         )?)

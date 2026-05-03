@@ -107,9 +107,7 @@ pub fn to_value<'v>(env: &Module<'v>, globals: &Globals, content: &str) -> Value
         &cell_info,
         &mut buckconfigs,
         &host_info,
-        PerFileTypeContext::Bzl(BzlEvalCtx {
-            bzl_path: import_path,
-        }),
+        PerFileTypeContext::Bzl(BzlEvalCtx::new(import_path)),
         false,
     );
 

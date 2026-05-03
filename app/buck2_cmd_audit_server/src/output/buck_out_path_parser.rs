@@ -508,6 +508,7 @@ mod tests {
             "cfg_for//:testing_exec".to_owned(),
             ConfigurationDataData {
                 constraints: BTreeMap::new(),
+                build_settings: BTreeMap::new(),
             },
             false,
         )

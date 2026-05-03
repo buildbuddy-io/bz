@@ -20,6 +20,7 @@ use buck2_build_api::interpreter::rule_defs::provider::builtin::dep_only_incompa
 use buck2_build_api::interpreter::rule_defs::provider::builtin::dep_only_incompatible_info::FrozenDepOnlyIncompatibleInfo;
 use buck2_build_api::transition::TRANSITION_ATTRS_PROVIDER;
 use buck2_build_api::transition::TRANSITION_CALCULATION;
+use buck2_build_api::transition::TransitionAttrs;
 use buck2_build_signals::node_key::BuildSignalsNodeKey;
 use buck2_build_signals::node_key::BuildSignalsNodeKeyImpl;
 use buck2_common::dice::cells::HasCellResolver;
@@ -673,14 +674,42 @@ async fn resolve_transition_input_attrs<'a>(
             .get()?
             .transition_attrs(ctx, tr)
             .await?;
-        if let Some(attrs) = attrs {
-            for attr in attrs.as_ref() {
-                // Multiple outgoing transitions may refer the same attribute.
-                if result.contains_key(attr.as_str()) {
-                    continue;
-                }
+        match attrs {
+            TransitionAttrs::None => {}
+            TransitionAttrs::Listed(attrs) => {
+                for attr in attrs.as_ref() {
+                    // Multiple outgoing transitions may refer the same attribute.
+                    if result.contains_key(attr.as_str()) {
+                        continue;
+                    }
 
-                if let Some(coerced_attr) = target_node.attr(attr, AttrInspectOptions::All)? {
+                    if let Some(coerced_attr) = target_node.attr(attr, AttrInspectOptions::All)? {
+                        let configured_attr = coerced_attr.configure(&cfg_ctx)?;
+                        if let Some(old_val) =
+                            result.insert(configured_attr.name, Arc::new(configured_attr.value))
+                        {
+                            return internal_error!(
+                                "Found duplicated value `{}` for attr `{}` on target `{}`",
+                                &old_val.as_display_no_ctx(),
+                                attr,
+                                target_node.label()
+                            )
+                            .into();
+                        }
+                    }
+                }
+            }
+            TransitionAttrs::All => {
+                for coerced_attr in target_node.attrs(AttrInspectOptions::All) {
+                    if !coerced_attr_can_be_bazel_transition_attr(coerced_attr.value) {
+                        continue;
+                    }
+
+                    // Multiple outgoing transitions may refer the same attribute.
+                    if result.contains_key(coerced_attr.name) {
+                        continue;
+                    }
+
                     let configured_attr = coerced_attr.configure(&cfg_ctx)?;
                     if let Some(old_val) =
                         result.insert(configured_attr.name, Arc::new(configured_attr.value))
@@ -688,7 +717,7 @@ async fn resolve_transition_input_attrs<'a>(
                         return internal_error!(
                             "Found duplicated value `{}` for attr `{}` on target `{}`",
                             &old_val.as_display_no_ctx(),
-                            attr,
+                            coerced_attr.name,
                             target_node.label()
                         )
                         .into();
@@ -698,6 +727,43 @@ async fn resolve_transition_input_attrs<'a>(
         }
     }
     ResultMaybeCompatible::Compatible(result)
+}
+
+fn coerced_attr_can_be_bazel_transition_attr(value: &CoercedAttr) -> bool {
+    match value {
+        CoercedAttr::ExplicitConfiguredDep(_)
+        | CoercedAttr::TransitionDep(_)
+        | CoercedAttr::SplitTransitionDep(_)
+        | CoercedAttr::ConfiguredDepForForwardNode(_)
+        | CoercedAttr::ConfigurationDep(_)
+        | CoercedAttr::PluginDep(_)
+        | CoercedAttr::Dep(_)
+        | CoercedAttr::SourceLabel(_)
+        | CoercedAttr::SourceFile(_) => false,
+        CoercedAttr::OneOf(value, _) => coerced_attr_can_be_bazel_transition_attr(value),
+        CoercedAttr::List(values) => values.iter().all(coerced_attr_can_be_bazel_transition_attr),
+        CoercedAttr::Tuple(values) => values.iter().all(coerced_attr_can_be_bazel_transition_attr),
+        CoercedAttr::Dict(values) => values.iter().all(|(key, value)| {
+            coerced_attr_can_be_bazel_transition_attr(key)
+                && coerced_attr_can_be_bazel_transition_attr(value)
+        }),
+        CoercedAttr::Selector(_)
+        | CoercedAttr::SelectFail(_)
+        | CoercedAttr::SelectIncompatible(_)
+        | CoercedAttr::Concat(_)
+        | CoercedAttr::Bool(_)
+        | CoercedAttr::Int(_)
+        | CoercedAttr::String(_)
+        | CoercedAttr::EnumVariant(_)
+        | CoercedAttr::None
+        | CoercedAttr::Visibility(_)
+        | CoercedAttr::WithinView(_)
+        | CoercedAttr::Label(_)
+        | CoercedAttr::Arg(_)
+        | CoercedAttr::Query(_)
+        | CoercedAttr::Metadata(_)
+        | CoercedAttr::TargetModifiers(_) => true,
+    }
 }
 
 /// Verifies if configured node's attributes are equal to the same attributes configured with pre-transition configuration.
