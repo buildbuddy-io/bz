@@ -183,6 +183,34 @@ def platform_impl(ctx):
         ),
     ]
 
+def toolchain_type_impl(ctx):
+    _ = ctx.attrs.no_match_error
+    return [DefaultInfo()]
+
+def _raw_target(label):
+    if hasattr(label, "raw_target"):
+        return str(label.raw_target())
+    return str(label)
+
+def _raw_targets(labels):
+    return [_raw_target(label) for label in labels]
+
+def toolchain_impl(ctx):
+    if ctx.attrs.use_target_platform_constraints and (ctx.attrs.exec_compatible_with or ctx.attrs.target_compatible_with):
+        fail("Cannot set use_target_platform_constraints to True and also set exec_compatible_with or target_compatible_with")
+
+    return [
+        DefaultInfo(),
+        DeclaredToolchainInfo(
+            toolchain_type = _raw_target(ctx.attrs.toolchain_type),
+            toolchain = _raw_target(ctx.attrs.toolchain),
+            exec_compatible_with = _raw_targets(ctx.attrs.exec_compatible_with),
+            target_compatible_with = _raw_targets(ctx.attrs.target_compatible_with),
+            target_settings = _raw_targets(ctx.attrs.target_settings),
+            use_target_platform_constraints = ctx.attrs.use_target_platform_constraints,
+        ),
+    ]
+
 def configuration_alias_impl(ctx: AnalysisContext) -> list[Provider]:
     return ctx.attrs.actual.providers
 
@@ -201,4 +229,6 @@ implemented_rules = {
     "constraint_value": constraint_value_impl,
     "exec_platform_marker_constraint": constraint_impl,
     "platform": platform_impl,
+    "toolchain": toolchain_impl,
+    "toolchain_type": toolchain_type_impl,
 }

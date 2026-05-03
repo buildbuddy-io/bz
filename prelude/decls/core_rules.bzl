@@ -1017,6 +1017,29 @@ platform = prelude_rule(
     ),
 )
 
+toolchain_type = prelude_rule(
+    name = "toolchain_type",
+    docs = "Declares a Bazel toolchain type.",
+    examples = None,
+    further = None,
+    attrs = {
+        "no_match_error": attrs.string(default = ""),
+    },
+)
+
+toolchain = prelude_rule(
+    name = "toolchain",
+    docs = "Declares a Bazel toolchain implementation and its selection constraints.",
+    examples = None,
+    further = None,
+    attrs = {
+        "toolchain_type": attrs.label(),
+        "target_settings": attrs.list(attrs.label(), default = []),
+        "toolchain": attrs.label(),
+        "use_target_platform_constraints": attrs.bool(default = False),
+    },
+)
+
 remote_file = prelude_rule(
     name = "remote_file",
     docs = """
@@ -1601,7 +1624,9 @@ core_rules = struct(
     platform = platform,
     remote_file = remote_file,
     test_suite = test_suite,
+    toolchain = toolchain,
     toolchain_alias = toolchain_alias,
+    toolchain_type = toolchain_type,
     versioned_alias = versioned_alias,
     worker_tool = worker_tool,
     zip_file = zip_file,

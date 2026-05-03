@@ -57,6 +57,8 @@ Completed:
 - Bazel native command-line `config_setting.values` keys such as `compilation_mode`, `stamp`, and `strip` are normalized to `//command_line_option:*` and read Bazel defaults from configuration.
 - Bazel rule transitions apply from the pre-rule configuration without Buck's post-transition attr equality invariant.
 - `ctx.toolchains[...]` exists as a Bazel `ToolchainContext`, enforces declared toolchain access, and returns `None` for declared optional misses.
+- Bazel native `toolchain_type(...)` and `toolchain(...)` rules are available from real BUILD files.
+- Native `toolchain(...)` targets now emit an internal `DeclaredToolchainInfo` provider containing the toolchain type, selected implementation label, target/exec constraints, target settings, and `use_target_platform_constraints`.
 - `cc_common.is_cc_toolchain_resolution_enabled_do_not_use(ctx = ctx)` is available.
 - `ctx.build_setting_value`, `ctx.attr`, and `ctx.var` are available during Bazel rule analysis.
 - Bazel-declared rules accept `None`, a single provider, or provider sequences from analysis and receive an implicit empty `DefaultInfo` when omitted.
@@ -70,7 +72,7 @@ BUCK2_HARD_ERROR=false \
 bazel-bin/app/buck2/buck2_bin --isolation-dir real-rules-go-... build //:hello
 ```
 
-The smoke now loads real `rules_go`, `rules_cc`, `rules_proto`, `protobuf`, `bazel_skylib`, `bazel_features`, and `gazelle` load-time Starlark from bzlmod, gets past the generated `@io_bazel_rules_nogo` repository, Gazelle `go_deps` aliases, `bazel_features` generated globals, Bazel build-setting defaults, rules_go's incoming Go transitions, bundled `@bazel_tools` package targets, Bazel provider return semantics, and source `.files` access. The current failure is in rules_go Go configuration analysis when a declared Go toolchain type is accepted by `ctx.toolchains` but no registered toolchain has been resolved:
+The smoke now loads real `rules_go`, `rules_cc`, `rules_proto`, `protobuf`, `bazel_skylib`, `bazel_features`, and `gazelle` load-time Starlark from bzlmod, gets past the generated `@io_bazel_rules_nogo` repository, Gazelle `go_deps` aliases, `bazel_features` generated globals, Bazel build-setting defaults, rules_go's incoming Go transitions, bundled `@bazel_tools` package targets, Bazel provider return semantics, source `.files` access, and native Bazel toolchain declaration rules. The current failure is in rules_go Go configuration analysis when a declared Go toolchain type is accepted by `ctx.toolchains` but no registered toolchain has been resolved:
 
 ```text
 root//:hello
@@ -177,6 +179,8 @@ Completed:
 - first-class bundled `@bazel_tools` cell and package targets reached by rules_go/rules_cc
 - Bazel-native command-line `config_setting.values` normalization
 - Bazel rule transition invocation without Buck post-transition attr checks
+- Bazel native `toolchain_type(...)` and `toolchain(...)` declarations
+- Internal `DeclaredToolchainInfo` provider emitted by native `toolchain(...)`
 - Bazel `ctx.toolchains[...]` access shape and optional `None` result
 - `cc_common.is_cc_toolchain_resolution_enabled_do_not_use(ctx = ctx)`
 

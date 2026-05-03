@@ -15,6 +15,7 @@ pub mod configuration_info;
 pub mod constraint_setting_info;
 pub mod constraint_value_info;
 pub mod coverage_info;
+pub mod declared_toolchain_info;
 pub mod default_info;
 pub mod dep_only_incompatible_info;
 pub mod dep_only_incompatible_rollout;
