@@ -22,23 +22,25 @@ fn imp() -> io::Result<()> {
     let out_path = std::env::var_os("OUT_DIR").unwrap();
     let include_file = Path::new(&out_path).join("include.rs");
     let manifest_path = std::env::var_os("CARGO_MANIFEST_DIR").unwrap();
-    let cargo_prelude_path = Path::new(&manifest_path)
+    let repo_root = Path::new(&manifest_path)
         .parent()
         .unwrap()
         .parent()
-        .unwrap()
-        .join("prelude");
-    let cwd_prelude_path = std::env::current_dir()?.join("prelude");
-    let prelude_path = if cwd_prelude_path.join("prelude.bzl").exists() {
-        cwd_prelude_path
-    } else {
-        cargo_prelude_path
-    };
+        .unwrap();
+    let prelude_path = source_tree_path(repo_root, "prelude", "prelude.bzl")?;
+    let bazel_tools_path =
+        source_tree_path(repo_root, "bazel_tools", "tools/cpp/toolchain_utils.bzl")?;
 
     // Self-check.
     assert!(prelude_path.join("prelude.bzl").exists());
+    assert!(
+        bazel_tools_path
+            .join("tools/cpp/toolchain_utils.bzl")
+            .exists()
+    );
 
     println!("cargo:rerun-if-changed={}", prelude_path.display());
+    println!("cargo:rerun-if-changed={}", bazel_tools_path.display());
 
     let include_file = std::fs::File::create(&include_file)?;
     let cargo_manifest_args = Path::new(&out_path).with_file_name("build_script.out_dir-0.params");
@@ -81,49 +83,117 @@ fn imp() -> io::Result<()> {
     } else if let Some(runfiles_manifest) = bazel_runfiles_manifest {
         write_include_file_from_runfiles_manifest(&runfiles_manifest, include_file)?;
     } else {
-        write_include_file(&prelude_path, include_file)?;
+        write_include_file(
+            &[
+                SourceTree {
+                    module: "prelude",
+                    path: &prelude_path,
+                    sentinel: "prelude.bzl",
+                },
+                SourceTree {
+                    module: "bazel_tools",
+                    path: &bazel_tools_path,
+                    sentinel: "tools/cpp/toolchain_utils.bzl",
+                },
+            ],
+            include_file,
+        )?;
     }
 
     Ok(())
+}
+
+fn source_tree_path(repo_root: &Path, name: &str, sentinel: &str) -> io::Result<PathBuf> {
+    let cwd_path = std::env::current_dir()?.join(name);
+    if cwd_path.join(sentinel).exists() {
+        return Ok(cwd_path);
+    }
+    Ok(repo_root.join(name))
 }
 
 fn as_unix_like(path: &Path) -> String {
     path.to_str().unwrap().replace('\\', "/")
 }
 
-fn write_include_file(prelude: &Path, mut include_file: impl io::Write) -> io::Result<()> {
+struct SourceTree<'a> {
+    module: &'static str,
+    path: &'a Path,
+    sentinel: &'static str,
+}
+
+fn write_include_file(
+    source_trees: &[SourceTree<'_>],
+    mut include_file: impl io::Write,
+) -> io::Result<()> {
     write_include_header(&mut include_file)?;
 
-    let mut files = Vec::new();
-    for res in walkdir::WalkDir::new(prelude) {
-        let entry = res.map_err(|e| e.into_io_error().unwrap())?;
-        if !entry.file_type().is_file() {
-            continue;
+    for source_tree in source_trees {
+        write_include_module_header(&mut include_file, source_tree.module)?;
+
+        let mut files = Vec::new();
+        for res in walkdir::WalkDir::new(source_tree.path) {
+            let entry = res.map_err(|e| e.into_io_error().unwrap())?;
+            if !entry.file_type().is_file() {
+                continue;
+            }
+
+            files.push((
+                as_unix_like(entry.path().strip_prefix(source_tree.path).unwrap()),
+                entry.path().to_owned(),
+            ));
+        }
+        files.sort_by(|(a, _), (b, _)| a.cmp(b));
+
+        if !files.iter().any(|(path, _)| path == source_tree.sentinel) {
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                format!(
+                    "{} directory `{}` did not contain `{}`; current directory is `{}`",
+                    source_tree.module,
+                    source_tree.path.display(),
+                    source_tree.sentinel,
+                    std::env::current_dir()?.display()
+                ),
+            ));
         }
 
-        files.push((
-            as_unix_like(entry.path().strip_prefix(prelude).unwrap()),
-            entry.path().to_owned(),
-        ));
-    }
-    files.sort_by(|(a, _), (b, _)| a.cmp(b));
+        for (path, contents_path) in files {
+            write_include_entry(&mut include_file, &path, &contents_path, &contents_path)?;
+        }
 
-    if files.is_empty() {
+        write_include_module_footer(&mut include_file)?;
+    }
+
+    Ok(())
+}
+
+fn write_include_module_from_collected<I>(
+    mut include_file: impl io::Write,
+    module: &str,
+    sentinel: &str,
+    files: I,
+) -> io::Result<()>
+where
+    I: IntoIterator<Item = (String, PathBuf, PathBuf)>,
+{
+    let mut files: Vec<_> = files.into_iter().collect();
+    files.sort_by(|(a, _, _), (b, _, _)| a.cmp(b));
+
+    if !files.iter().any(|(path, _, _)| path == sentinel) {
         return Err(io::Error::new(
             io::ErrorKind::NotFound,
             format!(
-                "prelude directory `{}` did not contain any files; current directory is `{}`",
-                prelude.display(),
-                std::env::current_dir()?.display()
+                "input data for bundled `{}` did not contain `{}`",
+                module, sentinel
             ),
         ));
     }
 
-    for (path, contents_path) in files {
-        write_include_entry(&mut include_file, &path, &contents_path, &contents_path)?;
+    write_include_module_header(&mut include_file, module)?;
+    for (path, contents_path, metadata_path) in files {
+        write_include_entry(&mut include_file, &path, &contents_path, &metadata_path)?;
     }
-
-    write_include_footer(&mut include_file)
+    write_include_module_footer(&mut include_file)
 }
 
 fn write_include_file_from_runfiles_manifest(
@@ -132,36 +202,27 @@ fn write_include_file_from_runfiles_manifest(
 ) -> io::Result<()> {
     write_include_header(&mut include_file)?;
 
-    let mut files = Vec::new();
-    for line in std::fs::read_to_string(manifest)?.lines() {
-        let Some((runfile_path, contents_path)) = line.split_once(' ') else {
-            continue;
-        };
-        let Some(path) = runfile_path
-            .strip_prefix("_main/prelude/")
-            .or_else(|| runfile_path.strip_prefix("prelude/"))
-        else {
-            continue;
-        };
-        files.push((path.to_owned(), PathBuf::from(contents_path)));
-    }
-    files.sort_by(|(a, _), (b, _)| a.cmp(b));
+    let manifest = std::fs::read_to_string(manifest)?;
+    for (module, sentinel) in [
+        ("prelude", "prelude.bzl"),
+        ("bazel_tools", "tools/cpp/toolchain_utils.bzl"),
+    ] {
+        let files = manifest.lines().filter_map(|line| {
+            let (runfile_path, contents_path) = line.split_once(' ')?;
+            let path = runfile_path
+                .strip_prefix(&format!("_main/{module}/"))
+                .or_else(|| runfile_path.strip_prefix(&format!("{module}/")))?;
+            Some((
+                path.to_owned(),
+                PathBuf::from(contents_path),
+                PathBuf::from(contents_path),
+            ))
+        });
 
-    if !files.iter().any(|(path, _)| path == "prelude.bzl") {
-        return Err(io::Error::new(
-            io::ErrorKind::NotFound,
-            format!(
-                "runfiles manifest `{}` did not contain the bundled prelude",
-                manifest.display()
-            ),
-        ));
+        write_include_module_from_collected(&mut include_file, module, sentinel, files)?;
     }
 
-    for (path, contents_path) in files {
-        write_include_entry(&mut include_file, &path, &contents_path, &contents_path)?;
-    }
-
-    write_include_footer(&mut include_file)
+    Ok(())
 }
 
 fn write_include_file_from_cargo_manifest_args(
@@ -172,38 +233,26 @@ fn write_include_file_from_cargo_manifest_args(
 ) -> io::Result<()> {
     write_include_header(&mut include_file)?;
 
-    let mut files = Vec::new();
-    for line in std::fs::read_to_string(manifest_args)?.lines().skip(2) {
-        let line = line.trim_matches('\'');
-        let Some((runfile_path, contents_path)) = line.split_once('=') else {
-            continue;
-        };
-        let Some(path) = runfile_path.strip_prefix("prelude/") else {
-            continue;
-        };
-        files.push((
-            path.to_owned(),
-            include_path_from_out_dir(out_dir, runfile_path),
-            runfiles_root.join(contents_path),
-        ));
-    }
-    files.sort_by(|(a, _, _), (b, _, _)| a.cmp(b));
+    let args = std::fs::read_to_string(manifest_args)?;
+    for (module, sentinel) in [
+        ("prelude", "prelude.bzl"),
+        ("bazel_tools", "tools/cpp/toolchain_utils.bzl"),
+    ] {
+        let files = args.lines().skip(2).filter_map(|line| {
+            let line = line.trim_matches('\'');
+            let (runfile_path, contents_path) = line.split_once('=')?;
+            let path = runfile_path.strip_prefix(&format!("{module}/"))?;
+            Some((
+                path.to_owned(),
+                include_path_from_out_dir(out_dir, runfile_path),
+                runfiles_root.join(contents_path),
+            ))
+        });
 
-    if !files.iter().any(|(path, _, _)| path == "prelude.bzl") {
-        return Err(io::Error::new(
-            io::ErrorKind::NotFound,
-            format!(
-                "cargo manifest args `{}` did not contain the bundled prelude",
-                manifest_args.display()
-            ),
-        ));
+        write_include_module_from_collected(&mut include_file, module, sentinel, files)?;
     }
 
-    for (path, contents_path, metadata_path) in files {
-        write_include_entry(&mut include_file, &path, &contents_path, &metadata_path)?;
-    }
-
-    write_include_footer(&mut include_file)
+    Ok(())
 }
 
 fn include_path_from_out_dir(out_dir: &Path, runfile_path: &str) -> PathBuf {
@@ -222,12 +271,13 @@ fn include_path_from_out_dir(out_dir: &Path, runfile_path: &str) -> PathBuf {
 }
 
 fn write_include_header(mut include_file: impl io::Write) -> io::Result<()> {
-    #[allow(clippy::write_literal)]
-    writeln!(include_file, "// {}generated by crate build.rs", "@")?;
+    writeln!(include_file, "// {}generated by crate build.rs", "@")
+}
 
+fn write_include_module_header(mut include_file: impl io::Write, module: &str) -> io::Result<()> {
     writeln!(
         include_file,
-        "pub(crate) const DATA: &[crate::BundledFile] = &["
+        "pub(crate) mod {module} {{\n  pub(crate) const DATA: &[crate::BundledFile] = &["
     )
 }
 
@@ -260,7 +310,7 @@ fn write_include_entry(
     writeln!(include_file, "}},")
 }
 
-fn write_include_footer(mut include_file: impl io::Write) -> io::Result<()> {
-    writeln!(include_file, "];")?;
+fn write_include_module_footer(mut include_file: impl io::Write) -> io::Result<()> {
+    writeln!(include_file, "  ];\n}}")?;
     Ok(())
 }

@@ -118,12 +118,23 @@ async fn configuration_matches(
     for (setting, expected) in &constraints_and_configs.build_settings {
         match build_settings.get(setting) {
             Some(actual) if actual.as_config_setting_value() == *expected => {}
+            None if bazel_command_line_option_default(setting) == Some(expected.as_str()) => {}
             None if expected == "False" => {}
             _ => return Ok(false),
         }
     }
 
     Ok(true)
+}
+
+fn bazel_command_line_option_default(setting: &str) -> Option<&'static str> {
+    match setting.strip_prefix("//command_line_option:")? {
+        "compilation_mode" => Some("fastbuild"),
+        "host_compilation_mode" => Some("opt"),
+        "stamp" => Some("false"),
+        "strip" => Some("sometimes"),
+        _ => None,
+    }
 }
 
 #[derive(Clone, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable)]

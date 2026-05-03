@@ -16,6 +16,7 @@ use std::fmt::Formatter;
 use std::sync::OnceLock;
 
 use allocative::Allocative;
+use buck2_core::configuration::data::BazelBuildSettingValue;
 use buck2_core::provider::label::ConfiguredProvidersLabel;
 use buck2_core::provider::label::ProvidersName;
 use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
@@ -25,6 +26,8 @@ use buck2_error::internal_error;
 use buck2_execute::digest_config::DigestConfig;
 use buck2_interpreter::late_binding_ty::AnalysisContextReprLate;
 use buck2_interpreter::types::configured_providers_label::StarlarkConfiguredProvidersLabel;
+use buck2_interpreter::types::configured_providers_label::StarlarkProvidersLabel;
+use buck2_interpreter::types::target_label::StarlarkTargetLabel;
 use buck2_util::late_binding::LateBinding;
 use derive_more::Display;
 use dice::DiceComputations;
@@ -46,6 +49,7 @@ use starlark::values::ValueLike;
 use starlark::values::ValueOfUnchecked;
 use starlark::values::ValueTyped;
 use starlark::values::ValueTypedComplex;
+use starlark::values::dict::AllocDict;
 use starlark::values::none::NoneOr;
 use starlark::values::starlark_value;
 use starlark::values::structs::StructRef;
@@ -55,6 +59,13 @@ use crate::analysis::anon_promises_dyn::RunAnonPromisesAccessor;
 use crate::analysis::registry::AnalysisRegistry;
 use crate::deferred::calculation::GET_PROMISED_ARTIFACT;
 use crate::interpreter::rule_defs::plugins::AnalysisPlugins;
+
+#[derive(Debug, buck2_error::Error)]
+#[buck2(tag = Input)]
+enum AnalysisContextError {
+    #[error("attempting to access `build_setting_value` of non-build setting {0}")]
+    NonBuildSetting(String),
+}
 
 /// Whether `declare_output` defaults `has_content_based_path` to `true`.
 /// Controlled by `[buck2] declare_output_has_content_based_path_default` buckconfig.
@@ -108,6 +119,70 @@ pub struct AnalysisActions<'v> {
     pub plugins: Option<ValueTypedComplex<'v, AnalysisPlugins<'v>>>,
     /// Digest configuration to use when interpreting digests passed in analysis.
     pub digest_config: DigestConfig,
+}
+
+#[derive(ProvidesStaticType, Debug, Trace, NoSerialize, Allocative)]
+pub struct AnalysisToolchains {
+    toolchains: Vec<String>,
+}
+
+impl Display for AnalysisToolchains {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "<ctx.toolchains>")
+    }
+}
+
+impl AnalysisToolchains {
+    fn new(toolchains: Vec<String>) -> Self {
+        Self { toolchains }
+    }
+
+    fn normalize_key(key: &str) -> String {
+        key.strip_prefix('@').unwrap_or(key).to_owned()
+    }
+
+    fn key_from_value(value: Value<'_>) -> String {
+        if let Some(label) = StarlarkProvidersLabel::from_value(value) {
+            return label.to_string();
+        }
+        if let Some(label) = StarlarkTargetLabel::from_value(value) {
+            return label.to_string();
+        }
+        if let Some(key) = value.unpack_str() {
+            return Self::normalize_key(key);
+        }
+        value.to_repr()
+    }
+
+    fn contains_value(&self, value: Value<'_>) -> bool {
+        let key = Self::key_from_value(value);
+        self.toolchains.iter().any(|candidate| candidate == &key)
+    }
+}
+
+impl<'v> AllocValue<'v> for AnalysisToolchains {
+    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
+        heap.alloc_complex_no_freeze(self)
+    }
+}
+
+#[starlark_value(type = "ToolchainContext")]
+impl<'v> StarlarkValue<'v> for AnalysisToolchains {
+    fn at(&self, index: Value<'v>, _heap: Heap<'v>) -> starlark::Result<Value<'v>> {
+        if self.contains_value(index) {
+            Ok(Value::new_none())
+        } else {
+            Err(internal_error!(
+                "toolchain `{}` was not declared by this rule",
+                index.to_repr()
+            )
+            .into())
+        }
+    }
+
+    fn is_in(&self, other: Value<'v>) -> starlark::Result<bool> {
+        Ok(self.contains_value(other))
+    }
 }
 
 impl<'v> AnalysisActions<'v> {
@@ -223,6 +298,8 @@ pub struct AnalysisContext<'v> {
     /// Only `None` when running a `dynamic_output` action from Bxl.
     label: Option<ValueTyped<'v, StarlarkConfiguredProvidersLabel>>,
     plugins: Option<ValueTypedComplex<'v, AnalysisPlugins<'v>>>,
+    toolchains: ValueTyped<'v, AnalysisToolchains>,
+    is_bazel_build_setting: bool,
 }
 
 impl<'v> Display for AnalysisContext<'v> {
@@ -245,6 +322,8 @@ impl<'v> AnalysisContext<'v> {
         attrs: Option<ValueOfUnchecked<'v, StructRef<'static>>>,
         label: Option<ValueTyped<'v, StarlarkConfiguredProvidersLabel>>,
         plugins: Option<ValueTypedComplex<'v, AnalysisPlugins<'v>>>,
+        toolchains: Vec<String>,
+        is_bazel_build_setting: bool,
         registry: AnalysisRegistry<'v>,
         digest_config: DigestConfig,
     ) -> Self {
@@ -258,6 +337,8 @@ impl<'v> AnalysisContext<'v> {
             }),
             label,
             plugins,
+            toolchains: heap.alloc_typed(AnalysisToolchains::new(toolchains)),
+            is_bazel_build_setting,
         }
     }
 
@@ -266,6 +347,8 @@ impl<'v> AnalysisContext<'v> {
         attrs: Option<ValueOfUnchecked<'v, StructRef<'static>>>,
         label: Option<ConfiguredTargetLabel>,
         plugins: Option<ValueTypedComplex<'v, AnalysisPlugins<'v>>>,
+        toolchains: Vec<String>,
+        is_bazel_build_setting: bool,
         registry: AnalysisRegistry<'v>,
         digest_config: DigestConfig,
     ) -> ValueTyped<'v, AnalysisContext<'v>> {
@@ -275,7 +358,16 @@ impl<'v> AnalysisContext<'v> {
             ))
         });
 
-        let analysis_context = Self::new(heap, attrs, label, plugins, registry, digest_config);
+        let analysis_context = Self::new(
+            heap,
+            attrs,
+            label,
+            plugins,
+            toolchains,
+            is_bazel_build_setting,
+            registry,
+            digest_config,
+        );
         heap.alloc_typed(analysis_context)
     }
 
@@ -291,6 +383,37 @@ impl<'v> AnalysisContext<'v> {
             .take()
             .expect("nothing to have stolen state yet")
     }
+}
+
+fn bazel_build_setting_value_to_starlark<'v>(
+    value: &BazelBuildSettingValue,
+    heap: Heap<'v>,
+) -> Value<'v> {
+    match value {
+        BazelBuildSettingValue::Bool(value) => heap.alloc(*value).to_value(),
+        BazelBuildSettingValue::Int(value) => heap.alloc(*value).to_value(),
+        BazelBuildSettingValue::String(value) => heap.alloc(value.as_str()).to_value(),
+        BazelBuildSettingValue::StringList(values) => {
+            let values = values.iter().map(String::as_str).collect::<Vec<_>>();
+            heap.alloc(values).to_value()
+        }
+    }
+}
+
+fn struct_field<'v>(
+    value: ValueOfUnchecked<'v, StructRef<'static>>,
+    field: &str,
+) -> Option<Value<'v>> {
+    StructRef::from_value(value.get())?
+        .iter()
+        .find_map(|(name, value)| (name.as_str() == field).then_some(value))
+}
+
+fn analysis_context_attrs<'v>(
+    ctx: &AnalysisContext<'v>,
+) -> buck2_error::Result<ValueOfUnchecked<'v, StructRef<'static>>> {
+    ctx.attrs
+        .ok_or_else(|| internal_error!("`attrs` is not available for `dynamic_output` or BXL"))
 }
 
 #[starlark_value(type = "AnalysisContext")]
@@ -345,9 +468,15 @@ fn analysis_context_methods(builder: &mut MethodsBuilder) {
     fn attrs<'v>(
         this: RefAnalysisContext<'v>,
     ) -> starlark::Result<ValueOfUnchecked<'v, StructRef<'static>>> {
-        Ok(this.0.attrs.ok_or_else(|| {
-            internal_error!("`attrs` is not available for `dynamic_output` or BXL")
-        })?)
+        Ok(analysis_context_attrs(this.0)?)
+    }
+
+    /// Bazel spelling for the target attribute struct.
+    #[starlark(attribute)]
+    fn attr<'v>(
+        this: RefAnalysisContext<'v>,
+    ) -> starlark::Result<ValueOfUnchecked<'v, StructRef<'static>>> {
+        Ok(analysis_context_attrs(this.0)?)
     }
 
     /// Returns an `actions` value containing functions to define actual actions that are run.
@@ -379,10 +508,65 @@ fn analysis_context_methods(builder: &mut MethodsBuilder) {
             internal_error!("`plugins` is not available for `dynamic_output` or BXL")
         })?)
     }
+
+    /// Returns the Bazel toolchain context for this rule.
+    #[starlark(attribute)]
+    fn toolchains<'v>(
+        this: RefAnalysisContext<'v>,
+    ) -> starlark::Result<ValueTyped<'v, AnalysisToolchains>> {
+        Ok(this.0.toolchains)
+    }
+
+    /// Returns the configured value of this Bazel build-setting target.
+    #[starlark(attribute)]
+    fn build_setting_value<'v>(
+        this: RefAnalysisContext<'v>,
+        heap: Heap<'v>,
+    ) -> starlark::Result<Value<'v>> {
+        let Some(label) = this.0.label else {
+            return Err(
+                internal_error!("`build_setting_value` is not available without a label").into(),
+            );
+        };
+        if !this.0.is_bazel_build_setting {
+            return Err(
+                buck2_error::Error::from(AnalysisContextError::NonBuildSetting(label.to_string()))
+                    .into(),
+            );
+        }
+
+        let target = label.label().target();
+        let build_setting_key = target.unconfigured().to_string();
+        if let Some(value) = target.cfg().data()?.build_settings.get(&build_setting_key) {
+            return Ok(bazel_build_setting_value_to_starlark(value, heap));
+        }
+
+        let attrs = this.0.attrs.ok_or_else(|| {
+            internal_error!("`build_setting_value` is not available without attrs")
+        })?;
+        struct_field(attrs, "build_setting_default").ok_or_else(|| {
+            internal_error!(
+                "Bazel build setting `{}` has no `build_setting_default` attr",
+                target.unconfigured()
+            )
+            .into()
+        })
+    }
+
+    /// Bazel make-variable map for this rule.
+    #[starlark(attribute)]
+    fn var<'v>(this: RefAnalysisContext<'v>, heap: Heap<'v>) -> starlark::Result<Value<'v>> {
+        let _unused = this;
+        Ok(heap.alloc(AllocDict::EMPTY))
+    }
 }
 
 #[starlark_module]
-#[starlark_types(AnalysisContext<'_> as AnalysisContext, AnalysisActions<'_> as AnalysisActions)]
+#[starlark_types(
+    AnalysisContext<'_> as AnalysisContext,
+    AnalysisActions<'_> as AnalysisActions,
+    AnalysisToolchains as AnalysisToolchains
+)]
 pub(crate) fn register_analysis_context(builder: &mut GlobalsBuilder) {}
 
 pub static ANALYSIS_ACTIONS_METHODS_ACTIONS: LateBinding<fn(&mut MethodsBuilder)> =

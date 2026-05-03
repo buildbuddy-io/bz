@@ -44,6 +44,12 @@ pub struct Rule {
     pub cfg: RuleIncomingTransition,
     /// The plugin kinds that are used by the target
     pub uses_plugins: Vec<PluginKind>,
+    /// Bazel toolchain types declared by `rule(toolchains = ...)`.
+    pub bazel_toolchains: Vec<String>,
+    /// Whether the rule was declared through Bazel's `rule(implementation = ...)` API.
+    pub is_bazel_rule: bool,
+    /// Whether the rule was declared with Bazel's `build_setting = ...`.
+    pub is_bazel_build_setting: bool,
 }
 
 interner!(INTERNER, BuckHasher, Rule);

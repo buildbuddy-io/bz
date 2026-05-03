@@ -61,6 +61,7 @@ use starlark::values::ValueOfUnchecked;
 use starlark::values::list::ListRef;
 use starlark::values::none::NoneOr;
 use starlark::values::starlark_value;
+use starlark::values::tuple::TupleRef;
 use starlark::values::type_repr::StarlarkTypeRepr;
 
 use crate::interpreter::rule_defs::provider::DefaultInfo;
@@ -219,6 +220,31 @@ enum GetOp {
 }
 
 impl<'v, V: ValueLike<'v>> ProviderCollectionGen<V> {
+    fn insert_provider_value(
+        providers: &mut SmallMap<Arc<ProviderId>, Value<'v>>,
+        value: Value<'v>,
+    ) -> buck2_error::Result<()> {
+        match ValueAsProviderLike::unpack_value(value)? {
+            Some(provider) => {
+                if let Some(existing_value) = providers.insert(provider.0.id().dupe(), value) {
+                    return Err(ProviderCollectionError::CollectionSpecifiedProviderTwice {
+                        provider_name: provider.0.id().name.clone(),
+                        original_repr: existing_value.to_repr(),
+                        new_repr: value.to_repr(),
+                    }
+                    .into());
+                };
+            }
+            None => {
+                return Err(ProviderCollectionError::CollectionElementNotAProvider {
+                    repr: value.to_repr(),
+                }
+                .into());
+            }
+        }
+        Ok(())
+    }
+
     /// Create most of the collection but don't do final assembly, or validate DefaultInfo here.
     /// This is an internal detail
     fn try_from_value_impl(
@@ -239,27 +265,45 @@ impl<'v, V: ValueLike<'v>> ProviderCollectionGen<V> {
 
         let mut providers = SmallMap::with_capacity(list.len());
         for value in list.iter() {
-            match ValueAsProviderLike::unpack_value(value)? {
-                Some(provider) => {
-                    if let Some(existing_value) = providers.insert(provider.0.id().dupe(), value) {
-                        return Err(ProviderCollectionError::CollectionSpecifiedProviderTwice {
-                            provider_name: provider.0.id().name.clone(),
-                            original_repr: existing_value.to_repr(),
-                            new_repr: value.to_repr(),
-                        }
-                        .into());
-                    };
-                }
-                None => {
-                    return Err(ProviderCollectionError::CollectionElementNotAProvider {
-                        repr: value.to_repr(),
-                    }
-                    .into());
-                }
-            }
+            Self::insert_provider_value(&mut providers, value)?;
         }
 
         Ok(providers)
+    }
+
+    fn try_from_bazel_value_impl(
+        mut value: Value<'v>,
+    ) -> buck2_error::Result<SmallMap<Arc<ProviderId>, Value<'v>>> {
+        value = StarlarkPromise::get_recursive(value);
+
+        let mut providers = SmallMap::new();
+        if value.is_none() {
+            return Ok(providers);
+        }
+
+        if ValueAsProviderLike::unpack_value(value)?.is_some() {
+            Self::insert_provider_value(&mut providers, value)?;
+            return Ok(providers);
+        }
+
+        if let Some(list) = ListRef::from_value(value) {
+            for value in list.iter() {
+                Self::insert_provider_value(&mut providers, value)?;
+            }
+            return Ok(providers);
+        }
+
+        if let Some(tuple) = TupleRef::from_value(value) {
+            for value in tuple.content() {
+                Self::insert_provider_value(&mut providers, *value)?;
+            }
+            return Ok(providers);
+        }
+
+        Err(ProviderCollectionError::CollectionNotAList {
+            repr: value.to_repr(),
+        }
+        .into())
     }
 
     /// Takes a value, e.g. a return from a `rule()` implementation function, and builds a `ProviderCollection` from it.
@@ -275,6 +319,24 @@ impl<'v, V: ValueLike<'v>> ProviderCollectionGen<V> {
                 repr: value.to_repr(),
             }
             .into());
+        }
+
+        Ok(ProviderCollection::<'v> { providers })
+    }
+
+    /// Takes a value returned from a Bazel Starlark rule implementation and builds a provider
+    /// collection. Bazel accepts `None`, a single provider, or a sequence of providers, and injects
+    /// an empty `DefaultInfo` when the implementation did not return one.
+    pub fn try_from_value_bazel_rule(
+        value: Value<'v>,
+        heap: Heap<'v>,
+    ) -> buck2_error::Result<ProviderCollection<'v>> {
+        let mut providers = Self::try_from_bazel_value_impl(value)?;
+        if !providers.contains_key(DefaultInfoCallable::provider_id()) {
+            providers.insert(
+                DefaultInfoCallable::provider_id().dupe(),
+                heap.alloc(DefaultInfo::empty(heap)),
+            );
         }
 
         Ok(ProviderCollection::<'v> { providers })

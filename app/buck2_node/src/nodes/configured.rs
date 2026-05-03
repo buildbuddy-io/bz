@@ -544,6 +544,21 @@ impl ConfiguredTargetNode {
         self.as_ref().uses_plugins()
     }
 
+    #[inline]
+    pub fn bazel_toolchains(&self) -> &[String] {
+        self.as_ref().bazel_toolchains()
+    }
+
+    #[inline]
+    pub fn is_bazel_rule(&self) -> bool {
+        self.as_ref().is_bazel_rule()
+    }
+
+    #[inline]
+    pub fn is_bazel_build_setting(&self) -> bool {
+        self.as_ref().is_bazel_build_setting()
+    }
+
     pub fn plugin_lists(&self) -> &PluginLists {
         &self.0.plugin_lists
     }
@@ -828,6 +843,27 @@ impl<'a> ConfiguredTargetNodeRef<'a> {
         match &self.0.get().target_node {
             TargetNodeOrForward::TargetNode(target_node) => target_node.uses_plugins(),
             TargetNodeOrForward::Forward(_, _) => &[],
+        }
+    }
+
+    pub fn bazel_toolchains(self) -> &'a [String] {
+        match &self.0.get().target_node {
+            TargetNodeOrForward::TargetNode(target_node) => target_node.bazel_toolchains(),
+            TargetNodeOrForward::Forward(_, _) => &[],
+        }
+    }
+
+    pub fn is_bazel_rule(self) -> bool {
+        match &self.0.get().target_node {
+            TargetNodeOrForward::TargetNode(target_node) => target_node.is_bazel_rule(),
+            TargetNodeOrForward::Forward(_, _) => false,
+        }
+    }
+
+    pub fn is_bazel_build_setting(self) -> bool {
+        match &self.0.get().target_node {
+            TargetNodeOrForward::TargetNode(target_node) => target_node.is_bazel_build_setting(),
+            TargetNodeOrForward::Forward(_, _) => false,
         }
     }
 

@@ -53,6 +53,14 @@ Completed:
 - `select({"//conditions:default": ...})` is treated as Bazel's default arm.
 - Bazel common implicit rule attrs such as `deprecation`, `tags`, `testonly`, and `features` are present when rules omit them.
 - Bazel `.bzl` `visibility(...)` is recorded at load time for later enforcement.
+- `@bazel_tools` is a first-class bundled external cell with real Bazel package targets for the bundled tool definitions currently reached by rules_go/rules_cc.
+- Bazel native command-line `config_setting.values` keys such as `compilation_mode`, `stamp`, and `strip` are normalized to `//command_line_option:*` and read Bazel defaults from configuration.
+- Bazel rule transitions apply from the pre-rule configuration without Buck's post-transition attr equality invariant.
+- `ctx.toolchains[...]` exists as a Bazel `ToolchainContext`, enforces declared toolchain access, and returns `None` for declared optional misses.
+- `cc_common.is_cc_toolchain_resolution_enabled_do_not_use(ctx = ctx)` is available.
+- `ctx.build_setting_value`, `ctx.attr`, and `ctx.var` are available during Bazel rule analysis.
+- Bazel-declared rules accept `None`, a single provider, or provider sequences from analysis and receive an implicit empty `DefaultInfo` when omitted.
+- `DefaultInfo(files = depset(...))`, dependency `.files`, and source-artifact `.files` are available with Bazel depset values.
 
 Latest smoke:
 
@@ -62,20 +70,17 @@ BUCK2_HARD_ERROR=false \
 bazel-bin/app/buck2/buck2_bin --isolation-dir real-rules-go-... build //:hello
 ```
 
-The smoke now loads real `rules_go`, `rules_cc`, `rules_proto`, `protobuf`, `bazel_skylib`, `bazel_features`, and `gazelle` load-time Starlark from bzlmod, gets past the generated `@io_bazel_rules_nogo` repository, Gazelle `go_deps` aliases, `bazel_features` generated globals, Bazel build-setting defaults, and rules_go's incoming Go transitions. The current failure is in rules_go CGo context analysis when a real rules_go attr resolves Bazel's bundled tools:
+The smoke now loads real `rules_go`, `rules_cc`, `rules_proto`, `protobuf`, `bazel_skylib`, `bazel_features`, and `gazelle` load-time Starlark from bzlmod, gets past the generated `@io_bazel_rules_nogo` repository, Gazelle `go_deps` aliases, `bazel_features` generated globals, Bazel build-setting defaults, rules_go's incoming Go transitions, bundled `@bazel_tools` package targets, Bazel provider return semantics, and source `.files` access. The current failure is in rules_go Go configuration analysis when a declared Go toolchain type is accepted by `ctx.toolchains` but no registered toolchain has been resolved:
 
 ```text
 root//:hello
--> root//:hello_lib
 -> @rules_go//:go_context_data
--> @rules_go//:stdlib
--> @rules_go//:cgo_context_data
--> @bazel_tools//tools/osx:current_xcode_config
+-> @rules_go//:go_config
 
-package `prelude//tools/osx:` does not exist
+Object of type `NoneType` has no attribute `default_goos`
 ```
 
-The direct `//:hello` smoke now reaches configured target analysis through the real `go_binary`, `go_library`, Go configuration transition, standard-library transition, and CGo context setup. The next gap is cutting over Bazel's bundled `@bazel_tools` target surface and toolchain context APIs so rules_go can ask for optional C++ and Xcode toolchains using normal Bazel labels.
+The direct `//:hello` smoke now reaches configured target analysis through the real `go_binary`, `go_library`, Go configuration transition, standard-library transition, and Go/CGo context setup. The next gap is replacing the placeholder `ToolchainContext` result with real Bazel registered-toolchain collection, module-extension generated `@go_toolchains` repos, `native.register_toolchains(...)`, and toolchain target resolution.
 
 ## Constraints
 
@@ -134,7 +139,7 @@ Acceptance:
 
 ## Phase 3: Bazel Load-Time Builtins
 
-Status: native load-time API cutover is underway; the current rules_go smoke no longer fails on missing `attr`, `rule`, `repository_rule`, `tag_class`, `module_extension`, `native`, `apple_common`, `config`, `config_common`, `cc_common`, `coverage_common`, `platform_common.TemplateVariableInfo`, `platform_common.ToolchainInfo`, `OutputGroupInfo`, `CcInfo`, `RunEnvironmentInfo`, `aspect`, `configuration_field`, `proto_common_do_not_use`, `provider(init = ...)`, `package(default_visibility = ...)`, `licenses(...)`, or Bazel transition globals.
+Status: native load-time API cutover is underway; the current rules_go smoke no longer fails on missing `attr`, `rule`, `repository_rule`, `tag_class`, `module_extension`, `native`, `apple_common`, `config`, `config_common`, `cc_common`, `coverage_common`, `platform_common.TemplateVariableInfo`, `platform_common.ToolchainInfo`, `OutputGroupInfo`, `CcInfo`, `RunEnvironmentInfo`, `aspect`, `configuration_field`, `proto_common_do_not_use`, `provider(init = ...)`, `package(default_visibility = ...)`, `licenses(...)`, `@bazel_tools` package targets, or Bazel transition globals.
 
 Completed:
 
@@ -169,11 +174,17 @@ Completed:
 - Common implicit rule attrs
 - `//conditions:default` select key handling
 - load-time `.bzl` `visibility(...)` recording
+- first-class bundled `@bazel_tools` cell and package targets reached by rules_go/rules_cc
+- Bazel-native command-line `config_setting.values` normalization
+- Bazel rule transition invocation without Buck post-transition attr checks
+- Bazel `ctx.toolchains[...]` access shape and optional `None` result
+- `cc_common.is_cc_toolchain_resolution_enabled_do_not_use(ctx = ctx)`
 
 Immediate target:
 
-- Move `@bazel_tools` from an incidental prelude alias to a first-class bundled Bazel tools cell with real Bazel package targets such as `//tools/osx:current_xcode_config`, `//tools/cpp:toolchain_type`, and `//tools/cpp:optional_current_cc_toolchain`.
-- Add the Bazel toolchain context surface needed by rules_go/rules_cc: `ctx.toolchains[...]`, optional toolchain misses returning `None`, and `cc_common.is_cc_toolchain_resolution_enabled_do_not_use(ctx = ctx)`.
+- Implement `native.register_toolchains(...)` for MODULE and BUILD loading.
+- Materialize `go_sdk` extension repos including `@go_toolchains`, `@go_host_compatible_sdk_label`, and SDK repos from real module-extension/repository-rule execution.
+- Resolve declared Bazel toolchain types to registered toolchain implementation targets and expose their `platform_common.ToolchainInfo` providers from `ctx.toolchains[...]`.
 - Add Apple/Xcode provider constructors exposed by Bazel's `apple_common` only when real rules request them.
 
 Implement as failures demand:
@@ -208,6 +219,14 @@ Implement enough Bazel analysis surface for real rules_go:
 - aspects needed by `rules_go`
 - enforce `.bzl` load visibility recorded by `visibility(...)`
 - transitions needed by `rules_go`, including platform label semantics for `//command_line_option:platforms`
+
+Completed for current rules_go smoke:
+
+- build-setting rule defaults and `ctx.build_setting_value`
+- Bazel provider return shapes and implicit `DefaultInfo`
+- `DefaultInfo(files = depset(...))`
+- dependency/source `.files`
+- `ctx.attr` alias and empty `ctx.var`
 
 Acceptance:
 

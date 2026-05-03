@@ -27,6 +27,16 @@ pub enum TransitionAttrs {
     None,
     Listed(Arc<[String]>),
     All,
+    BazelAll,
+}
+
+impl TransitionAttrs {
+    pub fn requires_post_transition_attr_check(&self) -> bool {
+        match self {
+            TransitionAttrs::None | TransitionAttrs::BazelAll => false,
+            TransitionAttrs::Listed(_) | TransitionAttrs::All => true,
+        }
+    }
 }
 
 #[async_trait]

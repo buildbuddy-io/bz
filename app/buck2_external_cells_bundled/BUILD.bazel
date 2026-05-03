@@ -33,6 +33,7 @@ cargo_build_script(
     rundir = ".",
     rustc_env = COMMON_RUSTC_ENV,
     data = glob(["**/*.proto", "**/*.lalrpop"], allow_empty = True) + [
+        "//:bazel_tools_sources",
         "//:prelude_sources",
     ],
 )

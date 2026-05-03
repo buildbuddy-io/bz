@@ -1,0 +1,26 @@
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "pkg_sources",
+    srcs = ["BUILD.bazel"],
+)
+
+filegroup(
+    name = "protoc",
+    srcs = [],
+)
+
+filegroup(
+    name = "java_toolchain",
+    srcs = [],
+)
+
+filegroup(
+    name = "javalite_toolchain",
+    srcs = [],
+)
+
+filegroup(
+    name = "cc_toolchain",
+    srcs = [],
+)

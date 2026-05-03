@@ -1,0 +1,16 @@
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "pkg_sources",
+    srcs = glob(["**"]),
+)
+
+filegroup(
+    name = "toolchain_type",
+    srcs = [],
+)
+
+filegroup(
+    name = "optional_current_cc_toolchain",
+    srcs = [],
+)

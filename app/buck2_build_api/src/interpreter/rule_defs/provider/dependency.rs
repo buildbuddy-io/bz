@@ -38,10 +38,12 @@ use starlark::values::ValueLifetimeless;
 use starlark::values::ValueLike;
 use starlark::values::ValueOfUnchecked;
 use starlark::values::ValueOfUncheckedGeneric;
+use starlark::values::list::ListRef;
 use starlark::values::none::NoneOr;
 use starlark::values::starlark_value;
 use starlark_map::StarlarkHasher;
 
+use crate::interpreter::rule_defs::depset::bazel_depset_from_direct;
 use crate::interpreter::rule_defs::provider::collection::FrozenProviderCollection;
 use crate::interpreter::rule_defs::provider::execution_platform::StarlarkExecutionPlatformResolution;
 use crate::interpreter::rule_defs::provider::ty::abstract_provider::AbstractProvider;
@@ -209,6 +211,22 @@ fn dependency_methods(builder: &mut MethodsBuilder) {
         this: &Dependency<'v>,
     ) -> starlark::Result<ValueOfUnchecked<'v, StarlarkConfiguredProvidersLabel>> {
         Ok(this.label)
+    }
+
+    /// Bazel target-style shortcut for `dep[DefaultInfo].files`.
+    #[starlark(attribute)]
+    fn files<'v>(this: &Dependency<'v>, heap: Heap<'v>) -> starlark::Result<Value<'v>> {
+        let default_outputs = this
+            .provider_collection
+            .default_info()?
+            .default_outputs_raw();
+        let files = ListRef::from_frozen_value(default_outputs)
+            .ok_or_else(|| {
+                buck2_error::internal_error!("DefaultInfo.default_outputs is not a list")
+            })?
+            .iter()
+            .collect::<Vec<_>>();
+        Ok(heap.alloc(bazel_depset_from_direct(files)?))
     }
 
     /// Returns a list of all providers available from this dependency.

@@ -303,20 +303,29 @@ impl LegacyBuckConfig {
         external_modules: &[BazelCompatExternalModule],
     ) -> Self {
         const BAZEL_COMPAT_DEFAULTS: &[(&str, &[(&str, &str)])] = &[
-            ("cells", &[("root", "."), ("prelude", "prelude")]),
+            (
+                "cells",
+                &[
+                    ("root", "."),
+                    ("prelude", "prelude"),
+                    ("bazel_tools", "bazel_tools"),
+                ],
+            ),
             (
                 "cell_aliases",
                 &[
                     ("config", "prelude"),
                     ("ovr_config", "prelude"),
-                    ("bazel_tools", "prelude"),
                     ("fbcode", "prelude"),
                     ("fbcode_macros", "prelude"),
                     ("fbsource", "prelude"),
                     ("toolchains", "prelude"),
                 ],
             ),
-            ("external_cells", &[("prelude", "bundled")]),
+            (
+                "external_cells",
+                &[("prelude", "bundled"), ("bazel_tools", "bundled")],
+            ),
             (
                 "buildfile",
                 &[

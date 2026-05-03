@@ -531,6 +531,8 @@ impl AnonTargetKey {
                             .alloc_typed(AnalysisPlugins::new(SmallMap::new()))
                             .into(),
                     ),
+                    Vec::new(),
+                    false,
                     registry,
                     dice.global_data().get_digest_config(),
                 );

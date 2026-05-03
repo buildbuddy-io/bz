@@ -176,6 +176,12 @@ fn depset_from_value<'v>(value: Value<'v>) -> starlark::Result<&'v BazelDepset<'
     )
 }
 
+pub(crate) fn bazel_depset_to_list<'v>(value: Value<'v>) -> starlark::Result<Vec<Value<'v>>> {
+    let mut values = Vec::new();
+    depset_from_value(value)?.collect_to_list(&mut values)?;
+    Ok(values)
+}
+
 fn push_unique<'v>(values: &mut Vec<Value<'v>>, value: Value<'v>) -> starlark::Result<()> {
     for existing in values.iter().copied() {
         if existing.equals(value)? {

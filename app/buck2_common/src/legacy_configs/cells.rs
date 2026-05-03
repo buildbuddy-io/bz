@@ -2678,7 +2678,10 @@ mod tests {
             }
 
             fn check_bundled_cell_exists(&self, cell_name: CellName) -> buck2_error::Result<()> {
-                if cell_name.as_str() == "test_bundled_cell" || cell_name.as_str() == "prelude" {
+                if cell_name.as_str() == "test_bundled_cell"
+                    || cell_name.as_str() == "prelude"
+                    || cell_name.as_str() == "bazel_tools"
+                {
                     Ok(())
                 } else {
                     Err(buck2_error::buck2_error!(

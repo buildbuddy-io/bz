@@ -18,6 +18,7 @@ use starlark::environment::MethodsBuilder;
 use starlark::values::AllocValue;
 use starlark::values::Heap;
 use starlark::values::StringValue;
+use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::list::UnpackList;
 use starlark::values::none::NoneOr;
@@ -30,6 +31,7 @@ use crate::interpreter::rule_defs::artifact::starlark_artifact_like::ValueAsInpu
 use crate::interpreter::rule_defs::artifact::starlark_declared_artifact::StarlarkDeclaredArtifact;
 use crate::interpreter::rule_defs::artifact::starlark_output_artifact::StarlarkOutputArtifact;
 use crate::interpreter::rule_defs::artifact::starlark_promise_artifact::StarlarkPromiseArtifact;
+use crate::interpreter::rule_defs::depset::bazel_depset_from_direct;
 
 #[derive(StarlarkTypeRepr, AllocValue)]
 pub enum EitherStarlarkInputArtifact<'v> {
@@ -105,6 +107,15 @@ fn input_artifact_methods(builder: &mut MethodsBuilder) {
         this: ValueOf<'v, &'v dyn StarlarkInputArtifactLike<'v>>,
     ) -> starlark::Result<StarlarkOutputArtifact<'v>> {
         Ok(this.typed.as_output(this.value)?)
+    }
+
+    /// Bazel source-file target shortcut for the singleton file depset.
+    #[starlark(attribute)]
+    fn files<'v>(
+        this: ValueOf<'v, &'v dyn StarlarkInputArtifactLike<'v>>,
+        heap: Heap<'v>,
+    ) -> starlark::Result<Value<'v>> {
+        Ok(heap.alloc(bazel_depset_from_direct(vec![this.value])?))
     }
 
     /// Create an artifact that lives at path relative from this artifact.

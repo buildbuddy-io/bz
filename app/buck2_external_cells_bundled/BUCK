@@ -10,6 +10,12 @@ bundled_cell(
     source_listing = "prelude//:source_listing",
 )
 
+bundled_cell(
+    name = "bazel_tools",
+    include_from_file = "src/lib.rs",
+    source_listing = "//buck2/bazel_tools:source_listing",
+)
+
 rust_library(
     name = "buck2_external_cells_bundled",
     srcs = glob([
@@ -18,6 +24,7 @@ rust_library(
         "test_data/**/.*",
     ]),
     mapped_srcs = {
+        ":bazel_tools": "src/bazel_tools",
         ":prelude": "src/prelude",
     },
     # Do not add non-third party deps. This should store the data only, so that

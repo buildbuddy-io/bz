@@ -59,6 +59,7 @@ use crate::interpreter::rule_defs::artifact::starlark_artifact_like::ValueIsInpu
 use crate::interpreter::rule_defs::artifact_tagging::ArtifactTag;
 use crate::interpreter::rule_defs::cmd_args::CommandLineArtifactVisitor;
 use crate::interpreter::rule_defs::cmd_args::value_as::ValueAsCommandLineLike;
+use crate::interpreter::rule_defs::depset::bazel_depset_to_list;
 use crate::interpreter::rule_defs::provider::ProviderCollection;
 use crate::interpreter::rule_defs::provider::collection::FrozenProviderCollection;
 
@@ -412,6 +413,13 @@ fn default_info_creator(builder: &mut GlobalsBuilder) {
         #[starlark(default = NoneOr::None)] default_outputs: NoneOr<
             ValueOf<'v, UnpackList<UnpackAndDiscard<ValueIsInputArtifactAnnotation>>>,
         >,
+        #[starlark(default = NoneOr::None)] files: NoneOr<Value<'v>>,
+        #[starlark(default = NoneOr::None)] executable: NoneOr<
+            ValueOf<'v, ValueIsInputArtifactAnnotation>,
+        >,
+        #[starlark(default = NoneOr::None)] runfiles: NoneOr<Value<'v>>,
+        #[starlark(default = NoneOr::None)] data_runfiles: NoneOr<Value<'v>>,
+        #[starlark(default = NoneOr::None)] default_runfiles: NoneOr<Value<'v>>,
         #[starlark(default = ValueOf { value: FrozenValue::new_empty_list().to_value(), typed: UnpackList::default()})]
         other_outputs: ValueOf<
             'v,
@@ -424,22 +432,32 @@ fn default_info_creator(builder: &mut GlobalsBuilder) {
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<DefaultInfo<'v>> {
         let heap = eval.heap();
+        let _unused = (runfiles, data_runfiles, default_runfiles);
 
         // support both list and singular options for now until we migrate all the rules.
         let valid_default_outputs: ValueOfUnchecked<ListType<ValueIsInputArtifactAnnotation>> =
-            match (default_outputs.into_option(), default_output.into_option()) {
-                (Some(list), None) => list.as_unchecked().cast(),
-                (None, Some(default_output)) => {
+            match (
+                default_outputs.into_option(),
+                default_output.into_option(),
+                files.into_option(),
+                executable.into_option(),
+            ) {
+                (Some(list), None, None, None) => list.as_unchecked().cast(),
+                (None, Some(default_output), None, None)
+                | (None, None, None, Some(default_output)) => {
                     // handle where we didn't specify `default_outputs`, which means we should use the new
                     // `default_output`.
                     eval.heap()
                         .alloc_typed_unchecked(AllocList([default_output.as_unchecked()]))
                         .cast()
                 }
-                (None, None) => {
+                (None, None, Some(files), _) => ValueOfUnchecked::<ListType<_>>::new(
+                    heap.alloc(AllocList(bazel_depset_to_list(files)?)),
+                ),
+                (None, None, None, None) => {
                     ValueOfUnchecked::<ListType<_>>::new(eval.heap().alloc(AllocList::EMPTY))
                 }
-                (Some(_), Some(_)) => {
+                _ => {
                     return Err(
                         buck2_error::Error::from(DefaultOutputError::ConflictingArguments).into(),
                     );

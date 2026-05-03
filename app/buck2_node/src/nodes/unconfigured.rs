@@ -204,6 +204,18 @@ impl TargetNode {
         self.as_ref().uses_plugins()
     }
 
+    pub fn bazel_toolchains(&self) -> &[String] {
+        self.as_ref().bazel_toolchains()
+    }
+
+    pub fn is_bazel_rule(&self) -> bool {
+        self.as_ref().is_bazel_rule()
+    }
+
+    pub fn is_bazel_build_setting(&self) -> bool {
+        self.as_ref().is_bazel_build_setting()
+    }
+
     pub fn get_default_target_platform(&self) -> Option<&TargetLabel> {
         match self.known_attr_or_none(
             DEFAULT_TARGET_PLATFORM_ATTRIBUTE.id,
@@ -615,6 +627,18 @@ impl<'a> TargetNodeRef<'a> {
         &self.0.get().rule.uses_plugins
     }
 
+    pub fn bazel_toolchains(self) -> &'a [String] {
+        &self.0.get().rule.bazel_toolchains
+    }
+
+    pub fn is_bazel_rule(self) -> bool {
+        self.0.get().rule.is_bazel_rule
+    }
+
+    pub fn is_bazel_build_setting(self) -> bool {
+        self.0.get().rule.is_bazel_build_setting
+    }
+
     pub fn inputs(self) -> impl Iterator<Item = CellPath> + 'a {
         struct InputsCollector {
             inputs: Vec<CellPath>,
@@ -705,6 +729,9 @@ pub mod testing {
                     rule_kind: RuleKind::Normal,
                     cfg: RuleIncomingTransition::None,
                     uses_plugins: Vec::new(),
+                    bazel_toolchains: Vec::new(),
+                    is_bazel_rule: false,
+                    is_bazel_build_setting: false,
                 }),
                 Arc::new(Package {
                     buildfile_path,

@@ -18,8 +18,10 @@ use buck2_error::internal_error;
 use buck2_interpreter::late_binding_ty::AnalysisContextReprLate;
 use buck2_interpreter::late_binding_ty::ProviderReprLate;
 use buck2_interpreter::starlark_promise::StarlarkPromise;
+use buck2_interpreter::types::configured_providers_label::StarlarkProvidersLabel;
 use buck2_interpreter::types::rule::FROZEN_PROMISE_ARTIFACT_MAPPINGS_GET_IMPL;
 use buck2_interpreter::types::rule::FROZEN_RULE_GET_IMPL;
+use buck2_interpreter::types::target_label::StarlarkTargetLabel;
 use buck2_interpreter::types::transition::transition_id_from_value;
 use buck2_node::attrs::attr::Attribute;
 use buck2_node::attrs::attr_type::AttrType;
@@ -118,6 +120,12 @@ pub struct StarlarkRuleCallable<'v> {
     cfg: RuleIncomingTransition,
     /// The plugins that are used by these targets
     uses_plugins: Vec<PluginKind>,
+    /// Bazel toolchain types declared by `rule(toolchains = ...)`.
+    bazel_toolchains: Vec<String>,
+    /// Whether the rule was declared through Bazel's `rule(implementation = ...)` API.
+    is_bazel_rule: bool,
+    /// Whether the rule was declared with Bazel's `build_setting = ...`.
+    is_bazel_build_setting: bool,
     /// This kind of the rule, e.g. whether it can be used in configuration context.
     rule_kind: RuleKind,
     /// The raw docstring for this rule
@@ -176,6 +184,8 @@ enum RuleError {
     InvalidBazelBuildSetting(String),
     #[error("unsupported Bazel build setting type `{0}`")]
     UnsupportedBazelBuildSettingType(String),
+    #[error("unsupported Bazel toolchain declaration `{0}`")]
+    UnsupportedBazelToolchain(String),
 }
 
 fn bazel_build_setting_default_attr(
@@ -252,6 +262,29 @@ fn add_bazel_common_implicit_attrs(
     Ok(())
 }
 
+fn normalize_bazel_toolchain_key(key: &str) -> String {
+    key.strip_prefix('@').unwrap_or(key).to_owned()
+}
+
+fn bazel_toolchain_key_from_value(value: Value<'_>) -> buck2_error::Result<String> {
+    if let Some(toolchain) = StarlarkProvidersLabel::from_value(value) {
+        return Ok(toolchain.to_string());
+    }
+    if let Some(toolchain) = StarlarkTargetLabel::from_value(value) {
+        return Ok(toolchain.to_string());
+    }
+    if let Some(toolchain) = value.unpack_str() {
+        return Ok(normalize_bazel_toolchain_key(toolchain));
+    }
+    if let Some(toolchain_type) = StructRef::from_value(value).and_then(|st| {
+        st.iter()
+            .find_map(|(name, value)| (name.as_str() == "toolchain_type").then_some(value))
+    }) {
+        return bazel_toolchain_key_from_value(toolchain_type);
+    }
+    Err(RuleError::UnsupportedBazelToolchain(value.to_repr()).into())
+}
+
 impl<'v> AllocValue<'v> for StarlarkRuleCallable<'v> {
     fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
         heap.alloc_complex(self)
@@ -268,6 +301,8 @@ impl<'v> StarlarkRuleCallable<'v> {
         is_configuration_rule: bool,
         is_toolchain_rule: bool,
         uses_plugins: Vec<PluginKind>,
+        bazel_toolchains: Vec<String>,
+        is_bazel_rule: bool,
         build_setting: Option<Value<'v>>,
         artifact_promise_mappings: Option<ArtifactPromiseMappings<'v>>,
         eval: &mut Evaluator<'v, '_, '_>,
@@ -302,6 +337,7 @@ impl<'v> StarlarkRuleCallable<'v> {
                 }
             })
             .collect::<buck2_error::Result<Vec<(String, Attribute)>>>()?;
+        let is_bazel_build_setting = build_setting.is_some();
         if let Some(attr) = bazel_build_setting_default_attr(build_setting)? {
             sorted_validated_attrs.push(attr);
             sorted_validated_attrs.sort_by(|(a, _), (b, _)| a.cmp(b));
@@ -352,6 +388,9 @@ impl<'v> StarlarkRuleCallable<'v> {
             cfg,
             rule_kind,
             uses_plugins,
+            bazel_toolchains,
+            is_bazel_rule,
+            is_bazel_build_setting,
             docs: Some(doc.to_owned()),
             ignore_attrs_for_profiling: build_context.ignore_attrs_for_profiling,
             artifact_promise_mappings,
@@ -377,6 +416,8 @@ impl<'v> StarlarkRuleCallable<'v> {
             false,
             false,
             Vec::new(),
+            Vec::new(),
+            false,
             None,
             Some(ArtifactPromiseMappings {
                 mappings: artifact_promise_mappings
@@ -553,6 +594,9 @@ impl<'v> Freeze for StarlarkRuleCallable<'v> {
                 cfg: self.cfg,
                 rule_kind: self.rule_kind,
                 uses_plugins: self.uses_plugins,
+                bazel_toolchains: self.bazel_toolchains,
+                is_bazel_rule: self.is_bazel_rule,
+                is_bazel_build_setting: self.is_bazel_build_setting,
             }),
             rule_type,
             implementation: frozen_impl,
@@ -734,6 +778,12 @@ pub fn register_rule_function(builder: &mut GlobalsBuilder) {
         uses_plugins: UnpackListOrTuple<PluginKindArg>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<StarlarkRuleCallable<'v>> {
+        let bazel_toolchains = toolchains
+            .items
+            .into_iter()
+            .map(bazel_toolchain_key_from_value)
+            .collect::<buck2_error::Result<Vec<_>>>()?;
+
         let _unused = (
             executable,
             test,
@@ -742,7 +792,6 @@ pub fn register_rule_function(builder: &mut GlobalsBuilder) {
             fragments,
             host_fragments,
             _skylark_testable,
-            toolchains,
             provides,
             dependency_resolution_rule,
             exec_compatible_with,
@@ -753,9 +802,9 @@ pub fn register_rule_function(builder: &mut GlobalsBuilder) {
             extendable,
             subrules,
         );
-        let implementation = match (r#impl, implementation) {
-            (Some(r#impl), None) => r#impl,
-            (None, Some(implementation)) => implementation,
+        let (implementation, is_bazel_rule) = match (r#impl, implementation) {
+            (Some(r#impl), None) => (r#impl, false),
+            (None, Some(implementation)) => (implementation, true),
             _ => {
                 return Err(buck2_error::Error::from(
                     RuleError::MissingOrConflictingImplementation,
@@ -776,6 +825,8 @@ pub fn register_rule_function(builder: &mut GlobalsBuilder) {
                 .into_iter()
                 .map(|PluginKindArg { plugin_kind }| plugin_kind)
                 .collect(),
+            bazel_toolchains,
+            is_bazel_rule,
             build_setting,
             None,
             eval,

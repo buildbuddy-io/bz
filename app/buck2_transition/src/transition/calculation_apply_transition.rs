@@ -122,6 +122,7 @@ fn bazel_build_setting_value_to_starlark<'v>(
 ) -> Value<'v> {
     match value {
         BazelBuildSettingValue::Bool(value) => eval.heap().alloc(*value).to_value(),
+        BazelBuildSettingValue::Int(value) => eval.heap().alloc(*value).to_value(),
         BazelBuildSettingValue::String(value) => eval.heap().alloc(value.as_str()).to_value(),
         BazelBuildSettingValue::StringList(values) => {
             let values = values.iter().map(String::as_str).collect::<Vec<_>>();
@@ -134,6 +135,7 @@ fn bazel_build_setting_value_from_attr(value: &CoercedAttr) -> Option<BazelBuild
     match value {
         CoercedAttr::OneOf(value, _) => bazel_build_setting_value_from_attr(value),
         CoercedAttr::Bool(value) => Some(BazelBuildSettingValue::Bool(value.0)),
+        CoercedAttr::Int(value) => Some(BazelBuildSettingValue::Int(*value)),
         CoercedAttr::String(value) | CoercedAttr::EnumVariant(value) => {
             Some(BazelBuildSettingValue::String(value.0.to_string()))
         }
@@ -218,6 +220,8 @@ fn bazel_transition_setting_value(value: Value) -> BazelBuildSettingValue {
         BazelBuildSettingValue::String(value.to_owned())
     } else if let Some(value) = value.unpack_bool() {
         BazelBuildSettingValue::Bool(value)
+    } else if let Some(value) = value.unpack_i32() {
+        BazelBuildSettingValue::Int(value.into())
     } else if let Some(values) = ListRef::from_value(value) {
         BazelBuildSettingValue::StringList(
             values
@@ -590,7 +594,7 @@ impl TransitionCalculation for TransitionCalculationImpl {
                     .map(|attr| (attr.clone(), configured_attrs.get(attr.as_str()).duped()))
                     .collect(),
             ),
-            TransitionAttrs::All => Some(
+            TransitionAttrs::All | TransitionAttrs::BazelAll => Some(
                 configured_attrs
                     .iter()
                     .map(|(name, value)| ((*name).to_owned(), Some(value.dupe())))

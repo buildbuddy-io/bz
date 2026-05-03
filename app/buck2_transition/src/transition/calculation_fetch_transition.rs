@@ -50,7 +50,7 @@ impl TransitionData {
 
     pub(crate) fn attrs(&self) -> TransitionAttrs {
         match self {
-            TransitionData::MagicObject(v) if v.is_bazel => TransitionAttrs::All,
+            TransitionData::MagicObject(v) if v.is_bazel => TransitionAttrs::BazelAll,
             TransitionData::MagicObject(v) => v
                 .attrs_names
                 .as_ref()

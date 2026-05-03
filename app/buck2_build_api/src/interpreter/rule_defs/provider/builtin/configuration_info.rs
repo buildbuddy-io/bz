@@ -63,6 +63,16 @@ pub struct ConfigurationInfoGen<V: ValueLifetimeless> {
     build_settings: ValueOfUncheckedGeneric<V, DictType<String, String>>,
 }
 
+fn bazel_native_option_key(key: &str) -> Option<String> {
+    if key.starts_with("//command_line_option:") {
+        Some(key.to_owned())
+    } else if !key.contains('.') {
+        Some(format!("//command_line_option:{key}"))
+    } else {
+        None
+    }
+}
+
 impl<'v, V: ValueLike<'v>> ConfigurationInfoGen<V> {
     pub fn to_config_setting_data(&self) -> ConfigSettingData {
         let constraints = DictRef::from_value(self.constraints.get().to_value())
@@ -85,15 +95,19 @@ impl<'v, V: ValueLike<'v>> ConfigurationInfoGen<V> {
         let values = DictRef::from_value(self.values.get().to_value())
             .expect("type checked on construction");
         let mut converted_values = BTreeMap::new();
+        let mut converted_build_settings = BTreeMap::new();
         for (k, v) in values.iter() {
             let key_config = k.to_value().to_str();
             let value_config = v.to_value().to_str();
-            converted_values.insert(key_config, value_config);
+            if let Some(key) = bazel_native_option_key(&key_config) {
+                converted_build_settings.insert(key, value_config);
+            } else {
+                converted_values.insert(key_config, value_config);
+            }
         }
 
         let build_settings = DictRef::from_value(self.build_settings.get().to_value())
             .expect("type checked on construction");
-        let mut converted_build_settings = BTreeMap::new();
         for (k, v) in build_settings.iter() {
             converted_build_settings.insert(k.to_value().to_str(), v.to_value().to_str());
         }
@@ -221,8 +235,10 @@ fn configuration_info_creator(globals: &mut GlobalsBuilder) {
         let new_constraints = build_constraints_map_from_dict(constraints)?;
 
         for (k, _) in &values.typed.entries {
-            // Validate the config section and key can be parsed correctly
-            parse_config_section_and_key(k, None)?;
+            if bazel_native_option_key(k).is_none() {
+                // Validate the config section and key can be parsed correctly.
+                parse_config_section_and_key(k, None)?;
+            }
         }
         Ok(ConfigurationInfo {
             constraints: ValueOfUnchecked::new(eval.heap().alloc(new_constraints)),

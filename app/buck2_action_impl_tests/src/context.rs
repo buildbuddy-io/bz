@@ -90,6 +90,8 @@ fn run_ctx_test(
                 Some(attributes),
                 Some(label),
                 Some(plugins),
+                Vec::new(),
+                false,
                 registry,
                 DigestConfig::testing_default(),
             ));

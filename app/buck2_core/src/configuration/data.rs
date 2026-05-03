@@ -365,6 +365,7 @@ impl ConfigurationPlatform {
 )]
 pub enum BazelBuildSettingValue {
     Bool(bool),
+    Int(i64),
     String(String),
     StringList(Vec<String>),
 }
@@ -379,6 +380,7 @@ impl BazelBuildSettingValue {
                     "False".to_owned()
                 }
             }
+            BazelBuildSettingValue::Int(value) => value.to_string(),
             BazelBuildSettingValue::String(value) => value.clone(),
             BazelBuildSettingValue::StringList(values) => {
                 format!(

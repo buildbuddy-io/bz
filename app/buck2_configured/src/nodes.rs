@@ -591,7 +591,12 @@ pub(crate) async fn gather_deps(
     ))
 }
 
-/// Resolves configured attributes of target node needed to compute transitions
+struct ResolvedTransitionInputAttrs<'a> {
+    attrs: OrderedMap<&'a str, Arc<ConfiguredAttr>>,
+    requires_post_transition_attr_check: bool,
+}
+
+/// Resolves configured attributes of target node needed to compute transitions.
 async fn resolve_transition_input_attrs<'a>(
     target_label: &ConfiguredTargetLabel,
     transitions: impl Iterator<Item = &TransitionId>,
@@ -599,7 +604,7 @@ async fn resolve_transition_input_attrs<'a>(
     matched_cfg_keys: &MatchedConfigurationSettingKeysWithCfg,
     platform_cfgs: &OrderedMap<TargetLabel, ConfigurationData>,
     ctx: &mut DiceComputations<'_>,
-) -> ResultMaybeCompatible<OrderedMap<&'a str, Arc<ConfiguredAttr>>> {
+) -> ResultMaybeCompatible<ResolvedTransitionInputAttrs<'a>> {
     struct AttrConfigurationContextToResolveTransitionAttrs<'c> {
         target_label: &'c ConfiguredTargetLabel,
         matched_cfg_keys: &'c MatchedConfigurationSettingKeysWithCfg,
@@ -669,11 +674,13 @@ async fn resolve_transition_input_attrs<'a>(
         label: target_node.label().dupe(),
     };
     let mut result = OrderedMap::default();
+    let mut requires_post_transition_attr_check = false;
     for tr in transitions {
         let attrs = TRANSITION_ATTRS_PROVIDER
             .get()?
             .transition_attrs(ctx, tr)
             .await?;
+        requires_post_transition_attr_check |= attrs.requires_post_transition_attr_check();
         match attrs {
             TransitionAttrs::None => {}
             TransitionAttrs::Listed(attrs) => {
@@ -699,7 +706,7 @@ async fn resolve_transition_input_attrs<'a>(
                     }
                 }
             }
-            TransitionAttrs::All => {
+            TransitionAttrs::All | TransitionAttrs::BazelAll => {
                 for coerced_attr in target_node.attrs(AttrInspectOptions::All) {
                     if !coerced_attr_can_be_bazel_transition_attr(coerced_attr.value) {
                         continue;
@@ -726,7 +733,10 @@ async fn resolve_transition_input_attrs<'a>(
             }
         }
     }
-    ResultMaybeCompatible::Compatible(result)
+    ResultMaybeCompatible::Compatible(ResolvedTransitionInputAttrs {
+        attrs: result,
+        requires_post_transition_attr_check,
+    })
 }
 
 fn coerced_attr_can_be_bazel_transition_attr(value: &CoercedAttr) -> bool {
@@ -847,7 +857,7 @@ async fn compute_configured_target_node_no_transition(
     for (_dep, tr) in target_node.transition_deps() {
         let resolved_cfg = TRANSITION_CALCULATION
             .get()?
-            .apply_transition(ctx, &attrs, target_cfg, tr)
+            .apply_transition(ctx, &attrs.attrs, target_cfg, tr)
             .await?;
         resolved_transitions.insert(tr.dupe(), resolved_cfg);
     }
@@ -1108,7 +1118,7 @@ async fn compute_configured_forward_target_node(
         .get()?
         .apply_transition(
             ctx,
-            &attrs,
+            &attrs.attrs,
             target_label_before_transition.cfg(),
             transition_id,
         )
@@ -1141,9 +1151,16 @@ async fn compute_configured_forward_target_node(
         // the node and check the attrs, but we'd still need to request the real node from dice and it doesn't seem worth
         // that extra cost just for a slightly improved error message.
 
-        // check that the attrs weren't changed first. This should be the only way that we can hit non-idempotence
-        // here and gives a better error than if we just give the general idempotence error.
-        verify_transitioned_attrs(&attrs, matched_cfg_keys.cfg().cfg(), &transitioned_node)?;
+        // Buck transitions require attrs used by the transition to stay stable under the
+        // transitioned configuration. Bazel rule transitions receive attrs configured in the
+        // pre-rule configuration and do not enforce this equality invariant.
+        if attrs.requires_post_transition_attr_check {
+            verify_transitioned_attrs(
+                &attrs.attrs,
+                matched_cfg_keys.cfg().cfg(),
+                &transitioned_node,
+            )?;
+        }
 
         if let Some(forward) = transitioned_node.forward_target() {
             return ResultMaybeCompatible::Err(NodeCalculationError::TransitionNotIdempotent(

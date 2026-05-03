@@ -1,0 +1,6 @@
+[cell_aliases]
+prelude = prelude
+
+[buildfile]
+name_v2 = BUILD.bazel,BUILD
+includes = prelude//bazel/prelude.bzl

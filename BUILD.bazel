@@ -11,6 +11,12 @@ filegroup(
 )
 
 filegroup(
+    name = "bazel_tools_sources",
+    srcs = ["//bazel_tools:bazel_tools_sources"],
+    visibility = ["//visibility:public"],
+)
+
+filegroup(
     name = "rust_toolchain_file",
     srcs = ["rust-toolchain"],
     visibility = ["//visibility:public"],

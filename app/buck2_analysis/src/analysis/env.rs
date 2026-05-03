@@ -293,6 +293,8 @@ async fn run_analysis_with_env_underlying(
                 Some(attributes),
                 Some(analysis_env.label),
                 Some(plugins.into()),
+                node.bazel_toolchains().to_vec(),
+                node.is_bazel_build_setting(),
                 registry,
                 dice.global_data().get_digest_config(),
             );
@@ -322,7 +324,11 @@ async fn run_analysis_with_env_underlying(
         let analysis_registry = ctx.take_state();
 
         // TODO: Convert the ValueError from `try_from_value` better than just printing its Debug
-        let res_typed = ProviderCollection::try_from_value(list_res)?;
+        let res_typed = if node.is_bazel_rule() {
+            ProviderCollection::try_from_value_bazel_rule(list_res, env.heap())?
+        } else {
+            ProviderCollection::try_from_value(list_res)?
+        };
         {
             let provider_collection = ValueTypedComplex::new_err(env.heap().alloc(res_typed))
                 .internal_error("Just allocated provider collection")?;
