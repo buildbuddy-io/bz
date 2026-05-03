@@ -1,0 +1,23 @@
+filegroup(
+    name = "prelude_sources",
+    srcs = glob(
+        ["prelude/**"],
+        exclude = [
+            "prelude/**/BUILD.bazel",
+            "prelude/**/.DS_Store",
+        ],
+    ),
+    visibility = ["//visibility:public"],
+)
+
+filegroup(
+    name = "rust_toolchain_file",
+    srcs = ["rust-toolchain"],
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "buck2",
+    actual = "//app/buck2:buck2_bin",
+    visibility = ["//visibility:public"],
+)

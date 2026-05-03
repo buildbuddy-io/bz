@@ -1,0 +1,81 @@
+module(
+    name = "buck2",
+    version = "0.0.0",
+)
+
+bazel_dep(name = "rules_rust", version = "0.70.0")
+
+RUST_EDITION = "2024"
+RUST_VERSION = "nightly/2026-01-18"
+
+rust = use_extension("@rules_rust//rust:extensions.bzl", "rust")
+rust.toolchain(
+    edition = RUST_EDITION,
+    extra_rustc_flags = [
+        "--cfg=tokio_unstable",
+    ],
+    versions = [RUST_VERSION],
+)
+use_repo(rust, "rust_toolchains")
+register_toolchains("@rust_toolchains//:all")
+
+rust_host_tools = use_extension("@rules_rust//rust:extensions.bzl", "rust_host_tools")
+rust_host_tools.host_tools(
+    edition = RUST_EDITION,
+    name = "rust_host_tools_nightly",
+    version = RUST_VERSION,
+)
+use_repo(rust_host_tools, "rust_host_tools_nightly")
+
+crate = use_extension("@rules_rust//crate_universe:extensions.bzl", "crate")
+crate.annotation(
+    crate = "tokio",
+    deps = ["@crates//:tracing"],
+)
+crate.annotation(
+    crate = "protoc-bin-vendored-linux-aarch_64",
+    data_glob = ["bin/**", "include/**"],
+)
+crate.annotation(
+    crate = "protoc-bin-vendored-linux-ppcle_64",
+    data_glob = ["bin/**", "include/**"],
+)
+crate.annotation(
+    crate = "protoc-bin-vendored-linux-s390_64",
+    data_glob = ["bin/**", "include/**"],
+)
+crate.annotation(
+    crate = "protoc-bin-vendored-linux-x86_32",
+    data_glob = ["bin/**", "include/**"],
+)
+crate.annotation(
+    crate = "protoc-bin-vendored-linux-x86_64",
+    data_glob = ["bin/**", "include/**"],
+)
+crate.annotation(
+    crate = "protoc-bin-vendored-macos-aarch_64",
+    data_glob = ["bin/**", "include/**"],
+    extra_aliased_targets = {
+        "protoc-bin-vendored-macos-aarch_64": "protoc_bin_vendored_macos_aarch_64",
+    },
+)
+crate.annotation(
+    crate = "protoc-bin-vendored-macos-x86_64",
+    data_glob = ["bin/**", "include/**"],
+)
+crate.annotation(
+    crate = "protoc-bin-vendored-win32",
+    data_glob = ["bin/**", "include/**"],
+)
+crate.from_cargo(
+    name = "crates",
+    cargo_lockfile = "//:Cargo.Bazel.lock",
+    generate_binaries = True,
+    host_tools = "@rust_host_tools_nightly//:rust_host_tools",
+    manifests = ["//:Cargo.toml"],
+)
+use_repo(
+    crate,
+    "crates",
+    "crates__protoc-bin-vendored-macos-aarch_64-3.2.0",
+)

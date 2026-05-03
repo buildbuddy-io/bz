@@ -1,0 +1,297 @@
+load("@crates//:defs.bzl", "aliases", "all_crate_deps")
+load("@rules_rust//cargo:defs.bzl", "cargo_build_script")
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_proc_macro")
+
+package(default_visibility = ["//visibility:public"])
+
+COMMON_RUSTC_ENV = {
+    "CARGO_MANIFEST_DIR": "games",
+    "CARGO_PKG_AUTHORS": "",
+    "CARGO_PKG_DESCRIPTION": "Some tui games",
+    "CARGO_PKG_HOMEPAGE": "",
+    "CARGO_PKG_LICENSE": "",
+    "CARGO_PKG_LICENSE_FILE": "",
+    "CARGO_PKG_NAME": "games",
+    "CARGO_PKG_README": "",
+    "CARGO_PKG_REPOSITORY": "",
+    "CARGO_PKG_VERSION": "0.1.0",
+    "CARGO_PKG_VERSION_MAJOR": "0",
+    "CARGO_PKG_VERSION_MINOR": "1",
+    "CARGO_PKG_VERSION_PATCH": "0",
+    "CARGO_PKG_VERSION_PRE": "",
+    }
+
+rust_library(
+    name = "games",
+    crate_name = "games",
+    crate_root = "src/lib.rs",
+    srcs = glob(["src/**/*.rs"]),
+    edition = "2021",
+    aliases = aliases(),
+    deps = all_crate_deps(normal = True) + [
+        "//superconsole:superconsole",
+    ],
+    proc_macro_deps = all_crate_deps(proc_macro = True) + [],
+    rustc_env = COMMON_RUSTC_ENV,
+    compile_data = glob([
+        "**/*",
+    ], allow_empty = True, exclude = [
+        "BUILD.bazel",
+        "BUCK",
+        "Cargo.toml",
+        "fuzz/**",
+    ]),
+)
+
+rust_binary(
+    name = "blocks",
+    crate_name = "blocks",
+    crate_root = "bin/blocks.rs",
+    srcs = ["bin/blocks.rs"],
+    edition = "2021",
+    aliases = aliases(),
+    deps = all_crate_deps(normal = True) + [
+        ":games",
+        "//superconsole:superconsole",
+    ],
+    proc_macro_deps = all_crate_deps(proc_macro = True) + [],
+    rustc_env = COMMON_RUSTC_ENV,
+    compile_data = glob([
+        "**/*",
+    ], allow_empty = True, exclude = [
+        "BUILD.bazel",
+        "BUCK",
+        "Cargo.toml",
+        "fuzz/**",
+    ]),
+)
+
+rust_binary(
+    name = "breakout",
+    crate_name = "breakout",
+    crate_root = "bin/breakout.rs",
+    srcs = ["bin/breakout.rs"],
+    edition = "2021",
+    aliases = aliases(),
+    deps = all_crate_deps(normal = True) + [
+        ":games",
+        "//superconsole:superconsole",
+    ],
+    proc_macro_deps = all_crate_deps(proc_macro = True) + [],
+    rustc_env = COMMON_RUSTC_ENV,
+    compile_data = glob([
+        "**/*",
+    ], allow_empty = True, exclude = [
+        "BUILD.bazel",
+        "BUCK",
+        "Cargo.toml",
+        "fuzz/**",
+    ]),
+)
+
+rust_binary(
+    name = "jump",
+    crate_name = "jump",
+    crate_root = "bin/jump.rs",
+    srcs = ["bin/jump.rs"],
+    edition = "2021",
+    aliases = aliases(),
+    deps = all_crate_deps(normal = True) + [
+        ":games",
+        "//superconsole:superconsole",
+    ],
+    proc_macro_deps = all_crate_deps(proc_macro = True) + [],
+    rustc_env = COMMON_RUSTC_ENV,
+    compile_data = glob([
+        "**/*",
+    ], allow_empty = True, exclude = [
+        "BUILD.bazel",
+        "BUCK",
+        "Cargo.toml",
+        "fuzz/**",
+    ]),
+)
+
+rust_binary(
+    name = "life",
+    crate_name = "life",
+    crate_root = "bin/life.rs",
+    srcs = ["bin/life.rs"],
+    edition = "2021",
+    aliases = aliases(),
+    deps = all_crate_deps(normal = True) + [
+        ":games",
+        "//superconsole:superconsole",
+    ],
+    proc_macro_deps = all_crate_deps(proc_macro = True) + [],
+    rustc_env = COMMON_RUSTC_ENV,
+    compile_data = glob([
+        "**/*",
+    ], allow_empty = True, exclude = [
+        "BUILD.bazel",
+        "BUCK",
+        "Cargo.toml",
+        "fuzz/**",
+    ]),
+)
+
+rust_binary(
+    name = "menu",
+    crate_name = "menu",
+    crate_root = "bin/menu.rs",
+    srcs = ["bin/menu.rs"],
+    edition = "2021",
+    aliases = aliases(),
+    deps = all_crate_deps(normal = True) + [
+        ":games",
+        "//superconsole:superconsole",
+    ],
+    proc_macro_deps = all_crate_deps(proc_macro = True) + [],
+    rustc_env = COMMON_RUSTC_ENV,
+    compile_data = glob([
+        "**/*",
+    ], allow_empty = True, exclude = [
+        "BUILD.bazel",
+        "BUCK",
+        "Cargo.toml",
+        "fuzz/**",
+    ]),
+)
+
+rust_binary(
+    name = "minesweeper",
+    crate_name = "minesweeper",
+    crate_root = "bin/minesweeper.rs",
+    srcs = ["bin/minesweeper.rs"],
+    edition = "2021",
+    aliases = aliases(),
+    deps = all_crate_deps(normal = True) + [
+        ":games",
+        "//superconsole:superconsole",
+    ],
+    proc_macro_deps = all_crate_deps(proc_macro = True) + [],
+    rustc_env = COMMON_RUSTC_ENV,
+    compile_data = glob([
+        "**/*",
+    ], allow_empty = True, exclude = [
+        "BUILD.bazel",
+        "BUCK",
+        "Cargo.toml",
+        "fuzz/**",
+    ]),
+)
+
+rust_binary(
+    name = "snake",
+    crate_name = "snake",
+    crate_root = "bin/snake.rs",
+    srcs = ["bin/snake.rs"],
+    edition = "2021",
+    aliases = aliases(),
+    deps = all_crate_deps(normal = True) + [
+        ":games",
+        "//superconsole:superconsole",
+    ],
+    proc_macro_deps = all_crate_deps(proc_macro = True) + [],
+    rustc_env = COMMON_RUSTC_ENV,
+    compile_data = glob([
+        "**/*",
+    ], allow_empty = True, exclude = [
+        "BUILD.bazel",
+        "BUCK",
+        "Cargo.toml",
+        "fuzz/**",
+    ]),
+)
+
+rust_binary(
+    name = "sokoban",
+    crate_name = "sokoban",
+    crate_root = "bin/sokoban.rs",
+    srcs = ["bin/sokoban.rs"],
+    edition = "2021",
+    aliases = aliases(),
+    deps = all_crate_deps(normal = True) + [
+        ":games",
+        "//superconsole:superconsole",
+    ],
+    proc_macro_deps = all_crate_deps(proc_macro = True) + [],
+    rustc_env = COMMON_RUSTC_ENV,
+    compile_data = glob([
+        "**/*",
+    ], allow_empty = True, exclude = [
+        "BUILD.bazel",
+        "BUCK",
+        "Cargo.toml",
+        "fuzz/**",
+    ]),
+)
+
+rust_binary(
+    name = "sokoban_gen",
+    crate_name = "sokoban_gen",
+    crate_root = "bin/sokoban_gen.rs",
+    srcs = ["bin/sokoban_gen.rs"],
+    edition = "2021",
+    aliases = aliases(),
+    deps = all_crate_deps(normal = True) + [
+        ":games",
+        "//superconsole:superconsole",
+    ],
+    proc_macro_deps = all_crate_deps(proc_macro = True) + [],
+    rustc_env = COMMON_RUSTC_ENV,
+    compile_data = glob([
+        "**/*",
+    ], allow_empty = True, exclude = [
+        "BUILD.bazel",
+        "BUCK",
+        "Cargo.toml",
+        "fuzz/**",
+    ]),
+)
+
+rust_binary(
+    name = "static",
+    crate_name = "static",
+    crate_root = "bin/static.rs",
+    srcs = ["bin/static.rs"],
+    edition = "2021",
+    aliases = aliases(),
+    deps = all_crate_deps(normal = True) + [
+        ":games",
+        "//superconsole:superconsole",
+    ],
+    proc_macro_deps = all_crate_deps(proc_macro = True) + [],
+    rustc_env = COMMON_RUSTC_ENV,
+    compile_data = glob([
+        "**/*",
+    ], allow_empty = True, exclude = [
+        "BUILD.bazel",
+        "BUCK",
+        "Cargo.toml",
+        "fuzz/**",
+    ]),
+)
+
+rust_binary(
+    name = "twenty48",
+    crate_name = "twenty48",
+    crate_root = "bin/twenty48.rs",
+    srcs = ["bin/twenty48.rs"],
+    edition = "2021",
+    aliases = aliases(),
+    deps = all_crate_deps(normal = True) + [
+        ":games",
+        "//superconsole:superconsole",
+    ],
+    proc_macro_deps = all_crate_deps(proc_macro = True) + [],
+    rustc_env = COMMON_RUSTC_ENV,
+    compile_data = glob([
+        "**/*",
+    ], allow_empty = True, exclude = [
+        "BUILD.bazel",
+        "BUCK",
+        "Cargo.toml",
+        "fuzz/**",
+    ]),
+)

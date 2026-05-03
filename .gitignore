@@ -1,5 +1,6 @@
 /target/
 Cargo.lock
+bazel-*
 buck-out
 /.direnv
 .buckconfig.local
