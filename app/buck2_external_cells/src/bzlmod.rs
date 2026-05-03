@@ -26,6 +26,9 @@ use buck2_common::io::IoProvider;
 use buck2_common::io::fs::FsIoProvider;
 use buck2_core::cells::cell_path::CellPath;
 use buck2_core::cells::external::BzlmodCellSetup;
+use buck2_core::cells::external::BzlmodGeneratedCellGenerator;
+use buck2_core::cells::external::BzlmodGeneratedCellSetup;
+use buck2_core::cells::external::BzlmodGoRegisterNogoSetup;
 use buck2_core::cells::external::ExternalCellOrigin;
 use buck2_core::cells::name::CellName;
 use buck2_core::cells::paths::CellRelativePath;
@@ -121,6 +124,60 @@ impl IoRequest for BzlmodExtractIoRequest {
 
         Ok(())
     }
+}
+
+struct BzlmodGeneratedIoRequest {
+    setup: BzlmodGeneratedCellSetup,
+    dest: ProjectRelativePathBuf,
+}
+
+impl IoRequest for BzlmodGeneratedIoRequest {
+    fn execute(self: Box<Self>, project_fs: &ProjectRoot) -> buck2_error::Result<()> {
+        let dest = project_fs.resolve(&self.dest);
+        fs_util::create_dir_all(dest.clone())?;
+        match &self.setup.generator {
+            BzlmodGeneratedCellGenerator::GoRegisterNogo(setup) => {
+                write_go_register_nogo_repo(&dest, setup)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+fn write_go_register_nogo_repo(
+    dest: &AbsNormPath,
+    setup: &BzlmodGoRegisterNogoSetup,
+) -> buck2_error::Result<()> {
+    let build = format!(
+        "package(default_visibility = [\"//visibility:public\"])\n\nalias(\n    name = \"nogo\",\n    actual = \"{}\",\n)\n\nexports_files([\"scope.bzl\"])\n",
+        setup.nogo
+    );
+    fs_util::write(dest.join(ForwardRelativePath::new("BUILD.bazel")?), build)
+        .categorize_internal()?;
+    let scope = format!(
+        "INCLUDES = {}\nEXCLUDES = {}\n",
+        scope_list_repr(&setup.includes),
+        scope_list_repr(&setup.excludes),
+    );
+    fs_util::write(dest.join(ForwardRelativePath::new("scope.bzl")?), scope)
+        .categorize_internal()?;
+    Ok(())
+}
+
+fn scope_list_repr(scopes: &[Arc<str>]) -> String {
+    if scopes.iter().any(|scope| scope.as_ref() == "all") {
+        return "[\"all\"]".to_owned();
+    }
+    let labels = scopes
+        .iter()
+        .map(|scope| {
+            let scope = scope
+                .strip_prefix("@@//")
+                .map_or_else(|| scope.to_string(), |rest| format!("root//{rest}"));
+            format!("Label({scope:?})")
+        })
+        .collect::<Vec<_>>();
+    format!("[{}]", labels.join(", "))
 }
 
 fn extract_archive(
@@ -321,6 +378,18 @@ async fn download_impl(
     )
     .await?;
 
+    declare_existing_directory(ctx, dest, materializer).await
+}
+
+async fn declare_existing_directory(
+    ctx: &mut DiceComputations<'_>,
+    dest: &ProjectRelativePath,
+    materializer: &dyn Materializer,
+) -> buck2_error::Result<()> {
+    let io = ctx.get_blocking_executor();
+    let io_provider = ctx.global_data().get_io_provider();
+    let project_root = io_provider.project_root();
+    let digest_config = ctx.global_data().get_digest_config();
     let proj_root = project_root.root();
     let abs_path = proj_root.join(dest);
     let file_digest_config = FileDigestConfig::build(digest_config.cas_digest_config());
@@ -362,6 +431,44 @@ async fn download_and_materialize(
         .await
 }
 
+async fn materialize_generated(
+    ctx: &mut DiceComputations<'_>,
+    path: &ProjectRelativePath,
+    setup: &BzlmodGeneratedCellSetup,
+    cancellations: &CancellationContext,
+) -> buck2_error::Result<()> {
+    let materializer = ctx.per_transaction_data().get_materializer();
+
+    if materializer.has_artifact_at(path.to_owned()).await? {
+        return Ok(());
+    }
+
+    cancellations
+        .critical_section(|| async move {
+            ctx.get_blocking_executor()
+                .execute_io(
+                    Box::new(
+                        buck2_execute::execute::clean_output_paths::CleanOutputPaths {
+                            paths: vec![path.to_owned()],
+                        },
+                    ),
+                    cancellations,
+                )
+                .await?;
+            ctx.get_blocking_executor()
+                .execute_io(
+                    Box::new(BzlmodGeneratedIoRequest {
+                        setup: setup.dupe(),
+                        dest: path.to_owned(),
+                    }),
+                    cancellations,
+                )
+                .await?;
+            declare_existing_directory(ctx, path, &*materializer).await
+        })
+        .await
+}
+
 #[derive(allocative::Allocative, Pagable)]
 pub(crate) struct BzlmodFileOpsDelegate {
     buck_out_resolver: BuckOutPathResolver,
@@ -384,6 +491,90 @@ impl BzlmodFileOpsDelegate {
 #[pagable_typetag]
 #[async_trait::async_trait]
 impl FileOpsDelegate for BzlmodFileOpsDelegate {
+    async fn read_file_if_exists(
+        &self,
+        _ctx: &mut DiceComputations<'_>,
+        path: &'async_trait CellRelativePath,
+    ) -> buck2_error::Result<ReadFileProxy> {
+        Ok(ReadFileProxy::new_with_captures(
+            (self.resolve(path), self.io.dupe()),
+            |(project_path, io)| async move {
+                (&io as &dyn IoProvider)
+                    .read_file_if_exists(project_path)
+                    .await
+            },
+        ))
+    }
+
+    async fn read_dir(
+        &self,
+        _ctx: &mut DiceComputations<'_>,
+        path: &'async_trait CellRelativePath,
+    ) -> buck2_error::Result<Arc<[RawDirEntry]>> {
+        let project_path = self.resolve(path);
+        let mut entries = (&self.io as &dyn IoProvider)
+            .read_dir(project_path)
+            .await
+            .with_buck_error_context(|| format!("Error listing dir `{path}`"))?;
+
+        entries.sort_by(|a, b| a.file_name.cmp(&b.file_name));
+        Ok(entries.into())
+    }
+
+    async fn read_path_metadata_if_exists(
+        &self,
+        _ctx: &mut DiceComputations<'_>,
+        path: &'async_trait CellRelativePath,
+    ) -> buck2_error::Result<Option<RawPathMetadata>> {
+        let project_path = self.resolve(path);
+        let Some(metadata) = (&self.io as &dyn IoProvider)
+            .read_path_metadata_if_exists(project_path)
+            .await
+            .with_buck_error_context(|| format!("Error accessing metadata for path `{path}`"))?
+        else {
+            return Ok(None);
+        };
+        Ok(Some(metadata.try_map(
+            |path| match path.strip_prefix_opt(self.get_base_path()) {
+                Some(path) => Ok(Arc::new(CellPath::new(self.cell, path.to_owned().into()))),
+                None => Err(internal_error!(
+                    "Non-cell internal symlink at `{}` in cell `{}`",
+                    path,
+                    self.cell
+                )),
+            },
+        )?))
+    }
+
+    fn eq_token(&self) -> PartialEqAny<'_> {
+        PartialEqAny::always_false()
+    }
+}
+
+#[derive(allocative::Allocative, Pagable)]
+pub(crate) struct BzlmodGeneratedFileOpsDelegate {
+    buck_out_resolver: BuckOutPathResolver,
+    cell: CellName,
+    setup: BzlmodGeneratedCellSetup,
+    io: FsIoProvider,
+}
+
+impl BzlmodGeneratedFileOpsDelegate {
+    fn resolve(&self, path: &CellRelativePath) -> ProjectRelativePathBuf {
+        self.buck_out_resolver.resolve_external_cell_source(
+            path,
+            ExternalCellOrigin::BzlmodGenerated(self.setup.dupe()),
+        )
+    }
+
+    fn get_base_path(&self) -> ProjectRelativePathBuf {
+        self.resolve(CellRelativePath::empty())
+    }
+}
+
+#[pagable_typetag]
+#[async_trait::async_trait]
+impl FileOpsDelegate for BzlmodGeneratedFileOpsDelegate {
     async fn read_file_if_exists(
         &self,
         _ctx: &mut DiceComputations<'_>,
@@ -499,11 +690,76 @@ pub(crate) async fn get_file_ops_delegate(
     ctx.compute(&BzlmodFileOpsDelegateKey(cell, setup)).await?
 }
 
+pub(crate) async fn get_generated_file_ops_delegate(
+    ctx: &mut DiceComputations<'_>,
+    cell: CellName,
+    setup: BzlmodGeneratedCellSetup,
+) -> buck2_error::Result<Arc<BzlmodGeneratedFileOpsDelegate>> {
+    #[derive(
+        dupe::Dupe,
+        Clone,
+        Debug,
+        derive_more::Display,
+        PartialEq,
+        Eq,
+        Hash,
+        allocative::Allocative,
+        Pagable
+    )]
+    #[display("({}, {})", _0, _1)]
+    #[pagable_typetag(dice::DiceKeyDyn)]
+    struct BzlmodGeneratedFileOpsDelegateKey(CellName, BzlmodGeneratedCellSetup);
+
+    #[async_trait::async_trait]
+    impl Key for BzlmodGeneratedFileOpsDelegateKey {
+        type Value = buck2_error::Result<Arc<BzlmodGeneratedFileOpsDelegate>>;
+
+        async fn compute(
+            &self,
+            ctx: &mut DiceComputations,
+            cancellations: &CancellationContext,
+        ) -> Self::Value {
+            let artifact_fs = ctx.get_artifact_fs().await?;
+            let ops = BzlmodGeneratedFileOpsDelegate {
+                buck_out_resolver: artifact_fs.buck_out_path_resolver().clone(),
+                cell: self.0,
+                setup: self.1.dupe(),
+                io: FsIoProvider::new(
+                    artifact_fs.fs().dupe(),
+                    ctx.global_data().get_digest_config().cas_digest_config(),
+                ),
+            };
+            materialize_generated(ctx, &ops.get_base_path(), &self.1, cancellations).await?;
+            Ok(Arc::new(ops))
+        }
+
+        fn equality(_x: &Self::Value, _y: &Self::Value) -> bool {
+            false
+        }
+
+        fn value_serialize() -> impl ValueSerialize<Value = Self::Value> {
+            OkPagableValueSerialize::<Self::Value>::new()
+        }
+    }
+
+    ctx.compute(&BzlmodGeneratedFileOpsDelegateKey(cell, setup))
+        .await?
+}
+
 pub(crate) async fn materialize_all(
     ctx: &mut DiceComputations<'_>,
     cell: CellName,
     setup: BzlmodCellSetup,
 ) -> buck2_error::Result<ProjectRelativePathBuf> {
     let ops = get_file_ops_delegate(ctx, cell, setup.dupe()).await?;
+    Ok(ops.get_base_path())
+}
+
+pub(crate) async fn materialize_generated_all(
+    ctx: &mut DiceComputations<'_>,
+    cell: CellName,
+    setup: BzlmodGeneratedCellSetup,
+) -> buck2_error::Result<ProjectRelativePathBuf> {
+    let ops = get_generated_file_ops_delegate(ctx, cell, setup.dupe()).await?;
     Ok(ops.get_base_path())
 }

@@ -24,6 +24,9 @@ use buck2_core::cells::alias::NonEmptyCellAlias;
 use buck2_core::cells::cell_root_path::CellRootPath;
 use buck2_core::cells::cell_root_path::CellRootPathBuf;
 use buck2_core::cells::external::BzlmodCellSetup;
+use buck2_core::cells::external::BzlmodGeneratedCellGenerator;
+use buck2_core::cells::external::BzlmodGeneratedCellSetup;
+use buck2_core::cells::external::BzlmodGoRegisterNogoSetup;
 use buck2_core::cells::external::BzlmodPatch;
 use buck2_core::cells::external::ExternalCellOrigin;
 use buck2_core::cells::external::GitCellSetup;
@@ -58,6 +61,8 @@ use crate::legacy_configs::args::ResolvedLegacyConfigArg;
 use crate::legacy_configs::args::resolve_config_args;
 use crate::legacy_configs::args::to_proto_config_args;
 use crate::legacy_configs::configs::BazelCompatExternalModule;
+use crate::legacy_configs::configs::BazelCompatGeneratedModule;
+use crate::legacy_configs::configs::BazelCompatRegistryModule;
 use crate::legacy_configs::configs::LegacyBuckConfig;
 use crate::legacy_configs::dice::HasInjectedLegacyConfigs;
 use crate::legacy_configs::file_ops::ConfigDirEntry;
@@ -610,6 +615,28 @@ impl BuckConfigBasedCells {
                 ),
                 patch_strip: get_config(section, "patch_strip")?.parse()?,
             }))
+        } else if value == "bzlmod_generated" {
+            let section = &format!("external_cell_{}", cell.as_str());
+            let generator: BzlmodGeneratedRepoConfig =
+                serde_json::from_str(get_config(section, "generator")?)
+                    .buck_error_context("Invalid generated bzlmod repo configuration")?;
+            let generator = match generator {
+                BzlmodGeneratedRepoConfig::GoRegisterNogo {
+                    nogo,
+                    includes,
+                    excludes,
+                } => BzlmodGeneratedCellGenerator::GoRegisterNogo(BzlmodGoRegisterNogoSetup {
+                    nogo: Arc::from(nogo),
+                    includes: Arc::new(includes.into_iter().map(Arc::from).collect()),
+                    excludes: Arc::new(excludes.into_iter().map(Arc::from).collect()),
+                }),
+            };
+            Ok(ExternalCellOrigin::BzlmodGenerated(
+                BzlmodGeneratedCellSetup {
+                    canonical_repo_name: get_config(section, "canonical_repo_name")?.into(),
+                    generator,
+                },
+            ))
         } else {
             Err(ExternalCellOriginParseError::Unknown(value.to_owned()).into())
         }
@@ -654,9 +681,9 @@ impl BazelModuleCellAliases {
         self.root_aliases.sort();
         self.root_aliases.dedup();
         self.external_modules
-            .sort_by(|a, b| a.cell_name.cmp(&b.cell_name));
+            .sort_by(|a, b| a.cell_name().cmp(b.cell_name()));
         self.external_modules
-            .dedup_by(|a, b| a.cell_name == b.cell_name);
+            .dedup_by(|a, b| a.cell_name() == b.cell_name());
     }
 }
 
@@ -672,6 +699,7 @@ struct DiscoveredBcrModule {
     dep: BazelDep,
     source_json: BcrSourceJson,
     module_aliases: Vec<String>,
+    use_repo_aliases: Vec<String>,
     deps: Vec<BazelDep>,
 }
 
@@ -679,6 +707,16 @@ struct DiscoveredBcrModule {
 struct BzlmodPatchConfig {
     url: String,
     integrity: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum BzlmodGeneratedRepoConfig {
+    GoRegisterNogo {
+        nogo: String,
+        includes: Vec<String>,
+        excludes: Vec<String>,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -909,6 +947,7 @@ async fn resolve_bcr_modules_with_client(
         }
     }
 
+    let selected_keys_for_generated = selected_keys.clone();
     let mut resolved = BTreeMap::<String, BazelCompatExternalModule>::new();
     for key in selected_keys {
         let Some(module) = discovered.get(&key) else {
@@ -930,7 +969,7 @@ async fn resolve_bcr_modules_with_client(
         let cell_name = bzlmod_cell_name(&canonical_repo_name);
         resolved.insert(
             cell_name.clone(),
-            BazelCompatExternalModule {
+            BazelCompatExternalModule::Registry(BazelCompatRegistryModule {
                 cell_name,
                 aliases,
                 module_name: module.dep.name.clone(),
@@ -942,11 +981,55 @@ async fn resolve_bcr_modules_with_client(
                 archive_type: module.source_json.archive_type.clone(),
                 patches_json,
                 patch_strip: module.source_json.patch_strip.unwrap_or(0),
-            },
+            }),
         );
     }
 
-    Ok(resolved.into_values().collect())
+    let mut resolved = resolved.into_values().collect::<Vec<_>>();
+    resolved.extend(resolve_generated_bzlmod_repos(
+        &discovered,
+        &selected_keys_for_generated,
+    )?);
+    Ok(resolved)
+}
+
+fn resolve_generated_bzlmod_repos(
+    discovered: &BTreeMap<(String, String), DiscoveredBcrModule>,
+    selected_keys: &BTreeSet<(String, String)>,
+) -> buck2_error::Result<Vec<BazelCompatExternalModule>> {
+    let mut generated = Vec::new();
+    for key in selected_keys {
+        let Some(module) = discovered.get(key) else {
+            continue;
+        };
+        if module.dep.name == "rules_go"
+            && module
+                .use_repo_aliases
+                .iter()
+                .any(|alias| alias == "io_bazel_rules_nogo")
+        {
+            let canonical_repo_name = format!(
+                "{}+{}+go_sdk+io_bazel_rules_nogo",
+                module.dep.name, module.dep.version
+            );
+            let generator_json =
+                serde_json::to_string(&BzlmodGeneratedRepoConfig::GoRegisterNogo {
+                    nogo: "@io_bazel_rules_go//:default_nogo".to_owned(),
+                    includes: vec!["@@//:__subpackages__".to_owned()],
+                    excludes: Vec::new(),
+                })
+                .buck_error_context("Error serializing generated bzlmod repo configuration")?;
+            generated.push(BazelCompatExternalModule::Generated(
+                BazelCompatGeneratedModule {
+                    cell_name: bzlmod_cell_name(&canonical_repo_name),
+                    aliases: vec!["io_bazel_rules_nogo".to_owned()],
+                    canonical_repo_name,
+                    generator_json,
+                },
+            ));
+        }
+    }
+    Ok(generated)
 }
 
 fn add_bzlmod_dep_alias(
@@ -1004,6 +1087,7 @@ async fn fetch_bcr_module(
         dep,
         source_json,
         module_aliases: bzlmod_module_aliases(&module_lines),
+        use_repo_aliases: bzlmod_use_repo_aliases_from_lines(&module_lines),
         deps: bzlmod_deps_from_lines(&module_lines, true),
     })
 }
@@ -1059,6 +1143,13 @@ fn bzlmod_module_aliases(lines: &[String]) -> Vec<String> {
         }
     }
     aliases
+}
+
+fn bzlmod_use_repo_aliases_from_lines(lines: &[String]) -> Vec<String> {
+    collect_bzl_calls(lines, "use_repo(")
+        .into_iter()
+        .flat_map(|call| bzl_use_repo_aliases(&call))
+        .collect()
 }
 
 fn bzlmod_patch_configs(

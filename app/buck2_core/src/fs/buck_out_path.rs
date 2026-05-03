@@ -335,6 +335,9 @@ impl BuckOutPathResolver {
                 ExternalCellOrigin::Bundled(_) => ForwardRelativePath::new("bundled").unwrap(),
                 ExternalCellOrigin::Git(_) => ForwardRelativePath::new("git").unwrap(),
                 ExternalCellOrigin::Bzlmod(_) => ForwardRelativePath::new("bzlmod").unwrap(),
+                ExternalCellOrigin::BzlmodGenerated(_) => {
+                    ForwardRelativePath::new("bzlmod_generated").unwrap()
+                }
             },
             match &origin {
                 ExternalCellOrigin::Bundled(cell) => {
@@ -344,6 +347,9 @@ impl BuckOutPathResolver {
                     ForwardRelativePath::new(setup.commit.as_ref()).unwrap()
                 }
                 ExternalCellOrigin::Bzlmod(setup) => {
+                    ForwardRelativePath::new(setup.canonical_repo_name.as_ref()).unwrap()
+                }
+                ExternalCellOrigin::BzlmodGenerated(setup) => {
                     ForwardRelativePath::new(setup.canonical_repo_name.as_ref()).unwrap()
                 }
             },

@@ -25,6 +25,7 @@ use crate::interpreter::rule_defs::cmd_args::register_cmd_args;
 use crate::interpreter::rule_defs::cmd_args::register_command_line_inputs;
 use crate::interpreter::rule_defs::command_executor_config::register_command_executor_config;
 use crate::interpreter::rule_defs::context::register_analysis_context;
+use crate::interpreter::rule_defs::depset::register_bazel_depset;
 use crate::interpreter::rule_defs::digest_config::register_digest_config_type;
 use crate::interpreter::rule_defs::provider::callable::register_provider;
 use crate::interpreter::rule_defs::provider::collection::register_provider_collection;
@@ -48,6 +49,7 @@ fn register_build_api_globals(globals: &mut GlobalsBuilder) {
     register_transitive_set(globals);
     register_transitive_set_types(globals);
     register_analysis_context(globals);
+    register_bazel_depset(globals);
     register_dependency(globals);
     register_artifact(globals);
     register_artifact_tag(globals);

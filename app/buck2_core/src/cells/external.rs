@@ -25,6 +25,7 @@ pub enum ExternalCellOrigin {
     Bundled(CellName),
     Git(GitCellSetup),
     Bzlmod(BzlmodCellSetup),
+    BzlmodGenerated(BzlmodGeneratedCellSetup),
 }
 
 #[derive(
@@ -76,12 +77,60 @@ pub struct BzlmodPatch {
     pub integrity: Arc<str>,
 }
 
+#[derive(
+    Debug,
+    derive_more::Display,
+    Clone,
+    Dupe,
+    allocative::Allocative,
+    PartialEq,
+    Eq,
+    Hash,
+    Pagable
+)]
+#[display("bzlmod-generated({})", canonical_repo_name)]
+pub struct BzlmodGeneratedCellSetup {
+    pub canonical_repo_name: Arc<str>,
+    pub generator: BzlmodGeneratedCellGenerator,
+}
+
+#[derive(
+    Debug,
+    Clone,
+    Dupe,
+    allocative::Allocative,
+    PartialEq,
+    Eq,
+    Hash,
+    Pagable
+)]
+pub enum BzlmodGeneratedCellGenerator {
+    GoRegisterNogo(BzlmodGoRegisterNogoSetup),
+}
+
+#[derive(
+    Debug,
+    Clone,
+    Dupe,
+    allocative::Allocative,
+    PartialEq,
+    Eq,
+    Hash,
+    Pagable
+)]
+pub struct BzlmodGoRegisterNogoSetup {
+    pub nogo: Arc<str>,
+    pub includes: Arc<Vec<Arc<str>>>,
+    pub excludes: Arc<Vec<Arc<str>>>,
+}
+
 impl fmt::Display for ExternalCellOrigin {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Bundled(cell) => write!(f, "bundled({cell})"),
             Self::Git(git) => write!(f, "{git}"),
             Self::Bzlmod(bzlmod) => write!(f, "{bzlmod}"),
+            Self::BzlmodGenerated(generated) => write!(f, "{generated}"),
         }
     }
 }

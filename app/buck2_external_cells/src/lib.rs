@@ -55,6 +55,9 @@ impl buck2_common::external_cells::ExternalCellsImpl for ConcreteExternalCellsIm
             ExternalCellOrigin::Bzlmod(setup) => {
                 Ok(bzlmod::get_file_ops_delegate(ctx, cell_name, setup).await? as _)
             }
+            ExternalCellOrigin::BzlmodGenerated(setup) => {
+                Ok(bzlmod::get_generated_file_ops_delegate(ctx, cell_name, setup).await? as _)
+            }
         }
     }
 
@@ -96,6 +99,9 @@ impl buck2_common::external_cells::ExternalCellsImpl for ConcreteExternalCellsIm
             ExternalCellOrigin::Bundled(cell) => bundled::materialize_all(ctx, cell).await?,
             ExternalCellOrigin::Git(setup) => git::materialize_all(ctx, cell, setup).await?,
             ExternalCellOrigin::Bzlmod(setup) => bzlmod::materialize_all(ctx, cell, setup).await?,
+            ExternalCellOrigin::BzlmodGenerated(setup) => {
+                bzlmod::materialize_generated_all(ctx, cell, setup).await?
+            }
         };
 
         Ok(io.project_root().copy(&materialized_path, &dest_path)?)

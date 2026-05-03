@@ -144,7 +144,13 @@ pub struct LegacyBuckConfigSection {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct BazelCompatExternalModule {
+pub(crate) enum BazelCompatExternalModule {
+    Registry(BazelCompatRegistryModule),
+    Generated(BazelCompatGeneratedModule),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct BazelCompatRegistryModule {
     pub cell_name: String,
     pub aliases: Vec<String>,
     pub module_name: String,
@@ -156,6 +162,37 @@ pub(crate) struct BazelCompatExternalModule {
     pub archive_type: Option<String>,
     pub patches_json: String,
     pub patch_strip: u32,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct BazelCompatGeneratedModule {
+    pub cell_name: String,
+    pub aliases: Vec<String>,
+    pub canonical_repo_name: String,
+    pub generator_json: String,
+}
+
+impl BazelCompatExternalModule {
+    pub(crate) fn cell_name(&self) -> &str {
+        match self {
+            Self::Registry(module) => &module.cell_name,
+            Self::Generated(module) => &module.cell_name,
+        }
+    }
+
+    pub(crate) fn aliases(&self) -> &[String] {
+        match self {
+            Self::Registry(module) => &module.aliases,
+            Self::Generated(module) => &module.aliases,
+        }
+    }
+
+    pub(crate) fn canonical_repo_name(&self) -> &str {
+        match self {
+            Self::Registry(module) => &module.canonical_repo_name,
+            Self::Generated(module) => &module.canonical_repo_name,
+        }
+    }
 }
 
 impl ConfigValue {
@@ -326,11 +363,15 @@ impl LegacyBuckConfig {
             if *section_name == "cells" {
                 for module in external_modules {
                     section_values
-                        .entry(module.cell_name.clone())
+                        .entry(module.cell_name().to_owned())
                         .or_insert_with(|| {
                             synthetic_config_value(&format!(
-                                "buck-out/v2/external_cells/bzlmod/{}",
-                                module.canonical_repo_name
+                                "buck-out/v2/external_cells/{}/{}",
+                                match module {
+                                    BazelCompatExternalModule::Registry(_) => "bzlmod",
+                                    BazelCompatExternalModule::Generated(_) => "bzlmod_generated",
+                                },
+                                module.canonical_repo_name()
                             ))
                         });
                 }
@@ -342,18 +383,23 @@ impl LegacyBuckConfig {
                         .or_insert_with(|| synthetic_config_value("root"));
                 }
                 for module in external_modules {
-                    for alias in &module.aliases {
+                    for alias in module.aliases() {
                         section_values
                             .entry(alias.clone())
-                            .or_insert_with(|| synthetic_config_value(&module.cell_name));
+                            .or_insert_with(|| synthetic_config_value(module.cell_name()));
                     }
                 }
             }
             if *section_name == "external_cells" {
                 for module in external_modules {
                     section_values
-                        .entry(module.cell_name.clone())
-                        .or_insert_with(|| synthetic_config_value("bzlmod"));
+                        .entry(module.cell_name().to_owned())
+                        .or_insert_with(|| {
+                            synthetic_config_value(match module {
+                                BazelCompatExternalModule::Registry(_) => "bzlmod",
+                                BazelCompatExternalModule::Generated(_) => "bzlmod_generated",
+                            })
+                        });
                 }
             }
             section.values = SortedMap::from_iter(section_values);
@@ -361,38 +407,52 @@ impl LegacyBuckConfig {
 
         for module in external_modules {
             let section = values
-                .entry(format!("external_cell_{}", module.cell_name))
+                .entry(format!("external_cell_{}", module.cell_name()))
                 .or_default();
             let mut section_values: BTreeMap<String, ConfigValue> = section
                 .values
                 .iter()
                 .map(|(key, value)| (key.clone(), value.clone()))
                 .collect();
-            for (key, value) in [
-                ("module_name", module.module_name.as_str()),
-                ("version", module.version.as_str()),
-                ("canonical_repo_name", module.canonical_repo_name.as_str()),
-                ("url", module.url.as_str()),
-                ("integrity", module.integrity.as_str()),
-                ("patches", module.patches_json.as_str()),
-            ] {
-                section_values
-                    .entry(key.to_owned())
-                    .or_insert_with(|| synthetic_config_value(value));
+            match module {
+                BazelCompatExternalModule::Registry(module) => {
+                    for (key, value) in [
+                        ("module_name", module.module_name.as_str()),
+                        ("version", module.version.as_str()),
+                        ("canonical_repo_name", module.canonical_repo_name.as_str()),
+                        ("url", module.url.as_str()),
+                        ("integrity", module.integrity.as_str()),
+                        ("patches", module.patches_json.as_str()),
+                    ] {
+                        section_values
+                            .entry(key.to_owned())
+                            .or_insert_with(|| synthetic_config_value(value));
+                    }
+                    if let Some(strip_prefix) = &module.strip_prefix {
+                        section_values
+                            .entry("strip_prefix".to_owned())
+                            .or_insert_with(|| synthetic_config_value(strip_prefix));
+                    }
+                    if let Some(archive_type) = &module.archive_type {
+                        section_values
+                            .entry("archive_type".to_owned())
+                            .or_insert_with(|| synthetic_config_value(archive_type));
+                    }
+                    section_values
+                        .entry("patch_strip".to_owned())
+                        .or_insert_with(|| synthetic_config_value(&module.patch_strip.to_string()));
+                }
+                BazelCompatExternalModule::Generated(module) => {
+                    for (key, value) in [
+                        ("canonical_repo_name", module.canonical_repo_name.as_str()),
+                        ("generator", module.generator_json.as_str()),
+                    ] {
+                        section_values
+                            .entry(key.to_owned())
+                            .or_insert_with(|| synthetic_config_value(value));
+                    }
+                }
             }
-            if let Some(strip_prefix) = &module.strip_prefix {
-                section_values
-                    .entry("strip_prefix".to_owned())
-                    .or_insert_with(|| synthetic_config_value(strip_prefix));
-            }
-            if let Some(archive_type) = &module.archive_type {
-                section_values
-                    .entry("archive_type".to_owned())
-                    .or_insert_with(|| synthetic_config_value(archive_type));
-            }
-            section_values
-                .entry("patch_strip".to_owned())
-                .or_insert_with(|| synthetic_config_value(&module.patch_strip.to_string()));
             section.values = SortedMap::from_iter(section_values);
         }
 
