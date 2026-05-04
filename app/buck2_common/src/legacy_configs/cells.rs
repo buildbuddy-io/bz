@@ -37,6 +37,7 @@ use buck2_core::cells::external::BzlmodJavaLocalJdkSetup;
 use buck2_core::cells::external::BzlmodLocalConfigPlatformSetup;
 use buck2_core::cells::external::BzlmodPatch;
 use buck2_core::cells::external::BzlmodPythonHubSetup;
+use buck2_core::cells::external::BzlmodRepositoryRuleSetup;
 use buck2_core::cells::external::BzlmodShellConfigSetup;
 use buck2_core::cells::external::ExternalCellOrigin;
 use buck2_core::cells::external::GitCellSetup;
@@ -710,6 +711,13 @@ impl BuckConfigBasedCells {
                 BzlmodGeneratedRepoConfig::PythonHub {} => {
                     BzlmodGeneratedCellGenerator::PythonHub(BzlmodPythonHubSetup {})
                 }
+                BzlmodGeneratedRepoConfig::RepositoryRule { files } => {
+                    let files_json = serde_json::to_string(&files)
+                        .buck_error_context("Error serializing repository_rule file manifest")?;
+                    BzlmodGeneratedCellGenerator::RepositoryRule(BzlmodRepositoryRuleSetup {
+                        files_json: Arc::from(files_json),
+                    })
+                }
             };
             Ok(ExternalCellOrigin::BzlmodGenerated(
                 BzlmodGeneratedCellSetup {
@@ -864,6 +872,16 @@ enum BzlmodGeneratedRepoConfig {
     },
     JavaLocalJdk {},
     PythonHub {},
+    RepositoryRule {
+        files: Vec<BzlmodRepositoryRuleFileConfig>,
+    },
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct BzlmodRepositoryRuleFileConfig {
+    path: String,
+    content: String,
+    executable: bool,
 }
 
 #[derive(Clone, Debug, Deserialize)]

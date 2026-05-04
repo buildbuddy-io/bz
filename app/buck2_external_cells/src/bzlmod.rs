@@ -39,6 +39,7 @@ use buck2_core::cells::external::BzlmodHttpArchiveSetup;
 use buck2_core::cells::external::BzlmodJavaLocalJdkSetup;
 use buck2_core::cells::external::BzlmodLocalConfigPlatformSetup;
 use buck2_core::cells::external::BzlmodPythonHubSetup;
+use buck2_core::cells::external::BzlmodRepositoryRuleSetup;
 use buck2_core::cells::external::BzlmodShellConfigSetup;
 use buck2_core::cells::external::ExternalCellOrigin;
 use buck2_core::cells::name::CellName;
@@ -74,6 +75,7 @@ use dice::ValueSerialize;
 use dupe::Dupe;
 use pagable::Pagable;
 use pagable::pagable_typetag;
+use serde::Deserialize;
 
 #[derive(buck2_error::Error, Debug)]
 #[buck2(tag = Tier0)]
@@ -225,9 +227,41 @@ impl IoRequest for BzlmodGeneratedIoRequest {
             BzlmodGeneratedCellGenerator::PythonHub(setup) => {
                 write_python_hub_repo(&dest, setup)?;
             }
+            BzlmodGeneratedCellGenerator::RepositoryRule(setup) => {
+                write_repository_rule_repo(&dest, &self.setup.canonical_repo_name, setup)?;
+            }
         }
         Ok(())
     }
+}
+
+#[derive(Deserialize)]
+struct BzlmodRepositoryRuleFile {
+    path: String,
+    content: String,
+    executable: bool,
+}
+
+fn write_repository_rule_repo(
+    dest: &AbsNormPath,
+    canonical_repo_name: &str,
+    setup: &BzlmodRepositoryRuleSetup,
+) -> buck2_error::Result<()> {
+    write_generated_module_file(dest, canonical_repo_name)?;
+    let files: Vec<BzlmodRepositoryRuleFile> = serde_json::from_str(&setup.files_json)
+        .buck_error_context("Invalid generated repository_rule file manifest")?;
+    for file in files {
+        let rel_path = ForwardRelativePath::new(&file.path)?;
+        let path = dest.join(rel_path);
+        if let Some(parent) = path.parent() {
+            fs_util::create_dir_all(parent)?;
+        }
+        fs_util::write(&path, file.content).categorize_internal()?;
+        if file.executable {
+            fs_util::set_executable(&path, true).categorize_internal()?;
+        }
+    }
+    Ok(())
 }
 
 fn write_local_config_platform_repo(

@@ -117,6 +117,7 @@ pub enum BzlmodGeneratedCellGenerator {
     HttpArchive(BzlmodHttpArchiveSetup),
     JavaLocalJdk(BzlmodJavaLocalJdkSetup),
     PythonHub(BzlmodPythonHubSetup),
+    RepositoryRule(BzlmodRepositoryRuleSetup),
 }
 
 #[derive(
@@ -251,6 +252,20 @@ pub struct BzlmodJavaLocalJdkSetup {}
     Pagable
 )]
 pub struct BzlmodPythonHubSetup {}
+
+#[derive(
+    Debug,
+    Clone,
+    Dupe,
+    allocative::Allocative,
+    PartialEq,
+    Eq,
+    Hash,
+    Pagable
+)]
+pub struct BzlmodRepositoryRuleSetup {
+    pub files_json: Arc<str>,
+}
 
 impl fmt::Display for ExternalCellOrigin {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

@@ -124,7 +124,7 @@ Acceptance:
 
 ## Phase 2: Module Extensions and Generated Repos
 
-Status: module dependencies, generic `use_extension(...)` bindings, extension tags, and `use_repo(...)` imports are discovered. Repo aliases are now applied through per-module bzlmod mappings: the root module sees its root-visible imports, while downloaded module cells see the deps and extension imports declared by their own `MODULE.bazel`. Generated repos are still not created by real bzlmod extension evaluation. The previous Go/Kotlin Rust-side generated repo materializers have been removed; the remaining generated-repo paths must be replaced by generic `module_extension(...)` evaluation and repository-rule execution rather than more module-specific generators.
+Status: module dependencies, generic `use_extension(...)` bindings, extension tags, and `use_repo(...)` imports are discovered. Repo aliases are now applied through per-module bzlmod mappings: the root module sees its root-visible imports, while downloaded module cells see the deps and extension imports declared by their own `MODULE.bazel`. There is now a generic generated-repository file materializer for future `repository_ctx.file/template` output. Generated repos are still not created by real bzlmod extension evaluation. The previous Go/Kotlin Rust-side generated repo materializers have been removed; the remaining generated-repo paths must be replaced by generic `module_extension(...)` evaluation and repository-rule execution rather than more module-specific generators.
 
 Implement:
 
