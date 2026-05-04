@@ -523,6 +523,7 @@ impl AnonTargetKey {
                 let ctx = AnalysisContext::prepare(
                     eval.heap(),
                     Some(attributes),
+                    None,
                     Some(self.0.configured_label()),
                     // FIXME(JakobDegen): There should probably be a way to pass plugins
                     // into anon targets

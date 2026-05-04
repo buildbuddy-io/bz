@@ -12,6 +12,7 @@
 
 pub mod analysis_failure_info;
 pub mod analysis_test_result_info;
+pub mod bazel_output_file_info;
 pub mod cc_info;
 pub mod configuration_info;
 pub mod constraint_setting_info;

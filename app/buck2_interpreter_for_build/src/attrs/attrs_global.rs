@@ -25,6 +25,7 @@ use buck2_node::attrs::coercion_context::AttrCoercionContext;
 use buck2_node::attrs::configurable::AttrIsConfigurable;
 use buck2_node::attrs::display::AttrDisplayWithContextExt;
 use buck2_node::provider_id_set::ProviderIdSet;
+use buck2_node::rule::BazelOutputAttrKind;
 use dupe::Dupe;
 use dupe::OptionDupedExt;
 use either::Either;
@@ -977,21 +978,24 @@ fn bazel_attr_module(registry: &mut GlobalsBuilder) {
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<StarlarkAttribute> {
         if mandatory {
-            Ok(bazel_attr_required(
-                eval,
-                bazel_doc(doc),
-                AttrType::string(),
-            )?)
+            Ok(StarlarkAttribute::new_bazel_output(
+                Attribute::new(None, bazel_doc(doc), AttrType::string())?,
+                BazelOutputAttrKind::Output,
+            ))
         } else {
-            Ok(bazel_attr(
-                eval,
-                None,
-                Value::new_none(),
-                false,
-                bazel_doc(doc),
-                AttrType::option(AttrType::string()),
-                Some(false),
-            )?)
+            Ok(StarlarkAttribute::new_bazel_output(
+                bazel_attr(
+                    eval,
+                    None,
+                    Value::new_none(),
+                    false,
+                    bazel_doc(doc),
+                    AttrType::option(AttrType::string()),
+                    Some(false),
+                )?
+                .clone_attribute(),
+                BazelOutputAttrKind::Output,
+            ))
         }
     }
 
@@ -1003,15 +1007,19 @@ fn bazel_attr_module(registry: &mut GlobalsBuilder) {
     ) -> starlark::Result<StarlarkAttribute> {
         let _unused = allow_empty;
         let fallback = eval.heap().alloc(AllocList::EMPTY);
-        Ok(bazel_attr(
-            eval,
-            None,
-            fallback,
-            mandatory,
-            bazel_doc(doc),
-            AttrType::list(AttrType::string()),
-            Some(false),
-        )?)
+        Ok(StarlarkAttribute::new_bazel_output(
+            bazel_attr(
+                eval,
+                None,
+                fallback,
+                mandatory,
+                bazel_doc(doc),
+                AttrType::list(AttrType::string()),
+                Some(false),
+            )?
+            .clone_attribute(),
+            BazelOutputAttrKind::OutputList,
+        ))
     }
 
     fn string_dict<'v>(

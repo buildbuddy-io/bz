@@ -88,6 +88,7 @@ fn run_ctx_test(
             let ctx = eval.heap().alloc(AnalysisContext::prepare(
                 eval.heap(),
                 Some(attributes),
+                None,
                 Some(label),
                 Some(plugins),
                 Vec::new(),

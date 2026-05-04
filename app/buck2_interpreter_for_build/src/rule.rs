@@ -34,6 +34,8 @@ use buck2_node::attrs::spec::AttributeSpec;
 use buck2_node::bzl_or_bxl_path::BzlOrBxlPath;
 use buck2_node::nodes::unconfigured::RuleKind;
 use buck2_node::nodes::unconfigured::TargetNode;
+use buck2_node::rule::BazelImplicitOutput;
+use buck2_node::rule::BazelOutputAttr;
 use buck2_node::rule::Rule;
 use buck2_node::rule::RuleIncomingTransition;
 use buck2_node::rule_type::RuleType;
@@ -71,6 +73,7 @@ use starlark::values::StarlarkValue;
 use starlark::values::StringValue;
 use starlark::values::Trace;
 use starlark::values::Value;
+use starlark::values::dict::DictRef;
 use starlark::values::dict::UnpackDictEntries;
 use starlark::values::list::ListType;
 use starlark::values::list::UnpackList;
@@ -88,6 +91,7 @@ use crate::interpreter::build_context::PerFileTypeContext;
 use crate::interpreter::module_internals::ModuleInternals;
 use crate::nodes::attr_spec::AttributeSpecExt;
 use crate::nodes::unconfigured::TargetNodeExt;
+use crate::nodes::unconfigured::bazel_output_file_targets;
 use crate::plugins::PluginKindArg;
 
 pub static NAME_ATTRIBUTE_FIELD: &str = "name";
@@ -122,6 +126,10 @@ pub struct StarlarkRuleCallable<'v> {
     uses_plugins: Vec<PluginKind>,
     /// Bazel toolchain types declared by `rule(toolchains = ...)`.
     bazel_toolchains: Vec<String>,
+    /// Bazel explicit output attrs declared by `attr.output()` / `attr.output_list()`.
+    bazel_output_attrs: Vec<BazelOutputAttr>,
+    /// Bazel implicit outputs declared by `rule(outputs = {...})`.
+    bazel_implicit_outputs: Vec<BazelImplicitOutput>,
     /// Whether the rule was declared through Bazel's `rule(implementation = ...)` API.
     is_bazel_rule: bool,
     /// Whether the rule was declared with Bazel's `build_setting = ...`.
@@ -186,6 +194,8 @@ enum RuleError {
     UnsupportedBazelBuildSettingType(String),
     #[error("unsupported Bazel toolchain declaration `{0}`")]
     UnsupportedBazelToolchain(String),
+    #[error("unsupported Bazel rule outputs declaration `{0}`")]
+    UnsupportedBazelOutputs(String),
 }
 
 fn bazel_build_setting_default_attr(
@@ -285,6 +295,36 @@ fn bazel_toolchain_key_from_value(value: Value<'_>) -> buck2_error::Result<Strin
     Err(RuleError::UnsupportedBazelToolchain(value.to_repr()).into())
 }
 
+fn bazel_implicit_outputs_from_value(
+    outputs: Option<Value<'_>>,
+) -> buck2_error::Result<Vec<BazelImplicitOutput>> {
+    let Some(outputs) = outputs else {
+        return Ok(Vec::new());
+    };
+    if outputs.is_none() {
+        return Ok(Vec::new());
+    }
+    let Some(outputs) = DictRef::from_value(outputs) else {
+        return Err(RuleError::UnsupportedBazelOutputs(outputs.to_repr()).into());
+    };
+
+    outputs
+        .iter()
+        .map(|(name, template)| {
+            let Some(name) = name.unpack_str() else {
+                return Err(RuleError::UnsupportedBazelOutputs(name.to_repr()).into());
+            };
+            let Some(template) = template.unpack_str() else {
+                return Err(RuleError::UnsupportedBazelOutputs(template.to_repr()).into());
+            };
+            Ok(BazelImplicitOutput {
+                name: ArcStr::from(name),
+                template: ArcStr::from(template),
+            })
+        })
+        .collect()
+}
+
 impl<'v> AllocValue<'v> for StarlarkRuleCallable<'v> {
     fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
         heap.alloc_complex(self)
@@ -302,6 +342,7 @@ impl<'v> StarlarkRuleCallable<'v> {
         is_toolchain_rule: bool,
         uses_plugins: Vec<PluginKind>,
         bazel_toolchains: Vec<String>,
+        bazel_implicit_outputs: Vec<BazelImplicitOutput>,
         is_bazel_rule: bool,
         build_setting: Option<Value<'v>>,
         artifact_promise_mappings: Option<ArtifactPromiseMappings<'v>>,
@@ -325,6 +366,7 @@ impl<'v> StarlarkRuleCallable<'v> {
             ),
         };
 
+        let mut bazel_output_attrs = Vec::new();
         let mut sorted_validated_attrs = attrs
             .entries
             .into_iter()
@@ -333,6 +375,12 @@ impl<'v> StarlarkRuleCallable<'v> {
                 if name == NAME_ATTRIBUTE_FIELD {
                     Err(RuleError::InvalidParameterName(NAME_ATTRIBUTE_FIELD.to_owned()).into())
                 } else {
+                    if let Some(kind) = value.bazel_output_kind() {
+                        bazel_output_attrs.push(BazelOutputAttr {
+                            name: ArcStr::from(name),
+                            kind,
+                        });
+                    }
                     Ok((name.to_owned(), value.clone_attribute()))
                 }
             })
@@ -389,6 +437,8 @@ impl<'v> StarlarkRuleCallable<'v> {
             rule_kind,
             uses_plugins,
             bazel_toolchains,
+            bazel_output_attrs,
+            bazel_implicit_outputs,
             is_bazel_rule,
             is_bazel_build_setting,
             docs: Some(doc.to_owned()),
@@ -415,6 +465,7 @@ impl<'v> StarlarkRuleCallable<'v> {
             doc,
             false,
             false,
+            Vec::new(),
             Vec::new(),
             Vec::new(),
             false,
@@ -595,6 +646,8 @@ impl<'v> Freeze for StarlarkRuleCallable<'v> {
                 rule_kind: self.rule_kind,
                 uses_plugins: self.uses_plugins,
                 bazel_toolchains: self.bazel_toolchains,
+                bazel_output_attrs: self.bazel_output_attrs,
+                bazel_implicit_outputs: self.bazel_implicit_outputs,
                 is_bazel_rule: self.is_bazel_rule,
                 is_bazel_build_setting: self.is_bazel_build_setting,
             }),
@@ -695,7 +748,11 @@ impl<'v> StarlarkValue<'v> for FrozenStarlarkRuleCallable {
                 self.ignore_attrs_for_profiling,
                 call_stack,
             )?;
+            let output_file_targets = bazel_output_file_targets(&target_node, internals)?;
             internals.record(target_node)?;
+            for output_file_target in output_file_targets {
+                internals.record(output_file_target)?;
+            }
             Ok(Value::new_none())
         })
     }
@@ -783,11 +840,11 @@ pub fn register_rule_function(builder: &mut GlobalsBuilder) {
             .into_iter()
             .map(bazel_toolchain_key_from_value)
             .collect::<buck2_error::Result<Vec<_>>>()?;
+        let bazel_implicit_outputs = bazel_implicit_outputs_from_value(outputs)?;
 
         let _unused = (
             executable,
             test,
-            outputs,
             output_to_genfiles,
             fragments,
             host_fragments,
@@ -826,6 +883,7 @@ pub fn register_rule_function(builder: &mut GlobalsBuilder) {
                 .map(|PluginKindArg { plugin_kind }| plugin_kind)
                 .collect(),
             bazel_toolchains,
+            bazel_implicit_outputs,
             is_bazel_rule,
             build_setting,
             None,

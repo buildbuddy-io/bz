@@ -202,10 +202,12 @@ impl CqueryUniverse {
                 self.get_from_package(package_with_modifiers.package, spec)
                     .filter_map(|(node, extra)| match node.rule_type() {
                         RuleType::Forward => None,
-                        RuleType::Starlark(..) => Some(ConfiguredProvidersLabel::new(
-                            node.label().dupe(),
-                            extra.into_providers(),
-                        )),
+                        RuleType::Starlark(..) | RuleType::BazelOutputFile => {
+                            Some(ConfiguredProvidersLabel::new(
+                                node.label().dupe(),
+                                extra.into_providers(),
+                            ))
+                        }
                     }),
             );
         }

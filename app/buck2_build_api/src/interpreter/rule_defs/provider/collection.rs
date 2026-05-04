@@ -407,6 +407,12 @@ impl<'v, V: ValueLike<'v>> ProviderCollectionGen<V> {
     }
 }
 
+impl<'v> ProviderCollection<'v> {
+    pub fn insert_provider(&mut self, value: Value<'v>) -> buck2_error::Result<()> {
+        ProviderCollectionGen::<Value<'v>>::insert_provider_value(&mut self.providers, value)
+    }
+}
+
 impl FrozenProviderCollection {
     pub fn testing_new_default(
         heap: &FrozenHeap,

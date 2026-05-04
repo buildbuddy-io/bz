@@ -730,6 +730,8 @@ pub mod testing {
                     cfg: RuleIncomingTransition::None,
                     uses_plugins: Vec::new(),
                     bazel_toolchains: Vec::new(),
+                    bazel_output_attrs: Vec::new(),
+                    bazel_implicit_outputs: Vec::new(),
                     is_bazel_rule: false,
                     is_bazel_build_setting: false,
                 }),

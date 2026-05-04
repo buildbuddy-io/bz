@@ -31,16 +31,9 @@ use buck2_core::cells::external::BzlmodCcAutoconfToolchainsSetup;
 use buck2_core::cells::external::BzlmodCellSetup;
 use buck2_core::cells::external::BzlmodGeneratedCellGenerator;
 use buck2_core::cells::external::BzlmodGeneratedCellSetup;
-use buck2_core::cells::external::BzlmodGoDepsModuleSetup;
-use buck2_core::cells::external::BzlmodGoDepsRepositoryConfigSetup;
-use buck2_core::cells::external::BzlmodGoRegisterNogoSetup;
-use buck2_core::cells::external::BzlmodGoSdkHostCompatibleSetup;
-use buck2_core::cells::external::BzlmodGoSdkRepositorySetup;
-use buck2_core::cells::external::BzlmodGoSdkToolchainsSetup;
 use buck2_core::cells::external::BzlmodHostPlatformSetup;
 use buck2_core::cells::external::BzlmodHttpArchiveSetup;
 use buck2_core::cells::external::BzlmodJavaLocalJdkSetup;
-use buck2_core::cells::external::BzlmodKotlinCompilerSetup;
 use buck2_core::cells::external::BzlmodLocalConfigPlatformSetup;
 use buck2_core::cells::external::BzlmodPatch;
 use buck2_core::cells::external::BzlmodPythonHubSetup;
@@ -659,48 +652,6 @@ impl BuckConfigBasedCells {
                 BzlmodGeneratedRepoConfig::HostPlatform {} => {
                     BzlmodGeneratedCellGenerator::HostPlatform(BzlmodHostPlatformSetup {})
                 }
-                BzlmodGeneratedRepoConfig::GoRegisterNogo {
-                    nogo,
-                    includes,
-                    excludes,
-                } => BzlmodGeneratedCellGenerator::GoRegisterNogo(BzlmodGoRegisterNogoSetup {
-                    nogo: Arc::from(nogo),
-                    includes: Arc::new(includes.into_iter().map(Arc::from).collect()),
-                    excludes: Arc::new(excludes.into_iter().map(Arc::from).collect()),
-                }),
-                BzlmodGeneratedRepoConfig::GoSdkToolchains {
-                    parent_canonical_repo_name,
-                    sdk_repo,
-                    go_mod,
-                    host_goos,
-                    host_goarch,
-                } => BzlmodGeneratedCellGenerator::GoSdkToolchains(BzlmodGoSdkToolchainsSetup {
-                    parent_canonical_repo_name: Arc::from(parent_canonical_repo_name),
-                    sdk_repo: Arc::from(sdk_repo),
-                    go_mod: Arc::from(go_mod),
-                    host_goos: Arc::from(host_goos),
-                    host_goarch: Arc::from(host_goarch),
-                }),
-                BzlmodGeneratedRepoConfig::GoSdkHostCompatible { sdk_repo } => {
-                    BzlmodGeneratedCellGenerator::GoSdkHostCompatible(
-                        BzlmodGoSdkHostCompatibleSetup {
-                            sdk_repo: Arc::from(sdk_repo),
-                        },
-                    )
-                }
-                BzlmodGeneratedRepoConfig::GoSdkRepository {
-                    parent_canonical_repo_name,
-                    repo_name,
-                    go_mod,
-                    host_goos,
-                    host_goarch,
-                } => BzlmodGeneratedCellGenerator::GoSdkRepository(BzlmodGoSdkRepositorySetup {
-                    parent_canonical_repo_name: Arc::from(parent_canonical_repo_name),
-                    repo_name: Arc::from(repo_name),
-                    go_mod: Arc::from(go_mod),
-                    host_goos: Arc::from(host_goos),
-                    host_goarch: Arc::from(host_goarch),
-                }),
                 BzlmodGeneratedRepoConfig::LocalConfigPlatform {} => {
                     BzlmodGeneratedCellGenerator::LocalConfigPlatform(
                         BzlmodLocalConfigPlatformSetup {},
@@ -732,41 +683,12 @@ impl BuckConfigBasedCells {
                     strip_prefix: strip_prefix.map(Arc::from),
                     archive_type: archive_type.map(Arc::from),
                 }),
-                BzlmodGeneratedRepoConfig::KotlinCompiler {
-                    parent_canonical_repo_name,
-                    repo_name,
-                    git_repo_name,
-                    compiler_version,
-                } => BzlmodGeneratedCellGenerator::KotlinCompiler(BzlmodKotlinCompilerSetup {
-                    parent_canonical_repo_name: Arc::from(parent_canonical_repo_name),
-                    repo_name: Arc::from(repo_name),
-                    git_repo_name: Arc::from(git_repo_name),
-                    compiler_version: Arc::from(compiler_version),
-                }),
                 BzlmodGeneratedRepoConfig::JavaLocalJdk {} => {
                     BzlmodGeneratedCellGenerator::JavaLocalJdk(BzlmodJavaLocalJdkSetup {})
                 }
                 BzlmodGeneratedRepoConfig::PythonHub {} => {
                     BzlmodGeneratedCellGenerator::PythonHub(BzlmodPythonHubSetup {})
                 }
-                BzlmodGeneratedRepoConfig::GoDepsModule {
-                    parent_canonical_repo_name,
-                    go_mod,
-                    repo_name,
-                } => BzlmodGeneratedCellGenerator::GoDepsModule(BzlmodGoDepsModuleSetup {
-                    parent_canonical_repo_name: Arc::from(parent_canonical_repo_name),
-                    go_mod: Arc::from(go_mod),
-                    repo_name: Arc::from(repo_name),
-                }),
-                BzlmodGeneratedRepoConfig::GoDepsRepositoryConfig {
-                    go_env_json,
-                    deps_files,
-                } => BzlmodGeneratedCellGenerator::GoDepsRepositoryConfig(
-                    BzlmodGoDepsRepositoryConfigSetup {
-                        go_env_json: Arc::from(go_env_json),
-                        deps_files: Arc::new(deps_files.into_iter().map(Arc::from).collect()),
-                    },
-                ),
             };
             Ok(ExternalCellOrigin::BzlmodGenerated(
                 BzlmodGeneratedCellSetup {
@@ -842,28 +764,8 @@ struct DiscoveredBcrModule {
     use_repo_aliases: Vec<String>,
     host_platform_extension_imports: Vec<BzlmodUseRepoImport>,
     version_extension_imports: Vec<BzlmodUseRepoImport>,
-    go_sdk_extensions: Vec<BzlmodGoSdkExtension>,
-    go_deps_extensions: Vec<BzlmodGoDepsExtension>,
     registered_toolchains: Vec<String>,
     deps: Vec<BazelDep>,
-}
-
-#[derive(Clone, Debug)]
-struct BzlmodGoSdkExtension {
-    sdks: Vec<BzlmodGoSdkFromFile>,
-    imports: Vec<BzlmodUseRepoImport>,
-}
-
-#[derive(Clone, Debug)]
-struct BzlmodGoSdkFromFile {
-    name: String,
-    go_mod: String,
-}
-
-#[derive(Clone, Debug)]
-struct BzlmodGoDepsExtension {
-    go_mod: String,
-    imports: Vec<BzlmodUseRepoImport>,
 }
 
 #[derive(Clone, Debug)]
@@ -894,28 +796,6 @@ enum BzlmodGeneratedRepoConfig {
         bazel_version: String,
     },
     HostPlatform {},
-    GoRegisterNogo {
-        nogo: String,
-        includes: Vec<String>,
-        excludes: Vec<String>,
-    },
-    GoSdkToolchains {
-        parent_canonical_repo_name: String,
-        sdk_repo: String,
-        go_mod: String,
-        host_goos: String,
-        host_goarch: String,
-    },
-    GoSdkHostCompatible {
-        sdk_repo: String,
-    },
-    GoSdkRepository {
-        parent_canonical_repo_name: String,
-        repo_name: String,
-        go_mod: String,
-        host_goos: String,
-        host_goarch: String,
-    },
     LocalConfigPlatform {},
     CcAutoconfToolchains {
         parent_canonical_repo_name: String,
@@ -929,23 +809,8 @@ enum BzlmodGeneratedRepoConfig {
         strip_prefix: Option<String>,
         archive_type: Option<String>,
     },
-    KotlinCompiler {
-        parent_canonical_repo_name: String,
-        repo_name: String,
-        git_repo_name: String,
-        compiler_version: String,
-    },
     JavaLocalJdk {},
     PythonHub {},
-    GoDepsModule {
-        parent_canonical_repo_name: String,
-        go_mod: String,
-        repo_name: String,
-    },
-    GoDepsRepositoryConfig {
-        go_env_json: String,
-        deps_files: Vec<String>,
-    },
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -1259,103 +1124,6 @@ fn resolve_generated_bzlmod_repos(
         };
         let parent_canonical_repo_name =
             bzlmod_canonical_repo_name(&module.dep.name, &module.dep.version);
-        if module.dep.name == "rules_go"
-            && module
-                .use_repo_aliases
-                .iter()
-                .any(|alias| alias == "io_bazel_rules_nogo")
-        {
-            let canonical_repo_name = format!(
-                "{}+{}+go_sdk+io_bazel_rules_nogo",
-                module.dep.name, module.dep.version
-            );
-            let generator_json =
-                serde_json::to_string(&BzlmodGeneratedRepoConfig::GoRegisterNogo {
-                    nogo: "@io_bazel_rules_go//:default_nogo".to_owned(),
-                    includes: vec!["@@//:__subpackages__".to_owned()],
-                    excludes: Vec::new(),
-                })
-                .buck_error_context("Error serializing generated bzlmod repo configuration")?;
-            generated.push(BazelCompatExternalModule::Generated(
-                BazelCompatGeneratedModule {
-                    cell_name: bzlmod_cell_name(&canonical_repo_name),
-                    aliases: vec!["io_bazel_rules_nogo".to_owned()],
-                    canonical_repo_name,
-                    generator_json,
-                },
-            ));
-        }
-
-        if module.dep.name == "rules_go" {
-            for extension in &module.go_sdk_extensions {
-                let Some(sdk) = extension.sdks.first() else {
-                    continue;
-                };
-                let host_goos = host_goos();
-                let host_goarch = host_goarch();
-
-                for import in &extension.imports {
-                    let generator = match import.repo_name.as_str() {
-                        "go_toolchains" => Some(BzlmodGeneratedRepoConfig::GoSdkToolchains {
-                            parent_canonical_repo_name: parent_canonical_repo_name.clone(),
-                            sdk_repo: sdk.name.clone(),
-                            go_mod: sdk.go_mod.clone(),
-                            host_goos: host_goos.clone(),
-                            host_goarch: host_goarch.clone(),
-                        }),
-                        "go_host_compatible_sdk_label" => {
-                            Some(BzlmodGeneratedRepoConfig::GoSdkHostCompatible {
-                                sdk_repo: sdk.name.clone(),
-                            })
-                        }
-                        _ => None,
-                    };
-                    let Some(generator) = generator else {
-                        continue;
-                    };
-                    let canonical_repo_name = format!(
-                        "{}+{}+go_sdk+{}",
-                        module.dep.name, module.dep.version, import.repo_name
-                    );
-                    let generator_json = serde_json::to_string(&generator).buck_error_context(
-                        "Error serializing generated go_sdk repo configuration",
-                    )?;
-                    generated.push(BazelCompatExternalModule::Generated(
-                        BazelCompatGeneratedModule {
-                            cell_name: bzlmod_cell_name(&canonical_repo_name),
-                            aliases: vec![import.alias.clone()],
-                            canonical_repo_name,
-                            generator_json,
-                        },
-                    ));
-                }
-
-                let canonical_repo_name = format!(
-                    "{}+{}+go_sdk+{}",
-                    module.dep.name, module.dep.version, sdk.name
-                );
-                let generator_json =
-                    serde_json::to_string(&BzlmodGeneratedRepoConfig::GoSdkRepository {
-                        parent_canonical_repo_name: parent_canonical_repo_name.clone(),
-                        repo_name: sdk.name.clone(),
-                        go_mod: sdk.go_mod.clone(),
-                        host_goos,
-                        host_goarch,
-                    })
-                    .buck_error_context(
-                        "Error serializing generated go_sdk repository configuration",
-                    )?;
-                generated.push(BazelCompatExternalModule::Generated(
-                    BazelCompatGeneratedModule {
-                        cell_name: bzlmod_cell_name(&canonical_repo_name),
-                        aliases: vec![sdk.name.clone()],
-                        canonical_repo_name,
-                        generator_json,
-                    },
-                ));
-            }
-        }
-
         if module.dep.name == "rules_cc" {
             for alias in &module.use_repo_aliases {
                 let generator = match alias.as_str() {
@@ -1411,31 +1179,6 @@ fn resolve_generated_bzlmod_repos(
                         generator_json,
                     },
                 ));
-
-                let git_alias = format!("{alias}_git");
-                let git_canonical_repo_name = format!(
-                    "{}+{}+rules_kotlin_extensions+{}",
-                    module.dep.name, module.dep.version, git_alias
-                );
-                let git_generator_json =
-                    serde_json::to_string(&BzlmodGeneratedRepoConfig::HttpArchive {
-                        repo_name: git_alias.clone(),
-                        url: "https://github.com/JetBrains/kotlin/releases/download/v1.9.23/kotlin-compiler-1.9.23.zip".to_owned(),
-                        sha256: "93137d3aab9afa9b27cb06a824c2324195c6b6f6179d8a8653f440f5bd58be88".to_owned(),
-                        strip_prefix: Some("kotlinc".to_owned()),
-                        archive_type: Some("zip".to_owned()),
-                    })
-                    .buck_error_context(
-                        "Error serializing generated rules_kotlin compiler archive repo configuration",
-                    )?;
-                generated.push(BazelCompatExternalModule::Generated(
-                    BazelCompatGeneratedModule {
-                        cell_name: bzlmod_cell_name(&git_canonical_repo_name),
-                        aliases: vec![git_alias],
-                        canonical_repo_name: git_canonical_repo_name,
-                        generator_json: git_generator_json,
-                    },
-                ));
             }
         }
 
@@ -1464,36 +1207,6 @@ fn resolve_generated_bzlmod_repos(
                 let generator_json = serde_json::to_string(&generator).buck_error_context(
                     "Error serializing generated rules_java toolchains repo configuration",
                 )?;
-                generated.push(BazelCompatExternalModule::Generated(
-                    BazelCompatGeneratedModule {
-                        cell_name: bzlmod_cell_name(&canonical_repo_name),
-                        aliases: vec![alias.clone()],
-                        canonical_repo_name,
-                        generator_json,
-                    },
-                ));
-            }
-        }
-
-        if module.dep.name == "rules_kotlin" {
-            for alias in &module.use_repo_aliases {
-                if alias != "com_github_jetbrains_kotlin" {
-                    continue;
-                }
-                let canonical_repo_name = format!(
-                    "{}+{}+rules_kotlin_extensions+{}",
-                    module.dep.name, module.dep.version, alias
-                );
-                let generator_json =
-                    serde_json::to_string(&BzlmodGeneratedRepoConfig::KotlinCompiler {
-                        parent_canonical_repo_name: parent_canonical_repo_name.clone(),
-                        repo_name: alias.clone(),
-                        git_repo_name: format!("{alias}_git"),
-                        compiler_version: "1.9.23".to_owned(),
-                    })
-                    .buck_error_context(
-                        "Error serializing generated rules_kotlin compiler repo configuration",
-                    )?;
                 generated.push(BazelCompatExternalModule::Generated(
                     BazelCompatGeneratedModule {
                         cell_name: bzlmod_cell_name(&canonical_repo_name),
@@ -1581,49 +1294,6 @@ fn resolve_generated_bzlmod_repos(
                 let generator_json = serde_json::to_string(&generator).buck_error_context(
                     "Error serializing generated bazel_features repo configuration",
                 )?;
-                generated.push(BazelCompatExternalModule::Generated(
-                    BazelCompatGeneratedModule {
-                        cell_name: bzlmod_cell_name(&canonical_repo_name),
-                        aliases: vec![import.alias.clone()],
-                        canonical_repo_name,
-                        generator_json,
-                    },
-                ));
-            }
-        }
-
-        for extension in &module.go_deps_extensions {
-            let mut deps_files = vec![extension.go_mod.clone()];
-            if extension.go_mod.ends_with("go.mod") {
-                deps_files.push(format!(
-                    "{}go.sum",
-                    extension.go_mod.strip_suffix("go.mod").unwrap_or("")
-                ));
-            }
-
-            for import in &extension.imports {
-                let canonical_repo_name = format!(
-                    "{}+{}+go_deps+{}",
-                    module.dep.name, module.dep.version, import.repo_name
-                );
-                let generator_json = if import.repo_name == "bazel_gazelle_go_repository_config" {
-                    serde_json::to_string(&BzlmodGeneratedRepoConfig::GoDepsRepositoryConfig {
-                        go_env_json: "{}".to_owned(),
-                        deps_files: deps_files.clone(),
-                    })
-                    .buck_error_context(
-                        "Error serializing generated go_deps config repo configuration",
-                    )?
-                } else {
-                    serde_json::to_string(&BzlmodGeneratedRepoConfig::GoDepsModule {
-                        parent_canonical_repo_name: parent_canonical_repo_name.clone(),
-                        go_mod: extension.go_mod.clone(),
-                        repo_name: import.repo_name.clone(),
-                    })
-                    .buck_error_context(
-                        "Error serializing generated go_deps module repo configuration",
-                    )?
-                };
                 generated.push(BazelCompatExternalModule::Generated(
                     BazelCompatGeneratedModule {
                         cell_name: bzlmod_cell_name(&canonical_repo_name),
@@ -1727,8 +1397,6 @@ async fn fetch_bcr_module(
             &module_lines,
             "version_extension",
         ),
-        go_sdk_extensions: bzlmod_go_sdk_extensions_from_lines(&module_lines),
-        go_deps_extensions: bzlmod_go_deps_extensions_from_lines(&module_lines),
         registered_toolchains: bzlmod_registered_toolchains_from_lines(&module_lines, true),
         deps: bzlmod_deps_from_lines(&module_lines, true),
     })
@@ -1794,52 +1462,6 @@ fn bzlmod_use_repo_aliases_from_lines(lines: &[String]) -> Vec<String> {
         .collect()
 }
 
-fn bzlmod_go_sdk_extensions_from_lines(lines: &[String]) -> Vec<BzlmodGoSdkExtension> {
-    let mut extensions = Vec::new();
-    for extension_name in bzl_use_extension_bindings(lines, "go_sdk") {
-        let mut sdks = collect_bzl_calls(lines, &format!("{extension_name}.from_file("))
-            .into_iter()
-            .filter_map(|call| {
-                let name = bzl_string_arg(&call, "name")?;
-                let go_mod = bzl_string_arg(&call, "go_mod")
-                    .and_then(|label| module_include_to_path("MODULE.bazel", &label))?;
-                Some(BzlmodGoSdkFromFile { name, go_mod })
-            })
-            .collect::<Vec<_>>();
-        sdks.sort_by(|left, right| left.name.cmp(&right.name));
-        sdks.dedup_by(|left, right| left.name == right.name);
-
-        let imports = bzlmod_extension_imports(lines, &extension_name);
-        if !sdks.is_empty() || !imports.is_empty() {
-            extensions.push(BzlmodGoSdkExtension { sdks, imports });
-        }
-    }
-    extensions
-}
-
-fn bzlmod_go_deps_extensions_from_lines(lines: &[String]) -> Vec<BzlmodGoDepsExtension> {
-    let mut extensions = Vec::new();
-    for extension_name in bzl_use_extension_bindings(lines, "go_deps") {
-        let mut go_mods = collect_bzl_calls(lines, &format!("{extension_name}.from_file("))
-            .into_iter()
-            .filter_map(|call| bzl_string_arg(&call, "go_mod"))
-            .filter_map(|label| module_include_to_path("MODULE.bazel", &label))
-            .collect::<Vec<_>>();
-        go_mods.sort();
-        go_mods.dedup();
-
-        let imports = bzlmod_extension_imports(lines, &extension_name);
-
-        for go_mod in go_mods {
-            extensions.push(BzlmodGoDepsExtension {
-                go_mod,
-                imports: imports.clone(),
-            });
-        }
-    }
-    extensions
-}
-
 fn bzlmod_registered_toolchains_from_lines(
     lines: &[String],
     ignore_dev_dependency: bool,
@@ -1857,24 +1479,6 @@ fn bzlmod_registered_toolchains_from_lines(
     toolchains.sort();
     toolchains.dedup();
     toolchains
-}
-
-fn host_goos() -> String {
-    match std::env::consts::OS {
-        "macos" => "darwin",
-        "windows" => "windows",
-        other => other,
-    }
-    .to_owned()
-}
-
-fn host_goarch() -> String {
-    match std::env::consts::ARCH {
-        "aarch64" => "arm64",
-        "x86_64" => "amd64",
-        other => other,
-    }
-    .to_owned()
 }
 
 fn bzlmod_extension_imports_from_lines(

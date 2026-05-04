@@ -27,7 +27,7 @@ Completed:
 - Bazel-style `depset(...)` is available at load time with order validation, transitive depset validation, element type checks, and `.to_list()`.
 - Buck's `Label` type references in prelude were renamed to `ConfiguredProvidersLabel`.
 - Bazel-style `provider()` now supports `fields = None`/omitted schemaless providers with arbitrary keyword fields and Bazel `init = ...` raw constructor tuples.
-- `@io_bazel_rules_nogo` is generated as a bzlmod external cell from the `rules_go` module's imported repos.
+- The hard-coded Go/Kotlin generated-repo paths have been removed from the bzlmod resolver and external-cell materializer; those repos must now come from real `module_extension(...)` and repository-rule execution.
 - The first `@bazel_tools` builtin Starlark files needed by `rules_go` are present as Bazel tool definitions, not rules_go compatibility shims.
 - Bazel `attr.*` constructors are native load-time globals.
 - Bazel `rule(...)` accepts Bazel's implementation/metadata signature and records Buck rule specs directly.
@@ -44,9 +44,6 @@ Completed:
 - `@platforms` `host_platform` extension imports are materialized as generated external cells with host OS/CPU constraints.
 - BUILD-file `package(default_visibility = ...)`, Bazel special visibility labels, and top-level `licenses(...)` are native load-time APIs.
 - `@bazel_tools//tools/build_defs/repo:utils.bzl` is present as a Bazel builtin tool definition.
-- Gazelle `go_deps.from_file(go_mod = ...)` imports from external bzlmod modules are parsed into generated external cells.
-- Generated `go_deps` Go module repos read the parent module's `go.mod`, download the selected module with `go mod download`, copy the module source, and emit Bazel `go_library` BUILD files.
-- Generated `go_deps` repository config repos emit `config.json` and Bazel buildfile markers.
 - The `bazel_features` `version_extension` generated repos are materialized as real Buck external cells from their bzlmod `use_repo(...)` imports.
 - Bazel `rule(..., build_setting = config.*(...))` injects native `build_setting_default` attrs and build setting values participate in configuration identity.
 - Bazel incoming transitions now invoke implementations as `implementation(settings, attr)`, preserve bool/string/string-list outputs, read default values from build-setting targets, store command-line option outputs in the configuration, and converge when the resulting `BuildOptions` equivalent is unchanged.
@@ -59,8 +56,6 @@ Completed:
 - `ctx.toolchains[...]` exists as a Bazel `ToolchainContext`, enforces declared toolchain access, and returns `None` for declared optional misses.
 - Bazel native `toolchain_type(...)` and `toolchain(...)` rules are available from real BUILD files.
 - Native `toolchain(...)` targets now emit an internal `DeclaredToolchainInfo` provider containing the toolchain type, selected implementation label, target/exec constraints, target settings, and `use_target_platform_constraints`.
-- rules_go `go_sdk.from_file(...)` imports are parsed from bzlmod and materialized as generated external cells for `@go_toolchains`, `@go_host_compatible_sdk_label`, and the selected Go SDK repository.
-- Generated `@go_toolchains` repos load rules_go's real `declare_bazel_toolchains(...)`; `//:all` registered-toolchain patterns expand with Bazel package semantics.
 - `register_toolchains(...)` declarations from root and BCR modules are collected, dependency-module `//...` patterns are qualified to their declaring module cell, and non-literal MODULE expressions are not misparsed as target patterns.
 - Configured targets now resolve declared Bazel toolchain types against registered native `toolchain(...)` targets and expose resolved `platform_common.ToolchainInfo` providers through `ctx.toolchains[...]`.
 - Bazel `Label(...)` Starlark values now coerce through plain `attrs.label()` values as well as dependency/source attrs.
@@ -76,7 +71,6 @@ Completed:
 - `ctx.build_setting_value`, `ctx.attr`, and `ctx.var` are available during Bazel rule analysis.
 - Bazel-declared rules accept `None`, a single provider, or provider sequences from analysis and receive an implicit empty `DefaultInfo` when omitted.
 - `DefaultInfo(files = depset(...))`, dependency `.files`, and source-artifact `.files` are available with Bazel depset values.
-- `rules_kotlin` `com_github_jetbrains_kotlin` extension imports are materialized as generated bzlmod cells backed by the JetBrains Kotlin compiler archive and the real rules_kotlin capability templates.
 - Provider callables are hashable and compare by Bazel provider identity, so real Starlark can use providers as dict keys during load.
 - Bazel `attr.string(values = ...)` and `attr.int(values = ...)` remain string/int attrs with separate allowed-value validation instead of being lowered to Buck enums; defaults outside `values` load like Bazel.
 - Generated `rules_cc` `local_config_cc` repos now contain concrete host `cc_toolchain_suite`, `cc_toolchain`, wrapper scripts, and `CcToolchainConfigInfo` rules rather than empty placeholders.
@@ -84,6 +78,7 @@ Completed:
 - `cc_common.create_cc_toolchain_config_info(ctx = ctx, ...)` consumes `ctx` instead of storing the analysis context in the provider.
 - Bazel toolchain target and execution constraint matching follows `alias(actual = ...)` labels.
 - Bazel `glob(allow_empty = ...)` is accepted by BUILD-file glob evaluation.
+- Bazel output-file package targets are modeled for `attr.output()`, `attr.output_list()`, and rule `outputs = ...`, and `ctx.outputs` exposes the predeclared artifacts during analysis.
 
 Latest smoke:
 
@@ -93,16 +88,15 @@ BUCK2_HARD_ERROR=false \
 bazel-bin/app/buck2/buck2_bin --isolation-dir real-rules-go-... build //:hello
 ```
 
-The smoke now loads real `rules_go`, `rules_cc`, `rules_proto`, `protobuf`, `bazel_skylib`, `bazel_features`, `gazelle`, `rules_java`, and `rules_kotlin` load-time Starlark from bzlmod. It gets past the generated `@io_bazel_rules_nogo` repository, Gazelle `go_deps` aliases, `bazel_features` generated globals, Bazel build-setting defaults, rules_go's incoming Go transitions, bundled `@bazel_tools` package targets, Bazel provider return semantics, source `.files` access, native Bazel toolchain declaration rules, generated rules_go Go SDK repos, generated rules_java Java tools repos, generated rules_kotlin Kotlin compiler capability repos, rules_cc native provider exports, rules_java/rules_kotlin/rules_cc toolchain BUILD-file evaluation, provider-keyed dicts, Bazel `attr.string(values = ...)` declarations, Bazel `:all` toolchain registration expansion, concrete `local_config_cc` targets, toolchain constraint alias matching, and Go SDK BUILD-file globs. The current failure is that Buck does not yet model Bazel output-file targets declared by `attr.output()`:
+After removing the hard-coded Go/Kotlin generated-repo materializers, the smoke loads the root target and the downloaded `rules_go` module, then stops when real rules_go tries to load the repo that its module extension should have produced:
 
 ```text
-Unknown target `pack.exe` from package
-`bzlmod_rules_go_0_57_0_go_sdk_go_default_sdk//`.
+unknown cell alias: `io_bazel_rules_nogo`
 ```
 
-The failing generated Go SDK BUILD file declares a real rules_go `go_tool_binary` with `out_pack = "pack.exe"` where the rule attr is `attr.output()`, then depends on `:pack.exe`. Bazel creates an explicit `OutputFile` package target for that label. Buck currently stores the output attr as a string for `ctx.outputs.out_pack`, but records no package target for `:pack.exe`.
+That is now the intentional boundary. `io_bazel_rules_nogo`, `go_toolchains`, `go_host_compatible_sdk_label`, Go SDK repos, Gazelle `go_deps` repos, and Kotlin compiler capability repos must be produced by evaluating downloaded bzlmod module extensions and their repository rules. We should not reintroduce Rust-side special cases for those names.
 
-The direct `//:hello` smoke now reaches configured target analysis through the real `go_binary`, `go_library`, Go configuration transition, standard-library transition, generated `@go_toolchains` loading, rules_java/rules_kotlin/rules_cc toolchain package loading, registered-toolchain expansion, resolved Go SDK context, and generated Go SDK implementation targets. The next gap is adding first-class Bazel output-file targets for `attr.output()` / `attr.output_list()` and rule `outputs = ...`, then continuing through the Go SDK action API gaps.
+The native output-file target work for `attr.output()` / `attr.output_list()` and rule `outputs = ...` now builds in `//:buck2`, but the simple smoke no longer reaches the old `:pack.exe` failure until module extension execution exists.
 
 ## Constraints
 
@@ -130,14 +124,13 @@ Acceptance:
 
 ## Phase 2: Module Extensions and Generated Repos
 
-Status: generated repo imports for external-module `go_deps.from_file(...)`, rules_go `go_sdk.from_file(...)`, rules_java `toolchains` Java tools archives, rules_kotlin Kotlin compiler capability repos, and `bazel_features` `version_extension` are parsed and materialized; full extension evaluation, repository-rule execution, and scoped repo mappings still remain.
+Status: module dependencies and `use_repo(...)` aliases are discovered, but generated repos are not yet created by real bzlmod extension evaluation. The previous Go/Kotlin Rust-side generated repo materializers have been removed; the remaining generated-repo paths must be replaced by generic `module_extension(...)` evaluation and repository-rule execution rather than more module-specific generators.
 
 Implement:
 
-- Parse `use_extension(...)` bindings from `MODULE.bazel`.
-- Parse extension tag calls such as `go_sdk.from_file(...)` and `go_sdk.nogo(...)`.
-- Parse `use_repo(...)` imports, including aliasing syntax.
-- Preserve `use_repo(...)` imports from non-root modules such as `bazel_features_globals`.
+- Represent `use_extension(...)` bindings from `MODULE.bazel` without keying behavior on extension names.
+- Capture extension tag calls as structured Starlark calls associated with their extension proxy.
+- Preserve `use_repo(...)` imports, including aliasing syntax and imports from non-root modules.
 - Load and evaluate real `module_extension(...)` definitions.
 - Provide `module_ctx`, `tag_class`, `extension_metadata`, and the module/tag data model needed by rules_go and Gazelle.
 - Execute repository rules emitted by module extensions into generated external cells.
@@ -150,15 +143,15 @@ Implement:
 
 Immediate target:
 
-- Add first-class Bazel output-file package targets created by `attr.output()` / `attr.output_list()`, starting with the generated Go SDK `:pack.exe` target.
+- Start executing downloaded module extensions, beginning with rules_go's `go_sdk.nogo(...)` path that should produce `@io_bazel_rules_nogo`.
 - Replace the current parsed generated-repo extraction with real `module_extension(...)` evaluation and repository rule execution.
 - Preserve per-module repo mappings so aliases imported by `rules_go` and `gazelle` no longer collide in the global alias superset.
-- Replace parsed `go_deps` materialization with real Starlark `module_extension(...)` evaluation.
+- Retire the remaining module-specific generated-repo materializers as their extensions become executable.
 
 Acceptance:
 
 - The simple `rules_go` fixture gets past module-extension generated repo loading.
-- `go_toolchains`, `go_host_compatible_sdk_label`, `io_bazel_rules_nogo`, and Gazelle `go_deps` repos are real generated repos/cells when imported by `use_repo(...)`.
+- `go_toolchains`, `go_host_compatible_sdk_label`, `io_bazel_rules_nogo`, Gazelle `go_deps`, and Kotlin compiler capability repos are produced by the downloaded modules' extension/repository-rule code when imported by `use_repo(...)`.
 
 ## Phase 3: Bazel Load-Time Builtins
 
@@ -214,9 +207,9 @@ Completed:
 
 Immediate target:
 
-- Add Bazel output-file targets and expose the generated `ctx.outputs` artifact through the output label's `DefaultInfo`.
-- Replace parsed `go_sdk` materialization with real module-extension/repository-rule execution.
-- Materialize transitive toolchain extension repos including `@local_config_cc_toolchains`, `@local_config_shell`, `@local_jdk`, `@pythons_hub`, and `@rules_pkg_rpmbuild`.
+- Exercise the new Bazel output-file targets once module-extension execution reaches the generated Go SDK BUILD file again.
+- Replace parsed/generated module-repo materialization with real module-extension/repository-rule execution.
+- Materialize transitive toolchain extension repos such as `@local_config_cc_toolchains`, `@local_config_shell`, `@local_jdk`, `@pythons_hub`, and `@rules_pkg_rpmbuild` by running their downloaded extension/repository-rule code.
 - Add Apple/Xcode provider constructors exposed by Bazel's `apple_common` only when real rules request them.
 
 Implement as failures demand:

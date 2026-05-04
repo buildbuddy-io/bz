@@ -14,6 +14,7 @@ use allocative::Allocative;
 use buck2_node::attrs::attr::Attribute;
 use buck2_node::attrs::attr_type::AttrType;
 use buck2_node::attrs::coerced_attr::CoercedAttr;
+use buck2_node::rule::BazelOutputAttrKind;
 use dupe::Dupe;
 use starlark::any::ProvidesStaticType;
 use starlark::environment::GlobalsBuilder;
@@ -40,7 +41,11 @@ enum StarlarkAttributeError {
     NoSerialize,
     Allocative
 )]
-pub struct StarlarkAttribute(Attribute);
+#[display("<attr>")]
+pub struct StarlarkAttribute {
+    attr: Attribute,
+    bazel_output_kind: Option<BazelOutputAttrKind>,
+}
 
 starlark_simple_value!(StarlarkAttribute);
 
@@ -59,27 +64,41 @@ impl<'v> StarlarkValue<'v> for StarlarkAttribute {
 
 impl StarlarkAttribute {
     pub fn new(attr: Attribute) -> Self {
-        Self(attr)
+        Self {
+            attr,
+            bazel_output_kind: None,
+        }
+    }
+
+    pub fn new_bazel_output(attr: Attribute, kind: BazelOutputAttrKind) -> Self {
+        Self {
+            attr,
+            bazel_output_kind: Some(kind),
+        }
     }
 
     pub fn clone_attribute(&self) -> Attribute {
-        self.0.clone()
+        self.attr.clone()
+    }
+
+    pub fn bazel_output_kind(&self) -> Option<BazelOutputAttrKind> {
+        self.bazel_output_kind.dupe()
     }
 
     /// Coercer to put into higher lever coercer (e. g. for `attrs.list(xxx)`).
     pub fn coercer_for_inner(&self) -> buck2_error::Result<AttrType> {
-        if self.0.is_default_only() {
+        if self.attr.is_default_only() {
             return Err(StarlarkAttributeError::DefaultOnlyInNested.into());
         }
-        Ok(self.0.coercer().dupe())
+        Ok(self.attr.coercer().dupe())
     }
 
     pub fn coercer_for_default_only(&self) -> AttrType {
-        self.0.coercer().dupe()
+        self.attr.coercer().dupe()
     }
 
     pub fn default(&self) -> Option<&Arc<CoercedAttr>> {
-        self.0.default()
+        self.attr.default()
     }
 }
 

@@ -110,20 +110,13 @@ pub enum BzlmodGeneratedCellGenerator {
     BazelFeaturesGlobals(BzlmodBazelFeaturesGlobalsSetup),
     BazelFeaturesVersion(BzlmodBazelFeaturesVersionSetup),
     HostPlatform(BzlmodHostPlatformSetup),
-    GoRegisterNogo(BzlmodGoRegisterNogoSetup),
-    GoSdkToolchains(BzlmodGoSdkToolchainsSetup),
-    GoSdkHostCompatible(BzlmodGoSdkHostCompatibleSetup),
-    GoSdkRepository(BzlmodGoSdkRepositorySetup),
     LocalConfigPlatform(BzlmodLocalConfigPlatformSetup),
     CcAutoconfToolchains(BzlmodCcAutoconfToolchainsSetup),
     CcAutoconf(BzlmodCcAutoconfSetup),
     ShellConfig(BzlmodShellConfigSetup),
     HttpArchive(BzlmodHttpArchiveSetup),
-    KotlinCompiler(BzlmodKotlinCompilerSetup),
     JavaLocalJdk(BzlmodJavaLocalJdkSetup),
     PythonHub(BzlmodPythonHubSetup),
-    GoDepsModule(BzlmodGoDepsModuleSetup),
-    GoDepsRepositoryConfig(BzlmodGoDepsRepositoryConfigSetup),
 }
 
 #[derive(
@@ -166,72 +159,6 @@ pub struct BzlmodBazelFeaturesVersionSetup {
     Pagable
 )]
 pub struct BzlmodHostPlatformSetup {}
-
-#[derive(
-    Debug,
-    Clone,
-    Dupe,
-    allocative::Allocative,
-    PartialEq,
-    Eq,
-    Hash,
-    Pagable
-)]
-pub struct BzlmodGoRegisterNogoSetup {
-    pub nogo: Arc<str>,
-    pub includes: Arc<Vec<Arc<str>>>,
-    pub excludes: Arc<Vec<Arc<str>>>,
-}
-
-#[derive(
-    Debug,
-    Clone,
-    Dupe,
-    allocative::Allocative,
-    PartialEq,
-    Eq,
-    Hash,
-    Pagable
-)]
-pub struct BzlmodGoSdkToolchainsSetup {
-    pub parent_canonical_repo_name: Arc<str>,
-    pub sdk_repo: Arc<str>,
-    pub go_mod: Arc<str>,
-    pub host_goos: Arc<str>,
-    pub host_goarch: Arc<str>,
-}
-
-#[derive(
-    Debug,
-    Clone,
-    Dupe,
-    allocative::Allocative,
-    PartialEq,
-    Eq,
-    Hash,
-    Pagable
-)]
-pub struct BzlmodGoSdkHostCompatibleSetup {
-    pub sdk_repo: Arc<str>,
-}
-
-#[derive(
-    Debug,
-    Clone,
-    Dupe,
-    allocative::Allocative,
-    PartialEq,
-    Eq,
-    Hash,
-    Pagable
-)]
-pub struct BzlmodGoSdkRepositorySetup {
-    pub parent_canonical_repo_name: Arc<str>,
-    pub repo_name: Arc<str>,
-    pub go_mod: Arc<str>,
-    pub host_goos: Arc<str>,
-    pub host_goarch: Arc<str>,
-}
 
 #[derive(
     Debug,
@@ -311,23 +238,6 @@ pub struct BzlmodHttpArchiveSetup {
     Hash,
     Pagable
 )]
-pub struct BzlmodKotlinCompilerSetup {
-    pub parent_canonical_repo_name: Arc<str>,
-    pub repo_name: Arc<str>,
-    pub git_repo_name: Arc<str>,
-    pub compiler_version: Arc<str>,
-}
-
-#[derive(
-    Debug,
-    Clone,
-    Dupe,
-    allocative::Allocative,
-    PartialEq,
-    Eq,
-    Hash,
-    Pagable
-)]
 pub struct BzlmodJavaLocalJdkSetup {}
 
 #[derive(
@@ -341,37 +251,6 @@ pub struct BzlmodJavaLocalJdkSetup {}
     Pagable
 )]
 pub struct BzlmodPythonHubSetup {}
-
-#[derive(
-    Debug,
-    Clone,
-    Dupe,
-    allocative::Allocative,
-    PartialEq,
-    Eq,
-    Hash,
-    Pagable
-)]
-pub struct BzlmodGoDepsModuleSetup {
-    pub parent_canonical_repo_name: Arc<str>,
-    pub go_mod: Arc<str>,
-    pub repo_name: Arc<str>,
-}
-
-#[derive(
-    Debug,
-    Clone,
-    Dupe,
-    allocative::Allocative,
-    PartialEq,
-    Eq,
-    Hash,
-    Pagable
-)]
-pub struct BzlmodGoDepsRepositoryConfigSetup {
-    pub go_env_json: Arc<str>,
-    pub deps_files: Arc<Vec<Arc<str>>>,
-}
 
 impl fmt::Display for ExternalCellOrigin {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

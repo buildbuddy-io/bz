@@ -304,6 +304,7 @@ impl<'v> UnpackValue<'v> for RefAnalysisAction<'v> {
 #[derive(ProvidesStaticType, Debug, Trace, NoSerialize, Allocative)]
 pub struct AnalysisContext<'v> {
     attrs: Option<ValueOfUnchecked<'v, StructRef<'static>>>,
+    outputs: Option<ValueOfUnchecked<'v, StructRef<'static>>>,
     pub actions: ValueTyped<'v, AnalysisActions<'v>>,
     /// Only `None` when running a `dynamic_output` action from Bxl.
     label: Option<ValueTyped<'v, StarlarkConfiguredProvidersLabel>>,
@@ -330,6 +331,7 @@ impl<'v> AnalysisContext<'v> {
     fn new(
         heap: Heap<'v>,
         attrs: Option<ValueOfUnchecked<'v, StructRef<'static>>>,
+        outputs: Option<ValueOfUnchecked<'v, StructRef<'static>>>,
         label: Option<ValueTyped<'v, StarlarkConfiguredProvidersLabel>>,
         plugins: Option<ValueTypedComplex<'v, AnalysisPlugins<'v>>>,
         toolchains: Vec<String>,
@@ -340,6 +342,7 @@ impl<'v> AnalysisContext<'v> {
     ) -> Self {
         Self {
             attrs,
+            outputs,
             actions: heap.alloc_typed(AnalysisActions {
                 state: RefCell::new(Some(registry)),
                 attributes: attrs,
@@ -356,6 +359,7 @@ impl<'v> AnalysisContext<'v> {
     pub fn prepare(
         heap: Heap<'v>,
         attrs: Option<ValueOfUnchecked<'v, StructRef<'static>>>,
+        outputs: Option<ValueOfUnchecked<'v, StructRef<'static>>>,
         label: Option<ConfiguredTargetLabel>,
         plugins: Option<ValueTypedComplex<'v, AnalysisPlugins<'v>>>,
         toolchains: Vec<String>,
@@ -373,6 +377,7 @@ impl<'v> AnalysisContext<'v> {
         let analysis_context = Self::new(
             heap,
             attrs,
+            outputs,
             label,
             plugins,
             toolchains,
@@ -427,6 +432,13 @@ fn analysis_context_attrs<'v>(
 ) -> buck2_error::Result<ValueOfUnchecked<'v, StructRef<'static>>> {
     ctx.attrs
         .ok_or_else(|| internal_error!("`attrs` is not available for `dynamic_output` or BXL"))
+}
+
+fn analysis_context_outputs<'v>(
+    ctx: &AnalysisContext<'v>,
+) -> buck2_error::Result<ValueOfUnchecked<'v, StructRef<'static>>> {
+    ctx.outputs
+        .ok_or_else(|| internal_error!("`outputs` is not available for `dynamic_output` or BXL"))
 }
 
 #[starlark_value(type = "AnalysisContext")]
@@ -490,6 +502,14 @@ fn analysis_context_methods(builder: &mut MethodsBuilder) {
         this: RefAnalysisContext<'v>,
     ) -> starlark::Result<ValueOfUnchecked<'v, StructRef<'static>>> {
         Ok(analysis_context_attrs(this.0)?)
+    }
+
+    /// Returns the Bazel predeclared output artifacts for this rule.
+    #[starlark(attribute)]
+    fn outputs<'v>(
+        this: RefAnalysisContext<'v>,
+    ) -> starlark::Result<ValueOfUnchecked<'v, StructRef<'static>>> {
+        Ok(analysis_context_outputs(this.0)?)
     }
 
     /// Returns an `actions` value containing functions to define actual actions that are run.

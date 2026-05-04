@@ -189,6 +189,20 @@ impl<'v> DefaultInfo<'v> {
             other_outputs,
         }
     }
+
+    pub fn with_default_outputs(
+        heap: Heap<'v>,
+        outputs: impl IntoIterator<Item = Value<'v>>,
+    ) -> Self {
+        let sub_targets = ValueOfUnchecked::<DictType<_, _>>::new(heap.alloc(AllocDict::EMPTY));
+        let default_outputs = ValueOfUnchecked::<ListType<_>>::new(heap.alloc(AllocList(outputs)));
+        let other_outputs = ValueOfUnchecked::<ListType<_>>::new(heap.alloc(AllocList::EMPTY));
+        DefaultInfo {
+            sub_targets,
+            default_outputs,
+            other_outputs,
+        }
+    }
 }
 
 impl FrozenDefaultInfo {

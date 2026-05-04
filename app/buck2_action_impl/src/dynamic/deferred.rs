@@ -201,6 +201,7 @@ fn execute_lambda_inner<'v>(
         let ctx = AnalysisContext::prepare(
             heap,
             dynamic_lambda_ctx_data.lambda.attributes()?,
+            None,
             self_key.owner().configured_label(),
             dynamic_lambda_ctx_data.lambda.plugins()?,
             Vec::new(),

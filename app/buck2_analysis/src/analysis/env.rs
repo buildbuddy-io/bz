@@ -14,8 +14,13 @@ use std::time::Instant;
 use buck2_build_api::analysis::AnalysisResult;
 use buck2_build_api::analysis::anon_promises_dyn::RunAnonPromisesAccessorPair;
 use buck2_build_api::analysis::registry::AnalysisRegistry;
+use buck2_build_api::interpreter::rule_defs::artifact::associated::AssociatedArtifacts;
+use buck2_build_api::interpreter::rule_defs::artifact::starlark_declared_artifact::StarlarkDeclaredArtifact;
 use buck2_build_api::interpreter::rule_defs::cmd_args::value::FrozenCommandLineArg;
 use buck2_build_api::interpreter::rule_defs::context::AnalysisContext;
+use buck2_build_api::interpreter::rule_defs::provider::builtin::bazel_output_file_info::FrozenBazelOutputFileInfo;
+use buck2_build_api::interpreter::rule_defs::provider::builtin::bazel_output_file_info::new_bazel_output_file_info;
+use buck2_build_api::interpreter::rule_defs::provider::builtin::default_info::DefaultInfo;
 use buck2_build_api::interpreter::rule_defs::provider::builtin::template_placeholder_info::FrozenTemplatePlaceholderInfo;
 use buck2_build_api::interpreter::rule_defs::provider::builtin::toolchain_info::FrozenToolchainInfo;
 use buck2_build_api::interpreter::rule_defs::provider::builtin::validation_info::FrozenValidationInfo;
@@ -27,6 +32,7 @@ use buck2_build_api::validation::transitive_validations::TransitiveValidations;
 use buck2_build_api::validation::transitive_validations::TransitiveValidationsData;
 use buck2_core::deferred::base_deferred_key::BaseDeferredKey;
 use buck2_core::execution_types::execution::ExecutionPlatformResolution;
+use buck2_core::fs::buck_out_path::BuckOutPathKind;
 use buck2_core::provider::label::ConfiguredProvidersLabel;
 use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
 use buck2_core::unsafe_send_future::UnsafeSendFuture;
@@ -35,6 +41,7 @@ use buck2_error::conversion::from_any_with_tag;
 use buck2_error::internal_error;
 use buck2_events::dispatch::get_dispatcher;
 use buck2_execute::digest_config::HasDigestConfig;
+use buck2_execute::execute::request::OutputType;
 use buck2_hash::StdBuckHashMap;
 use buck2_interpreter::dice::starlark_provider::StarlarkEvalKind;
 use buck2_interpreter::factory::BuckStarlarkModule;
@@ -43,7 +50,11 @@ use buck2_interpreter::print_handler::EventDispatcherPrintHandler;
 use buck2_interpreter::soft_error::Buck2StarlarkSoftErrorHandler;
 use buck2_interpreter::types::rule::FROZEN_PROMISE_ARTIFACT_MAPPINGS_GET_IMPL;
 use buck2_interpreter::types::rule::FROZEN_RULE_GET_IMPL;
+use buck2_node::attrs::configured_attr::ConfiguredAttr;
+use buck2_node::attrs::display::AttrDisplayWithContextExt;
+use buck2_node::attrs::inspect_options::AttrInspectOptions;
 use buck2_node::nodes::configured::ConfiguredTargetNodeRef;
+use buck2_node::rule::BAZEL_OUTPUT_FILE_OUTPUT_ATTR;
 use buck2_node::rule_type::StarlarkRuleType;
 use dice::CancellationContext;
 use dice::DiceComputations;
@@ -55,8 +66,13 @@ use starlark::eval::Evaluator;
 use starlark::values::FrozenValue;
 use starlark::values::FrozenValueTyped;
 use starlark::values::Value;
+use starlark::values::ValueOfUnchecked;
 use starlark::values::ValueTyped;
 use starlark::values::ValueTypedComplex;
+use starlark::values::list::AllocList;
+use starlark::values::list::ListRef;
+use starlark::values::structs::AllocStruct;
+use starlark::values::structs::StructRef;
 use starlark_map::small_map::SmallMap;
 
 use crate::analysis::calculation::AnalysisSplitInstants;
@@ -197,13 +213,13 @@ struct AnalysisEnv<'a> {
 
 pub(crate) async fn run_analysis<'a>(
     dice: &'a mut DiceComputations<'_>,
-    label: &ConfiguredTargetLabel,
+    label: &'a ConfiguredTargetLabel,
     results: Vec<(&'a ConfiguredTargetLabel, AnalysisResult)>,
     query_results: StdBuckHashMap<String, Arc<AnalysisQueryResult>>,
     execution_platform: &'a ExecutionPlatformResolution,
     rule_spec: &'a dyn RuleSpec,
     node: ConfiguredTargetNodeRef<'a>,
-    cancellation: &CancellationContext,
+    cancellation: &'a CancellationContext,
 ) -> buck2_error::Result<(AnalysisResult, Option<AnalysisSplitInstants>)> {
     let analysis_env = AnalysisEnv {
         rule_spec,
@@ -216,6 +232,149 @@ pub(crate) async fn run_analysis<'a>(
     run_analysis_with_env(dice, analysis_env, node).await
 }
 
+#[derive(Debug, buck2_error::Error)]
+#[buck2(tag = Input)]
+enum BazelOutputFileAnalysisError {
+    #[error("Bazel output-file target `{0}` has no generating rule dependency")]
+    MissingGeneratingRule(ConfiguredTargetLabel),
+    #[error("Bazel output-file target `{0}` has more than one generating rule dependency")]
+    MultipleGeneratingRules(ConfiguredTargetLabel),
+    #[error("Bazel output-file target `{0}` is missing output attr `{1}`")]
+    MissingOutputAttr(ConfiguredTargetLabel, &'static str),
+    #[error("Bazel output-file target `{0}` has unsupported output attr value `{1}`")]
+    UnsupportedOutputAttrValue(ConfiguredTargetLabel, String),
+    #[error("Bazel generating rule `{0}` did not provide output-file metadata")]
+    MissingOutputFileInfo(ConfiguredTargetLabel),
+    #[error("Bazel generating rule `{0}` did not declare output `{1}`")]
+    MissingOutputFile(ConfiguredTargetLabel, String),
+}
+
+pub(crate) fn run_bazel_output_file_analysis<'a, 'd: 'a>(
+    dice: &'a mut DiceComputations<'d>,
+    label: &'a ConfiguredTargetLabel,
+    results: Vec<(&'a ConfiguredTargetLabel, AnalysisResult)>,
+    execution_platform: &'a ExecutionPlatformResolution,
+    node: ConfiguredTargetNodeRef<'a>,
+    cancellation: &'a CancellationContext,
+) -> impl Future<Output = buck2_error::Result<AnalysisResult>> + 'a + Captures<'d> {
+    let fut = async move {
+        run_bazel_output_file_analysis_underlying(
+            dice,
+            label,
+            results,
+            execution_platform,
+            node,
+            cancellation,
+        )
+        .await
+    };
+    unsafe { UnsafeSendFuture::new_encapsulates_starlark(fut) }
+}
+
+async fn run_bazel_output_file_analysis_underlying(
+    dice: &mut DiceComputations<'_>,
+    label: &ConfiguredTargetLabel,
+    results: Vec<(&ConfiguredTargetLabel, AnalysisResult)>,
+    execution_platform: &ExecutionPlatformResolution,
+    node: ConfiguredTargetNodeRef<'_>,
+    cancellation: &CancellationContext,
+) -> buck2_error::Result<AnalysisResult> {
+    let output_name = match node
+        .get(BAZEL_OUTPUT_FILE_OUTPUT_ATTR, AttrInspectOptions::All)
+        .map(|attr| attr.value)
+    {
+        Some(ConfiguredAttr::String(value)) => value.0.to_string(),
+        Some(other) => {
+            return Err(BazelOutputFileAnalysisError::UnsupportedOutputAttrValue(
+                label.dupe(),
+                other.as_display_no_ctx().to_string(),
+            )
+            .into());
+        }
+        None => {
+            return Err(BazelOutputFileAnalysisError::MissingOutputAttr(
+                label.dupe(),
+                BAZEL_OUTPUT_FILE_OUTPUT_ATTR,
+            )
+            .into());
+        }
+    };
+
+    let mut results = results.into_iter();
+    let Some((generating_label, generating_result)) = results.next() else {
+        return Err(BazelOutputFileAnalysisError::MissingGeneratingRule(label.dupe()).into());
+    };
+    if results.next().is_some() {
+        return Err(BazelOutputFileAnalysisError::MultipleGeneratingRules(label.dupe()).into());
+    }
+
+    BuckStarlarkModule::with_profiling_async(async move |env| {
+        let print = EventDispatcherPrintHandler(get_dispatcher());
+        let registry = AnalysisRegistry::new_from_owner(
+            BaseDeferredKey::TargetLabel(label.dupe()),
+            execution_platform.dupe(),
+        )?;
+
+        let eval_kind = StarlarkEvalKind::Analysis(label.dupe());
+        let eval_provider = StarlarkEvaluatorProvider::new(dice, eval_kind).await?;
+        let mut reentrant_eval =
+            eval_provider.make_reentrant_evaluator(&env, cancellation.into())?;
+
+        let provider_collection = reentrant_eval.with_evaluator(|eval| {
+            eval.set_print_handler(&print);
+            eval.set_soft_error_handler(&Buck2StarlarkSoftErrorHandler);
+
+            let generating_providers = generating_result.providers()?;
+            let generating_provider_collection = generating_providers.value();
+            let output_info = generating_provider_collection
+                .builtin_provider::<FrozenBazelOutputFileInfo>()
+                .ok_or_else(|| {
+                    BazelOutputFileAnalysisError::MissingOutputFileInfo(generating_label.dupe())
+                })?;
+            let output = output_info.output(&output_name)?.ok_or_else(|| {
+                BazelOutputFileAnalysisError::MissingOutputFile(
+                    generating_label.dupe(),
+                    output_name.clone(),
+                )
+            })?;
+
+            eval.heap().add_reference(generating_providers.owner());
+            let output = output.to_value();
+            let default_info = eval
+                .heap()
+                .alloc(DefaultInfo::with_default_outputs(eval.heap(), [output]));
+            let providers =
+                ProviderCollection::try_from_value(eval.heap().alloc(AllocList([default_info])))?;
+            Ok(ValueTypedComplex::new_err(eval.heap().alloc(providers))
+                .internal_error("Just allocated provider collection")?)
+        })?;
+
+        registry
+            .analysis_value_storage
+            .set_result_value(provider_collection)?;
+
+        let finished_eval = reentrant_eval.finish_evaluation();
+        let declared_actions = registry.num_declared_actions();
+        let declared_artifacts = registry.num_declared_artifacts();
+        let registry_finalizer = registry.finalize(&env)?;
+        let (token, frozen_env, profile_data) = finished_eval.freeze_and_finish(env)?;
+        let recorded_values = registry_finalizer(&frozen_env)?;
+
+        Ok((
+            token,
+            AnalysisResult::new(
+                recorded_values,
+                profile_data,
+                StdBuckHashMap::default(),
+                declared_actions,
+                declared_artifacts,
+                None,
+            ),
+        ))
+    })
+    .await
+}
+
 pub fn get_deps_from_analysis_results(
     results: Vec<(&ConfiguredTargetLabel, AnalysisResult)>,
 ) -> buck2_error::Result<StdBuckHashMap<ConfiguredTargetLabel, FrozenProviderCollectionValue>> {
@@ -225,9 +384,186 @@ pub fn get_deps_from_analysis_results(
         .collect::<buck2_error::Result<StdBuckHashMap<ConfiguredTargetLabel, FrozenProviderCollectionValue>>>()
 }
 
+#[derive(Debug, buck2_error::Error)]
+#[buck2(tag = Input)]
+enum BazelPredeclaredOutputError {
+    #[error("Bazel predeclared output `{0}` has unsupported value `{1}`")]
+    UnsupportedOutputAttrValue(String, String),
+    #[error("Bazel implicit output template `{0}` references unsupported placeholder `{1}`")]
+    UnsupportedImplicitOutputPlaceholder(String, String),
+}
+
+fn struct_field_value<'v>(
+    value: ValueOfUnchecked<'v, StructRef<'static>>,
+    field: &str,
+) -> Option<Value<'v>> {
+    StructRef::from_value(value.get())?
+        .iter()
+        .find_map(|(name, value)| (name.as_str() == field).then_some(value))
+}
+
+fn declare_bazel_output_artifact<'v>(
+    eval: &mut Evaluator<'v, '_, '_>,
+    registry: &mut AnalysisRegistry<'v>,
+    output_path: &str,
+) -> buck2_error::Result<Value<'v>> {
+    let artifact = registry.declare_output(
+        None,
+        output_path,
+        OutputType::File,
+        None,
+        BuckOutPathKind::default(),
+        eval.heap(),
+    )?;
+    Ok(eval
+        .heap()
+        .alloc_typed(StarlarkDeclaredArtifact::new(
+            None,
+            artifact,
+            AssociatedArtifacts::new(),
+        ))
+        .to_value())
+}
+
+fn declare_bazel_output_attr<'v>(
+    eval: &mut Evaluator<'v, '_, '_>,
+    registry: &mut AnalysisRegistry<'v>,
+    attr_name: &str,
+    value: Value<'v>,
+    output_file_targets: &mut Vec<(String, Value<'v>)>,
+) -> buck2_error::Result<Value<'v>> {
+    if value.is_none() {
+        return Ok(Value::new_none());
+    }
+    if let Some(output_path) = value.unpack_str() {
+        let artifact = declare_bazel_output_artifact(eval, registry, output_path)?;
+        output_file_targets.push((output_path.to_owned(), artifact));
+        return Ok(artifact);
+    }
+    if let Some(values) = ListRef::from_value(value) {
+        let mut artifacts = Vec::with_capacity(values.len());
+        for value in values.iter() {
+            let Some(output_path) = value.unpack_str() else {
+                return Err(BazelPredeclaredOutputError::UnsupportedOutputAttrValue(
+                    attr_name.to_owned(),
+                    value.to_repr(),
+                )
+                .into());
+            };
+            let artifact = declare_bazel_output_artifact(eval, registry, output_path)?;
+            output_file_targets.push((output_path.to_owned(), artifact));
+            artifacts.push(artifact);
+        }
+        return Ok(eval.heap().alloc(AllocList(artifacts)));
+    }
+    Err(BazelPredeclaredOutputError::UnsupportedOutputAttrValue(
+        attr_name.to_owned(),
+        value.to_repr(),
+    )
+    .into())
+}
+
+fn implicit_output_template_value<'v>(
+    attrs: ValueOfUnchecked<'v, StructRef<'static>>,
+    target_name: &str,
+    attr_name: &str,
+) -> buck2_error::Result<String> {
+    if attr_name == "name" {
+        return Ok(target_name.to_owned());
+    }
+    let Some(value) = struct_field_value(attrs, attr_name) else {
+        return Err(
+            BazelPredeclaredOutputError::UnsupportedImplicitOutputPlaceholder(
+                target_name.to_owned(),
+                attr_name.to_owned(),
+            )
+            .into(),
+        );
+    };
+    value.unpack_str().map(str::to_owned).ok_or_else(|| {
+        BazelPredeclaredOutputError::UnsupportedImplicitOutputPlaceholder(
+            target_name.to_owned(),
+            format!("{attr_name}={}", value.to_repr()),
+        )
+        .into()
+    })
+}
+
+fn expand_bazel_implicit_output_template<'v>(
+    attrs: ValueOfUnchecked<'v, StructRef<'static>>,
+    target_name: &str,
+    template: &str,
+) -> buck2_error::Result<String> {
+    let mut output = String::new();
+    let mut rest = template;
+    while let Some(start) = rest.find("%{") {
+        output.push_str(&rest[..start]);
+        let after_start = &rest[start + 2..];
+        let Some(end) = after_start.find('}') else {
+            return Err(
+                BazelPredeclaredOutputError::UnsupportedImplicitOutputPlaceholder(
+                    template.to_owned(),
+                    after_start.to_owned(),
+                )
+                .into(),
+            );
+        };
+        let attr_name = &after_start[..end];
+        output.push_str(&implicit_output_template_value(
+            attrs,
+            target_name,
+            attr_name,
+        )?);
+        rest = &after_start[end + 1..];
+    }
+    output.push_str(rest);
+    Ok(output)
+}
+
+fn declare_bazel_predeclared_outputs<'v>(
+    eval: &mut Evaluator<'v, '_, '_>,
+    registry: &mut AnalysisRegistry<'v>,
+    attrs: ValueOfUnchecked<'v, StructRef<'static>>,
+    node: ConfiguredTargetNodeRef<'_>,
+) -> buck2_error::Result<(ValueOfUnchecked<'v, StructRef<'static>>, Option<Value<'v>>)> {
+    let owned_node = node.to_owned();
+    let target_node = owned_node.target_node();
+    let mut output_fields = Vec::new();
+    let mut output_file_targets = Vec::new();
+    for output_attr in &target_node.rule.bazel_output_attrs {
+        let value = struct_field_value(attrs, &output_attr.name).unwrap_or_else(Value::new_none);
+        let output_value = declare_bazel_output_attr(
+            eval,
+            registry,
+            &output_attr.name,
+            value,
+            &mut output_file_targets,
+        )?;
+        output_fields.push((output_attr.name.to_string(), output_value));
+    }
+
+    let target_name = node.label().unconfigured().name().as_str();
+    for output in &target_node.rule.bazel_implicit_outputs {
+        let output_path =
+            expand_bazel_implicit_output_template(attrs, target_name, &output.template)?;
+        let artifact = declare_bazel_output_artifact(eval, registry, &output_path)?;
+        output_file_targets.push((output_path, artifact));
+        output_fields.push((output.name.to_string(), artifact));
+    }
+
+    let outputs_struct = ValueOfUnchecked::new(eval.heap().alloc(AllocStruct(output_fields)));
+    let output_file_info = if output_file_targets.is_empty() {
+        None
+    } else {
+        let info = new_bazel_output_file_info(output_file_targets, eval);
+        Some(eval.heap().alloc(info))
+    };
+    Ok((outputs_struct, output_file_info))
+}
+
 // Used to express that the impl Future below captures multiple named lifetimes.
 // See https://github.com/rust-lang/rust/issues/34511#issuecomment-373423999 for more details.
-trait Captures<'x> {}
+pub(crate) trait Captures<'x> {}
 impl<T: ?Sized> Captures<'_> for T {}
 
 fn run_analysis_with_env<'a, 'd: 'a>(
@@ -296,13 +632,18 @@ async fn run_analysis_with_env_underlying(
         let mut reentrant_eval =
             eval_provider.make_reentrant_evaluator(&env, analysis_env.cancellation.into())?;
 
-        let (ctx, list_res) = reentrant_eval.with_evaluator(|eval| {
+        let (ctx, list_res, output_file_info) = reentrant_eval.with_evaluator(|eval| {
             eval.set_print_handler(&print);
             eval.set_soft_error_handler(&Buck2StarlarkSoftErrorHandler);
+
+            let mut registry = registry;
+            let (outputs, output_file_info) =
+                declare_bazel_predeclared_outputs(eval, &mut registry, attributes, node)?;
 
             let ctx = AnalysisContext::prepare(
                 eval.heap(),
                 Some(attributes),
+                Some(outputs),
                 Some(analysis_env.label),
                 Some(plugins.into()),
                 node.bazel_toolchains().to_vec(),
@@ -314,7 +655,7 @@ async fn run_analysis_with_env_underlying(
 
             let list_res = analysis_env.rule_spec.invoke(eval, ctx)?;
 
-            Ok((ctx, list_res))
+            Ok((ctx, list_res, output_file_info))
         })?;
 
         let pre_promises = Instant::now();
@@ -337,11 +678,14 @@ async fn run_analysis_with_env_underlying(
         let analysis_registry = ctx.take_state();
 
         // TODO: Convert the ValueError from `try_from_value` better than just printing its Debug
-        let res_typed = if node.is_bazel_rule() {
+        let mut res_typed = if node.is_bazel_rule() {
             ProviderCollection::try_from_value_bazel_rule(list_res, env.heap())?
         } else {
             ProviderCollection::try_from_value(list_res)?
         };
+        if let Some(output_file_info) = output_file_info {
+            res_typed.insert_provider(output_file_info)?;
+        }
         {
             let provider_collection = ValueTypedComplex::new_err(env.heap().alloc(res_typed))
                 .internal_error("Just allocated provider collection")?;
