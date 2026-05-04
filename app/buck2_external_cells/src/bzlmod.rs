@@ -36,6 +36,9 @@ use buck2_core::cells::external::BzlmodGeneratedCellSetup;
 use buck2_core::cells::external::BzlmodGoDepsModuleSetup;
 use buck2_core::cells::external::BzlmodGoDepsRepositoryConfigSetup;
 use buck2_core::cells::external::BzlmodGoRegisterNogoSetup;
+use buck2_core::cells::external::BzlmodGoSdkHostCompatibleSetup;
+use buck2_core::cells::external::BzlmodGoSdkRepositorySetup;
+use buck2_core::cells::external::BzlmodGoSdkToolchainsSetup;
 use buck2_core::cells::external::BzlmodHostPlatformSetup;
 use buck2_core::cells::external::ExternalCellOrigin;
 use buck2_core::cells::name::CellName;
@@ -112,6 +115,16 @@ enum BzlmodError {
     InvalidGeneratedRepoPath(String),
     #[error("Could not find `{dict}` in bazel_features globals at `{path}`")]
     MissingBazelFeaturesGlobalsDict { path: String, dict: &'static str },
+    #[error(
+        "Could not run `{command}` for generated Go SDK repo, exit code: {exit_code:?}, stderr:\n{stderr}"
+    )]
+    GoSdkCommandFailed {
+        command: String,
+        exit_code: ExitStatus,
+        stderr: String,
+    },
+    #[error("Could not find local GOROOT from `go env GOROOT`")]
+    GoSdkMissingGoroot,
 }
 
 struct BzlmodExtractIoRequest {
@@ -175,6 +188,15 @@ impl IoRequest for BzlmodGeneratedIoRequest {
             BzlmodGeneratedCellGenerator::GoRegisterNogo(setup) => {
                 write_go_register_nogo_repo(&dest, setup)?;
             }
+            BzlmodGeneratedCellGenerator::GoSdkToolchains(setup) => {
+                write_go_sdk_toolchains_repo(project_fs, &self.dest, &dest, setup)?;
+            }
+            BzlmodGeneratedCellGenerator::GoSdkHostCompatible(setup) => {
+                write_go_sdk_host_compatible_repo(&dest, setup)?;
+            }
+            BzlmodGeneratedCellGenerator::GoSdkRepository(setup) => {
+                write_go_sdk_repository(project_fs, &self.dest, &dest, setup)?;
+            }
             BzlmodGeneratedCellGenerator::GoDepsModule(setup) => {
                 write_go_deps_module_repo(project_fs, &self.dest, &dest, setup)?;
             }
@@ -205,6 +227,221 @@ fn write_go_register_nogo_repo(
     fs_util::write(dest.join(ForwardRelativePath::new("scope.bzl")?), scope)
         .categorize_internal()?;
     Ok(())
+}
+
+fn write_go_sdk_toolchains_repo(
+    project_fs: &ProjectRoot,
+    dest_rel: &ProjectRelativePath,
+    dest: &AbsNormPath,
+    setup: &BzlmodGoSdkToolchainsSetup,
+) -> buck2_error::Result<()> {
+    write_generated_module_file(dest, "go_toolchains")?;
+    let sdk_version = go_sdk_version_from_parent_go_mod(
+        project_fs,
+        dest_rel,
+        &setup.parent_canonical_repo_name,
+        &setup.go_mod,
+    )?;
+    let (major, minor, patch, prerelease) = go_sdk_version_parts(&sdk_version);
+    let prefix = format!("_0000_{}_", setup.sdk_repo);
+    let build = format!(
+        r#"load("@io_bazel_rules_go//go/private:go_toolchain.bzl", "declare_bazel_toolchains")
+
+package(default_visibility = ["//visibility:public"])
+
+declare_bazel_toolchains(
+    prefix = {prefix:?},
+    go_toolchain_repo = "@{sdk_repo}",
+    host_goarch = {host_goarch:?},
+    host_goos = {host_goos:?},
+    major = {major:?},
+    minor = {minor:?},
+    patch = {patch:?},
+    prerelease = {prerelease:?},
+    sdk_name = {sdk_repo:?},
+    sdk_type = "remote",
+)
+"#,
+        prefix = prefix,
+        sdk_repo = setup.sdk_repo,
+        host_goarch = setup.host_goarch,
+        host_goos = setup.host_goos,
+        major = major,
+        minor = minor,
+        patch = patch,
+        prerelease = prerelease,
+    );
+    fs_util::write(dest.join(ForwardRelativePath::new("BUILD.bazel")?), build)
+        .categorize_internal()?;
+    Ok(())
+}
+
+fn write_go_sdk_host_compatible_repo(
+    dest: &AbsNormPath,
+    setup: &BzlmodGoSdkHostCompatibleSetup,
+) -> buck2_error::Result<()> {
+    write_generated_module_file(dest, "go_host_compatible_sdk_label")?;
+    fs_util::write(dest.join(ForwardRelativePath::new("BUILD.bazel")?), "")
+        .categorize_internal()?;
+    let defs = format!(
+        "HOST_COMPATIBLE_SDK = Label({:?})\n",
+        format!("@{}//:ROOT", setup.sdk_repo)
+    );
+    fs_util::write(dest.join(ForwardRelativePath::new("defs.bzl")?), defs).categorize_internal()?;
+    Ok(())
+}
+
+fn write_go_sdk_repository(
+    project_fs: &ProjectRoot,
+    dest_rel: &ProjectRelativePath,
+    dest: &AbsNormPath,
+    setup: &BzlmodGoSdkRepositorySetup,
+) -> buck2_error::Result<()> {
+    let goroot = local_go_root()?;
+    copy_dir_contents(&goroot, dest)?;
+    write_generated_module_file(dest, &setup.repo_name)?;
+
+    fs_util::write(dest.join(ForwardRelativePath::new("ROOT")?), "").categorize_internal()?;
+    let template = go_sdk_build_template(project_fs, dest_rel, &setup.parent_canonical_repo_name)?;
+    let sdk_version = go_sdk_version_from_parent_go_mod(
+        project_fs,
+        dest_rel,
+        &setup.parent_canonical_repo_name,
+        &setup.go_mod,
+    )?;
+    let version = format!("go{}", sdk_version);
+    let exec_compatible_with = format!(
+        "[{:?}, {:?}]",
+        format!("@io_bazel_rules_go//go/toolchain:{}", setup.host_goarch),
+        format!("@io_bazel_rules_go//go/toolchain:{}", setup.host_goos),
+    );
+    let build = template
+        .replace("{goos}", &setup.host_goos)
+        .replace("{goarch}", &setup.host_goarch)
+        .replace(
+            "{exe}",
+            if setup.host_goos.as_ref() == "windows" {
+                ".exe"
+            } else {
+                ""
+            },
+        )
+        .replace("{version}", &version)
+        .replace("{experiments}", "[]")
+        .replace("{exec_compatible_with}", &exec_compatible_with);
+    fs_util::write(dest.join(ForwardRelativePath::new("BUILD.bazel")?), build)
+        .categorize_internal()?;
+
+    let (major, minor, patch, prerelease) = go_sdk_version_parts(&sdk_version);
+    let version_bzl = format!(
+        "MAJOR_VERSION = {major:?}\nMINOR_VERSION = {minor:?}\nPATCH_VERSION = {patch:?}\nPRERELEASE_SUFFIX = {prerelease:?}\n"
+    );
+    fs_util::write(
+        dest.join(ForwardRelativePath::new("version.bzl")?),
+        version_bzl,
+    )
+    .categorize_internal()?;
+    Ok(())
+}
+
+fn go_sdk_version_from_parent_go_mod(
+    project_fs: &ProjectRoot,
+    dest_rel: &ProjectRelativePath,
+    parent_canonical_repo_name: &str,
+    go_mod: &str,
+) -> buck2_error::Result<String> {
+    let Some((external_cells_root, _)) = dest_rel.as_str().split_once("/bzlmod_generated/") else {
+        return Err(BzlmodError::InvalidGeneratedRepoPath(dest_rel.to_string()).into());
+    };
+    let go_mod_path = ProjectRelativePathBuf::unchecked_new(format!(
+        "{external_cells_root}/bzlmod/{parent_canonical_repo_name}/{go_mod}",
+    ));
+    let go_mod = fs_util::read_to_string(project_fs.resolve(&go_mod_path))
+        .categorize_internal()
+        .with_buck_error_context(|| format!("Error reading Go SDK go.mod `{go_mod_path}`"))?;
+    Ok(parse_go_sdk_version_from_go_mod(&go_mod))
+}
+
+fn parse_go_sdk_version_from_go_mod(go_mod: &str) -> String {
+    let mut go_version = None;
+    let mut toolchain_version = None;
+    for line in go_mod.lines() {
+        let line = line.split_once("//").map_or(line, |(line, _)| line).trim();
+        let mut words = line.split_whitespace();
+        match (words.next(), words.next()) {
+            (Some("go"), Some(version)) => go_version = Some(version.to_owned()),
+            (Some("toolchain"), Some(version)) => {
+                toolchain_version = Some(version.strip_prefix("go").unwrap_or(version).to_owned())
+            }
+            _ => {}
+        }
+    }
+    toolchain_version
+        .or(go_version)
+        .unwrap_or_else(|| "1.16".to_owned())
+}
+
+fn go_sdk_build_template(
+    project_fs: &ProjectRoot,
+    dest_rel: &ProjectRelativePath,
+    parent_canonical_repo_name: &str,
+) -> buck2_error::Result<String> {
+    let Some((external_cells_root, _)) = dest_rel.as_str().split_once("/bzlmod_generated/") else {
+        return Err(BzlmodError::InvalidGeneratedRepoPath(dest_rel.to_string()).into());
+    };
+    let template_path = ProjectRelativePathBuf::unchecked_new(format!(
+        "{external_cells_root}/bzlmod/{parent_canonical_repo_name}/go/private/BUILD.sdk.bazel",
+    ));
+    fs_util::read_to_string(project_fs.resolve(&template_path))
+        .categorize_internal()
+        .with_buck_error_context(|| {
+            format!("Error reading rules_go SDK template `{template_path}`")
+        })
+}
+
+fn local_go_root() -> buck2_error::Result<AbsNormPathBuf> {
+    let output = Command::new("go")
+        .arg("env")
+        .arg("GOROOT")
+        .stderr(Stdio::piped())
+        .stdout(Stdio::piped())
+        .output()
+        .buck_error_context("Could not run `go env GOROOT` for generated Go SDK repo")?;
+    if !output.status.success() {
+        return Err(BzlmodError::GoSdkCommandFailed {
+            command: "go env GOROOT".to_owned(),
+            exit_code: output.status,
+            stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+        }
+        .into());
+    }
+    let goroot = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    if goroot.is_empty() {
+        return Err(BzlmodError::GoSdkMissingGoroot.into());
+    }
+    AbsNormPathBuf::try_from(goroot)
+}
+
+fn go_sdk_version_parts(version: &str) -> (String, String, String, String) {
+    let version = version.strip_prefix("go").unwrap_or(version);
+    let mut parts = version.splitn(3, '.');
+    let major = parts.next().unwrap_or("").to_owned();
+    let minor = parts.next().unwrap_or("0").to_owned();
+    let patch_and_prerelease = parts.next().unwrap_or("0");
+    let patch_digits = patch_and_prerelease
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect::<String>();
+    let prerelease = patch_and_prerelease
+        .strip_prefix(&patch_digits)
+        .unwrap_or("")
+        .to_owned();
+    let patch = if patch_digits.is_empty() {
+        "0".to_owned()
+    } else {
+        patch_digits
+    };
+    (major, minor, patch, prerelease)
 }
 
 fn write_bazel_features_version_repo(

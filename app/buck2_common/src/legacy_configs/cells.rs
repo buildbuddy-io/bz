@@ -32,6 +32,9 @@ use buck2_core::cells::external::BzlmodGeneratedCellSetup;
 use buck2_core::cells::external::BzlmodGoDepsModuleSetup;
 use buck2_core::cells::external::BzlmodGoDepsRepositoryConfigSetup;
 use buck2_core::cells::external::BzlmodGoRegisterNogoSetup;
+use buck2_core::cells::external::BzlmodGoSdkHostCompatibleSetup;
+use buck2_core::cells::external::BzlmodGoSdkRepositorySetup;
+use buck2_core::cells::external::BzlmodGoSdkToolchainsSetup;
 use buck2_core::cells::external::BzlmodHostPlatformSetup;
 use buck2_core::cells::external::BzlmodPatch;
 use buck2_core::cells::external::ExternalCellOrigin;
@@ -381,6 +384,7 @@ impl BuckConfigBasedCells {
             root_config.with_bazel_compat_defaults(
                 &module_aliases.root_aliases,
                 &module_aliases.external_modules,
+                &module_aliases.registered_toolchains,
             )
         } else {
             root_config
@@ -533,6 +537,7 @@ impl BuckConfigBasedCells {
             Ok(config.with_bazel_compat_defaults(
                 &module_aliases.root_aliases,
                 &module_aliases.external_modules,
+                &module_aliases.registered_toolchains,
             ))
         } else {
             Ok(config)
@@ -655,6 +660,39 @@ impl BuckConfigBasedCells {
                     includes: Arc::new(includes.into_iter().map(Arc::from).collect()),
                     excludes: Arc::new(excludes.into_iter().map(Arc::from).collect()),
                 }),
+                BzlmodGeneratedRepoConfig::GoSdkToolchains {
+                    parent_canonical_repo_name,
+                    sdk_repo,
+                    go_mod,
+                    host_goos,
+                    host_goarch,
+                } => BzlmodGeneratedCellGenerator::GoSdkToolchains(BzlmodGoSdkToolchainsSetup {
+                    parent_canonical_repo_name: Arc::from(parent_canonical_repo_name),
+                    sdk_repo: Arc::from(sdk_repo),
+                    go_mod: Arc::from(go_mod),
+                    host_goos: Arc::from(host_goos),
+                    host_goarch: Arc::from(host_goarch),
+                }),
+                BzlmodGeneratedRepoConfig::GoSdkHostCompatible { sdk_repo } => {
+                    BzlmodGeneratedCellGenerator::GoSdkHostCompatible(
+                        BzlmodGoSdkHostCompatibleSetup {
+                            sdk_repo: Arc::from(sdk_repo),
+                        },
+                    )
+                }
+                BzlmodGeneratedRepoConfig::GoSdkRepository {
+                    parent_canonical_repo_name,
+                    repo_name,
+                    go_mod,
+                    host_goos,
+                    host_goarch,
+                } => BzlmodGeneratedCellGenerator::GoSdkRepository(BzlmodGoSdkRepositorySetup {
+                    parent_canonical_repo_name: Arc::from(parent_canonical_repo_name),
+                    repo_name: Arc::from(repo_name),
+                    go_mod: Arc::from(go_mod),
+                    host_goos: Arc::from(host_goos),
+                    host_goarch: Arc::from(host_goarch),
+                }),
                 BzlmodGeneratedRepoConfig::GoDepsModule {
                     parent_canonical_repo_name,
                     go_mod,
@@ -717,12 +755,15 @@ async fn should_apply_bazel_compat_defaults(
 struct BazelModuleCellAliases {
     root_aliases: Vec<String>,
     external_modules: Vec<BazelCompatExternalModule>,
+    registered_toolchains: Vec<String>,
 }
 
 impl BazelModuleCellAliases {
     fn normalize(&mut self) {
         self.root_aliases.sort();
         self.root_aliases.dedup();
+        self.registered_toolchains.sort();
+        self.registered_toolchains.dedup();
         self.external_modules
             .sort_by(|a, b| a.cell_name().cmp(b.cell_name()));
         self.external_modules
@@ -745,8 +786,22 @@ struct DiscoveredBcrModule {
     use_repo_aliases: Vec<String>,
     host_platform_extension_imports: Vec<BzlmodUseRepoImport>,
     version_extension_imports: Vec<BzlmodUseRepoImport>,
+    go_sdk_extensions: Vec<BzlmodGoSdkExtension>,
     go_deps_extensions: Vec<BzlmodGoDepsExtension>,
+    registered_toolchains: Vec<String>,
     deps: Vec<BazelDep>,
+}
+
+#[derive(Clone, Debug)]
+struct BzlmodGoSdkExtension {
+    sdks: Vec<BzlmodGoSdkFromFile>,
+    imports: Vec<BzlmodUseRepoImport>,
+}
+
+#[derive(Clone, Debug)]
+struct BzlmodGoSdkFromFile {
+    name: String,
+    go_mod: String,
 }
 
 #[derive(Clone, Debug)]
@@ -759,6 +814,11 @@ struct BzlmodGoDepsExtension {
 struct BzlmodUseRepoImport {
     alias: String,
     repo_name: String,
+}
+
+struct BcrResolution {
+    external_modules: Vec<BazelCompatExternalModule>,
+    registered_toolchains: Vec<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -782,6 +842,23 @@ enum BzlmodGeneratedRepoConfig {
         nogo: String,
         includes: Vec<String>,
         excludes: Vec<String>,
+    },
+    GoSdkToolchains {
+        parent_canonical_repo_name: String,
+        sdk_repo: String,
+        go_mod: String,
+        host_goos: String,
+        host_goarch: String,
+    },
+    GoSdkHostCompatible {
+        sdk_repo: String,
+    },
+    GoSdkRepository {
+        parent_canonical_repo_name: String,
+        repo_name: String,
+        go_mod: String,
+        host_goos: String,
+        host_goarch: String,
     },
     GoDepsModule {
         parent_canonical_repo_name: String,
@@ -894,6 +971,10 @@ async fn get_bazel_module_resolution(
             }
         }
 
+        aliases
+            .registered_toolchains
+            .extend(bzlmod_registered_toolchains_from_lines(&lines));
+
         for call in collect_bzl_calls(&lines, "include(") {
             if let Some(label) = bzl_first_string_arg(&call) {
                 if let Some(include_file) = module_include_to_path(&module_file, &label) {
@@ -903,7 +984,11 @@ async fn get_bazel_module_resolution(
         }
     }
 
-    aliases.external_modules = resolve_bcr_modules(root_deps).await?;
+    let bcr_resolution = resolve_bcr_modules(root_deps).await?;
+    aliases.external_modules = bcr_resolution.external_modules;
+    aliases
+        .registered_toolchains
+        .extend(bcr_resolution.registered_toolchains);
     aliases.normalize();
     Ok(aliases)
 }
@@ -919,9 +1004,7 @@ async fn bzlmod_http_client() -> buck2_error::Result<HttpClient> {
     Ok(builder.build())
 }
 
-async fn resolve_bcr_modules(
-    root_deps: Vec<BazelDep>,
-) -> buck2_error::Result<Vec<BazelCompatExternalModule>> {
+async fn resolve_bcr_modules(root_deps: Vec<BazelDep>) -> buck2_error::Result<BcrResolution> {
     std::thread::Builder::new()
         .name("buck2-bzlmod-resolver".to_owned())
         .spawn(move || {
@@ -947,7 +1030,7 @@ async fn resolve_bcr_modules(
 async fn resolve_bcr_modules_with_client(
     root_deps: Vec<BazelDep>,
     client: &HttpClient,
-) -> buck2_error::Result<Vec<BazelCompatExternalModule>> {
+) -> buck2_error::Result<BcrResolution> {
     let registry = "https://bcr.bazel.build";
     let mut discovered = BTreeMap::<(String, String), DiscoveredBcrModule>::new();
     let mut scheduled = BTreeSet::<(String, String)>::new();
@@ -1023,6 +1106,22 @@ async fn resolve_bcr_modules_with_client(
     }
 
     let selected_keys_for_generated = selected_keys.clone();
+    let mut registered_toolchains = selected_keys_for_generated
+        .iter()
+        .filter_map(|key| discovered.get(key))
+        .flat_map(|module| {
+            let canonical_repo_name =
+                bzlmod_canonical_repo_name(&module.dep.name, &module.dep.version);
+            let cell_name = bzlmod_cell_name(&canonical_repo_name);
+            module
+                .registered_toolchains
+                .iter()
+                .map(move |pattern| qualify_bzlmod_registered_toolchain(pattern, &cell_name))
+        })
+        .collect::<Vec<_>>();
+    registered_toolchains.sort();
+    registered_toolchains.dedup();
+
     let mut resolved = BTreeMap::<String, BazelCompatExternalModule>::new();
     for key in selected_keys {
         let Some(module) = discovered.get(&key) else {
@@ -1065,7 +1164,10 @@ async fn resolve_bcr_modules_with_client(
         &discovered,
         &selected_keys_for_generated,
     )?);
-    Ok(resolved)
+    Ok(BcrResolution {
+        external_modules: resolved,
+        registered_toolchains,
+    })
 }
 
 fn resolve_generated_bzlmod_repos(
@@ -1077,6 +1179,8 @@ fn resolve_generated_bzlmod_repos(
         let Some(module) = discovered.get(key) else {
             continue;
         };
+        let parent_canonical_repo_name =
+            bzlmod_canonical_repo_name(&module.dep.name, &module.dep.version);
         if module.dep.name == "rules_go"
             && module
                 .use_repo_aliases
@@ -1104,8 +1208,76 @@ fn resolve_generated_bzlmod_repos(
             ));
         }
 
-        let parent_canonical_repo_name =
-            bzlmod_canonical_repo_name(&module.dep.name, &module.dep.version);
+        if module.dep.name == "rules_go" {
+            for extension in &module.go_sdk_extensions {
+                let Some(sdk) = extension.sdks.first() else {
+                    continue;
+                };
+                let host_goos = host_goos();
+                let host_goarch = host_goarch();
+
+                for import in &extension.imports {
+                    let generator = match import.repo_name.as_str() {
+                        "go_toolchains" => Some(BzlmodGeneratedRepoConfig::GoSdkToolchains {
+                            parent_canonical_repo_name: parent_canonical_repo_name.clone(),
+                            sdk_repo: sdk.name.clone(),
+                            go_mod: sdk.go_mod.clone(),
+                            host_goos: host_goos.clone(),
+                            host_goarch: host_goarch.clone(),
+                        }),
+                        "go_host_compatible_sdk_label" => {
+                            Some(BzlmodGeneratedRepoConfig::GoSdkHostCompatible {
+                                sdk_repo: sdk.name.clone(),
+                            })
+                        }
+                        _ => None,
+                    };
+                    let Some(generator) = generator else {
+                        continue;
+                    };
+                    let canonical_repo_name = format!(
+                        "{}+{}+go_sdk+{}",
+                        module.dep.name, module.dep.version, import.repo_name
+                    );
+                    let generator_json = serde_json::to_string(&generator).buck_error_context(
+                        "Error serializing generated go_sdk repo configuration",
+                    )?;
+                    generated.push(BazelCompatExternalModule::Generated(
+                        BazelCompatGeneratedModule {
+                            cell_name: bzlmod_cell_name(&canonical_repo_name),
+                            aliases: vec![import.alias.clone()],
+                            canonical_repo_name,
+                            generator_json,
+                        },
+                    ));
+                }
+
+                let canonical_repo_name = format!(
+                    "{}+{}+go_sdk+{}",
+                    module.dep.name, module.dep.version, sdk.name
+                );
+                let generator_json =
+                    serde_json::to_string(&BzlmodGeneratedRepoConfig::GoSdkRepository {
+                        parent_canonical_repo_name: parent_canonical_repo_name.clone(),
+                        repo_name: sdk.name.clone(),
+                        go_mod: sdk.go_mod.clone(),
+                        host_goos,
+                        host_goarch,
+                    })
+                    .buck_error_context(
+                        "Error serializing generated go_sdk repository configuration",
+                    )?;
+                generated.push(BazelCompatExternalModule::Generated(
+                    BazelCompatGeneratedModule {
+                        cell_name: bzlmod_cell_name(&canonical_repo_name),
+                        aliases: vec![sdk.name.clone()],
+                        canonical_repo_name,
+                        generator_json,
+                    },
+                ));
+            }
+        }
+
         if module.dep.name == "platforms" {
             for import in &module.host_platform_extension_imports {
                 if import.repo_name != "host_platform" {
@@ -1214,6 +1386,15 @@ fn resolve_generated_bzlmod_repos(
     Ok(generated)
 }
 
+fn qualify_bzlmod_registered_toolchain(pattern: &str, module_cell_name: &str) -> String {
+    let pattern = pattern.trim();
+    if let Some(rest) = pattern.strip_prefix("//") {
+        format!("{module_cell_name}//{rest}")
+    } else {
+        pattern.to_owned()
+    }
+}
+
 fn add_bzlmod_dep_alias(
     dep: &BazelDep,
     selected_versions: &BTreeMap<String, String>,
@@ -1278,7 +1459,9 @@ async fn fetch_bcr_module(
             &module_lines,
             "version_extension",
         ),
+        go_sdk_extensions: bzlmod_go_sdk_extensions_from_lines(&module_lines),
         go_deps_extensions: bzlmod_go_deps_extensions_from_lines(&module_lines),
+        registered_toolchains: bzlmod_registered_toolchains_from_lines(&module_lines),
         deps: bzlmod_deps_from_lines(&module_lines, true),
     })
 }
@@ -1343,6 +1526,29 @@ fn bzlmod_use_repo_aliases_from_lines(lines: &[String]) -> Vec<String> {
         .collect()
 }
 
+fn bzlmod_go_sdk_extensions_from_lines(lines: &[String]) -> Vec<BzlmodGoSdkExtension> {
+    let mut extensions = Vec::new();
+    for extension_name in bzl_use_extension_bindings(lines, "go_sdk") {
+        let mut sdks = collect_bzl_calls(lines, &format!("{extension_name}.from_file("))
+            .into_iter()
+            .filter_map(|call| {
+                let name = bzl_string_arg(&call, "name")?;
+                let go_mod = bzl_string_arg(&call, "go_mod")
+                    .and_then(|label| module_include_to_path("MODULE.bazel", &label))?;
+                Some(BzlmodGoSdkFromFile { name, go_mod })
+            })
+            .collect::<Vec<_>>();
+        sdks.sort_by(|left, right| left.name.cmp(&right.name));
+        sdks.dedup_by(|left, right| left.name == right.name);
+
+        let imports = bzlmod_extension_imports(lines, &extension_name);
+        if !sdks.is_empty() || !imports.is_empty() {
+            extensions.push(BzlmodGoSdkExtension { sdks, imports });
+        }
+    }
+    extensions
+}
+
 fn bzlmod_go_deps_extensions_from_lines(lines: &[String]) -> Vec<BzlmodGoDepsExtension> {
     let mut extensions = Vec::new();
     for extension_name in bzl_use_extension_bindings(lines, "go_deps") {
@@ -1364,6 +1570,39 @@ fn bzlmod_go_deps_extensions_from_lines(lines: &[String]) -> Vec<BzlmodGoDepsExt
         }
     }
     extensions
+}
+
+fn bzlmod_registered_toolchains_from_lines(lines: &[String]) -> Vec<String> {
+    let mut toolchains = collect_bzl_calls(lines, "register_toolchains(")
+        .into_iter()
+        .flat_map(|call| {
+            bzl_call_args(&call)
+                .into_iter()
+                .filter_map(|arg| bzl_string_literal_value(arg.trim()))
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+    toolchains.sort();
+    toolchains.dedup();
+    toolchains
+}
+
+fn host_goos() -> String {
+    match std::env::consts::OS {
+        "macos" => "darwin",
+        "windows" => "windows",
+        other => other,
+    }
+    .to_owned()
+}
+
+fn host_goarch() -> String {
+    match std::env::consts::ARCH {
+        "aarch64" => "arm64",
+        "x86_64" => "amd64",
+        other => other,
+    }
+    .to_owned()
 }
 
 fn bzlmod_extension_imports_from_lines(
@@ -1884,6 +2123,34 @@ fn bzl_string_value(value: &str) -> Option<String> {
             escaped = true;
         } else if ch == quote {
             return Some(result);
+        } else {
+            result.push(ch);
+        }
+    }
+
+    None
+}
+
+fn bzl_string_literal_value(value: &str) -> Option<String> {
+    let mut chars = value.trim().chars();
+    let quote = chars.next()?;
+    if quote != '"' && quote != '\'' {
+        return None;
+    }
+
+    let mut result = String::new();
+    let mut escaped = false;
+    while let Some(ch) = chars.next() {
+        if escaped {
+            result.push(ch);
+            escaped = false;
+        } else if ch == '\\' {
+            escaped = true;
+        } else if ch == quote {
+            if chars.as_str().trim().is_empty() {
+                return Some(result);
+            }
+            return None;
         } else {
             result.push(ch);
         }

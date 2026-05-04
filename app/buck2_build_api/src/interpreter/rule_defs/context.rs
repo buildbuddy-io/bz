@@ -33,6 +33,7 @@ use derive_more::Display;
 use dice::DiceComputations;
 use futures::FutureExt;
 use starlark::any::ProvidesStaticType;
+use starlark::collections::SmallMap;
 use starlark::environment::GlobalsBuilder;
 use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
@@ -122,19 +123,23 @@ pub struct AnalysisActions<'v> {
 }
 
 #[derive(ProvidesStaticType, Debug, Trace, NoSerialize, Allocative)]
-pub struct AnalysisToolchains {
+pub struct AnalysisToolchains<'v> {
     toolchains: Vec<String>,
+    resolved: SmallMap<String, Value<'v>>,
 }
 
-impl Display for AnalysisToolchains {
+impl Display for AnalysisToolchains<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, "<ctx.toolchains>")
     }
 }
 
-impl AnalysisToolchains {
-    fn new(toolchains: Vec<String>) -> Self {
-        Self { toolchains }
+impl<'v> AnalysisToolchains<'v> {
+    fn new(toolchains: Vec<String>, resolved: SmallMap<String, Value<'v>>) -> Self {
+        Self {
+            toolchains,
+            resolved,
+        }
     }
 
     fn normalize_key(key: &str) -> String {
@@ -160,17 +165,22 @@ impl AnalysisToolchains {
     }
 }
 
-impl<'v> AllocValue<'v> for AnalysisToolchains {
+impl<'v> AllocValue<'v> for AnalysisToolchains<'v> {
     fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
         heap.alloc_complex_no_freeze(self)
     }
 }
 
 #[starlark_value(type = "ToolchainContext")]
-impl<'v> StarlarkValue<'v> for AnalysisToolchains {
+impl<'v> StarlarkValue<'v> for AnalysisToolchains<'v> {
     fn at(&self, index: Value<'v>, _heap: Heap<'v>) -> starlark::Result<Value<'v>> {
-        if self.contains_value(index) {
-            Ok(Value::new_none())
+        let key = Self::key_from_value(index);
+        if self.toolchains.iter().any(|candidate| candidate == &key) {
+            Ok(self
+                .resolved
+                .get(&key)
+                .copied()
+                .unwrap_or_else(Value::new_none))
         } else {
             Err(internal_error!(
                 "toolchain `{}` was not declared by this rule",
@@ -298,7 +308,7 @@ pub struct AnalysisContext<'v> {
     /// Only `None` when running a `dynamic_output` action from Bxl.
     label: Option<ValueTyped<'v, StarlarkConfiguredProvidersLabel>>,
     plugins: Option<ValueTypedComplex<'v, AnalysisPlugins<'v>>>,
-    toolchains: ValueTyped<'v, AnalysisToolchains>,
+    toolchains: ValueTyped<'v, AnalysisToolchains<'v>>,
     is_bazel_build_setting: bool,
 }
 
@@ -323,6 +333,7 @@ impl<'v> AnalysisContext<'v> {
         label: Option<ValueTyped<'v, StarlarkConfiguredProvidersLabel>>,
         plugins: Option<ValueTypedComplex<'v, AnalysisPlugins<'v>>>,
         toolchains: Vec<String>,
+        resolved_toolchains: SmallMap<String, Value<'v>>,
         is_bazel_build_setting: bool,
         registry: AnalysisRegistry<'v>,
         digest_config: DigestConfig,
@@ -337,7 +348,7 @@ impl<'v> AnalysisContext<'v> {
             }),
             label,
             plugins,
-            toolchains: heap.alloc_typed(AnalysisToolchains::new(toolchains)),
+            toolchains: heap.alloc_typed(AnalysisToolchains::new(toolchains, resolved_toolchains)),
             is_bazel_build_setting,
         }
     }
@@ -348,6 +359,7 @@ impl<'v> AnalysisContext<'v> {
         label: Option<ConfiguredTargetLabel>,
         plugins: Option<ValueTypedComplex<'v, AnalysisPlugins<'v>>>,
         toolchains: Vec<String>,
+        resolved_toolchains: SmallMap<String, Value<'v>>,
         is_bazel_build_setting: bool,
         registry: AnalysisRegistry<'v>,
         digest_config: DigestConfig,
@@ -364,6 +376,7 @@ impl<'v> AnalysisContext<'v> {
             label,
             plugins,
             toolchains,
+            resolved_toolchains,
             is_bazel_build_setting,
             registry,
             digest_config,
@@ -513,7 +526,7 @@ fn analysis_context_methods(builder: &mut MethodsBuilder) {
     #[starlark(attribute)]
     fn toolchains<'v>(
         this: RefAnalysisContext<'v>,
-    ) -> starlark::Result<ValueTyped<'v, AnalysisToolchains>> {
+    ) -> starlark::Result<ValueTyped<'v, AnalysisToolchains<'v>>> {
         Ok(this.0.toolchains)
     }
 
@@ -565,7 +578,7 @@ fn analysis_context_methods(builder: &mut MethodsBuilder) {
 #[starlark_types(
     AnalysisContext<'_> as AnalysisContext,
     AnalysisActions<'_> as AnalysisActions,
-    AnalysisToolchains as AnalysisToolchains
+    AnalysisToolchains<'_> as AnalysisToolchains
 )]
 pub(crate) fn register_analysis_context(builder: &mut GlobalsBuilder) {}
 

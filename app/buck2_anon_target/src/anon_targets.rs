@@ -532,6 +532,7 @@ impl AnonTargetKey {
                             .into(),
                     ),
                     Vec::new(),
+                    SmallMap::new(),
                     false,
                     registry,
                     dice.global_data().get_digest_config(),

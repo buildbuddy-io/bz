@@ -204,6 +204,7 @@ fn execute_lambda_inner<'v>(
             self_key.owner().configured_label(),
             dynamic_lambda_ctx_data.lambda.plugins()?,
             Vec::new(),
+            SmallMap::new(),
             false,
             dynamic_lambda_ctx_data.registry,
             dynamic_lambda_ctx_data.digest_config,

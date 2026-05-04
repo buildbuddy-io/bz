@@ -10,6 +10,7 @@
 
 //! Calculations relating to 'TargetNode's that runs on Dice
 
+use std::collections::BTreeSet;
 use std::iter;
 use std::sync::Arc;
 
@@ -39,6 +40,7 @@ use buck2_core::configuration::transition::applied::TransitionApplied;
 use buck2_core::configuration::transition::id::TransitionId;
 use buck2_core::execution_types::execution::ExecutionPlatformResolution;
 use buck2_core::execution_types::execution::ExecutionPlatformResolutionPartial;
+use buck2_core::pattern::pattern::PackageSpec;
 use buck2_core::pattern::pattern::ParsedPattern;
 use buck2_core::pattern::pattern_type::TargetPatternExtra;
 use buck2_core::plugins::PluginKind;
@@ -47,6 +49,7 @@ use buck2_core::plugins::PluginListElemKind;
 use buck2_core::plugins::PluginLists;
 use buck2_core::provider::label::ConfiguredProvidersLabel;
 use buck2_core::provider::label::ProvidersLabel;
+use buck2_core::provider::label::ProvidersName;
 use buck2_core::soft_error;
 use buck2_core::target::configured_or_unconfigured::ConfiguredOrUnconfiguredTargetLabel;
 use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
@@ -63,12 +66,14 @@ use buck2_node::attrs::configured_traversal::ConfiguredAttrTraversal;
 use buck2_node::attrs::display::AttrDisplayWithContextExt;
 use buck2_node::attrs::inspect_options::AttrInspectOptions;
 use buck2_node::attrs::spec::AttributeId;
+use buck2_node::attrs::spec::internal::EXEC_COMPATIBLE_WITH_ATTRIBUTE;
 use buck2_node::attrs::spec::internal::INCOMING_TRANSITION_ATTRIBUTE;
 use buck2_node::attrs::spec::internal::LEGACY_TARGET_COMPATIBLE_WITH_ATTRIBUTE;
 use buck2_node::attrs::spec::internal::TARGET_COMPATIBLE_WITH_ATTRIBUTE;
 use buck2_node::configuration::calculation::CellNameForConfigurationResolution;
 use buck2_node::configuration::resolved::MatchedConfigurationSettingKeys;
 use buck2_node::configuration::resolved::MatchedConfigurationSettingKeysWithCfg;
+use buck2_node::nodes::configured::BazelResolvedToolchain;
 use buck2_node::nodes::configured::ConfiguredTargetNode;
 use buck2_node::nodes::configured_frontend::CONFIGURED_TARGET_NODE_CALCULATION;
 use buck2_node::nodes::configured_frontend::ConfiguredTargetNodeCalculation;
@@ -813,6 +818,198 @@ fn verify_transitioned_attrs(
     Ok(())
 }
 
+fn normalize_bazel_toolchain_key(key: &str) -> String {
+    key.strip_prefix('@').unwrap_or(key).to_owned()
+}
+
+fn bazel_toolchain_keys_match(declared: &str, candidate: &str) -> bool {
+    declared == candidate
+        || declared
+            .split_once("//")
+            .zip(candidate.split_once("//"))
+            .is_some_and(|((_, declared_rest), (_, candidate_rest))| {
+                declared_rest == candidate_rest
+            })
+}
+
+fn attr_target_label(attr: &CoercedAttr) -> Option<&TargetLabel> {
+    match attr {
+        CoercedAttr::Label(label)
+        | CoercedAttr::Dep(label)
+        | CoercedAttr::ConfigurationDep(label)
+        | CoercedAttr::SourceLabel(label) => Some(label.target()),
+        CoercedAttr::OneOf(inner, _) => attr_target_label(inner),
+        _ => None,
+    }
+}
+
+fn attr_target_labels(attr: &CoercedAttr) -> Vec<&TargetLabel> {
+    match attr {
+        CoercedAttr::List(list) => list.iter().filter_map(attr_target_label).collect(),
+        CoercedAttr::OneOf(inner, _) => attr_target_labels(inner),
+        _ => attr_target_label(attr).into_iter().collect(),
+    }
+}
+
+fn configuration_constraint_labels(
+    cfg: &ConfigurationData,
+) -> buck2_error::Result<BTreeSet<String>> {
+    Ok(cfg
+        .data()?
+        .constraints
+        .values()
+        .map(|constraint| constraint.0.target().to_string())
+        .collect())
+}
+
+fn toolchain_constraints_match(
+    target_node: &TargetNode,
+    target_constraints: &BTreeSet<String>,
+    exec_constraints: &BTreeSet<String>,
+) -> buck2_error::Result<bool> {
+    let target_compatible_with = target_node
+        .known_attr_or_none(TARGET_COMPATIBLE_WITH_ATTRIBUTE.id, AttrInspectOptions::All)
+        .map(|attr| attr_target_labels(&attr.value))
+        .unwrap_or_default();
+    if !target_compatible_with
+        .iter()
+        .all(|label| target_constraints.contains(&label.to_string()))
+    {
+        return Ok(false);
+    }
+
+    let exec_compatible_with = target_node
+        .known_attr_or_none(EXEC_COMPATIBLE_WITH_ATTRIBUTE.id, AttrInspectOptions::All)
+        .map(|attr| attr_target_labels(&attr.value))
+        .unwrap_or_default();
+    if !exec_compatible_with
+        .iter()
+        .all(|label| exec_constraints.contains(&label.to_string()))
+    {
+        return Ok(false);
+    }
+
+    Ok(true)
+}
+
+async fn registered_bazel_toolchain_nodes(
+    ctx: &mut DiceComputations<'_>,
+) -> buck2_error::Result<Vec<TargetNode>> {
+    let root_conf = ctx.get_legacy_root_config_on_dice().await?;
+    let registered: Vec<String> = root_conf
+        .view(ctx)
+        .parse_list(BuckconfigKeyRef {
+            section: "bazel",
+            property: "registered_toolchains",
+        })?
+        .unwrap_or_default();
+    if registered.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let cell_resolver = ctx.get_cell_resolver().await?;
+    let root_cell = cell_resolver.root_cell();
+    let alias_resolver = ctx.get_cell_alias_resolver(root_cell).await?;
+
+    let mut nodes = Vec::new();
+    for pattern in registered {
+        let pattern = ParsedPattern::<TargetPatternExtra>::parse_precise(
+            pattern.trim(),
+            root_cell,
+            &cell_resolver,
+            &alias_resolver,
+        )?;
+        match pattern {
+            ParsedPattern::Target(package, target_name, extra) => {
+                let result = ctx.get_interpreter_results(package).await?;
+                let (targets, missing) = if target_name.as_ref().as_str() == "all" {
+                    result.apply_spec(PackageSpec::<TargetPatternExtra>::All())
+                } else {
+                    result.apply_spec(PackageSpec::Targets(vec![(target_name, extra)]))
+                };
+                if let Some(missing) = missing {
+                    return Err(missing.into_first_error().into());
+                }
+                nodes.extend(targets.into_values());
+            }
+            ParsedPattern::Package(package) => {
+                let result = ctx.get_interpreter_results(package).await?;
+                let (targets, _missing) =
+                    result.apply_spec(PackageSpec::<TargetPatternExtra>::All());
+                nodes.extend(targets.into_values());
+            }
+            ParsedPattern::Recursive(_) => {}
+        }
+    }
+    Ok(nodes)
+}
+
+async fn resolve_bazel_toolchain_deps(
+    ctx: &mut DiceComputations<'_>,
+    target_label: &ConfiguredTargetLabel,
+    target_node: &TargetNode,
+    exec_constraints: &BTreeSet<String>,
+) -> buck2_error::Result<(Vec<ConfiguredTargetNode>, Vec<BazelResolvedToolchain>)> {
+    if target_node.bazel_toolchains().is_empty() || !target_label.cfg().is_bound() {
+        return Ok((Vec::new(), Vec::new()));
+    }
+
+    let registered = registered_bazel_toolchain_nodes(ctx).await?;
+    if registered.is_empty() {
+        return Ok((Vec::new(), Vec::new()));
+    }
+
+    let target_constraints = configuration_constraint_labels(target_label.cfg())?;
+
+    let mut deps = Vec::new();
+    let mut resolved = Vec::new();
+    for declared in target_node.bazel_toolchains() {
+        let declared = normalize_bazel_toolchain_key(declared);
+        let Some(toolchain_node) = registered.iter().find(|candidate| {
+            if candidate.rule_type().name() != "toolchain" {
+                return false;
+            }
+            let Some(toolchain_type) = candidate
+                .attr_or_none("toolchain_type", AttrInspectOptions::All)
+                .and_then(|attr| attr_target_label(&attr.value).map(|label| label.to_string()))
+            else {
+                return false;
+            };
+            if !bazel_toolchain_keys_match(
+                &declared,
+                &normalize_bazel_toolchain_key(&toolchain_type),
+            ) {
+                return false;
+            }
+            toolchain_constraints_match(candidate, &target_constraints, &exec_constraints)
+                .unwrap_or(false)
+        }) else {
+            continue;
+        };
+
+        let Some(toolchain_impl) = toolchain_node
+            .attr_or_none("toolchain", AttrInspectOptions::All)
+            .and_then(|attr| attr_target_label(&attr.value).map(|label| label.dupe()))
+        else {
+            continue;
+        };
+        let configured = toolchain_impl.configure(target_label.cfg().dupe());
+        let provider_label =
+            ConfiguredProvidersLabel::new(configured.dupe(), ProvidersName::Default);
+        let dep = ctx
+            .get_internal_configured_target_node(&configured)
+            .await
+            .require_compatible()?;
+        deps.push(dep);
+        resolved.push(BazelResolvedToolchain {
+            toolchain_type: declared,
+            toolchain: provider_label,
+        });
+    }
+
+    Ok((deps, resolved))
+}
+
 /// Compute configured target node ignoring transition for this node.
 async fn compute_configured_target_node_no_transition(
     target_label: &ConfiguredTargetLabel,
@@ -861,6 +1058,7 @@ async fn compute_configured_target_node_no_transition(
             .await?;
         resolved_transitions.insert(tr.dupe(), resolved_cfg);
     }
+    drop(attrs);
 
     // We need to collect deps and to ensure that all attrs can be successfully
     // configured so that we don't need to support propagate configuration errors on attr access.
@@ -936,22 +1134,39 @@ async fn compute_configured_target_node_no_transition(
     let execution_platform_cfg = &execution_platform_cfg;
     let toolchain_deps = &gathered_deps.toolchain_deps;
     let exec_deps = &gathered_deps.exec_deps;
+    let bazel_target_label = target_label.dupe();
+    let bazel_target_node = target_node.dupe();
+    let bazel_exec_constraints =
+        if target_node.bazel_toolchains().is_empty() || !execution_platform_cfg.cfg().is_bound() {
+            BTreeSet::new()
+        } else {
+            configuration_constraint_labels(execution_platform_cfg.cfg())?
+        };
 
     let get_toolchain_deps = DiceComputations::declare_closure(move |ctx| {
         async move {
-            ctx.compute_join(
-                toolchain_deps,
-                |ctx, target: &TargetConfiguredTargetLabel| {
-                    async move {
-                        ctx.get_internal_configured_target_node(
-                            &target.with_exec_cfg(execution_platform_cfg.cfg().dupe()),
-                        )
-                        .await
-                    }
-                    .boxed()
-                },
+            let toolchain_dep_results = ctx
+                .compute_join(
+                    toolchain_deps,
+                    |ctx, target: &TargetConfiguredTargetLabel| {
+                        async move {
+                            ctx.get_internal_configured_target_node(
+                                &target.with_exec_cfg(execution_platform_cfg.cfg().dupe()),
+                            )
+                            .await
+                        }
+                        .boxed()
+                    },
+                )
+                .await;
+            let bazel_toolchain_result = resolve_bazel_toolchain_deps(
+                ctx,
+                &bazel_target_label,
+                &bazel_target_node,
+                &bazel_exec_constraints,
             )
-            .await
+            .await;
+            (toolchain_dep_results, bazel_toolchain_result)
         }
         .boxed()
     });
@@ -977,7 +1192,7 @@ async fn compute_configured_target_node_no_transition(
         .boxed()
     });
 
-    let (toolchain_dep_results, exec_dep_results): (Vec<_>, Vec<_>) =
+    let ((toolchain_dep_results, bazel_toolchain_result), exec_dep_results): ((Vec<_>, _), Vec<_>) =
         ctx.compute2(get_toolchain_deps, get_exec_deps).await;
 
     let mut deps = gathered_deps.deps;
@@ -999,6 +1214,8 @@ async fn compute_configured_target_node_no_transition(
             &mut exec_deps,
         );
     }
+    let (bazel_toolchain_deps, bazel_resolved_toolchains) = bazel_toolchain_result?;
+    deps.extend(bazel_toolchain_deps);
 
     // Build the exec_dep_cfgs mapping from exec_dep target labels to their actual cfgs.
     // This is needed because modifiers may change the cfg of exec_deps, and we need to
@@ -1028,6 +1245,7 @@ async fn compute_configured_target_node_no_transition(
         deps,
         exec_deps,
         platform_cfgs,
+        bazel_resolved_toolchains,
         gathered_deps.plugin_lists,
     ))
 }

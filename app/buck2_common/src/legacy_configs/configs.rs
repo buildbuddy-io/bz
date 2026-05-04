@@ -301,6 +301,7 @@ impl LegacyBuckConfig {
         &self,
         root_module_aliases: &[String],
         external_modules: &[BazelCompatExternalModule],
+        registered_toolchains: &[String],
     ) -> Self {
         const BAZEL_COMPAT_DEFAULTS: &[(&str, &[(&str, &str)])] = &[
             (
@@ -411,6 +412,19 @@ impl LegacyBuckConfig {
                         });
                 }
             }
+            section.values = SortedMap::from_iter(section_values);
+        }
+
+        if !registered_toolchains.is_empty() {
+            let section = values.entry("bazel".to_owned()).or_default();
+            let mut section_values: BTreeMap<String, ConfigValue> = section
+                .values
+                .iter()
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect();
+            section_values
+                .entry("registered_toolchains".to_owned())
+                .or_insert_with(|| synthetic_config_value(&registered_toolchains.join(",")));
             section.values = SortedMap::from_iter(section_values);
         }
 

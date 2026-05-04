@@ -111,6 +111,9 @@ pub enum BzlmodGeneratedCellGenerator {
     BazelFeaturesVersion(BzlmodBazelFeaturesVersionSetup),
     HostPlatform(BzlmodHostPlatformSetup),
     GoRegisterNogo(BzlmodGoRegisterNogoSetup),
+    GoSdkToolchains(BzlmodGoSdkToolchainsSetup),
+    GoSdkHostCompatible(BzlmodGoSdkHostCompatibleSetup),
+    GoSdkRepository(BzlmodGoSdkRepositorySetup),
     GoDepsModule(BzlmodGoDepsModuleSetup),
     GoDepsRepositoryConfig(BzlmodGoDepsRepositoryConfigSetup),
 }
@@ -170,6 +173,56 @@ pub struct BzlmodGoRegisterNogoSetup {
     pub nogo: Arc<str>,
     pub includes: Arc<Vec<Arc<str>>>,
     pub excludes: Arc<Vec<Arc<str>>>,
+}
+
+#[derive(
+    Debug,
+    Clone,
+    Dupe,
+    allocative::Allocative,
+    PartialEq,
+    Eq,
+    Hash,
+    Pagable
+)]
+pub struct BzlmodGoSdkToolchainsSetup {
+    pub parent_canonical_repo_name: Arc<str>,
+    pub sdk_repo: Arc<str>,
+    pub go_mod: Arc<str>,
+    pub host_goos: Arc<str>,
+    pub host_goarch: Arc<str>,
+}
+
+#[derive(
+    Debug,
+    Clone,
+    Dupe,
+    allocative::Allocative,
+    PartialEq,
+    Eq,
+    Hash,
+    Pagable
+)]
+pub struct BzlmodGoSdkHostCompatibleSetup {
+    pub sdk_repo: Arc<str>,
+}
+
+#[derive(
+    Debug,
+    Clone,
+    Dupe,
+    allocative::Allocative,
+    PartialEq,
+    Eq,
+    Hash,
+    Pagable
+)]
+pub struct BzlmodGoSdkRepositorySetup {
+    pub parent_canonical_repo_name: Arc<str>,
+    pub repo_name: Arc<str>,
+    pub go_mod: Arc<str>,
+    pub host_goos: Arc<str>,
+    pub host_goarch: Arc<str>,
 }
 
 #[derive(

@@ -87,6 +87,12 @@ pub struct ConfiguredTargetNode(triomphe::Arc<Hashed<ConfiguredTargetNodeData>>)
 
 impl Dupe for ConfiguredTargetNode {}
 
+#[derive(Debug, Clone, Eq, PartialEq, Hash, Allocative, Pagable)]
+pub struct BazelResolvedToolchain {
+    pub toolchain_type: String,
+    pub toolchain: ConfiguredProvidersLabel,
+}
+
 #[derive(Debug, Eq, PartialEq, Hash, Allocative, Pagable)]
 enum TargetNodeOrForward {
     TargetNode(TargetNode),
@@ -191,6 +197,7 @@ struct ConfiguredTargetNodeData {
     // TODO(cjhopman): Should this be a diff against the node's deps?
     all_deps: ConfiguredTargetNodeDeps,
     platform_cfgs: OrderedMap<TargetLabel, ConfigurationData>,
+    bazel_resolved_toolchains: Arc<[BazelResolvedToolchain]>,
     // TODO(JakobDegen): Consider saving some memory by using a more tset like representation of
     // the plugin lists
     plugin_lists: PluginLists,
@@ -232,6 +239,7 @@ impl ConfiguredTargetNode {
             Vec::new(),
             Vec::new(),
             OrderedMap::new(),
+            Vec::new(),
             PluginLists::new(),
         )
     }
@@ -245,6 +253,7 @@ impl ConfiguredTargetNode {
         deps: Vec<ConfiguredTargetNode>,
         exec_deps: Vec<ConfiguredTargetNode>,
         platform_cfgs: OrderedMap<TargetLabel, ConfigurationData>,
+        bazel_resolved_toolchains: Vec<BazelResolvedToolchain>,
         plugin_lists: PluginLists,
     ) -> Self {
         Self(triomphe::Arc::new(Hashed::new(ConfiguredTargetNodeData {
@@ -255,6 +264,7 @@ impl ConfiguredTargetNode {
             execution_platform_resolution,
             all_deps: ConfiguredTargetNodeDeps::new(deps, exec_deps),
             platform_cfgs,
+            bazel_resolved_toolchains: Arc::from(bazel_resolved_toolchains),
             plugin_lists,
         })))
     }
@@ -311,6 +321,7 @@ impl ConfiguredTargetNode {
                 plugin_lists: transitioned_node.plugin_lists().clone(),
                 all_deps: ConfiguredTargetNodeDeps::new(vec![transitioned_node], vec![]),
                 platform_cfgs: OrderedMap::new(),
+                bazel_resolved_toolchains: Arc::from([]),
             },
         ))))
     }
@@ -547,6 +558,11 @@ impl ConfiguredTargetNode {
     #[inline]
     pub fn bazel_toolchains(&self) -> &[String] {
         self.as_ref().bazel_toolchains()
+    }
+
+    #[inline]
+    pub fn bazel_resolved_toolchains(&self) -> &[BazelResolvedToolchain] {
+        self.as_ref().bazel_resolved_toolchains()
     }
 
     #[inline]
@@ -851,6 +867,10 @@ impl<'a> ConfiguredTargetNodeRef<'a> {
             TargetNodeOrForward::TargetNode(target_node) => target_node.bazel_toolchains(),
             TargetNodeOrForward::Forward(_, _) => &[],
         }
+    }
+
+    pub fn bazel_resolved_toolchains(self) -> &'a [BazelResolvedToolchain] {
+        &self.0.get().bazel_resolved_toolchains
     }
 
     pub fn is_bazel_rule(self) -> bool {

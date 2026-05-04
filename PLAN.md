@@ -59,6 +59,11 @@ Completed:
 - `ctx.toolchains[...]` exists as a Bazel `ToolchainContext`, enforces declared toolchain access, and returns `None` for declared optional misses.
 - Bazel native `toolchain_type(...)` and `toolchain(...)` rules are available from real BUILD files.
 - Native `toolchain(...)` targets now emit an internal `DeclaredToolchainInfo` provider containing the toolchain type, selected implementation label, target/exec constraints, target settings, and `use_target_platform_constraints`.
+- rules_go `go_sdk.from_file(...)` imports are parsed from bzlmod and materialized as generated external cells for `@go_toolchains`, `@go_host_compatible_sdk_label`, and the selected Go SDK repository.
+- Generated `@go_toolchains` repos load rules_go's real `declare_bazel_toolchains(...)`; `//:all` registered-toolchain patterns expand with Bazel package semantics.
+- `register_toolchains(...)` declarations from root and BCR modules are collected, dependency-module `//...` patterns are qualified to their declaring module cell, and non-literal MODULE expressions are not misparsed as target patterns.
+- Configured targets now resolve declared Bazel toolchain types against registered native `toolchain(...)` targets and expose resolved `platform_common.ToolchainInfo` providers through `ctx.toolchains[...]`.
+- Bazel `Label(...)` Starlark values now coerce through plain `attrs.label()` values as well as dependency/source attrs.
 - `cc_common.is_cc_toolchain_resolution_enabled_do_not_use(ctx = ctx)` is available.
 - `ctx.build_setting_value`, `ctx.attr`, and `ctx.var` are available during Bazel rule analysis.
 - Bazel-declared rules accept `None`, a single provider, or provider sequences from analysis and receive an implicit empty `DefaultInfo` when omitted.
@@ -72,17 +77,14 @@ BUCK2_HARD_ERROR=false \
 bazel-bin/app/buck2/buck2_bin --isolation-dir real-rules-go-... build //:hello
 ```
 
-The smoke now loads real `rules_go`, `rules_cc`, `rules_proto`, `protobuf`, `bazel_skylib`, `bazel_features`, and `gazelle` load-time Starlark from bzlmod, gets past the generated `@io_bazel_rules_nogo` repository, Gazelle `go_deps` aliases, `bazel_features` generated globals, Bazel build-setting defaults, rules_go's incoming Go transitions, bundled `@bazel_tools` package targets, Bazel provider return semantics, source `.files` access, and native Bazel toolchain declaration rules. The current failure is in rules_go Go configuration analysis when a declared Go toolchain type is accepted by `ctx.toolchains` but no registered toolchain has been resolved:
+The smoke now loads real `rules_go`, `rules_cc`, `rules_proto`, `protobuf`, `bazel_skylib`, `bazel_features`, and `gazelle` load-time Starlark from bzlmod, gets past the generated `@io_bazel_rules_nogo` repository, Gazelle `go_deps` aliases, `bazel_features` generated globals, Bazel build-setting defaults, rules_go's incoming Go transitions, bundled `@bazel_tools` package targets, Bazel provider return semantics, source `.files` access, native Bazel toolchain declaration rules, generated rules_go Go SDK repos, and Bazel `:all` toolchain registration expansion. The current failure is registered-toolchain collection reaching transitive module-extension repos that Buck does not yet create:
 
 ```text
-root//:hello
--> @rules_go//:go_context_data
--> @rules_go//:go_config
-
-Object of type `NoneType` has no attribute `default_goos`
+Error parsing target pattern `@local_config_cc_toolchains//:all`
+unknown cell alias: `local_config_cc_toolchains`
 ```
 
-The direct `//:hello` smoke now reaches configured target analysis through the real `go_binary`, `go_library`, Go configuration transition, standard-library transition, and Go/CGo context setup. The next gap is replacing the placeholder `ToolchainContext` result with real Bazel registered-toolchain collection, module-extension generated `@go_toolchains` repos, `native.register_toolchains(...)`, and toolchain target resolution.
+The direct `//:hello` smoke now reaches configured target analysis through the real `go_binary`, `go_library`, Go configuration transition, standard-library transition, generated `@go_toolchains` loading, and registered-toolchain expansion. The next gap is real module-extension evaluation/repository-rule execution for transitive generated repos such as `@local_config_cc_toolchains`, `@local_config_shell`, `@local_jdk`, `@pythons_hub`, and `@rules_pkg_rpmbuild`.
 
 ## Constraints
 
@@ -110,7 +112,7 @@ Acceptance:
 
 ## Phase 2: Module Extensions and Generated Repos
 
-Status: generated repo imports for external-module `go_deps.from_file(...)` and `bazel_features` `version_extension` are parsed and materialized; full extension evaluation and scoped repo mappings still remaining.
+Status: generated repo imports for external-module `go_deps.from_file(...)`, rules_go `go_sdk.from_file(...)`, and `bazel_features` `version_extension` are parsed and materialized; full extension evaluation, repository-rule execution, and scoped repo mappings still remain.
 
 Implement:
 
@@ -187,8 +189,8 @@ Completed:
 Immediate target:
 
 - Implement `native.register_toolchains(...)` for MODULE and BUILD loading.
-- Materialize `go_sdk` extension repos including `@go_toolchains`, `@go_host_compatible_sdk_label`, and SDK repos from real module-extension/repository-rule execution.
-- Resolve declared Bazel toolchain types to registered toolchain implementation targets and expose their `platform_common.ToolchainInfo` providers from `ctx.toolchains[...]`.
+- Replace parsed `go_sdk` materialization with real module-extension/repository-rule execution.
+- Materialize transitive toolchain extension repos including `@local_config_cc_toolchains`, `@local_config_shell`, `@local_jdk`, `@pythons_hub`, and `@rules_pkg_rpmbuild`.
 - Add Apple/Xcode provider constructors exposed by Bazel's `apple_common` only when real rules request them.
 
 Implement as failures demand:

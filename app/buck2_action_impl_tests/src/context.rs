@@ -91,6 +91,7 @@ fn run_ctx_test(
                 Some(label),
                 Some(plugins),
                 Vec::new(),
+                SmallMap::new(),
                 false,
                 registry,
                 DigestConfig::testing_default(),

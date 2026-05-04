@@ -17,6 +17,7 @@ use buck2_build_api::analysis::registry::AnalysisRegistry;
 use buck2_build_api::interpreter::rule_defs::cmd_args::value::FrozenCommandLineArg;
 use buck2_build_api::interpreter::rule_defs::context::AnalysisContext;
 use buck2_build_api::interpreter::rule_defs::provider::builtin::template_placeholder_info::FrozenTemplatePlaceholderInfo;
+use buck2_build_api::interpreter::rule_defs::provider::builtin::toolchain_info::FrozenToolchainInfo;
 use buck2_build_api::interpreter::rule_defs::provider::builtin::validation_info::FrozenValidationInfo;
 use buck2_build_api::interpreter::rule_defs::provider::collection::FrozenProviderCollection;
 use buck2_build_api::interpreter::rule_defs::provider::collection::FrozenProviderCollectionValue;
@@ -259,20 +260,31 @@ async fn run_analysis_with_env_underlying(
             })
             .collect::<SmallMap<_, _>>();
 
-        let (attributes, plugins) = {
-            let dep_analysis_results = get_deps_from_analysis_results(analysis_env.deps)?;
-            let resolution_ctx = RuleAnalysisAttrResolutionContext {
-                module: &env,
-                dep_analysis_results,
-                query_results: analysis_env.query_results,
-                execution_platform_resolution: node.execution_platform_resolution().clone(),
-            };
-
-            (
-                node_to_attrs_struct(node, &mut &resolution_ctx)?,
-                plugins_to_starlark_value(node, &mut &resolution_ctx)?,
-            )
+        let dep_analysis_results = get_deps_from_analysis_results(analysis_env.deps)?;
+        let resolution_ctx = RuleAnalysisAttrResolutionContext {
+            module: &env,
+            dep_analysis_results,
+            query_results: analysis_env.query_results,
+            execution_platform_resolution: node.execution_platform_resolution().clone(),
         };
+
+        let attributes = node_to_attrs_struct(node, &mut &resolution_ctx)?;
+        let plugins = plugins_to_starlark_value(node, &mut &resolution_ctx)?;
+        let mut resolved_toolchains = SmallMap::new();
+        for resolved in node.bazel_resolved_toolchains() {
+            let provider_collection = get_dep(
+                &resolution_ctx.dep_analysis_results,
+                &resolved.toolchain,
+                &env,
+            )?;
+            if let Some(toolchain_info) = provider_collection
+                .as_ref()
+                .builtin_provider::<FrozenToolchainInfo>()
+            {
+                resolved_toolchains
+                    .insert(resolved.toolchain_type.clone(), toolchain_info.to_value());
+            }
+        }
 
         let registry = AnalysisRegistry::new_from_owner(
             BaseDeferredKey::TargetLabel(node.label().dupe()),
@@ -294,6 +306,7 @@ async fn run_analysis_with_env_underlying(
                 Some(analysis_env.label),
                 Some(plugins.into()),
                 node.bazel_toolchains().to_vec(),
+                resolved_toolchains,
                 node.is_bazel_build_setting(),
                 registry,
                 dice.global_data().get_digest_config(),
