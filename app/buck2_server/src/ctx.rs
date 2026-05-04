@@ -52,11 +52,15 @@ use buck2_common::http::SetHttpClient;
 use buck2_common::invocation_paths::InvocationPaths;
 use buck2_common::io::trace::TracingIoProvider;
 use buck2_common::legacy_configs::cells::BuckConfigBasedCells;
+use buck2_common::legacy_configs::cells::BzlmodEvaluatedModuleExtension;
+use buck2_common::legacy_configs::cells::BzlmodModuleExtensionEvaluationRequest;
 use buck2_common::legacy_configs::configs::LegacyBuckConfig;
 use buck2_common::legacy_configs::dice::HasInjectedLegacyConfigs;
 use buck2_common::legacy_configs::file_ops::ConfigPath;
 use buck2_common::legacy_configs::key::BuckconfigKeyRef;
 use buck2_configured::cycle::ConfiguredGraphCycleDescriptor;
+use buck2_core::cells::external::BzlmodModuleExtensionRepoSetup;
+use buck2_core::cells::external::bzlmod_cell_name;
 use buck2_core::execution_types::executor_config::CommandExecutorConfig;
 use buck2_core::execution_types::executor_config::RemoteExecutorUseCase;
 use buck2_core::facebook_only;
@@ -72,7 +76,9 @@ use buck2_directory::directory::dashmap_directory_interner::DashMapDirectoryInte
 use buck2_events::dispatch::EventDispatcher;
 use buck2_events::metadata;
 use buck2_events::schedule_type::SandcastleScheduleType;
+use buck2_execute::execute::blocking::HasBlockingExecutor;
 use buck2_execute::execute::blocking::SetBlockingExecutor;
+use buck2_execute::execute::clean_output_paths::CleanOutputPaths;
 use buck2_execute::knobs::ExecutorGlobalKnobs;
 use buck2_execute::materialize::materializer::Materializer;
 use buck2_execute::materialize::materializer::SetMaterializer;
@@ -98,6 +104,7 @@ use buck2_interpreter::extra::InterpreterHostPlatform;
 use buck2_interpreter::extra::xcode::XcodeVersionInfo;
 use buck2_interpreter::factory::SetProfileEventListener;
 use buck2_interpreter::prelude_path::prelude_path;
+use buck2_interpreter_for_build::bazel_repository::evaluate_bzlmod_module_extension_repo;
 use buck2_interpreter_for_build::interpreter::configuror::BuildInterpreterConfiguror;
 use buck2_interpreter_for_build::interpreter::cycles::LoadCycleDescriptor;
 use buck2_interpreter_for_build::interpreter::interpreter_setup::setup_interpreter;
@@ -518,6 +525,8 @@ impl ServerCommandContext<'_> {
                     config_paths: StdBuckHashSet::default(),
                     external_data: (*dice_ctx.get_injected_external_buckconfig_data().await?)
                         .clone(),
+                    bzlmod_module_extension_evaluation_requests: new_configs
+                        .bzlmod_module_extension_evaluation_requests,
                 })
             } else {
                 // If there is no previous command but the flag was set, then the flag is ignored,
@@ -604,6 +613,9 @@ impl DiceUpdater for DiceCommandUpdater<'_, '_> {
             )?;
         }
 
+        let bzlmod_module_extension_evaluation_requests = cells_and_configs
+            .bzlmod_module_extension_evaluation_requests
+            .clone();
         let cell_resolver = cells_and_configs.cell_resolver;
 
         let configuror = BuildInterpreterConfiguror::new(
@@ -626,7 +638,7 @@ impl DiceUpdater for DiceCommandUpdater<'_, '_> {
             .as_ref()
             .map_or(Vec::new(), |opts| opts.enable_optional_validations.clone());
 
-        ctx.set_enabled_optional_validations(optional_validations)?;
+        ctx.set_enabled_optional_validations(optional_validations.clone())?;
 
         let profiler_instrumentation_override =
             &self.cmd_ctx.starlark_profiling_manager.configuration;
@@ -652,13 +664,130 @@ impl DiceUpdater for DiceCommandUpdater<'_, '_> {
         early_timings.end_known_span();
 
         let mut user_data = self.make_user_computation_data(&cells_and_configs.root_config)?;
-        user_data.set_mergebase(mergebase);
+        user_data.set_mergebase(mergebase.dupe());
+
+        if !bzlmod_module_extension_evaluation_requests.is_empty() {
+            let mut preliminary_dice = ctx.commit_with_data(user_data).await;
+            let bzlmod_module_extension_results = self
+                .evaluate_bzlmod_module_extensions_for_cell_graph(
+                    &mut preliminary_dice,
+                    &bzlmod_module_extension_evaluation_requests,
+                )
+                .await?;
+            let final_cells_and_configs =
+                BuckConfigBasedCells::parse_with_config_args_and_bzlmod_module_extension_results(
+                    &self.cmd_ctx.base_context.project_root,
+                    &self.cmd_ctx.config_overrides,
+                    true,
+                    bzlmod_module_extension_results,
+                )
+                .await?;
+            self.cmd_ctx
+                .report_traced_config_paths(&final_cells_and_configs.config_paths)?;
+
+            let final_cell_resolver = final_cells_and_configs.cell_resolver;
+            let final_configuror = BuildInterpreterConfiguror::new(
+                prelude_path(&final_cell_resolver)?,
+                self.interpreter_platform,
+                self.interpreter_architecture,
+                self.interpreter_xcode_version.clone(),
+                self.cmd_ctx.record_target_call_stacks,
+                self.cmd_ctx.skip_targets_with_duplicate_names,
+                None,
+                Arc::new(ConcurrentTargetLabelInterner::default()),
+            )?;
+
+            let mut final_ctx = preliminary_dice.into_updater();
+            final_ctx.set_buck_out_path(Some(self.cmd_ctx.buck_out_dir.clone()))?;
+            final_ctx.set_enabled_optional_validations(optional_validations)?;
+            setup_interpreter(
+                &mut final_ctx,
+                final_cell_resolver,
+                final_configuror,
+                final_cells_and_configs.external_data,
+                profiler_instrumentation_override.clone(),
+                self.cmd_ctx.disable_starlark_types,
+                self.cmd_ctx.unstable_typecheck,
+            )?;
+
+            let mut final_user_data =
+                self.make_user_computation_data(&final_cells_and_configs.root_config)?;
+            final_user_data.set_mergebase(mergebase);
+            return Ok((final_ctx, final_user_data));
+        }
 
         Ok((ctx, user_data))
     }
 }
 
 impl DiceCommandUpdater<'_, '_> {
+    async fn evaluate_bzlmod_module_extensions_for_cell_graph(
+        &self,
+        ctx: &mut DiceComputations<'_>,
+        requests: &[BzlmodModuleExtensionEvaluationRequest],
+    ) -> buck2_error::Result<Vec<BzlmodEvaluatedModuleExtension>> {
+        let cancellations = CancellationContext::never_cancelled();
+        let mut results = Vec::new();
+        let mut seen = BTreeSet::new();
+
+        for request in requests {
+            if !seen.insert((
+                request.parent_canonical_repo_name.to_string(),
+                request.extension_bzl_file.to_string(),
+                request.extension_name.to_string(),
+            )) {
+                continue;
+            }
+
+            let working_dir_key = bzlmod_cell_name(&format!(
+                "{}+{}+{}",
+                request.parent_canonical_repo_name,
+                request.extension_bzl_file,
+                request.extension_name
+            ));
+            let working_dir =
+                format!("buck-out/v2/external_cells/bzlmod_module_extensions/{working_dir_key}");
+            let working_dir_path = ProjectRelativePath::new(&working_dir)?.to_owned();
+            ctx.get_blocking_executor()
+                .execute_io(
+                    Box::new(CleanOutputPaths {
+                        paths: vec![working_dir_path],
+                    }),
+                    &cancellations,
+                )
+                .await?;
+
+            let invocations = evaluate_bzlmod_module_extension_repo(
+                ctx,
+                &BzlmodModuleExtensionRepoSetup {
+                    parent_canonical_repo_name: request.parent_canonical_repo_name.dupe(),
+                    extension_bzl_file: request.extension_bzl_file.dupe(),
+                    extension_name: request.extension_name.dupe(),
+                    repo_name: Arc::from(""),
+                    extension_usages_json: request.extension_usages_json.dupe(),
+                },
+                &working_dir,
+                &cancellations,
+            )
+            .await?;
+
+            let mut repo_names = invocations
+                .into_iter()
+                .map(|invocation| Arc::from(invocation.name))
+                .collect::<Vec<Arc<str>>>();
+            repo_names.sort();
+            repo_names.dedup();
+            results.push(BzlmodEvaluatedModuleExtension {
+                parent_canonical_repo_name: request.parent_canonical_repo_name.dupe(),
+                extension_bzl_file: request.extension_bzl_file.dupe(),
+                extension_name: request.extension_name.dupe(),
+                repo_names,
+            });
+        }
+
+        Ok(results)
+    }
+
     fn make_user_computation_data(
         &self,
         root_config: &LegacyBuckConfig,

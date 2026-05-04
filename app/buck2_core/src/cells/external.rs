@@ -8,14 +8,17 @@
  * above-listed licenses.
  */
 
+use std::collections::BTreeMap;
 use std::fmt;
 use std::str::FromStr;
 use std::sync::Arc;
+use std::sync::Mutex;
 
 use allocative::Allocative;
 use buck2_error::buck2_error;
 use derive_more::Display;
 use dupe::Dupe;
+use once_cell::sync::Lazy;
 use pagable::Pagable;
 
 use crate::cells::name::CellName;
@@ -32,6 +35,27 @@ pub fn bzlmod_cell_name(canonical_repo_name: &str) -> String {
         }
     }
     cell
+}
+
+static BZLMOD_CANONICAL_REPO_NAMES: Lazy<Mutex<BTreeMap<String, String>>> =
+    Lazy::new(|| Mutex::new(BTreeMap::new()));
+
+pub fn register_bzlmod_cell_canonical_repo_name(canonical_repo_name: &str) {
+    BZLMOD_CANONICAL_REPO_NAMES
+        .lock()
+        .expect("bzlmod canonical repo map poisoned")
+        .insert(
+            bzlmod_cell_name(canonical_repo_name),
+            canonical_repo_name.to_owned(),
+        );
+}
+
+pub fn bzlmod_canonical_repo_name_for_cell(cell_name: &str) -> Option<String> {
+    BZLMOD_CANONICAL_REPO_NAMES
+        .lock()
+        .expect("bzlmod canonical repo map poisoned")
+        .get(cell_name)
+        .cloned()
 }
 
 #[derive(Debug, Clone, Dupe, Allocative, PartialEq, Eq, Pagable)]

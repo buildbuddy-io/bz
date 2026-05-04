@@ -2950,7 +2950,7 @@ pub(crate) fn register_bazel_repository_globals(builder: &mut GlobalsBuilder) {
     }
 
     fn module_extension<'v>(
-        #[starlark(require = named)] implementation: StarlarkCallable<'v, (Value<'v>,), Value<'v>>,
+        implementation: StarlarkCallable<'v, (Value<'v>,), Value<'v>>,
         #[starlark(require = named, default = SmallMap::new())] tag_classes: SmallMap<
             String,
             Value<'v>,

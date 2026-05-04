@@ -107,6 +107,9 @@ pub struct ExternalBuckconfigData {
     external_path_configs: Vec<ExternalPathBuckconfigData>,
     // The result of parsing the buckconfigs coming from command line args (e.g. --config or --config-file)
     args: Vec<ResolvedLegacyConfigArg>,
+
+    bzlmod_module_extension_results_complete: bool,
+    bzlmod_module_extension_results: Vec<BzlmodEvaluatedModuleExtension>,
 }
 
 #[derive(PartialEq, Eq, Allocative, Clone, Pagable)]
@@ -115,11 +118,29 @@ pub struct ExternalPathBuckconfigData {
     pub(crate) origin_path: ConfigPath,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Allocative, Pagable)]
+pub struct BzlmodModuleExtensionEvaluationRequest {
+    pub parent_canonical_repo_name: Arc<str>,
+    pub extension_bzl_file: Arc<str>,
+    pub extension_name: Arc<str>,
+    pub extension_usages_json: Arc<str>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Allocative, Pagable)]
+pub struct BzlmodEvaluatedModuleExtension {
+    pub parent_canonical_repo_name: Arc<str>,
+    pub extension_bzl_file: Arc<str>,
+    pub extension_name: Arc<str>,
+    pub repo_names: Vec<Arc<str>>,
+}
+
 impl ExternalBuckconfigData {
     pub fn testing_default() -> Self {
         Self {
             external_path_configs: Vec::new(),
             args: Vec::new(),
+            bzlmod_module_extension_results_complete: false,
+            bzlmod_module_extension_results: Vec::new(),
         }
     }
 
@@ -150,6 +171,8 @@ impl ExternalBuckconfigData {
                     _ => true,
                 })
                 .collect(),
+            bzlmod_module_extension_results_complete: self.bzlmod_module_extension_results_complete,
+            bzlmod_module_extension_results: self.bzlmod_module_extension_results,
         }
     }
 
@@ -235,6 +258,7 @@ pub struct BuckConfigBasedCells {
     pub root_config: LegacyBuckConfig,
     pub config_paths: StdBuckHashSet<ConfigPath>,
     pub external_data: ExternalBuckconfigData,
+    pub bzlmod_module_extension_evaluation_requests: Vec<BzlmodModuleExtensionEvaluationRequest>,
 }
 
 impl BuckConfigBasedCells {
@@ -277,11 +301,18 @@ impl BuckConfigBasedCells {
             follow_includes,
         )
         .await?;
-        let config = if should_apply_bazel_compat_defaults(cell_path, file_ops).await?
+        let config = if cell_name.as_str().starts_with("bzlmod_")
             || cell_name.as_str() == "bazel_tools"
+            || should_apply_bazel_compat_defaults(cell_path, file_ops).await?
         {
             let root_path = CellRootPathBuf::new(ProjectRelativePath::empty().to_owned());
-            let module_aliases = get_bazel_module_resolution(&root_path, file_ops).await?;
+            let module_aliases = get_bazel_module_resolution(
+                &root_path,
+                file_ops,
+                self.external_data.bzlmod_module_extension_results_complete,
+                &self.external_data.bzlmod_module_extension_results,
+            )
+            .await?;
             config.with_bazel_compat_defaults(
                 module_aliases.aliases_for_cell(cell_name.as_str()),
                 &module_aliases.external_modules,
@@ -302,12 +333,29 @@ impl BuckConfigBasedCells {
         project_fs: &ProjectRoot,
         config_args: &[buck2_cli_proto::ConfigOverride],
     ) -> buck2_error::Result<Self> {
+        Self::parse_with_config_args_and_bzlmod_module_extension_results(
+            project_fs,
+            config_args,
+            false,
+            Vec::new(),
+        )
+        .await
+    }
+
+    pub async fn parse_with_config_args_and_bzlmod_module_extension_results(
+        project_fs: &ProjectRoot,
+        config_args: &[buck2_cli_proto::ConfigOverride],
+        bzlmod_module_extension_results_complete: bool,
+        bzlmod_module_extension_results: Vec<BzlmodEvaluatedModuleExtension>,
+    ) -> buck2_error::Result<Self> {
         Self::parse_with_file_ops_and_options(
             &mut DefaultConfigParserFileOps {
                 project_fs: project_fs.dupe(),
             },
             config_args,
             false, /* follow includes */
+            bzlmod_module_extension_results_complete,
+            bzlmod_module_extension_results,
         )
         .await
     }
@@ -320,6 +368,8 @@ impl BuckConfigBasedCells {
             file_ops,
             config_args,
             true, /* follow includes */
+            false,
+            Vec::new(),
         )
         .await
     }
@@ -328,16 +378,26 @@ impl BuckConfigBasedCells {
         file_ops: &mut dyn ConfigParserFileOps,
         config_args: &[buck2_cli_proto::ConfigOverride],
         follow_includes: bool,
+        bzlmod_module_extension_results_complete: bool,
+        bzlmod_module_extension_results: Vec<BzlmodEvaluatedModuleExtension>,
     ) -> buck2_error::Result<Self> {
-        Self::parse_with_file_ops_and_options_inner(file_ops, config_args, follow_includes)
-            .await
-            .buck_error_context("Parsing cells")
+        Self::parse_with_file_ops_and_options_inner(
+            file_ops,
+            config_args,
+            follow_includes,
+            bzlmod_module_extension_results_complete,
+            bzlmod_module_extension_results,
+        )
+        .await
+        .buck_error_context("Parsing cells")
     }
 
     async fn parse_with_file_ops_and_options_inner(
         file_ops: &mut dyn ConfigParserFileOps,
         config_args: &[buck2_cli_proto::ConfigOverride],
         follow_includes: bool,
+        bzlmod_module_extension_results_complete: bool,
+        bzlmod_module_extension_results: Vec<BzlmodEvaluatedModuleExtension>,
     ) -> buck2_error::Result<Self> {
         // Tracing file ops to record config file accesses on command invocation.
         struct TracingFileOps<'a> {
@@ -397,8 +457,17 @@ impl BuckConfigBasedCells {
             follow_includes,
         )
         .await?;
+        let mut bzlmod_module_extension_evaluation_requests = Vec::new();
         let root_config = if should_apply_bazel_compat_defaults(&root_path, &mut file_ops).await? {
-            let module_aliases = get_bazel_module_resolution(&root_path, &mut file_ops).await?;
+            let module_aliases = get_bazel_module_resolution(
+                &root_path,
+                &mut file_ops,
+                bzlmod_module_extension_results_complete,
+                &bzlmod_module_extension_results,
+            )
+            .await?;
+            bzlmod_module_extension_evaluation_requests =
+                module_aliases.module_extension_evaluation_requests.clone();
             root_config.with_bazel_compat_defaults(
                 module_aliases.aliases_for_cell("root"),
                 &module_aliases.external_modules,
@@ -470,7 +539,10 @@ impl BuckConfigBasedCells {
             external_data: ExternalBuckconfigData {
                 external_path_configs: started_parse,
                 args: processed_config_args,
+                bzlmod_module_extension_results_complete,
+                bzlmod_module_extension_results,
             },
+            bzlmod_module_extension_evaluation_requests,
         })
     }
 
@@ -558,11 +630,18 @@ impl BuckConfigBasedCells {
         )
         .await?;
 
-        if should_apply_bazel_compat_defaults(cell_path, file_ops).await?
+        if cell_name.starts_with("bzlmod_")
             || cell_name == "bazel_tools"
+            || should_apply_bazel_compat_defaults(cell_path, file_ops).await?
         {
             let root_path = CellRootPathBuf::new(ProjectRelativePath::empty().to_owned());
-            let module_aliases = get_bazel_module_resolution(&root_path, file_ops).await?;
+            let module_aliases = get_bazel_module_resolution(
+                &root_path,
+                file_ops,
+                external_data.bzlmod_module_extension_results_complete,
+                &external_data.bzlmod_module_extension_results,
+            )
+            .await?;
             Ok(config.with_bazel_compat_defaults(
                 module_aliases.aliases_for_cell(cell_name),
                 &module_aliases.external_modules,
@@ -786,6 +865,7 @@ struct BazelModuleCellAliases {
     cell_aliases: BTreeMap<String, Vec<BazelCompatCellAlias>>,
     external_modules: Vec<BazelCompatExternalModule>,
     registered_toolchains: Vec<String>,
+    module_extension_evaluation_requests: Vec<BzlmodModuleExtensionEvaluationRequest>,
 }
 
 impl BazelModuleCellAliases {
@@ -813,6 +893,23 @@ impl BazelModuleCellAliases {
             .sort_by(|a, b| a.cell_name().cmp(b.cell_name()));
         self.external_modules
             .dedup_by(|a, b| a.cell_name() == b.cell_name());
+        self.module_extension_evaluation_requests.sort_by(|a, b| {
+            (
+                &a.parent_canonical_repo_name,
+                &a.extension_bzl_file,
+                &a.extension_name,
+            )
+                .cmp(&(
+                    &b.parent_canonical_repo_name,
+                    &b.extension_bzl_file,
+                    &b.extension_name,
+                ))
+        });
+        self.module_extension_evaluation_requests.dedup_by(|a, b| {
+            a.parent_canonical_repo_name == b.parent_canonical_repo_name
+                && a.extension_bzl_file == b.extension_bzl_file
+                && a.extension_name == b.extension_name
+        });
     }
 }
 
@@ -861,6 +958,7 @@ struct BcrResolution {
     root_aliases: Vec<BazelCompatCellAlias>,
     cell_aliases: BTreeMap<String, Vec<BazelCompatCellAlias>>,
     registered_toolchains: Vec<String>,
+    module_extension_evaluation_requests: Vec<BzlmodModuleExtensionEvaluationRequest>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -948,6 +1046,8 @@ struct BcrSourceJson {
 async fn get_bazel_module_resolution(
     cell_path: &CellRootPath,
     file_ops: &mut dyn ConfigParserFileOps,
+    bzlmod_module_extension_results_complete: bool,
+    bzlmod_module_extension_results: &[BzlmodEvaluatedModuleExtension],
 ) -> buck2_error::Result<BazelModuleCellAliases> {
     let mut aliases = BazelModuleCellAliases::default();
     let mut root_deps = Vec::new();
@@ -1051,13 +1151,20 @@ async fn get_bazel_module_resolution(
         }
     }
 
-    let bcr_resolution = resolve_bcr_modules(root_deps).await?;
+    let bcr_resolution = resolve_bcr_modules(
+        root_deps,
+        bzlmod_module_extension_results_complete,
+        bzlmod_module_extension_results,
+    )
+    .await?;
     aliases.external_modules = bcr_resolution.external_modules;
     aliases.root_aliases.extend(bcr_resolution.root_aliases);
     aliases.cell_aliases = bcr_resolution.cell_aliases;
     aliases
         .registered_toolchains
         .extend(bcr_resolution.registered_toolchains);
+    aliases.module_extension_evaluation_requests =
+        bcr_resolution.module_extension_evaluation_requests;
     aliases.normalize();
     Ok(aliases)
 }
@@ -1073,7 +1180,12 @@ async fn bzlmod_http_client() -> buck2_error::Result<HttpClient> {
     Ok(builder.build())
 }
 
-async fn resolve_bcr_modules(root_deps: Vec<BazelDep>) -> buck2_error::Result<BcrResolution> {
+async fn resolve_bcr_modules(
+    root_deps: Vec<BazelDep>,
+    bzlmod_module_extension_results_complete: bool,
+    bzlmod_module_extension_results: &[BzlmodEvaluatedModuleExtension],
+) -> buck2_error::Result<BcrResolution> {
+    let bzlmod_module_extension_results = bzlmod_module_extension_results.to_owned();
     std::thread::Builder::new()
         .name("buck2-bzlmod-resolver".to_owned())
         .spawn(move || {
@@ -1083,7 +1195,13 @@ async fn resolve_bcr_modules(root_deps: Vec<BazelDep>) -> buck2_error::Result<Bc
                 .buck_error_context("Error creating Tokio runtime for bzlmod resolution")?;
             runtime.block_on(async move {
                 let client = bzlmod_http_client().await?;
-                resolve_bcr_modules_with_client(root_deps, &client).await
+                resolve_bcr_modules_with_client(
+                    root_deps,
+                    &client,
+                    bzlmod_module_extension_results_complete,
+                    &bzlmod_module_extension_results,
+                )
+                .await
             })
         })
         .buck_error_context("Error spawning bzlmod resolver thread")?
@@ -1099,6 +1217,8 @@ async fn resolve_bcr_modules(root_deps: Vec<BazelDep>) -> buck2_error::Result<Bc
 async fn resolve_bcr_modules_with_client(
     root_deps: Vec<BazelDep>,
     client: &HttpClient,
+    bzlmod_module_extension_results_complete: bool,
+    bzlmod_module_extension_results: &[BzlmodEvaluatedModuleExtension],
 ) -> buck2_error::Result<BcrResolution> {
     let registry = "https://bcr.bazel.build";
     let mut discovered = BTreeMap::<(String, String), DiscoveredBcrModule>::new();
@@ -1236,11 +1356,14 @@ async fn resolve_bcr_modules_with_client(
     }
 
     let mut resolved = resolved.into_values().collect::<Vec<_>>();
-    resolved.extend(resolve_generated_bzlmod_repos(
+    let generated_resolution = resolve_generated_bzlmod_repos(
         &discovered,
         &selected_keys_for_generated,
         &mut cell_aliases_by_cell,
-    )?);
+        bzlmod_module_extension_results_complete,
+        bzlmod_module_extension_results,
+    )?;
+    resolved.extend(generated_resolution.external_modules);
     let registered_toolchains = resolve_bzlmod_registered_toolchains(
         &discovered,
         &selected_keys_for_generated,
@@ -1257,15 +1380,25 @@ async fn resolve_bcr_modules_with_client(
             .map(|(cell, aliases)| (cell, bzlmod_cell_alias_map_to_vec(aliases)))
             .collect(),
         registered_toolchains,
+        module_extension_evaluation_requests: generated_resolution
+            .module_extension_evaluation_requests,
     })
+}
+
+struct GeneratedBzlmodReposResolution {
+    external_modules: Vec<BazelCompatExternalModule>,
+    module_extension_evaluation_requests: Vec<BzlmodModuleExtensionEvaluationRequest>,
 }
 
 fn resolve_generated_bzlmod_repos(
     discovered: &BTreeMap<(String, String), DiscoveredBcrModule>,
     selected_keys: &BTreeSet<(String, String)>,
     cell_aliases_by_cell: &mut BTreeMap<String, BTreeMap<String, String>>,
-) -> buck2_error::Result<Vec<BazelCompatExternalModule>> {
+    bzlmod_module_extension_results_complete: bool,
+    bzlmod_module_extension_results: &[BzlmodEvaluatedModuleExtension],
+) -> buck2_error::Result<GeneratedBzlmodReposResolution> {
     let mut generated = Vec::new();
+    let mut module_extension_evaluation_requests = Vec::new();
     let mut generated_repo_declaring_cells = Vec::new();
     let mut extension_generated_repo_groups =
         BTreeMap::<(String, String, String), Vec<(String, String)>>::new();
@@ -1482,12 +1615,72 @@ fn resolve_generated_bzlmod_repos(
                 usage.extension_bzl_file.clone(),
                 usage.extension_name.clone(),
             );
-            for import in &usage.imports {
-                if bzlmod_cell_alias_target(cell_aliases_by_cell, &parent_cell_name, &import.alias)
-                    .is_some()
-                {
+
+            let imports_needing_generic_repos = usage
+                .imports
+                .iter()
+                .filter(|import| {
+                    bzlmod_cell_alias_target(cell_aliases_by_cell, &parent_cell_name, &import.alias)
+                        .is_none()
+                })
+                .collect::<Vec<_>>();
+            let mut static_repo_names = imports_needing_generic_repos
+                .iter()
+                .map(|import| import.repo_name.clone())
+                .collect::<BTreeSet<_>>();
+            static_repo_names.extend(bzlmod_extension_tag_repo_names(usage));
+
+            let evaluated_extension = bzlmod_module_extension_results.iter().find(|result| {
+                result.parent_canonical_repo_name.as_ref() == parent_canonical_repo_name
+                    && result.extension_bzl_file.as_ref() == usage.extension_bzl_file
+                    && result.extension_name.as_ref() == usage.extension_name
+            });
+
+            let mut generated_repo_names = if bzlmod_module_extension_results_complete {
+                if static_repo_names.is_empty() && evaluated_extension.is_none() {
                     continue;
                 }
+                let Some(evaluated_extension) = evaluated_extension else {
+                    return Err(buck2_error!(
+                        buck2_error::ErrorTag::Input,
+                        "bzlmod module extension `{}`%`{}` for `{}` was not evaluated before cell graph finalization",
+                        usage.extension_bzl_file,
+                        usage.extension_name,
+                        parent_canonical_repo_name
+                    ));
+                };
+                evaluated_extension
+                    .repo_names
+                    .iter()
+                    .map(|repo_name| repo_name.to_string())
+                    .collect::<BTreeSet<_>>()
+            } else {
+                if static_repo_names.is_empty() {
+                    continue;
+                }
+                module_extension_evaluation_requests.push(BzlmodModuleExtensionEvaluationRequest {
+                    parent_canonical_repo_name: Arc::from(parent_canonical_repo_name.clone()),
+                    extension_bzl_file: Arc::from(usage.extension_bzl_file.clone()),
+                    extension_name: Arc::from(usage.extension_name.clone()),
+                    extension_usages_json: Arc::from(extension_usages_json.clone()),
+                });
+                static_repo_names
+            };
+
+            for import in imports_needing_generic_repos {
+                if bzlmod_module_extension_results_complete
+                    && !generated_repo_names.contains(&import.repo_name)
+                {
+                    return Err(buck2_error!(
+                        buck2_error::ErrorTag::Input,
+                        "bzlmod module extension `{}`%`{}` for `{}` did not emit imported repository `{}`",
+                        usage.extension_bzl_file,
+                        usage.extension_name,
+                        parent_canonical_repo_name,
+                        import.repo_name
+                    ));
+                }
+
                 let canonical_repo_name =
                     bzlmod_extension_repo_canonical_repo_name(module, usage, &import.repo_name);
                 let generator_json =
@@ -1514,8 +1707,10 @@ fn resolve_generated_bzlmod_repos(
                     .entry(extension_group_key.clone())
                     .or_default()
                     .push((import.repo_name.clone(), generated_cell_name));
+                generated_repo_names.remove(&import.repo_name);
             }
-            for repo_name in bzlmod_extension_tag_repo_names(usage) {
+
+            for repo_name in generated_repo_names {
                 let canonical_repo_name =
                     bzlmod_extension_repo_canonical_repo_name(module, usage, &repo_name);
                 let generator_json =
@@ -1576,7 +1771,10 @@ fn resolve_generated_bzlmod_repos(
         &generated_repo_declaring_cells,
         &extension_generated_repo_groups,
     );
-    Ok(generated)
+    Ok(GeneratedBzlmodReposResolution {
+        external_modules: generated,
+        module_extension_evaluation_requests,
+    })
 }
 
 fn bzlmod_module_extension_evaluation_config_json(

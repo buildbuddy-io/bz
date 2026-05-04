@@ -11,6 +11,7 @@
 use std::hash::Hash;
 
 use allocative::Allocative;
+use buck2_core::cells::external::bzlmod_canonical_repo_name_for_cell;
 use buck2_core::provider::label::ConfiguredProvidersLabel;
 use buck2_core::provider::label::NonDefaultProvidersName;
 use buck2_core::provider::label::ProvidersLabel;
@@ -44,6 +45,10 @@ use crate::types::package_path::StarlarkPackagePath;
 use crate::types::project_root::StarlarkProjectRoot;
 use crate::types::target_label::StarlarkConfiguredTargetLabel;
 use crate::types::target_label::StarlarkTargetLabel;
+
+fn bazel_repo_name_for_cell(cell: &str) -> String {
+    bzlmod_canonical_repo_name_for_cell(cell).unwrap_or_else(|| cell.to_owned())
+}
 
 impl StarlarkConfiguredProvidersLabel {
     pub fn label(&self) -> &ConfiguredProvidersLabel {
@@ -162,6 +167,20 @@ fn configured_label_methods(builder: &mut MethodsBuilder) {
     #[starlark(attribute)]
     fn cell<'v>(this: &'v StarlarkConfiguredProvidersLabel) -> starlark::Result<&'v str> {
         Ok(this.label.target().pkg().cell_name().as_str())
+    }
+
+    #[starlark(attribute)]
+    fn repo_name(this: &StarlarkConfiguredProvidersLabel) -> starlark::Result<String> {
+        Ok(bazel_repo_name_for_cell(
+            this.label.target().pkg().cell_name().as_str(),
+        ))
+    }
+
+    #[starlark(attribute)]
+    fn workspace_name(this: &StarlarkConfiguredProvidersLabel) -> starlark::Result<String> {
+        Ok(bazel_repo_name_for_cell(
+            this.label.target().pkg().cell_name().as_str(),
+        ))
     }
 
     /// Returns the PackagePath for this configured providers label.
@@ -301,6 +320,20 @@ fn label_methods(builder: &mut MethodsBuilder) {
     fn cell<'v>(this: &'v StarlarkProvidersLabel) -> starlark::Result<&'v str> {
         let cell = this.label.target().pkg().cell_name().as_str();
         Ok(cell)
+    }
+
+    #[starlark(attribute)]
+    fn repo_name(this: &StarlarkProvidersLabel) -> starlark::Result<String> {
+        Ok(bazel_repo_name_for_cell(
+            this.label.target().pkg().cell_name().as_str(),
+        ))
+    }
+
+    #[starlark(attribute)]
+    fn workspace_name(this: &StarlarkProvidersLabel) -> starlark::Result<String> {
+        Ok(bazel_repo_name_for_cell(
+            this.label.target().pkg().cell_name().as_str(),
+        ))
     }
 
     #[starlark(attribute)]

@@ -17,6 +17,7 @@ use std::sync::Arc;
 use allocative::Allocative;
 use buck2_cli_proto::ConfigOverride;
 use buck2_core::cells::cell_root_path::CellRootPath;
+use buck2_core::cells::external::register_bzlmod_cell_canonical_repo_name;
 use buck2_core::fs::project_rel_path::ProjectRelativePath;
 use buck2_hash::StdBuckHashMap;
 use dupe::Dupe;
@@ -309,6 +310,10 @@ impl LegacyBuckConfig {
         external_modules: &[BazelCompatExternalModule],
         registered_toolchains: &[String],
     ) -> Self {
+        for module in external_modules {
+            register_bzlmod_cell_canonical_repo_name(module.canonical_repo_name());
+        }
+
         const BAZEL_COMPAT_DEFAULTS: &[(&str, &[(&str, &str)])] = &[
             (
                 "cells",

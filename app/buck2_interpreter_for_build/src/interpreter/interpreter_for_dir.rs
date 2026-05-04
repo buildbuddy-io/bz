@@ -681,15 +681,16 @@ impl InterpreterForDir {
     ) -> buck2_error::Result<Vec<crate::bazel_repository::BazelRepositoryGeneratedFile>> {
         BuckStarlarkModule::with_profiling(|env| {
             let rule_value = rule_module
-                .get_option(&invocation.rule_id.name)
-                .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::Input))?
-                .ok_or_else(|| {
-                    buck2_error::Error::from(
+                .get_any_visibility(&invocation.rule_id.name)
+                .map(|(value, _)| value)
+                .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::Input))
+                .or_else(|_| {
+                    Err(buck2_error::Error::from(
                         crate::bazel_repository::BazelRepositoryError::RepositoryRuleSymbolMissing {
                             path: rule_path.to_string(),
                             rule: invocation.rule_id.name.clone(),
                         },
-                    )
+                    ))
                 })?;
             let repository_rule = crate::bazel_repository::repository_rule_from_loaded_module(
                 rule_path,
