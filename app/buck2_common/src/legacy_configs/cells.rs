@@ -774,6 +774,21 @@ struct BzlmodUseRepoImport {
     repo_name: String,
 }
 
+#[derive(Clone, Debug)]
+struct BzlmodExtensionUsage {
+    proxy_name: String,
+    extension_bzl_file: String,
+    extension_name: String,
+    imports: Vec<BzlmodUseRepoImport>,
+    tags: Vec<BzlmodExtensionTag>,
+}
+
+#[derive(Clone, Debug)]
+struct BzlmodExtensionTag {
+    tag_name: String,
+    kwargs: Vec<(String, String)>,
+}
+
 struct BcrResolution {
     external_modules: Vec<BazelCompatExternalModule>,
     registered_toolchains: Vec<String>,
@@ -1456,9 +1471,10 @@ fn bzlmod_module_aliases(lines: &[String]) -> Vec<String> {
 }
 
 fn bzlmod_use_repo_aliases_from_lines(lines: &[String]) -> Vec<String> {
-    collect_bzl_calls(lines, "use_repo(")
+    bzlmod_extension_usages_from_lines(lines)
         .into_iter()
-        .flat_map(|call| bzl_use_repo_aliases(&call))
+        .flat_map(|usage| usage.imports)
+        .map(|import| import.alias)
         .collect()
 }
 
@@ -1485,26 +1501,15 @@ fn bzlmod_extension_imports_from_lines(
     lines: &[String],
     extension: &str,
 ) -> Vec<BzlmodUseRepoImport> {
-    bzl_use_extension_bindings(lines, extension)
+    bzlmod_extension_usages_from_lines(lines)
         .into_iter()
-        .flat_map(|extension_name| bzlmod_extension_imports(lines, &extension_name))
+        .filter(|usage| usage.extension_name == extension)
+        .flat_map(|usage| usage.imports)
         .collect()
 }
 
-fn bzlmod_extension_imports(lines: &[String], extension_name: &str) -> Vec<BzlmodUseRepoImport> {
-    collect_bzl_calls(lines, "use_repo(")
-        .into_iter()
-        .filter(|call| {
-            bzl_call_args(call)
-                .first()
-                .is_some_and(|arg| arg.trim() == extension_name)
-        })
-        .flat_map(|call| bzl_use_repo_imports(&call))
-        .collect()
-}
-
-fn bzl_use_extension_bindings(lines: &[String], extension: &str) -> Vec<String> {
-    lines
+fn bzlmod_extension_usages_from_lines(lines: &[String]) -> Vec<BzlmodExtensionUsage> {
+    let mut usages = lines
         .iter()
         .filter_map(|line| {
             let line = strip_bzl_comment(line);
@@ -1514,13 +1519,83 @@ fn bzl_use_extension_bindings(lines: &[String], extension: &str) -> Vec<String> 
                 return None;
             }
             let args = bzl_call_args(value);
+            let extension_bzl_file = args.first().and_then(|arg| bzl_string_value(arg.trim()))?;
             let extension_name = args.get(1).and_then(|arg| bzl_string_value(arg.trim()))?;
-            if extension_name == extension {
-                Some(name.to_owned())
-            } else {
-                None
-            }
+            Some(BzlmodExtensionUsage {
+                proxy_name: name.to_owned(),
+                extension_bzl_file,
+                extension_name,
+                imports: bzlmod_extension_imports(lines, name),
+                tags: bzlmod_extension_tags(lines, name),
+            })
         })
+        .collect::<Vec<_>>();
+    usages.sort_by(|left, right| {
+        (
+            &left.proxy_name,
+            &left.extension_bzl_file,
+            &left.extension_name,
+            left.tags.len(),
+        )
+            .cmp(&(
+                &right.proxy_name,
+                &right.extension_bzl_file,
+                &right.extension_name,
+                right.tags.len(),
+            ))
+    });
+    usages.dedup_by(|left, right| {
+        left.extension_bzl_file == right.extension_bzl_file
+            && left.extension_name == right.extension_name
+            && left.proxy_name == right.proxy_name
+    });
+    usages
+}
+
+fn bzlmod_extension_tags(lines: &[String], proxy_name: &str) -> Vec<BzlmodExtensionTag> {
+    let call_prefix = format!("{proxy_name}.");
+    let mut tags = collect_bzl_calls(lines, &call_prefix)
+        .into_iter()
+        .filter_map(|call| {
+            let rest = call.strip_prefix(&call_prefix)?;
+            let (tag_name, _) = rest.split_once('(')?;
+            if !is_bzl_identifier(tag_name) {
+                return None;
+            }
+            let mut kwargs = bzl_call_args(&call)
+                .into_iter()
+                .filter_map(|arg| {
+                    let (name, value) = bzl_top_level_assignment(&arg)?;
+                    let name = name.trim();
+                    if is_bzl_identifier(name) {
+                        Some((name.to_owned(), value.trim().to_owned()))
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>();
+            kwargs.sort_by(|left, right| left.0.cmp(&right.0));
+            Some(BzlmodExtensionTag {
+                tag_name: tag_name.to_owned(),
+                kwargs,
+            })
+        })
+        .collect::<Vec<_>>();
+    tags.sort_by(|left, right| {
+        (&left.tag_name, &left.kwargs).cmp(&(&right.tag_name, &right.kwargs))
+    });
+    tags
+}
+
+fn bzlmod_extension_imports(lines: &[String], proxy_name: &str) -> Vec<BzlmodUseRepoImport> {
+    collect_bzl_calls(lines, "use_repo(")
+        .into_iter()
+        .filter(|call| {
+            bzl_call_args(call)
+                .first()
+                .is_some_and(|arg| arg.trim() == proxy_name)
+        })
+        .flat_map(|call| bzl_use_repo_imports(&call))
         .collect()
 }
 
@@ -2392,6 +2467,57 @@ mod tests {
         );
 
         Ok(())
+    }
+
+    #[test]
+    fn test_bzlmod_extension_usages_are_parsed_without_extension_name_special_cases() {
+        let lines = indoc!(
+            r#"
+            sdk = use_extension("//go:extensions.bzl", "go_sdk")
+            sdk.from_file(name = "go_default_sdk", go_mod = "//:go.mod")
+            use_repo(
+                sdk,
+                "go_toolchains",
+                alias_name = "actual_repo",
+            )
+
+            features = use_extension("@bazel_features//:extensions.bzl", "version_extension")
+            use_repo(features, "bazel_features_globals")
+            "#
+        )
+        .lines()
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+
+        let usages = super::bzlmod_extension_usages_from_lines(&lines);
+        assert_eq!(usages.len(), 2);
+        assert_eq!(usages[0].proxy_name, "features");
+        assert_eq!(
+            usages[0].extension_bzl_file,
+            "@bazel_features//:extensions.bzl"
+        );
+        assert_eq!(usages[0].extension_name, "version_extension");
+        assert_eq!(usages[0].imports.len(), 1);
+        assert_eq!(usages[0].imports[0].alias, "bazel_features_globals");
+        assert_eq!(usages[0].imports[0].repo_name, "bazel_features_globals");
+
+        assert_eq!(usages[1].proxy_name, "sdk");
+        assert_eq!(usages[1].extension_bzl_file, "//go:extensions.bzl");
+        assert_eq!(usages[1].extension_name, "go_sdk");
+        assert_eq!(usages[1].tags.len(), 1);
+        assert_eq!(usages[1].tags[0].tag_name, "from_file");
+        assert_eq!(
+            usages[1].tags[0].kwargs,
+            vec![
+                ("go_mod".to_owned(), "\"//:go.mod\"".to_owned()),
+                ("name".to_owned(), "\"go_default_sdk\"".to_owned()),
+            ]
+        );
+        assert_eq!(usages[1].imports.len(), 2);
+        assert_eq!(usages[1].imports[0].alias, "go_toolchains");
+        assert_eq!(usages[1].imports[0].repo_name, "go_toolchains");
+        assert_eq!(usages[1].imports[1].alias, "alias_name");
+        assert_eq!(usages[1].imports[1].repo_name, "actual_repo");
     }
 
     #[tokio::test]
