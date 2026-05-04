@@ -221,6 +221,11 @@ impl BazelAttributeSpec {
             docs,
         )))
     }
+
+    #[allow(dead_code)]
+    pub(crate) fn attributes(&self) -> &SmallMap<String, Attribute> {
+        &self.attributes
+    }
 }
 
 #[derive(Debug, ProvidesStaticType, Trace, NoSerialize, Allocative)]
@@ -475,6 +480,13 @@ pub(crate) struct FrozenStarlarkTagClass {
     docs: Option<String>,
 }
 
+impl FrozenStarlarkTagClass {
+    #[allow(dead_code)]
+    pub(crate) fn attributes(&self) -> &SmallMap<String, Attribute> {
+        self.attributes.attributes()
+    }
+}
+
 impl Display for FrozenStarlarkTagClass {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "<tag_class>")
@@ -630,16 +642,24 @@ impl Display for FrozenStarlarkModuleExtension {
 
 impl FrozenStarlarkModuleExtension {
     #[allow(dead_code)]
+    pub(crate) fn id(&self) -> buck2_error::Result<&StarlarkRuleType> {
+        self.id
+            .as_deref()
+            .ok_or_else(|| BazelRepositoryError::ModuleExtensionNotExported.into())
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn tag_classes(&self) -> &SmallMap<String, FrozenValue> {
+        &self.tag_classes
+    }
+
+    #[allow(dead_code)]
     pub(crate) fn invoke_implementation<'v>(
         &self,
         module_ctx: Value<'v>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {
-        let Some(id) = &self.id else {
-            return Err(
-                buck2_error::Error::from(BazelRepositoryError::ModuleExtensionNotExported).into(),
-            );
-        };
+        let id = self.id()?;
         let positional = [module_ctx];
         let args = Arguments::new_positional(&positional);
         let result = self.implementation.to_value().invoke(&args, eval)?;
