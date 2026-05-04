@@ -17,6 +17,7 @@ use std::sync::OnceLock;
 
 use allocative::Allocative;
 use buck2_core::configuration::data::BazelBuildSettingValue;
+use buck2_core::fs::buck_out_path::BuckOutPathKind;
 use buck2_core::provider::label::ConfiguredProvidersLabel;
 use buck2_core::provider::label::ProvidersName;
 use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
@@ -24,6 +25,7 @@ use buck2_error::BuckErrorContext;
 use buck2_error::conversion::from_any_with_tag;
 use buck2_error::internal_error;
 use buck2_execute::digest_config::DigestConfig;
+use buck2_execute::execute::request::OutputType;
 use buck2_interpreter::late_binding_ty::AnalysisContextReprLate;
 use buck2_interpreter::types::configured_providers_label::StarlarkConfiguredProvidersLabel;
 use buck2_interpreter::types::configured_providers_label::StarlarkProvidersLabel;
@@ -51,21 +53,36 @@ use starlark::values::ValueOfUnchecked;
 use starlark::values::ValueTyped;
 use starlark::values::ValueTypedComplex;
 use starlark::values::dict::AllocDict;
+use starlark::values::list::AllocList;
+use starlark::values::list::ListRef;
+use starlark::values::list_or_tuple::UnpackListOrTuple;
 use starlark::values::none::NoneOr;
 use starlark::values::starlark_value;
+use starlark::values::structs::AllocStruct;
 use starlark::values::structs::StructRef;
 use starlark::values::type_repr::StarlarkTypeRepr;
 
+use crate::actions::impls::workspace_status::UnregisteredWorkspaceStatusAction;
+use crate::actions::impls::workspace_status::WorkspaceStatusKind;
 use crate::analysis::anon_promises_dyn::RunAnonPromisesAccessor;
 use crate::analysis::registry::AnalysisRegistry;
 use crate::deferred::calculation::GET_PROMISED_ARTIFACT;
+use crate::interpreter::rule_defs::artifact::associated::AssociatedArtifacts;
+use crate::interpreter::rule_defs::artifact::starlark_artifact::StarlarkArtifact;
+use crate::interpreter::rule_defs::artifact::starlark_declared_artifact::StarlarkDeclaredArtifact;
 use crate::interpreter::rule_defs::plugins::AnalysisPlugins;
+use crate::interpreter::rule_defs::provider::builtin::default_info::BazelRunfiles;
+use crate::interpreter::rule_defs::provider::builtin::default_info::bazel_runfiles_from_files;
+use crate::interpreter::rule_defs::provider::dependency::Dependency;
+use buck2_hash::BuckIndexSet;
 
 #[derive(Debug, buck2_error::Error)]
 #[buck2(tag = Input)]
 enum AnalysisContextError {
     #[error("attempting to access `build_setting_value` of non-build setting {0}")]
     NonBuildSetting(String),
+    #[error("ctx.runfiles argument `{0}` is not supported yet")]
+    UnsupportedRunfilesArgument(&'static str),
 }
 
 /// Whether `declare_output` defaults `has_content_based_path` to `true`.
@@ -311,6 +328,8 @@ pub struct AnalysisContext<'v> {
     plugins: Option<ValueTypedComplex<'v, AnalysisPlugins<'v>>>,
     toolchains: ValueTyped<'v, AnalysisToolchains<'v>>,
     is_bazel_build_setting: bool,
+    bazel_info_file: RefCell<Option<ValueTyped<'v, StarlarkDeclaredArtifact<'v>>>>,
+    bazel_version_file: RefCell<Option<ValueTyped<'v, StarlarkDeclaredArtifact<'v>>>>,
 }
 
 impl<'v> Display for AnalysisContext<'v> {
@@ -353,6 +372,8 @@ impl<'v> AnalysisContext<'v> {
             plugins,
             toolchains: heap.alloc_typed(AnalysisToolchains::new(toolchains, resolved_toolchains)),
             is_bazel_build_setting,
+            bazel_info_file: RefCell::new(None),
+            bazel_version_file: RefCell::new(None),
         }
     }
 
@@ -373,7 +394,6 @@ impl<'v> AnalysisContext<'v> {
                 ConfiguredProvidersLabel::new(label, ProvidersName::Default),
             ))
         });
-
         let analysis_context = Self::new(
             heap,
             attrs,
@@ -441,6 +461,127 @@ fn analysis_context_outputs<'v>(
         .ok_or_else(|| internal_error!("`outputs` is not available for `dynamic_output` or BXL"))
 }
 
+fn bazel_file_root<'v>(heap: Heap<'v>, path: &str) -> Value<'v> {
+    heap.alloc(AllocStruct([("path", heap.alloc_str(path).to_value())]))
+}
+
+fn analysis_context_configuration<'v>(heap: Heap<'v>) -> ValueOfUnchecked<'v, StructRef<'static>> {
+    let host_path_separator = if cfg!(windows) { ";" } else { ":" };
+    let bin_dir = bazel_file_root(heap, "buck-out/bin");
+    let genfiles_dir = bazel_file_root(heap, "buck-out/genfiles");
+    ValueOfUnchecked::new(heap.alloc(AllocStruct([
+        ("bin_dir", bin_dir),
+        ("genfiles_dir", genfiles_dir),
+        (
+            "host_path_separator",
+            heap.alloc_str(host_path_separator).to_value(),
+        ),
+        ("default_shell_env", heap.alloc(AllocDict::EMPTY)),
+        ("test_env", heap.alloc(AllocDict::EMPTY)),
+        ("coverage_enabled", Value::new_bool(false)),
+        ("short_id", heap.alloc_str("buck2").to_value()),
+    ])))
+}
+
+fn collect_bazel_files_from_value<'v>(
+    value: Value<'v>,
+    files: &mut Vec<Value<'v>>,
+) -> buck2_error::Result<()> {
+    if value.is_none() {
+        return Ok(());
+    }
+    if let Some(dep) = value.downcast_ref::<Dependency<'v>>() {
+        files.extend(dep.default_output_values()?);
+        return Ok(());
+    }
+    if value.downcast_ref::<StarlarkArtifact>().is_some() {
+        files.push(value);
+        return Ok(());
+    }
+    if let Some(list) = ListRef::from_value(value) {
+        for item in list.iter() {
+            collect_bazel_files_from_value(item, files)?;
+        }
+    }
+    Ok(())
+}
+
+fn bazel_files_from_attr_value<'v>(value: Value<'v>) -> buck2_error::Result<Vec<Value<'v>>> {
+    let mut files = Vec::new();
+    collect_bazel_files_from_value(value, &mut files)?;
+    Ok(files)
+}
+
+fn analysis_context_bazel_file_structs<'v>(
+    heap: Heap<'v>,
+    attrs: ValueOfUnchecked<'v, StructRef<'static>>,
+) -> buck2_error::Result<(
+    ValueOfUnchecked<'v, StructRef<'static>>,
+    ValueOfUnchecked<'v, StructRef<'static>>,
+    ValueOfUnchecked<'v, StructRef<'static>>,
+)> {
+    let mut file_fields = Vec::new();
+    let mut files_fields = Vec::new();
+    let mut executable_fields = Vec::new();
+    if let Some(attrs) = StructRef::from_value(attrs.get()) {
+        for (name, value) in attrs.iter() {
+            let name = name.as_str().to_owned();
+            let files = bazel_files_from_attr_value(value)?;
+            files_fields.push((name.clone(), heap.alloc(files.clone())));
+            let single_file = match files.as_slice() {
+                [file] => *file,
+                [] => Value::new_none(),
+                _ => continue,
+            };
+            file_fields.push((name.clone(), single_file));
+            executable_fields.push((name, single_file));
+        }
+    }
+    Ok((
+        ValueOfUnchecked::new(heap.alloc(AllocStruct(file_fields))),
+        ValueOfUnchecked::new(heap.alloc(AllocStruct(files_fields))),
+        ValueOfUnchecked::new(heap.alloc(AllocStruct(executable_fields))),
+    ))
+}
+
+fn analysis_context_workspace_status_file<'v>(
+    this: &AnalysisContext<'v>,
+    kind: WorkspaceStatusKind,
+    heap: Heap<'v>,
+) -> starlark::Result<ValueTyped<'v, StarlarkDeclaredArtifact<'v>>> {
+    let slot = match kind {
+        WorkspaceStatusKind::Stable => &this.bazel_info_file,
+        WorkspaceStatusKind::Volatile => &this.bazel_version_file,
+    };
+    if let Some(value) = slot.borrow().as_ref().copied() {
+        return Ok(value);
+    }
+
+    let mut state = this.actions.state()?;
+    let declared = state.declare_output(
+        None,
+        kind.output_path(),
+        OutputType::File,
+        None,
+        BuckOutPathKind::Configuration,
+        heap,
+    )?;
+    let artifact = heap.alloc_typed(StarlarkDeclaredArtifact::new(
+        None,
+        declared,
+        AssociatedArtifacts::new(),
+    ));
+    let outputs = BuckIndexSet::from_iter([artifact.output_artifact()]);
+    state.register_action(
+        outputs,
+        UnregisteredWorkspaceStatusAction::new(kind),
+        None,
+        None,
+    )?;
+    *slot.borrow_mut() = Some(artifact);
+    Ok(artifact)
+}
+
 #[starlark_value(type = "AnalysisContext")]
 impl<'v> StarlarkValue<'v> for AnalysisContext<'v> {
     fn get_methods() -> Option<&'static Methods> {
@@ -502,6 +643,160 @@ fn analysis_context_methods(builder: &mut MethodsBuilder) {
         this: RefAnalysisContext<'v>,
     ) -> starlark::Result<ValueOfUnchecked<'v, StructRef<'static>>> {
         Ok(analysis_context_attrs(this.0)?)
+    }
+
+    /// Bazel single-file view of label attributes marked with `allow_single_file`.
+    #[starlark(attribute)]
+    fn file<'v>(
+        this: RefAnalysisContext<'v>,
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOfUnchecked<'v, StructRef<'static>>> {
+        let attrs = analysis_context_attrs(this.0)?;
+        let (file, _, _) = analysis_context_bazel_file_structs(heap, attrs)?;
+        Ok(file)
+    }
+
+    /// Bazel files-to-build view of label attributes.
+    #[starlark(attribute)]
+    fn files<'v>(
+        this: RefAnalysisContext<'v>,
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOfUnchecked<'v, StructRef<'static>>> {
+        let attrs = analysis_context_attrs(this.0)?;
+        let (_, files, _) = analysis_context_bazel_file_structs(heap, attrs)?;
+        Ok(files)
+    }
+
+    /// Bazel executable view of executable label attributes.
+    #[starlark(attribute)]
+    fn executable<'v>(
+        this: RefAnalysisContext<'v>,
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOfUnchecked<'v, StructRef<'static>>> {
+        let attrs = analysis_context_attrs(this.0)?;
+        let (_, _, executable) = analysis_context_bazel_file_structs(heap, attrs)?;
+        Ok(executable)
+    }
+
+    /// The current target's Bazel-compatible build configuration view.
+    #[starlark(attribute)]
+    fn configuration<'v>(
+        this: RefAnalysisContext<'v>,
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueOfUnchecked<'v, StructRef<'static>>> {
+        let _ = this;
+        Ok(analysis_context_configuration(heap))
+    }
+
+    /// Bazel root object for generated binary outputs.
+    #[starlark(attribute)]
+    fn bin_dir<'v>(this: RefAnalysisContext<'v>, heap: Heap<'v>) -> starlark::Result<Value<'v>> {
+        let _ = this;
+        Ok(bazel_file_root(heap, "buck-out/bin"))
+    }
+
+    /// Bazel root object for generated files.
+    #[starlark(attribute)]
+    fn genfiles_dir<'v>(
+        this: RefAnalysisContext<'v>,
+        heap: Heap<'v>,
+    ) -> starlark::Result<Value<'v>> {
+        let _ = this;
+        Ok(bazel_file_root(heap, "buck-out/genfiles"))
+    }
+
+    /// Enabled Bazel features for this rule.
+    #[starlark(attribute)]
+    fn features<'v>(this: RefAnalysisContext<'v>, heap: Heap<'v>) -> starlark::Result<Value<'v>> {
+        let _ = this;
+        Ok(heap.alloc(AllocList::EMPTY))
+    }
+
+    /// Disabled Bazel features for this rule.
+    #[starlark(attribute)]
+    fn disabled_features<'v>(
+        this: RefAnalysisContext<'v>,
+        heap: Heap<'v>,
+    ) -> starlark::Result<Value<'v>> {
+        let _ = this;
+        Ok(heap.alloc(AllocList::EMPTY))
+    }
+
+    /// Bazel stable workspace status file.
+    #[starlark(attribute)]
+    fn info_file<'v>(
+        this: RefAnalysisContext<'v>,
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueTyped<'v, StarlarkDeclaredArtifact<'v>>> {
+        analysis_context_workspace_status_file(this.0, WorkspaceStatusKind::Stable, heap)
+    }
+
+    /// Bazel volatile workspace status file.
+    #[starlark(attribute)]
+    fn version_file<'v>(
+        this: RefAnalysisContext<'v>,
+        heap: Heap<'v>,
+    ) -> starlark::Result<ValueTyped<'v, StarlarkDeclaredArtifact<'v>>> {
+        analysis_context_workspace_status_file(this.0, WorkspaceStatusKind::Volatile, heap)
+    }
+
+    /// Returns whether coverage instrumentation should be generated for this rule.
+    fn coverage_instrumented<'v>(
+        this: RefAnalysisContext<'v>,
+        #[starlark(default = NoneOr::None)] target: NoneOr<Value<'v>>,
+    ) -> starlark::Result<bool> {
+        let _ = (this, target);
+        Ok(false)
+    }
+
+    /// Returns a Bazel runfiles object.
+    fn runfiles<'v>(
+        this: RefAnalysisContext<'v>,
+        #[starlark(default = NoneOr::None)] files: NoneOr<UnpackListOrTuple<Value<'v>>>,
+        #[starlark(require = named, default = NoneOr::None)] transitive_files: NoneOr<Value<'v>>,
+        #[starlark(require = named, default = false)] collect_data: bool,
+        #[starlark(require = named, default = false)] collect_default: bool,
+        #[starlark(require = named, default = NoneOr::None)] symlinks: NoneOr<Value<'v>>,
+        #[starlark(require = named, default = NoneOr::None)] root_symlinks: NoneOr<Value<'v>>,
+        #[starlark(require = named, default = false)] skip_conflict_checking: bool,
+        heap: Heap<'v>,
+    ) -> starlark::Result<BazelRunfiles<'v>> {
+        let _ctx = this;
+        if collect_data {
+            return Err(buck2_error::Error::from(
+                AnalysisContextError::UnsupportedRunfilesArgument("collect_data"),
+            )
+            .into());
+        }
+        if collect_default {
+            return Err(buck2_error::Error::from(
+                AnalysisContextError::UnsupportedRunfilesArgument("collect_default"),
+            )
+            .into());
+        }
+        if symlinks.into_option().is_some() {
+            return Err(buck2_error::Error::from(
+                AnalysisContextError::UnsupportedRunfilesArgument("symlinks"),
+            )
+            .into());
+        }
+        if root_symlinks.into_option().is_some() {
+            return Err(buck2_error::Error::from(
+                AnalysisContextError::UnsupportedRunfilesArgument("root_symlinks"),
+            )
+            .into());
+        }
+        if skip_conflict_checking {
+            return Err(buck2_error::Error::from(
+                AnalysisContextError::UnsupportedRunfilesArgument("skip_conflict_checking"),
+            )
+            .into());
+        }
+        bazel_runfiles_from_files(
+            heap,
+            files.into_option().unwrap_or_default().items,
+            transitive_files.into_option(),
+        )
     }
 
     /// Returns the Bazel predeclared output artifacts for this rule.

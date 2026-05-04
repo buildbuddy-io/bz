@@ -53,6 +53,11 @@ pub trait StarlarkArtifactLike<'v>: Display {
         f: &dyn for<'b> Fn(&'b ForwardRelativePath) -> StringValue<'v>,
     ) -> buck2_error::Result<StringValue<'v>>;
 
+    fn with_bazel_path(
+        &self,
+        f: &dyn Fn(&str) -> StringValue<'v>,
+    ) -> buck2_error::Result<StringValue<'v>>;
+
     /// It's very important that the Hash/Eq of the StarlarkArtifactLike things doesn't change
     /// during freezing, otherwise Starlark invariants are broken. Use the fingerprint
     /// as the inputs to Hash/Eq to ensure they are consistent
@@ -68,6 +73,28 @@ pub trait StarlarkArtifactLike<'v>: Display {
     fn write_hash(&self, hasher: &mut StarlarkHasher) -> starlark::Result<()> {
         self.fingerprint().hash(hasher);
         Ok(())
+    }
+}
+
+pub fn bazel_artifact_path(path: ArtifactPath<'_>) -> String {
+    match path.base_path.as_ref() {
+        Either::Left(_) => path.with_full_path(|path| path.to_string()),
+        Either::Right(source) => {
+            let package = source.package();
+            let source_path = package
+                .cell_relative_path()
+                .as_forward_relative_path()
+                .join(source.path().as_forward_rel_path());
+            let source_path = source_path.join_cow(path.projected_path);
+            let cell = package.cell_name();
+            if cell.as_str() == "root" {
+                source_path.to_string()
+            } else if source_path.is_empty() {
+                cell.as_str().to_owned()
+            } else {
+                format!("{}/{}", cell.as_str(), source_path)
+            }
+        }
     }
 }
 

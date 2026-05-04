@@ -24,6 +24,7 @@ use crate::attrs::coerce::coerced_attr::CoercedAttrExr;
 
 pub mod any;
 pub mod arg;
+pub mod bazel_label;
 pub mod bool;
 pub mod configuration_dep;
 pub mod dep;
@@ -121,6 +122,7 @@ impl AttrTypeInnerExt for AttrTypeInner {
         match self {
             Self::Any(x) => x.coerce_item(configurable, ctx, value),
             Self::Arg(x) => x.coerce_item(configurable, ctx, value),
+            Self::BazelLabel(x) => x.coerce_item(configurable, ctx, value),
             Self::Bool(x) => x.coerce_item(configurable, ctx, value),
             Self::Int(x) => x.coerce_item(configurable, ctx, value),
             Self::Dep(x) => x.coerce_item(configurable, ctx, value),
@@ -152,6 +154,7 @@ impl AttrTypeInnerExt for AttrTypeInner {
         match self {
             AttrTypeInner::Any(x) => x.starlark_type(),
             AttrTypeInner::Arg(x) => x.starlark_type(),
+            AttrTypeInner::BazelLabel(x) => x.starlark_type(),
             AttrTypeInner::ConfigurationDep(x) => x.starlark_type(),
             AttrTypeInner::ConfiguredDep(x) => x.starlark_type(),
             AttrTypeInner::Bool(x) => x.starlark_type(),

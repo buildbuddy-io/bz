@@ -18,6 +18,8 @@ use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
 use starlark::environment::MethodsStatic;
 use starlark::values::Freeze;
+use starlark::values::FrozenHeap;
+use starlark::values::FrozenValue;
 use starlark::values::Heap;
 use starlark::values::NoSerialize;
 use starlark::values::StarlarkValue;
@@ -222,6 +224,27 @@ pub(crate) fn bazel_depset_from_direct<'v>(
         transitive: Vec::new().into_boxed_slice(),
         order: BazelDepsetOrder::Default,
         element_type,
+        _marker: PhantomData,
+    })
+}
+
+pub(crate) fn bazel_depset_from_values<'v>(
+    heap: Heap<'v>,
+    direct: Vec<Value<'v>>,
+) -> starlark::Result<Value<'v>> {
+    Ok(heap.alloc(bazel_depset_from_direct(direct)?))
+}
+
+pub(crate) fn bazel_depset_empty<'v>(heap: Heap<'v>) -> Value<'v> {
+    heap.alloc(bazel_depset_from_direct(Vec::new()).unwrap())
+}
+
+pub(crate) fn bazel_depset_empty_frozen(heap: &FrozenHeap) -> FrozenValue {
+    heap.alloc(FrozenBazelDepset {
+        direct: Vec::new().into_boxed_slice(),
+        transitive: Vec::new().into_boxed_slice(),
+        order: BazelDepsetOrder::Default,
+        element_type: None,
         _marker: PhantomData,
     })
 }

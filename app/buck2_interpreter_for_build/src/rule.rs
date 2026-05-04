@@ -924,6 +924,7 @@ pub fn register_rule_function(builder: &mut GlobalsBuilder) {
         uses_plugins: UnpackListOrTuple<PluginKindArg>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<StarlarkRuleCallable<'v>> {
+        let has_bazel_attrs = attrs.entries.iter().any(|(_, attr)| attr.is_bazel());
         let bazel_toolchains = toolchains
             .items
             .into_iter()
@@ -946,8 +947,14 @@ pub fn register_rule_function(builder: &mut GlobalsBuilder) {
             extendable,
             subrules,
         );
+        let has_bazel_rule_options = has_bazel_attrs
+            || !bazel_toolchains.is_empty()
+            || !bazel_implicit_outputs.is_empty()
+            || executable
+            || test.is_some()
+            || build_setting.is_some();
         let (implementation, is_bazel_rule) = match (r#impl, implementation) {
-            (Some(r#impl), None) => (r#impl, false),
+            (Some(r#impl), None) => (r#impl, has_bazel_rule_options),
             (None, Some(implementation)) => (implementation, true),
             _ => {
                 return Err(buck2_error::Error::from(

@@ -1036,7 +1036,10 @@ toolchain = prelude_rule(
     attrs = {
         "toolchain_type": attrs.label(),
         "target_settings": attrs.list(attrs.label(), default = []),
-        "toolchain": attrs.label(),
+        # Bazel declares this as NODEP_LABEL: it is label-shaped, but package
+        # loading must not force the target repository to exist until the
+        # toolchain has been selected.
+        "toolchain": attrs.string(),
         "use_target_platform_constraints": attrs.bool(default = False),
     },
 )

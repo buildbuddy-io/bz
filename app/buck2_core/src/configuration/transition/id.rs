@@ -9,6 +9,7 @@
  */
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use allocative::Allocative;
 use derive_more::Display;
@@ -26,6 +27,8 @@ use crate::provider::label::ProvidersLabel;
 pub enum TransitionId {
     #[display("{}#{}", path, name)]
     MagicObject { path: ImportPath, name: String },
+    #[display("bazel_attribute({})", _0)]
+    BazelAttribute(Arc<TransitionId>),
     #[display("{}", _0)]
     Target(ProvidersLabel),
     #[display("analysis_test_transition")]

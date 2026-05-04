@@ -260,8 +260,72 @@ fn bazel_transition_result_to_configuration(
     conf: &ConfigurationData,
     transition: &TransitionData,
 ) -> buck2_error::Result<TransitionApplied> {
+    const PATCH_TRANSITION_KEY: &str = "";
+
+    fn apply_patch(
+        dict: DictRef,
+        conf: &ConfigurationData,
+        transition: &TransitionData,
+    ) -> buck2_error::Result<ConfigurationData> {
+        if dict.is_empty() {
+            return Ok(conf.dupe());
+        }
+
+        let original_data = conf.data()?.clone();
+        let mut data = conf.data()?.clone();
+        for (key, value) in dict.iter() {
+            let key = bazel_transition_setting_key(key.to_value(), transition)?;
+            data.build_settings
+                .insert(key, bazel_transition_setting_value(value.to_value()));
+        }
+        if data == original_data {
+            return Ok(conf.dupe());
+        }
+        let label = bazel_transitioned_label(&data, conf.is_marked_as_exec_platform());
+        Ok(ConfigurationData::from_platform(
+            label,
+            data,
+            conf.is_marked_as_exec_platform(),
+        )?)
+    }
+
+    fn split_from_patch(
+        conf: &ConfigurationData,
+        configuration: ConfigurationData,
+    ) -> TransitionApplied {
+        let mut split = OrderedMap::new();
+        let previous = split.insert(PATCH_TRANSITION_KEY.to_owned(), configuration);
+        assert!(previous.is_none());
+        let _ = conf;
+        TransitionApplied::Split(SortedMap::from(split))
+    }
+
     if result.is_none() {
+        if transition.is_split() {
+            return Ok(split_from_patch(conf, conf.dupe()));
+        }
         return Ok(TransitionApplied::Single(conf.dupe()));
+    }
+
+    if transition.is_split() {
+        if let Some(list) = ListRef::from_value(result) {
+            if list.is_empty() {
+                return Ok(split_from_patch(conf, conf.dupe()));
+            }
+            let mut split = OrderedMap::new();
+            for (index, value) in list.iter().enumerate() {
+                let Some(dict) = DictRef::from_value(value) else {
+                    return Err(ApplyTransitionError::BazelTransitionMustReturnDict(
+                        value.get_type().to_owned(),
+                    )
+                    .into());
+                };
+                let previous =
+                    split.insert(index.to_string(), apply_patch(dict, conf, transition)?);
+                assert!(previous.is_none());
+            }
+            return Ok(TransitionApplied::Split(SortedMap::from(split)));
+        }
     }
 
     let Some(dict) = DictRef::from_value(result) else {
@@ -271,24 +335,38 @@ fn bazel_transition_result_to_configuration(
         .into());
     };
     if dict.is_empty() {
+        if transition.is_split() {
+            return Ok(split_from_patch(conf, conf.dupe()));
+        }
         return Ok(TransitionApplied::Single(conf.dupe()));
     }
 
-    let original_data = conf.data()?.clone();
-    let mut data = conf.data()?.clone();
-    for (key, value) in dict.iter() {
-        let key = bazel_transition_setting_key(key.to_value(), transition)?;
-        data.build_settings
-            .insert(key, bazel_transition_setting_value(value.to_value()));
+    if transition.is_split() {
+        let mut split = OrderedMap::new();
+        let mut dict_of_dicts = true;
+        for (key, value) in dict.iter() {
+            let Some(split_key) = key.to_value().unpack_str() else {
+                dict_of_dicts = false;
+                break;
+            };
+            let Some(split_dict) = DictRef::from_value(value.to_value()) else {
+                dict_of_dicts = false;
+                break;
+            };
+            let previous = split.insert(
+                split_key.to_owned(),
+                apply_patch(split_dict, conf, transition)?,
+            );
+            assert!(previous.is_none());
+        }
+        if dict_of_dicts {
+            return Ok(TransitionApplied::Split(SortedMap::from(split)));
+        }
+        return Ok(split_from_patch(conf, apply_patch(dict, conf, transition)?));
     }
-    if data == original_data {
-        return Ok(TransitionApplied::Single(conf.dupe()));
-    }
-    let label = bazel_transitioned_label(&data, conf.is_marked_as_exec_platform());
-    Ok(TransitionApplied::Single(ConfigurationData::from_platform(
-        label,
-        data,
-        conf.is_marked_as_exec_platform(),
+
+    Ok(TransitionApplied::Single(apply_patch(
+        dict, conf, transition,
     )?))
 }
 
@@ -336,7 +414,9 @@ fn call_transition_function<'v>(
         let attrs =
             attrs.unwrap_or_else(|| eval.heap().alloc(AllocStruct(Vec::<(&str, Value)>::new())));
         let impl_ = match transition {
-            TransitionData::MagicObject(v) => v.implementation.to_value(),
+            TransitionData::MagicObject(v) | TransitionData::BazelAttribute(v) => {
+                v.implementation.to_value()
+            }
             TransitionData::AnalysisTest(_) => {
                 unreachable!("analysis test transitions are applied without Starlark evaluation")
             }
@@ -362,6 +442,9 @@ fn call_transition_function<'v>(
         }
         TransitionData::AnalysisTest(_) => {
             unreachable!("analysis test transitions are applied without Starlark evaluation")
+        }
+        TransitionData::BazelAttribute(_) => {
+            unreachable!("Bazel attribute transitions are handled by the Bazel branch")
         }
         TransitionData::Target(v) => v.r#impl.to_value().get(),
     };

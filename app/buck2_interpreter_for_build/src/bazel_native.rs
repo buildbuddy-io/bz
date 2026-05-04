@@ -25,11 +25,13 @@ use starlark::values::none::NoneType;
 use starlark::values::starlark_value;
 use starlark::values::tuple::UnpackTuple;
 
+use crate::interpreter::build_context::BuildContext;
+
 #[derive(Debug, buck2_error::Error)]
 #[buck2(tag = Input)]
 enum BazelNativeError {
-    #[error("`native.register_toolchains` is not implemented yet")]
-    RegisterToolchainsNotImplemented,
+    #[error("`native.register_toolchains` expected a string target pattern, got `{0}`")]
+    RegisterToolchainsNonString(String),
     #[error("Bazel label build setting requires the prelude `alias` rule to be loaded")]
     MissingAliasRule,
     #[error("Bazel native rule `{0}` requires a loaded Buck rule with the same name")]
@@ -78,9 +80,24 @@ fn bazel_native_module(builder: &mut GlobalsBuilder) {
     }
 
     fn register_toolchains<'v>(
-        #[starlark(args)] _toolchains: UnpackTuple<Value<'v>>,
+        #[starlark(args)] toolchains: UnpackTuple<Value<'v>>,
+        eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<NoneType> {
-        Err(buck2_error::Error::from(BazelNativeError::RegisterToolchainsNotImplemented).into())
+        let build_context = BuildContext::from_context(eval)?;
+        if let Some(recorder) = build_context.bazel_repository_rule_recorder {
+            for toolchain in toolchains.items {
+                let Some(pattern) = toolchain.unpack_str() else {
+                    return Err(buck2_error::Error::from(
+                        BazelNativeError::RegisterToolchainsNonString(
+                            toolchain.get_type().to_owned(),
+                        ),
+                    )
+                    .into());
+                };
+                recorder.record_registered_toolchain(pattern.to_owned());
+            }
+        }
+        Ok(NoneType)
     }
 }
 

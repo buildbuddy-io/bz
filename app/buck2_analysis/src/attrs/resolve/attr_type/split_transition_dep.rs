@@ -20,6 +20,11 @@ use crate::attrs::resolve::attr_type::dep::DepAttrTypeExt;
 use crate::attrs::resolve::ctx::AttrResolutionContext;
 
 pub(crate) trait SplitTransitionDepAttrTypeExt {
+    fn resolve_values<'v>(
+        ctx: &mut dyn AttrResolutionContext<'v>,
+        deps: &ConfiguredSplitTransitionDep,
+    ) -> buck2_error::Result<Vec<Value<'v>>>;
+
     fn resolve_single<'v>(
         ctx: &mut dyn AttrResolutionContext<'v>,
         deps: &ConfiguredSplitTransitionDep,
@@ -27,6 +32,22 @@ pub(crate) trait SplitTransitionDepAttrTypeExt {
 }
 
 impl SplitTransitionDepAttrTypeExt for SplitTransitionDepAttrType {
+    fn resolve_values<'v>(
+        ctx: &mut dyn AttrResolutionContext<'v>,
+        deps: &ConfiguredSplitTransitionDep,
+    ) -> buck2_error::Result<Vec<Value<'v>>> {
+        let mut values = Vec::with_capacity(deps.deps.len());
+        for target in deps.deps.values() {
+            values.push(DepAttrType::resolve_single_impl(
+                ctx,
+                target,
+                &deps.required_providers,
+                false,
+            )?);
+        }
+        Ok(values)
+    }
+
     fn resolve_single<'v>(
         ctx: &mut dyn AttrResolutionContext<'v>,
         deps: &ConfiguredSplitTransitionDep,

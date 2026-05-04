@@ -11,6 +11,7 @@
 use std::cell::Ref;
 use std::cell::RefCell;
 use std::cell::RefMut;
+use std::collections::HashSet;
 use std::convert::Infallible;
 use std::fmt;
 use std::fmt::Debug;
@@ -39,6 +40,7 @@ use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
 use starlark::environment::MethodsStatic;
 use starlark::eval::Arguments;
+use starlark::eval::Evaluator;
 use starlark::static_starlark_value;
 use starlark::typing::Ty;
 use starlark::values::AllocValue;
@@ -59,9 +61,11 @@ use starlark::values::ValueLike;
 use starlark::values::ValueOf;
 use starlark::values::list::ListRef;
 use starlark::values::list::UnpackList;
+use starlark::values::none::NoneOr;
 use starlark::values::starlark_value;
 use starlark::values::tuple::UnpackTuple;
 use starlark::values::type_repr::StarlarkTypeRepr;
+use starlark::values::typing::StarlarkCallable;
 use static_assertions::assert_eq_size;
 
 use crate::artifact_groups::ArtifactGroup;
@@ -86,6 +90,8 @@ use crate::interpreter::rule_defs::cmd_args::traits::SimpleCommandLineArtifactVi
 use crate::interpreter::rule_defs::cmd_args::traits::WriteToFileMacroVisitor;
 use crate::interpreter::rule_defs::cmd_args::value::CommandLineArg;
 use crate::interpreter::rule_defs::cmd_args::value::FrozenCommandLineArg;
+use crate::interpreter::rule_defs::depset::BazelDepset;
+use crate::interpreter::rule_defs::depset::bazel_depset_to_list;
 
 #[derive(Debug, buck2_error::Error)]
 pub enum CommandLineError {
@@ -704,6 +710,52 @@ impl<'v> StarlarkCmdArgs<'v> {
         Self::default()
     }
 
+    pub fn from_values(values: impl IntoIterator<Item = Value<'v>>) -> buck2_error::Result<Self> {
+        let mut builder = Self::new();
+        builder.0.get_mut().add_from_iterator(values.into_iter())?;
+        Ok(builder)
+    }
+
+    pub fn add_hidden_value(&mut self, value: Value<'v>) -> buck2_error::Result<()> {
+        self.0
+            .get_mut()
+            .add_hidden(StarlarkCommandLineValueUnpack::unpack_value_err(value)?)
+    }
+
+    pub fn add_bazel_hidden_value(
+        &mut self,
+        value: Value<'v>,
+        heap: Heap<'v>,
+    ) -> starlark::Result<()> {
+        if value.is_none() {
+            return Ok(());
+        }
+
+        if BazelDepset::from_value(value).is_some() {
+            for item in bazel_depset_to_list(value)? {
+                self.add_bazel_hidden_value(item, heap)?;
+            }
+            return Ok(());
+        }
+
+        if let Some(value) = StarlarkCommandLineValueUnpack::unpack_value(value)? {
+            self.0.get_mut().add_hidden(value)?;
+            return Ok(());
+        }
+
+        let values = value.iterate(heap).map_err(|_| {
+            buck2_error::buck2_error!(
+                buck2_error::ErrorTag::Input,
+                "expected hidden action input/tool to be a command-line value, sequence, or depset, got `{}`",
+                value.get_type()
+            )
+        })?;
+        for item in values {
+            self.add_bazel_hidden_value(item, heap)?;
+        }
+        Ok(())
+    }
+
     pub fn try_from_value(value: Value<'v>) -> buck2_error::Result<Self> {
         Self::try_from_value_typed(StarlarkCommandLineValueUnpack::unpack_value_err(value)?)
     }
@@ -779,6 +831,101 @@ impl<'v> StarlarkCommandLineData<'v> {
     }
 }
 
+fn bazel_args_format_string<'v>(
+    value: NoneOr<StringValue<'v>>,
+    heap: Heap<'v>,
+    parameter: &str,
+) -> starlark::Result<Option<StringValue<'v>>> {
+    let Some(value) = value.into_option() else {
+        return Ok(None);
+    };
+    let format = value.as_str();
+    let count = format.match_indices("%s").count();
+    if count != 1 {
+        return Err(buck2_error::buck2_error!(
+            buck2_error::ErrorTag::Input,
+            "Invalid value for parameter `{}`: expected string with a single `%s`, got `{}`",
+            parameter,
+            format
+        )
+        .into());
+    }
+    Ok(Some(heap.alloc_str(&format.replace("%s", "{}"))))
+}
+
+fn bazel_args_values<'v>(value: Value<'v>, heap: Heap<'v>) -> starlark::Result<Vec<Value<'v>>> {
+    if BazelDepset::from_value(value).is_some() {
+        return bazel_depset_to_list(value);
+    }
+    Ok(value
+        .iterate(heap)
+        .map_err(|_| {
+            buck2_error::buck2_error!(
+                buck2_error::ErrorTag::Input,
+                "expected value of type `sequence or depset`, got `{}`",
+                value.get_type()
+            )
+        })?
+        .collect())
+}
+
+fn bazel_args_extend_mapped_value<'v>(
+    mapped: Value<'v>,
+    values: &mut Vec<Value<'v>>,
+    heap: Heap<'v>,
+) -> starlark::Result<()> {
+    if mapped.is_none() {
+        return Ok(());
+    }
+    if mapped.unpack_str().is_some() {
+        values.push(mapped);
+        return Ok(());
+    }
+    match mapped.iterate(heap) {
+        Ok(iter) => values.extend(iter),
+        Err(_) => values.push(mapped),
+    }
+    Ok(())
+}
+
+fn bazel_args_apply_map_each<'v>(
+    values: Vec<Value<'v>>,
+    map_each: NoneOr<StarlarkCallable<'v, (Value<'v>,), Value<'v>>>,
+    eval: &mut Evaluator<'v, '_, '_>,
+) -> starlark::Result<Vec<Value<'v>>> {
+    let Some(map_each) = map_each.into_option() else {
+        return Ok(values);
+    };
+    let mut mapped = Vec::new();
+    for value in values {
+        let result = eval.eval_function(map_each.0.to_value(), &[value], &[])?;
+        bazel_args_extend_mapped_value(result, &mut mapped, eval.heap())?;
+    }
+    Ok(mapped)
+}
+
+fn bazel_args_uniquify(values: &mut Vec<Value<'_>>) {
+    let mut seen = HashSet::new();
+    values.retain(|value| seen.insert(value.to_repr()));
+}
+
+fn bazel_args_nested<'v>(
+    values: Vec<Value<'v>>,
+    format_each: Option<StringValue<'v>>,
+    before_each: Option<StringValue<'v>>,
+    join_with: Option<StringValue<'v>>,
+) -> buck2_error::Result<StarlarkCmdArgs<'v>> {
+    let mut nested = StarlarkCommandLineData::default();
+    if format_each.is_some() || before_each.is_some() || join_with.is_some() {
+        let opts = nested.options_mut();
+        opts.format = format_each;
+        opts.prepend = before_each;
+        opts.delimiter = join_with;
+    }
+    nested.add_from_iterator(values.into_iter())?;
+    Ok(StarlarkCmdArgs(RefCell::new(nested)))
+}
+
 struct StarlarkCommandLineMut<'v> {
     value: Value<'v>,
     borrow: RefMut<'v, StarlarkCommandLineData<'v>>,
@@ -839,6 +986,163 @@ fn cmd_args_methods(builder: &mut MethodsBuilder) {
         let values = args.positions(heap)?;
         this.borrow.add_from_iterator(values)?;
         Ok(this)
+    }
+
+    /// Bazel-compatible vector addition.
+    fn add_all<'v>(
+        mut this: StarlarkCommandLineMut<'v>,
+        #[starlark(require = pos)] arg_name_or_values: Value<'v>,
+        #[starlark(require = pos)] values: Option<Value<'v>>,
+        #[starlark(require = named, default = NoneOr::None)] map_each: NoneOr<
+            StarlarkCallable<'v, (Value<'v>,), Value<'v>>,
+        >,
+        #[starlark(require = named, default = NoneOr::None)] format_each: NoneOr<StringValue<'v>>,
+        #[starlark(require = named, default = NoneOr::None)] before_each: NoneOr<StringValue<'v>>,
+        #[starlark(require = named, default = true)] omit_if_empty: bool,
+        #[starlark(require = named, default = false)] uniquify: bool,
+        #[starlark(require = named, default = true)] expand_directories: bool,
+        #[starlark(require = named, default = NoneOr::None)] terminate_with: NoneOr<
+            StringValue<'v>,
+        >,
+        #[starlark(require = named, default = false)] allow_closure: bool,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<StarlarkCommandLineMut<'v>> {
+        let _unused = (expand_directories, allow_closure);
+        let (arg_name, values) = match values {
+            Some(values) => {
+                let Some(arg_name) = arg_name_or_values.unpack_str() else {
+                    return Err(buck2_error::buck2_error!(
+                        buck2_error::ErrorTag::Input,
+                        "expected value of type `string` for arg name, got `{}`",
+                        arg_name_or_values.get_type()
+                    )
+                    .into());
+                };
+                (Some(arg_name), values)
+            }
+            None => (None, arg_name_or_values),
+        };
+        let mut values = bazel_args_values(values, eval.heap())?;
+        values = bazel_args_apply_map_each(values, map_each, eval)?;
+        if values.is_empty() && omit_if_empty {
+            return Ok(this);
+        }
+        if uniquify {
+            bazel_args_uniquify(&mut values);
+        }
+        if let Some(arg_name) = arg_name {
+            this.borrow
+                .add_value(eval.heap().alloc_str(arg_name).to_value())?;
+        }
+        if !values.is_empty() {
+            let nested = bazel_args_nested(
+                values,
+                bazel_args_format_string(format_each, eval.heap(), "format_each")?,
+                before_each.into_option(),
+                None,
+            )?;
+            this.borrow
+                .add_value(eval.heap().alloc_typed(nested).to_value())?;
+        }
+        if let Some(terminate_with) = terminate_with.into_option() {
+            this.borrow.add_value(terminate_with.to_value())?;
+        }
+        Ok(this)
+    }
+
+    /// Bazel-compatible vector addition joined into one argument.
+    fn add_joined<'v>(
+        mut this: StarlarkCommandLineMut<'v>,
+        #[starlark(require = pos)] arg_name_or_values: Value<'v>,
+        #[starlark(require = pos)] values: Option<Value<'v>>,
+        #[starlark(require = named)] join_with: StringValue<'v>,
+        #[starlark(require = named, default = NoneOr::None)] map_each: NoneOr<
+            StarlarkCallable<'v, (Value<'v>,), Value<'v>>,
+        >,
+        #[starlark(require = named, default = NoneOr::None)] format_each: NoneOr<StringValue<'v>>,
+        #[starlark(require = named, default = NoneOr::None)] format_joined: NoneOr<StringValue<'v>>,
+        #[starlark(require = named, default = true)] omit_if_empty: bool,
+        #[starlark(require = named, default = false)] uniquify: bool,
+        #[starlark(require = named, default = true)] expand_directories: bool,
+        #[starlark(require = named, default = false)] allow_closure: bool,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<StarlarkCommandLineMut<'v>> {
+        let _unused = (expand_directories, allow_closure);
+        let (arg_name, values) = match values {
+            Some(values) => {
+                let Some(arg_name) = arg_name_or_values.unpack_str() else {
+                    return Err(buck2_error::buck2_error!(
+                        buck2_error::ErrorTag::Input,
+                        "expected value of type `string` for arg name, got `{}`",
+                        arg_name_or_values.get_type()
+                    )
+                    .into());
+                };
+                (Some(arg_name), values)
+            }
+            None => (None, arg_name_or_values),
+        };
+        let mut values = bazel_args_values(values, eval.heap())?;
+        values = bazel_args_apply_map_each(values, map_each, eval)?;
+        if values.is_empty() && omit_if_empty {
+            return Ok(this);
+        }
+        if uniquify {
+            bazel_args_uniquify(&mut values);
+        }
+        if let Some(arg_name) = arg_name {
+            this.borrow
+                .add_value(eval.heap().alloc_str(arg_name).to_value())?;
+        }
+        if values.is_empty() {
+            this.borrow
+                .add_value(eval.heap().alloc_str("").to_value())?;
+            return Ok(this);
+        }
+        let joined = bazel_args_nested(
+            values,
+            bazel_args_format_string(format_each, eval.heap(), "format_each")?,
+            None,
+            Some(join_with),
+        )?;
+        let joined = eval.heap().alloc_typed(joined);
+        if let Some(format_joined) =
+            bazel_args_format_string(format_joined, eval.heap(), "format_joined")?
+        {
+            let outer =
+                bazel_args_nested(vec![joined.to_value()], Some(format_joined), None, None)?;
+            this.borrow
+                .add_value(eval.heap().alloc_typed(outer).to_value())?;
+        } else {
+            this.borrow.add_value(joined.to_value())?;
+        }
+        Ok(this)
+    }
+
+    /// Records Bazel param-file preferences. Buck's command-line lowering keeps the arguments inline
+    /// until a native param-file action shape is available here.
+    fn use_param_file<'v>(
+        this: StarlarkCommandLineMut<'v>,
+        #[starlark(require = pos)] param_file_arg: &str,
+        #[starlark(require = named, default = false)] use_always: bool,
+    ) -> starlark::Result<StarlarkCommandLineMut<'v>> {
+        let _unused = (param_file_arg, use_always);
+        Ok(this)
+    }
+
+    /// Records Bazel param-file formatting preferences.
+    fn set_param_file_format<'v>(
+        this: StarlarkCommandLineMut<'v>,
+        #[starlark(require = pos)] format: &str,
+    ) -> starlark::Result<StarlarkCommandLineMut<'v>> {
+        match format {
+            "shell" | "multiline" | "flag_per_line" => Ok(this),
+            _ => Err(buck2_error::buck2_error!(
+                buck2_error::ErrorTag::Input,
+                "Invalid value for parameter `format`: expected one of `shell`, `multiline`, `flag_per_line`"
+            )
+            .into()),
+        }
     }
 
     /// Make all artifact paths relative to a given location. Typically used when the command

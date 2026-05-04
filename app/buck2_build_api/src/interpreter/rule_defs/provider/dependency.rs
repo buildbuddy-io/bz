@@ -126,6 +126,17 @@ impl<'v> Dependency<'v> {
             NoneOr::Other(e) => Ok(Some(&e.0)),
         }
     }
+
+    pub fn default_output_values(&self) -> buck2_error::Result<Vec<Value<'v>>> {
+        let default_outputs = self
+            .provider_collection
+            .default_info()?
+            .default_outputs_raw();
+        let files = ListRef::from_frozen_value(default_outputs).ok_or_else(|| {
+            buck2_error::internal_error!("DefaultInfo.default_outputs is not a list")
+        })?;
+        Ok(files.iter().collect())
+    }
 }
 
 #[starlark_value(type = "Dependency")]
@@ -216,16 +227,7 @@ fn dependency_methods(builder: &mut MethodsBuilder) {
     /// Bazel target-style shortcut for `dep[DefaultInfo].files`.
     #[starlark(attribute)]
     fn files<'v>(this: &Dependency<'v>, heap: Heap<'v>) -> starlark::Result<Value<'v>> {
-        let default_outputs = this
-            .provider_collection
-            .default_info()?
-            .default_outputs_raw();
-        let files = ListRef::from_frozen_value(default_outputs)
-            .ok_or_else(|| {
-                buck2_error::internal_error!("DefaultInfo.default_outputs is not a list")
-            })?
-            .iter()
-            .collect::<Vec<_>>();
+        let files = this.default_output_values()?;
         Ok(heap.alloc(bazel_depset_from_direct(files)?))
     }
 

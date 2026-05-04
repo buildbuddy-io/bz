@@ -404,7 +404,7 @@ java_runtime = prelude_rule(
         "srcs": attrs.list(attrs.source(allow_directory = True), default = []),
         "java": attrs.option(attrs.source(), default = None),
         "java_home": attrs.option(attrs.string(), default = None),
-        "version": attrs.option(attrs.string(), default = None),
+        "version": attrs.option(attrs.int(), default = None),
         "hermetic_srcs": attrs.list(attrs.source(allow_directory = True), default = []),
         "features": attrs.list(attrs.string(), default = []),
         "tags": attrs.list(attrs.string(), default = []),

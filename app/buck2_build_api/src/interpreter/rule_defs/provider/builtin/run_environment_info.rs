@@ -41,6 +41,30 @@ pub struct RunEnvironmentInfoGen<V: ValueLifetimeless> {
     inherited_environment: ValueOfUncheckedGeneric<V, ListType<String>>,
 }
 
+pub(crate) fn make_run_environment_info<'v>(
+    environment: UnpackDictEntries<&'v str, &'v str>,
+    inherited_environment: UnpackListOrTuple<&'v str>,
+    eval: &mut Evaluator<'v, '_, '_>,
+) -> RunEnvironmentInfo<'v> {
+    let heap = eval.heap();
+    let environment = heap.alloc(AllocDict(
+        environment
+            .entries
+            .into_iter()
+            .map(|(key, value)| (key.to_owned(), value.to_owned())),
+    ));
+    let inherited_environment = heap.alloc(AllocList(
+        inherited_environment
+            .items
+            .into_iter()
+            .map(|name| name.to_owned()),
+    ));
+    RunEnvironmentInfo {
+        environment: ValueOfUnchecked::new(environment),
+        inherited_environment: ValueOfUnchecked::new(inherited_environment),
+    }
+}
+
 #[starlark_module]
 fn run_environment_info_creator(globals: &mut GlobalsBuilder) {
     #[starlark(as_type = FrozenRunEnvironmentInfo)]
@@ -53,22 +77,10 @@ fn run_environment_info_creator(globals: &mut GlobalsBuilder) {
         inherited_environment: UnpackListOrTuple<&'v str>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<RunEnvironmentInfo<'v>> {
-        let heap = eval.heap();
-        let environment = heap.alloc(AllocDict(
-            environment
-                .entries
-                .into_iter()
-                .map(|(key, value)| (key.to_owned(), value.to_owned())),
-        ));
-        let inherited_environment = heap.alloc(AllocList(
-            inherited_environment
-                .items
-                .into_iter()
-                .map(|name| name.to_owned()),
-        ));
-        Ok(RunEnvironmentInfo {
-            environment: ValueOfUnchecked::new(environment),
-            inherited_environment: ValueOfUnchecked::new(inherited_environment),
-        })
+        Ok(make_run_environment_info(
+            environment,
+            inherited_environment,
+            eval,
+        ))
     }
 }

@@ -18,6 +18,7 @@ use buck2_core::cells::CellAliasResolver;
 use buck2_core::cells::CellResolver;
 use buck2_core::cells::cell_path::CellPath;
 use buck2_core::cells::cell_path_with_allowed_relative_dir::CellPathWithAllowedRelativeDir;
+use buck2_core::cells::external::bzlmod_cell_name;
 use buck2_core::cells::name::CellName;
 use buck2_core::cells::paths::CellRelativePathBuf;
 use buck2_core::package::PackageLabel;
@@ -223,7 +224,12 @@ impl BuildAttrCoercionContext {
             {
                 self.parse_pattern::<ProvidersPatternExtra>(&format!(":{value}"))?
             }
-            Err(e) => return Err(e),
+            Err(e) => {
+                if let Some(label) = self.coerce_bazel_non_visible_repo_label(value)? {
+                    return Ok(label);
+                }
+                return Err(e);
+            }
         };
         match pattern {
             ParsedPattern::Target(package, target_name, providers) => {
@@ -245,6 +251,49 @@ impl BuildAttrCoercionContext {
         }
     }
 
+    fn coerce_bazel_non_visible_repo_label(
+        &self,
+        value: &str,
+    ) -> buck2_error::Result<Option<ProvidersLabel>> {
+        if !self.is_bazel_compat_cell() {
+            return Ok(None);
+        }
+
+        let Some(value) = value.strip_prefix('@') else {
+            return Ok(None);
+        };
+        if value.starts_with('@') {
+            return Ok(None);
+        }
+
+        let Some((repo, label)) = value.split_once("//") else {
+            return Ok(None);
+        };
+        if repo.is_empty() || self.cell_alias_resolver.resolve(repo).is_ok() {
+            return Ok(None);
+        }
+
+        let Some((package, target)) = bazel_absolute_label_parts(label) else {
+            return Ok(None);
+        };
+
+        // Bazel keeps labels with repos that are not visible from the current repo as
+        // non-visible RepositoryName values and reports the repo-mapping error only if
+        // analysis actually reaches that label.
+        let cell_name = CellName::unchecked_new(&bzlmod_cell_name(&format!(
+            "unknown+{}+{}",
+            self.cell_name.as_str(),
+            repo
+        )))?;
+        let package =
+            PackageLabel::new(cell_name, CellRelativePathBuf::try_from(package)?.as_ref())?;
+        let target = TargetNameRef::new(&target)?;
+        Ok(Some(ProvidersLabel::new(
+            buck2_core::target::label::label::TargetLabel::new(package, target),
+            ProvidersName::Default,
+        )))
+    }
+
     fn require_enclosing_package(
         &self,
         msg: &str,
@@ -262,6 +311,22 @@ fn is_bazel_relative_target_shorthand(value: &str) -> bool {
         && !value.contains(':')
         && !value.contains('[')
         && !value.contains(']')
+}
+
+fn bazel_absolute_label_parts(label: &str) -> Option<(String, String)> {
+    if let Some((package, target)) = label.rsplit_once(':') {
+        if target.is_empty() {
+            None
+        } else {
+            Some((package.to_owned(), target.to_owned()))
+        }
+    } else {
+        label
+            .rsplit('/')
+            .next()
+            .filter(|target| !target.is_empty())
+            .map(|target| (label.to_owned(), target.to_owned()))
+    }
 }
 
 impl AttrCoercionContext for BuildAttrCoercionContext {

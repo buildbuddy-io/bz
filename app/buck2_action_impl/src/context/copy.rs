@@ -128,6 +128,45 @@ pub(crate) fn analysis_actions_methods_copy(methods: &mut MethodsBuilder) {
         )?)
     }
 
+    /// Bazel spelling for creating a symlink output.
+    fn symlink<'v>(
+        this: &AnalysisActions<'v>,
+        #[starlark(require = named)] output: OutputArtifactArg<'v>,
+        #[starlark(require = named, default = NoneOr::None)] target_file: NoneOr<
+            ValueAsInputArtifactLike<'v>,
+        >,
+        #[starlark(require = named, default = NoneOr::None)] target_path: NoneOr<&str>,
+        #[starlark(require = named, default = NoneOr::None)] is_executable: NoneOr<bool>,
+        #[starlark(require = named, default = NoneOr::None)] progress_message: NoneOr<&str>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<ValueTyped<'v, StarlarkDeclaredArtifact<'v>>> {
+        let _ = (is_executable, progress_message);
+        if let Some(target_path) = target_path.into_option() {
+            return Err(buck2_error::buck2_error!(
+                buck2_error::ErrorTag::Input,
+                "ctx.actions.symlink(target_path = {}) is not supported yet",
+                target_path
+            )
+            .into());
+        }
+        let target_file = target_file.into_option().ok_or_else(|| {
+            buck2_error::buck2_error!(
+                buck2_error::ErrorTag::Input,
+                "ctx.actions.symlink requires `target_file` or `target_path`"
+            )
+        })?;
+
+        Ok(copy_file_impl(
+            eval,
+            this,
+            output,
+            target_file,
+            CopyMode::Symlink,
+            OutputType::FileOrDirectory,
+            None,
+        )?)
+    }
+
     /// Make a copy of a directory.
     fn copy_dir<'v>(
         this: &AnalysisActions<'v>,

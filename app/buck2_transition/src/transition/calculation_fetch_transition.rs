@@ -36,6 +36,7 @@ use crate::transition::starlark::FrozenTransition;
 
 pub(crate) enum TransitionData {
     MagicObject(OwnedFrozenValueTyped<FrozenTransition>),
+    BazelAttribute(OwnedFrozenValueTyped<FrozenTransition>),
     AnalysisTest(BTreeMap<String, BazelBuildSettingValue>),
     Target(OwnedFrozenValueTyped<FrozenTransitionInfo>),
 }
@@ -45,7 +46,9 @@ impl TransitionData {
         &self,
     ) -> impl Iterator<Item = (&FrozenStringValue, &ProvidersLabel)> + Send + Sync {
         match self {
-            TransitionData::MagicObject(v) => Either::Left(v.refs.iter()),
+            TransitionData::MagicObject(v) | TransitionData::BazelAttribute(v) => {
+                Either::Left(v.refs.iter())
+            }
             TransitionData::AnalysisTest(_) | TransitionData::Target(_) => {
                 Either::Right([].into_iter())
             }
@@ -55,6 +58,7 @@ impl TransitionData {
 
     pub(crate) fn attrs(&self) -> TransitionAttrs {
         match self {
+            TransitionData::BazelAttribute(_) => TransitionAttrs::BazelAll,
             TransitionData::MagicObject(v) if v.is_bazel => TransitionAttrs::BazelAll,
             TransitionData::MagicObject(v) => v
                 .attrs_names
@@ -86,6 +90,7 @@ impl TransitionData {
 
     pub(crate) fn is_split(&self) -> bool {
         match self {
+            TransitionData::BazelAttribute(_) => true,
             TransitionData::MagicObject(v) => v.split,
             TransitionData::AnalysisTest(_) | TransitionData::Target(_) => false,
         }
@@ -93,6 +98,7 @@ impl TransitionData {
 
     pub(crate) fn is_bazel(&self) -> bool {
         match self {
+            TransitionData::BazelAttribute(_) => true,
             TransitionData::MagicObject(v) => v.is_bazel,
             TransitionData::AnalysisTest(_) | TransitionData::Target(_) => false,
         }
@@ -100,6 +106,7 @@ impl TransitionData {
 
     pub(crate) fn bazel_inputs(&self) -> &[starlark::values::FrozenStringValue] {
         match self {
+            TransitionData::BazelAttribute(v) => &v.inputs,
             TransitionData::MagicObject(v) if v.is_bazel => &v.inputs,
             _ => &[],
         }
@@ -113,11 +120,29 @@ impl TransitionData {
             TransitionData::MagicObject(v) if v.is_bazel && key.starts_with("//") => {
                 match v.id.as_ref() {
                     TransitionId::MagicObject { path, .. } => format!("{}{}", path.cell(), key),
+                    TransitionId::BazelAttribute(inner) => match inner.as_ref() {
+                        TransitionId::MagicObject { path, .. } => {
+                            format!("{}{}", path.cell(), key)
+                        }
+                        TransitionId::BazelAttribute(_)
+                        | TransitionId::BazelAnalysisTest { .. }
+                        | TransitionId::Target(_) => key.to_owned(),
+                    },
                     TransitionId::BazelAnalysisTest { .. } | TransitionId::Target(_) => {
                         key.to_owned()
                     }
                 }
             }
+            TransitionData::BazelAttribute(v) if key.starts_with("//") => match v.id.as_ref() {
+                TransitionId::MagicObject { path, .. } => format!("{}{}", path.cell(), key),
+                TransitionId::BazelAttribute(inner) => match inner.as_ref() {
+                    TransitionId::MagicObject { path, .. } => format!("{}{}", path.cell(), key),
+                    TransitionId::BazelAttribute(_)
+                    | TransitionId::BazelAnalysisTest { .. }
+                    | TransitionId::Target(_) => key.to_owned(),
+                },
+                TransitionId::BazelAnalysisTest { .. } | TransitionId::Target(_) => key.to_owned(),
+            },
             _ => key.to_owned(),
         }
     }
@@ -127,7 +152,9 @@ impl TransitionData {
     ) -> Option<&BTreeMap<String, BazelBuildSettingValue>> {
         match self {
             TransitionData::AnalysisTest(settings) => Some(settings),
-            TransitionData::MagicObject(_) | TransitionData::Target(_) => None,
+            TransitionData::MagicObject(_)
+            | TransitionData::BazelAttribute(_)
+            | TransitionData::Target(_) => None,
         }
     }
 }
@@ -146,6 +173,8 @@ enum FetchTransitionError {
     NotFound(TransitionId),
     #[error("Expected `{0}` to be a transition target, but it had no `TransitionInfo` provider.")]
     MissingTransitionInfo(ProvidersLabel),
+    #[error("Expected `{0}` to be a Bazel Starlark transition for attribute cfg.")]
+    NotBazelAttributeTransition(TransitionId),
 }
 
 #[async_trait]
@@ -165,6 +194,29 @@ impl FetchTransition for DiceComputations<'_> {
 
                 Ok(TransitionData::MagicObject(transition.downcast_starlark()?))
             }
+            TransitionId::BazelAttribute(inner) => match inner.as_ref() {
+                TransitionId::MagicObject { path, name } => {
+                    let module = self.get_loaded_module_from_import_path(path).await?;
+                    let transition: OwnedFrozenValueTyped<FrozenTransition> = module
+                        .env()
+                        .get_any_visibility(name)
+                        .map_err(|_| {
+                            buck2_error::Error::from(FetchTransitionError::NotFound(id.clone()))
+                        })?
+                        .0
+                        .downcast_starlark()?;
+                    if !transition.is_bazel {
+                        return Err(FetchTransitionError::NotBazelAttributeTransition(
+                            (**inner).clone(),
+                        )
+                        .into());
+                    }
+                    Ok(TransitionData::BazelAttribute(transition))
+                }
+                _ => {
+                    Err(FetchTransitionError::NotBazelAttributeTransition((**inner).clone()).into())
+                }
+            },
             TransitionId::Target(label) => {
                 let transition_info = self
                     .get_configuration_analysis_result(label)

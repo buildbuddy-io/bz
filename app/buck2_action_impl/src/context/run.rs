@@ -15,6 +15,7 @@ use buck2_artifact::artifact::artifact_type::Artifact;
 use buck2_artifact::artifact::artifact_type::ArtifactErrors;
 use buck2_artifact::artifact::artifact_type::OutputArtifact;
 use buck2_build_api::artifact_groups::ArtifactGroup;
+use buck2_build_api::interpreter::rule_defs::artifact::starlark_declared_artifact::StarlarkDeclaredArtifact;
 use buck2_build_api::interpreter::rule_defs::artifact::starlark_output_artifact::StarlarkOutputArtifact;
 use buck2_build_api::interpreter::rule_defs::artifact_tagging::ArtifactTag;
 use buck2_build_api::interpreter::rule_defs::cmd_args::CommandLineArgLike;
@@ -35,6 +36,7 @@ use buck2_core::execution_types::executor_config::RemoteExecutorDependency;
 use buck2_error::BuckErrorContext;
 use buck2_error::conversion::from_any_with_tag;
 use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
+use buck2_hash::BuckIndexSet;
 use buck2_hash::StdBuckHashMap;
 use buck2_util::thin_box::ThinBoxSlice;
 use dupe::Dupe;
@@ -118,10 +120,122 @@ pub(crate) enum RunActionError {
         "Action is marked with `expect_eligible_for_dedupe` but input `{}` is not eligible for dedupe", .input
     )]
     ExpectEligibleForDedupeWithIneligibleInput { input: ArtifactGroup },
+    #[error("missing `arguments` parameter for `ctx.actions.run`")]
+    MissingArguments,
+    #[error("missing `category` parameter for Buck-style `ctx.actions.run`")]
+    MissingCategory,
+}
+
+fn bazel_run_outputs<'v>(
+    outputs: UnpackListOrTuple<ValueTyped<'v, StarlarkDeclaredArtifact<'v>>>,
+) -> BuckIndexSet<OutputArtifact<'v>> {
+    outputs
+        .into_iter()
+        .map(|artifact| artifact.output_artifact())
+        .collect()
+}
+
+fn bazel_run_add_hidden<'v>(
+    args: &mut StarlarkCmdArgs<'v>,
+    value: Value<'v>,
+    eval: &mut Evaluator<'v, '_, '_>,
+) -> starlark::Result<()> {
+    args.add_bazel_hidden_value(value, eval.heap())
+}
+
+fn register_bazel_run_action<'v>(
+    this: &AnalysisActions<'v>,
+    exe: StarlarkCmdArgs<'v>,
+    mut args: StarlarkCmdArgs<'v>,
+    inputs: Value<'v>,
+    tools: Value<'v>,
+    outputs: UnpackListOrTuple<ValueTyped<'v, StarlarkDeclaredArtifact<'v>>>,
+    env: Option<
+        ValueOf<'v, UnpackDictEntries<UnpackAndDiscard<&'v str>, ValueAsCommandLineLike<'v>>>,
+    >,
+    mnemonic: Option<StringValue<'v>>,
+    eval: &mut Evaluator<'v, '_, '_>,
+) -> starlark::Result<NoneType> {
+    bazel_run_add_hidden(&mut args, inputs, eval)?;
+    bazel_run_add_hidden(&mut args, tools, eval)?;
+
+    let outputs = bazel_run_outputs(outputs);
+    if outputs.is_empty() {
+        return Err(buck2_error::Error::from(RunActionError::NoOutputsSpecified).into());
+    }
+
+    let executor_preference = new_executor_preference(false, false, false)?;
+    let starlark_values = eval.heap().alloc_complex(StarlarkRunActionValues {
+        exe: eval.heap().alloc_typed(exe),
+        args: eval.heap().alloc_typed(args),
+        env: env.as_ref().map(|env| env.as_unchecked().cast()),
+        worker: None,
+        remote_worker: None,
+        category: mnemonic.unwrap_or_else(|| eval.heap().alloc_str("BazelRun")),
+        identifier: None,
+        outputs_for_error_handler: Vec::new(),
+    });
+
+    let action = UnregisteredRunAction {
+        executor_preference,
+        always_print_stderr: false,
+        eager_materialization_enabled: false,
+        weight: WeightClass::Permits(1),
+        low_pass_filter: true,
+        dep_files: RunActionDepFiles::new(),
+        metadata_param: None,
+        no_outputs_cleanup: false,
+        incremental_remote_outputs: false,
+        allow_cache_upload: None,
+        allow_dep_file_cache_upload: false,
+        allow_offline_output_cache: false,
+        force_full_hybrid_if_capable: false,
+        unique_input_inodes: false,
+        remote_execution_dependencies: ThinBoxSlice::empty(),
+        re_gang_workers: ThinBoxSlice::empty(),
+        remote_execution_custom_image: None,
+        meta_internal_extra_params: parse_meta_internal_extra_params(None)?,
+        expected_eligible_for_dedupe: None,
+        timeout: None,
+    };
+
+    this.state()?
+        .register_action(outputs, action, Some(starlark_values), None)?;
+    Ok(NoneType)
 }
 
 #[starlark_module]
 pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
+    /// Bazel-compatible shell action.
+    fn run_shell<'v>(
+        this: &AnalysisActions<'v>,
+        #[starlark(require = named)] command: &str,
+        #[starlark(require = named, default = UnpackListOrTuple::default())]
+        arguments: UnpackListOrTuple<Value<'v>>,
+        #[starlark(require = named, default = NoneType)] inputs: Value<'v>,
+        #[starlark(require = named, default = NoneType)] tools: Value<'v>,
+        #[starlark(require = named, default = UnpackListOrTuple::default())]
+        outputs: UnpackListOrTuple<ValueTyped<'v, StarlarkDeclaredArtifact<'v>>>,
+        #[starlark(require = named)] env: Option<
+            ValueOf<'v, UnpackDictEntries<UnpackAndDiscard<&'v str>, ValueAsCommandLineLike<'v>>>,
+        >,
+        #[starlark(require = named)] mnemonic: Option<StringValue<'v>>,
+        #[starlark(require = named, default = NoneType)] execution_requirements: Value<'v>,
+        #[starlark(require = named, default = NoneType)] toolchain: Value<'v>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<NoneType> {
+        let _unused = (execution_requirements, toolchain);
+        let heap = eval.heap();
+        let exe = StarlarkCmdArgs::from_values([heap.alloc_str("/bin/bash").to_value()])?;
+        let mut shell_args = Vec::with_capacity(arguments.items.len() + 3);
+        shell_args.push(heap.alloc_str("-c").to_value());
+        shell_args.push(heap.alloc_str(command).to_value());
+        shell_args.push(heap.alloc_str("buck2_run_shell").to_value());
+        shell_args.extend(arguments.items);
+        let args = StarlarkCmdArgs::from_values(shell_args)?;
+        register_bazel_run_action(this, exe, args, inputs, tools, outputs, env, mnemonic, eval)
+    }
+
     /// Run a command to produce one or more artifacts.
     ///
     /// * `arguments`: must be of type `cmd_args`, or a type convertible to such (such as a list of
@@ -245,12 +359,20 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
     /// and must not be already bound. Output artifacts become "bound" after this call.
     fn run<'v>(
         this: &AnalysisActions<'v>,
-        #[starlark(require = pos)] arguments: StarlarkCommandLineValueUnpack<'v>,
-        #[starlark(require = named)] category: StringValue<'v>,
+        #[starlark(default = NoneOr::None)] arguments: NoneOr<StarlarkCommandLineValueUnpack<'v>>,
+        #[starlark(require = named)] category: Option<StringValue<'v>>,
         #[starlark(require = named, default = NoneOr::None)] identifier: NoneOr<StringValue<'v>>,
         #[starlark(require = named)] env: Option<
             ValueOf<'v, UnpackDictEntries<UnpackAndDiscard<&'v str>, ValueAsCommandLineLike<'v>>>,
         >,
+        #[starlark(require = named)] executable: Option<Value<'v>>,
+        #[starlark(require = named, default = NoneType)] inputs: Value<'v>,
+        #[starlark(require = named, default = NoneType)] tools: Value<'v>,
+        #[starlark(require = named, default = UnpackListOrTuple::default())]
+        outputs: UnpackListOrTuple<ValueTyped<'v, StarlarkDeclaredArtifact<'v>>>,
+        #[starlark(require = named)] mnemonic: Option<StringValue<'v>>,
+        #[starlark(require = named, default = NoneType)] execution_requirements: Value<'v>,
+        #[starlark(require = named, default = NoneType)] toolchain: Value<'v>,
         #[starlark(require = named, default = false)] local_only: bool,
         #[starlark(require = named, default = false)] prefer_local: bool,
         #[starlark(require = named, default = false)] prefer_remote: bool,
@@ -298,6 +420,30 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
         >,
         #[starlark(require = named, default = false)] eager_materialization_enabled: bool,
     ) -> starlark::Result<NoneType> {
+        let arguments = arguments.into_option();
+        if let Some(executable) = executable {
+            let _unused = (execution_requirements, toolchain);
+            let exe = StarlarkCmdArgs::from_values([executable])?;
+            let args = match arguments {
+                Some(arguments) => StarlarkCmdArgs::try_from_value_typed(arguments)?,
+                None => StarlarkCmdArgs::default(),
+            };
+            return register_bazel_run_action(
+                this, exe, args, inputs, tools, outputs, env, mnemonic, eval,
+            );
+        }
+        let _unused_bazel_run_params = (
+            inputs,
+            tools,
+            outputs,
+            mnemonic,
+            execution_requirements,
+            toolchain,
+        );
+        let arguments =
+            arguments.ok_or_else(|| buck2_error::Error::from(RunActionError::MissingArguments))?;
+        let category =
+            category.ok_or_else(|| buck2_error::Error::from(RunActionError::MissingCategory))?;
         if incremental_remote_outputs && !no_outputs_cleanup {
             // Precaution to make sure content-based paths are not involved.
             return Err(buck2_error::Error::from(

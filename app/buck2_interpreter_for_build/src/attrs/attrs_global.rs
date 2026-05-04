@@ -10,10 +10,15 @@
 
 use std::sync::Arc;
 
+use buck2_common::package_listing::listing::PackageListing;
+use buck2_core::cells::cell_path_with_allowed_relative_dir::CellPathWithAllowedRelativeDir;
+use buck2_core::cells::name::CellName;
 use buck2_core::configuration::transition::id::TransitionId;
+use buck2_core::package::PackageLabel;
 use buck2_core::plugins::PluginKindSet;
 use buck2_core::target::label::interner::ConcurrentTargetLabelInterner;
 use buck2_error::BuckErrorContext;
+use buck2_fs::paths::file_name::FileNameBuf;
 use buck2_interpreter::coerce::COERCE_PROVIDERS_LABEL_FOR_BZL;
 use buck2_interpreter::types::provider::callable::ValueAsProviderCallableLike;
 use buck2_interpreter::types::transition::transition_id_from_value;
@@ -49,6 +54,7 @@ use crate::attrs::starlark_attribute::StarlarkAttribute;
 use crate::attrs::starlark_attribute::register_attr_type;
 use crate::bazel_configuration_field::BazelConfigurationField;
 use crate::interpreter::build_context::BuildContext;
+use crate::interpreter::build_context::PerFileTypeContext;
 use crate::interpreter::selector::StarlarkSelector;
 use crate::plugins::AllPlugins;
 use crate::plugins::PluginKindArg;
@@ -182,12 +188,9 @@ fn bazel_attr_with_allowed_values<'v>(
                 .buck_error_context("Error coercing Bazel attribute default")?,
         )),
     };
-    Ok(StarlarkAttribute::new(Attribute::new_with_allowed_values(
-        default,
-        doc,
-        coercer,
-        allowed_values,
-    )?))
+    Ok(StarlarkAttribute::new_bazel(
+        Attribute::new_with_allowed_values(default, doc, coercer, allowed_values)?,
+    ))
 }
 
 fn bazel_label_default<'v>(
@@ -234,7 +237,9 @@ fn bazel_attr_required<'v>(
     doc: &str,
     coercer: AttrType,
 ) -> buck2_error::Result<StarlarkAttribute> {
-    Ok(StarlarkAttribute::new(Attribute::new(None, doc, coercer)?))
+    Ok(StarlarkAttribute::new_bazel(Attribute::new(
+        None, doc, coercer,
+    )?))
 }
 
 fn bazel_label_allows_files(allow_files: Option<Value>, allow_single_file: Option<Value>) -> bool {
@@ -252,9 +257,9 @@ fn bazel_dep_attr_type<'v>(
             Some("target") => Ok(AttrType::dep(required_providers, PluginKindSet::EMPTY)),
             Some("exec") => Ok(AttrType::exec_dep(required_providers)),
             Some(other) => Err(AttrError::UnsupportedBazelAttrCfg(other.to_owned()).into()),
-            None => Ok(AttrType::transition_dep(
+            None => Ok(AttrType::split_transition_dep(
                 required_providers,
-                Some(transition_id_from_value(cfg)?),
+                Arc::new(TransitionId::BazelAttribute(transition_id_from_value(cfg)?)),
             )),
         },
     }
@@ -267,10 +272,11 @@ fn bazel_label_attr_type<'v>(
     cfg: Option<Value<'v>>,
     list: bool,
 ) -> buck2_error::Result<AttrType> {
+    let dep = bazel_dep_attr_type(dep_like_attr_handle_providers_arg(providers.items)?, cfg)?;
     let inner = if bazel_label_allows_files(allow_files, allow_single_file) {
-        AttrType::source(false)
+        AttrType::bazel_label(dep, AttrType::source(false))
     } else {
-        bazel_dep_attr_type(dep_like_attr_handle_providers_arg(providers.items)?, cfg)?
+        dep
     };
     Ok(if list { AttrType::list(inner) } else { inner })
 }
@@ -280,12 +286,41 @@ pub(crate) fn attr_coercion_context_for_bzl<'v>(
     eval: &Evaluator<'v, '_, '_>,
 ) -> buck2_error::Result<BuildAttrCoercionContext> {
     let build_context = BuildContext::from_context(eval)?;
+    let global_label_interner = Arc::new(ConcurrentTargetLabelInterner::default());
+    if let PerFileTypeContext::Bzl(bzl) = &build_context.additional {
+        let bzl_cell = bzl.bzl_path.cell();
+        let root_bazel_compat = bzl_cell.as_str() == "root"
+            && build_context
+                .cell_info()
+                .cell_resolver()
+                .get(CellName::unchecked_new("bazel_tools")?)
+                .is_ok();
+        if bzl_cell.as_str() == "bazel_tools"
+            || bzl_cell.as_str().starts_with("bzlmod_")
+            || root_bazel_compat
+        {
+            let package = PackageLabel::from_cell_path(bzl.bzl_path.path_parent())?;
+            return Ok(BuildAttrCoercionContext::new_with_package(
+                build_context.cell_info().cell_resolver().dupe(),
+                build_context.cell_info().cell_alias_resolver().dupe(),
+                (
+                    package.dupe(),
+                    PackageListing::empty(FileNameBuf::unchecked_new("BUILD.bazel")),
+                ),
+                false,
+                global_label_interner,
+                CellPathWithAllowedRelativeDir::backwards_relative_not_supported(
+                    package.to_cell_path(),
+                ),
+            ));
+        }
+    }
     Ok(BuildAttrCoercionContext::new_no_package(
         build_context.cell_info().cell_resolver().dupe(),
         build_context.cell_info().name().name(),
         build_context.cell_info().cell_alias_resolver().dupe(),
         // It is OK to not deduplicate because we don't coerce a lot of labels in bzl files.
-        Arc::new(ConcurrentTargetLabelInterner::default()),
+        global_label_interner,
     ))
 }
 

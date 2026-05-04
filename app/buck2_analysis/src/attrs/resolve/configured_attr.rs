@@ -26,6 +26,7 @@ use buck2_node::attrs::attr_type::source::SourceAttrType;
 use buck2_node::attrs::attr_type::split_transition_dep::SplitTransitionDepAttrType;
 use buck2_node::attrs::attr_type::transition_dep::TransitionDepAttrType;
 use buck2_node::attrs::configured_attr::ConfiguredAttr;
+use buck2_node::provider_id_set::ProviderIdSet;
 use buck2_node::visibility::VisibilityPatternList;
 use buck2_node::visibility::VisibilitySpecification;
 use buck2_node::visibility::WithinViewSpecification;
@@ -64,6 +65,12 @@ pub trait ConfiguredAttrExt {
     ) -> buck2_error::Result<Vec<Value<'v>>>;
 
     fn resolve_single<'v>(
+        &self,
+        pkg: PackageLabel,
+        ctx: &mut dyn AttrResolutionContext<'v>,
+    ) -> buck2_error::Result<Value<'v>>;
+
+    fn resolve_bazel<'v>(
         &self,
         pkg: PackageLabel,
         ctx: &mut dyn AttrResolutionContext<'v>,
@@ -171,6 +178,35 @@ impl ConfiguredAttrExt for ConfiguredAttr {
         }
     }
 
+    fn resolve_bazel<'v>(
+        &self,
+        pkg: PackageLabel,
+        ctx: &mut dyn AttrResolutionContext<'v>,
+    ) -> buck2_error::Result<Value<'v>> {
+        match self {
+            ConfiguredAttr::SplitTransitionDep(d) => {
+                Ok(ctx
+                    .heap()
+                    .alloc(AllocList(SplitTransitionDepAttrType::resolve_values(
+                        ctx,
+                        d.as_ref(),
+                    )?)))
+            }
+            ConfiguredAttr::SourceLabel(s) => {
+                DepAttrType::resolve_single_impl(ctx, s, &ProviderIdSet::EMPTY, false)
+            }
+            ConfiguredAttr::List(list) => {
+                let mut values = Vec::with_capacity(list.len());
+                for v in list.iter() {
+                    values.append(&mut resolve_bazel_list_items(v, pkg, ctx)?);
+                }
+                Ok(ctx.heap().alloc(values))
+            }
+            ConfiguredAttr::OneOf(box l, _) => l.resolve_bazel(pkg, ctx),
+            _ => self.resolve_single(pkg, ctx),
+        }
+    }
+
     /// Converts the configured attr to a starlark value without fully resolving
     fn to_value<'v>(
         &self,
@@ -178,6 +214,26 @@ impl ConfiguredAttrExt for ConfiguredAttr {
         heap: Heap<'v>,
     ) -> buck2_error::Result<Value<'v>> {
         configured_attr_to_value(self, pkg, heap)
+    }
+}
+
+fn resolve_bazel_list_items<'v>(
+    attr: &ConfiguredAttr,
+    pkg: PackageLabel,
+    ctx: &mut dyn AttrResolutionContext<'v>,
+) -> buck2_error::Result<Vec<Value<'v>>> {
+    match attr {
+        ConfiguredAttr::SplitTransitionDep(d) => {
+            SplitTransitionDepAttrType::resolve_values(ctx, d.as_ref())
+        }
+        ConfiguredAttr::SourceLabel(s) => Ok(vec![DepAttrType::resolve_single_impl(
+            ctx,
+            s,
+            &ProviderIdSet::EMPTY,
+            false,
+        )?]),
+        ConfiguredAttr::OneOf(box l, _) => resolve_bazel_list_items(l, pkg, ctx),
+        _ => attr.resolve(pkg, ctx),
     }
 }
 

@@ -8,8 +8,10 @@
  * above-listed licenses.
  */
 
+use std::fmt;
 use std::fmt::Debug;
 use std::iter;
+use std::marker::PhantomData;
 use std::ptr;
 
 use allocative::Allocative;
@@ -23,7 +25,11 @@ use starlark::any::ProvidesStaticType;
 use starlark::coerce::Coerce;
 use starlark::collections::SmallMap;
 use starlark::environment::GlobalsBuilder;
+use starlark::environment::Methods;
+use starlark::environment::MethodsBuilder;
+use starlark::environment::MethodsStatic;
 use starlark::eval::Evaluator;
+use starlark::starlark_complex_value;
 use starlark::values::Freeze;
 use starlark::values::FreezeError;
 use starlark::values::FrozenHeap;
@@ -31,6 +37,8 @@ use starlark::values::FrozenValue;
 use starlark::values::FrozenValueOfUnchecked;
 use starlark::values::FrozenValueTyped;
 use starlark::values::Heap;
+use starlark::values::NoSerialize;
+use starlark::values::StarlarkValue;
 use starlark::values::StringValue;
 use starlark::values::Trace;
 use starlark::values::UnpackAndDiscard;
@@ -49,7 +57,11 @@ use starlark::values::list::AllocList;
 use starlark::values::list::ListRef;
 use starlark::values::list::ListType;
 use starlark::values::list::UnpackList;
+use starlark::values::list_or_tuple::UnpackListOrTuple;
 use starlark::values::none::NoneOr;
+use starlark::values::starlark_value;
+use starlark::values::structs::AllocStruct;
+use starlark::values::structs::StructRef;
 
 use crate as buck2_build_api;
 use crate::artifact_groups::ArtifactGroup;
@@ -59,9 +71,169 @@ use crate::interpreter::rule_defs::artifact::starlark_artifact_like::ValueIsInpu
 use crate::interpreter::rule_defs::artifact_tagging::ArtifactTag;
 use crate::interpreter::rule_defs::cmd_args::CommandLineArtifactVisitor;
 use crate::interpreter::rule_defs::cmd_args::value_as::ValueAsCommandLineLike;
+use crate::interpreter::rule_defs::depset::BazelDepset;
+use crate::interpreter::rule_defs::depset::FrozenBazelDepset;
+use crate::interpreter::rule_defs::depset::bazel_depset_empty;
+use crate::interpreter::rule_defs::depset::bazel_depset_empty_frozen;
+use crate::interpreter::rule_defs::depset::bazel_depset_from_values;
 use crate::interpreter::rule_defs::depset::bazel_depset_to_list;
 use crate::interpreter::rule_defs::provider::ProviderCollection;
 use crate::interpreter::rule_defs::provider::collection::FrozenProviderCollection;
+
+#[derive(
+    Debug,
+    Clone,
+    Coerce,
+    Trace,
+    Freeze,
+    ProvidesStaticType,
+    NoSerialize,
+    Allocative
+)]
+#[repr(C)]
+pub struct BazelRunfilesGen<'v, V: ValueLike<'v>> {
+    files: ValueOfUncheckedGeneric<V, FrozenBazelDepset>,
+    _marker: PhantomData<&'v ()>,
+}
+
+starlark_complex_value!(pub BazelRunfiles<'v>);
+
+impl<'v, V: ValueLike<'v>> fmt::Display for BazelRunfilesGen<'v, V> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("runfiles")
+    }
+}
+
+#[starlark_value(type = "runfiles")]
+impl<'v, V: ValueLike<'v>> StarlarkValue<'v> for BazelRunfilesGen<'v, V>
+where
+    Self: ProvidesStaticType<'v>,
+{
+    fn get_methods() -> Option<&'static Methods> {
+        static RES: MethodsStatic = MethodsStatic::new();
+        RES.methods_for_type::<Self::Canonical>(bazel_runfiles_methods)
+    }
+}
+
+fn bazel_runfiles_from_depset<'v>(files: Value<'v>) -> BazelRunfiles<'v> {
+    BazelRunfiles {
+        files: ValueOfUnchecked::new(files),
+        _marker: PhantomData,
+    }
+}
+
+fn bazel_runfiles_empty_value<'v>(heap: Heap<'v>) -> Value<'v> {
+    heap.alloc(bazel_runfiles_from_depset(bazel_depset_empty(heap)))
+}
+
+fn bazel_runfiles_empty_frozen_value(heap: &FrozenHeap) -> FrozenValue {
+    heap.alloc(FrozenBazelRunfiles {
+        files: FrozenValueOfUnchecked::new(bazel_depset_empty_frozen(heap)),
+        _marker: PhantomData,
+    })
+}
+
+fn push_unique_value<'v>(values: &mut Vec<Value<'v>>, value: Value<'v>) -> starlark::Result<()> {
+    for existing in values.iter().copied() {
+        if existing.equals(value)? {
+            return Ok(());
+        }
+    }
+    values.push(value);
+    Ok(())
+}
+
+fn bazel_runfiles_from_runfiles<'v, 'a>(
+    heap: Heap<'v>,
+    runfiles: impl IntoIterator<Item = &'a BazelRunfiles<'v>>,
+) -> starlark::Result<BazelRunfiles<'v>>
+where
+    'v: 'a,
+{
+    let mut files = Vec::new();
+    for runfiles in runfiles {
+        for file in bazel_depset_to_list(runfiles.files.get().to_value())? {
+            push_unique_value(&mut files, file)?;
+        }
+    }
+    let files = bazel_depset_from_values(heap, files)?;
+    Ok(bazel_runfiles_from_depset(files))
+}
+
+pub(crate) fn bazel_runfiles_from_files<'v>(
+    heap: Heap<'v>,
+    direct_files: impl IntoIterator<Item = Value<'v>>,
+    transitive_files: Option<Value<'v>>,
+) -> starlark::Result<BazelRunfiles<'v>> {
+    let mut files = Vec::new();
+    for file in direct_files {
+        push_unique_value(&mut files, file)?;
+    }
+    if let Some(transitive_files) = transitive_files {
+        for file in bazel_depset_to_list(transitive_files)? {
+            push_unique_value(&mut files, file)?;
+        }
+    }
+    let files = bazel_depset_from_values(heap, files)?;
+    Ok(bazel_runfiles_from_depset(files))
+}
+
+#[starlark_module]
+fn bazel_runfiles_methods(builder: &mut MethodsBuilder) {
+    #[starlark(attribute)]
+    fn files<'v>(this: &BazelRunfiles<'v>) -> starlark::Result<Value<'v>> {
+        Ok(this.files.get().to_value())
+    }
+
+    #[starlark(attribute)]
+    fn symlinks<'v>(this: &BazelRunfiles<'v>, heap: Heap<'v>) -> starlark::Result<Value<'v>> {
+        let _ = this;
+        Ok(bazel_depset_empty(heap))
+    }
+
+    #[starlark(attribute)]
+    fn root_symlinks<'v>(this: &BazelRunfiles<'v>, heap: Heap<'v>) -> starlark::Result<Value<'v>> {
+        let _ = this;
+        Ok(bazel_depset_empty(heap))
+    }
+
+    #[starlark(attribute)]
+    fn empty_filenames<'v>(
+        this: &BazelRunfiles<'v>,
+        heap: Heap<'v>,
+    ) -> starlark::Result<Value<'v>> {
+        let _ = this;
+        Ok(bazel_depset_empty(heap))
+    }
+
+    fn merge<'v>(
+        this: &BazelRunfiles<'v>,
+        other: &BazelRunfiles<'v>,
+        heap: Heap<'v>,
+    ) -> starlark::Result<BazelRunfiles<'v>> {
+        bazel_runfiles_from_runfiles(heap, [this, other])
+    }
+
+    fn merge_all<'v>(
+        this: &BazelRunfiles<'v>,
+        others: UnpackListOrTuple<Value<'v>>,
+        heap: Heap<'v>,
+    ) -> starlark::Result<BazelRunfiles<'v>> {
+        let mut runfiles = Vec::with_capacity(others.items.len() + 1);
+        runfiles.push(this);
+        for other in others.items {
+            let other = BazelRunfiles::from_value(other).ok_or_else(|| {
+                buck2_error::buck2_error!(
+                    buck2_error::ErrorTag::Input,
+                    "`runfiles.merge_all` expected runfiles, got `{}`",
+                    other.to_string_for_type_error()
+                )
+            })?;
+            runfiles.push(other);
+        }
+        bazel_runfiles_from_runfiles(heap, runfiles)
+    }
+}
 
 /// A provider that all rules' implementations must return
 ///
@@ -152,6 +324,18 @@ pub struct DefaultInfoGen<V: ValueLifetimeless> {
     /// `ArtifactTraversable` can be an `Artifact` (which yields itself), or
     /// `cmd_args`, which expand to all their inputs.
     other_outputs: ValueOfUncheckedGeneric<V, ListType<ValueAsCommandLineLike<'static>>>,
+    /// Bazel-compatible default files depset.
+    files: ValueOfUncheckedGeneric<V, FrozenBazelDepset>,
+    /// Bazel-compatible files-to-run provider view.
+    files_to_run: ValueOfUncheckedGeneric<V, StructRef<'static>>,
+    /// Bazel-compatible runfiles for data dependencies.
+    data_runfiles: ValueOfUncheckedGeneric<V, FrozenBazelRunfiles>,
+    /// Bazel-compatible runfiles for ordinary dependencies.
+    default_runfiles: ValueOfUncheckedGeneric<V, FrozenBazelRunfiles>,
+}
+
+fn bazel_files_to_run<'v>(heap: Heap<'v>, executable: Value<'v>) -> Value<'v> {
+    heap.alloc(AllocStruct([("executable", executable)]))
 }
 
 fn validate_default_info(info: &FrozenDefaultInfo) -> buck2_error::Result<()> {
@@ -183,10 +367,21 @@ impl<'v> DefaultInfo<'v> {
         let sub_targets = ValueOfUnchecked::<DictType<_, _>>::new(heap.alloc(AllocDict::EMPTY));
         let default_outputs = ValueOfUnchecked::<ListType<_>>::new(heap.alloc(AllocList::EMPTY));
         let other_outputs = ValueOfUnchecked::<ListType<_>>::new(heap.alloc(AllocList::EMPTY));
+        let files = ValueOfUnchecked::<FrozenBazelDepset>::new(bazel_depset_empty(heap));
+        let files_to_run =
+            ValueOfUnchecked::<StructRef>::new(bazel_files_to_run(heap, Value::new_none()));
+        let data_runfiles =
+            ValueOfUnchecked::<FrozenBazelRunfiles>::new(bazel_runfiles_empty_value(heap));
+        let default_runfiles =
+            ValueOfUnchecked::<FrozenBazelRunfiles>::new(bazel_runfiles_empty_value(heap));
         DefaultInfo {
             sub_targets,
             default_outputs,
             other_outputs,
+            files,
+            files_to_run,
+            data_runfiles,
+            default_runfiles,
         }
     }
 
@@ -194,13 +389,28 @@ impl<'v> DefaultInfo<'v> {
         heap: Heap<'v>,
         outputs: impl IntoIterator<Item = Value<'v>>,
     ) -> Self {
+        let outputs = outputs.into_iter().collect::<Vec<_>>();
         let sub_targets = ValueOfUnchecked::<DictType<_, _>>::new(heap.alloc(AllocDict::EMPTY));
-        let default_outputs = ValueOfUnchecked::<ListType<_>>::new(heap.alloc(AllocList(outputs)));
+        let default_outputs =
+            ValueOfUnchecked::<ListType<_>>::new(heap.alloc(AllocList(outputs.iter().copied())));
         let other_outputs = ValueOfUnchecked::<ListType<_>>::new(heap.alloc(AllocList::EMPTY));
+        let files = ValueOfUnchecked::<FrozenBazelDepset>::new(
+            bazel_depset_from_values(heap, outputs).unwrap(),
+        );
+        let files_to_run =
+            ValueOfUnchecked::<StructRef>::new(bazel_files_to_run(heap, Value::new_none()));
+        let data_runfiles =
+            ValueOfUnchecked::<FrozenBazelRunfiles>::new(bazel_runfiles_empty_value(heap));
+        let default_runfiles =
+            ValueOfUnchecked::<FrozenBazelRunfiles>::new(bazel_runfiles_empty_value(heap));
         DefaultInfo {
             sub_targets,
             default_outputs,
             other_outputs,
+            files,
+            files_to_run,
+            data_runfiles,
+            default_runfiles,
         }
     }
 }
@@ -216,10 +426,25 @@ impl FrozenDefaultInfo {
             FrozenValueOfUnchecked::<ListType<_>>::new(heap.alloc(AllocList::EMPTY));
         let other_outputs =
             FrozenValueOfUnchecked::<ListType<_>>::new(heap.alloc(AllocList::EMPTY));
+        let files =
+            FrozenValueOfUnchecked::<FrozenBazelDepset>::new(bazel_depset_empty_frozen(heap));
+        let files_to_run = FrozenValueOfUnchecked::<StructRef>::new(
+            heap.alloc(AllocStruct([("executable", FrozenValue::new_none())])),
+        );
+        let data_runfiles = FrozenValueOfUnchecked::<FrozenBazelRunfiles>::new(
+            bazel_runfiles_empty_frozen_value(heap),
+        );
+        let default_runfiles = FrozenValueOfUnchecked::<FrozenBazelRunfiles>::new(
+            bazel_runfiles_empty_frozen_value(heap),
+        );
         FrozenValueTyped::new_err(heap.alloc(FrozenDefaultInfo {
             sub_targets,
             default_outputs,
             other_outputs,
+            files,
+            files_to_run,
+            data_runfiles,
+            default_runfiles,
         }))
         .unwrap()
     }
@@ -427,13 +652,17 @@ fn default_info_creator(builder: &mut GlobalsBuilder) {
         #[starlark(default = NoneOr::None)] default_outputs: NoneOr<
             ValueOf<'v, UnpackList<UnpackAndDiscard<ValueIsInputArtifactAnnotation>>>,
         >,
-        #[starlark(default = NoneOr::None)] files: NoneOr<Value<'v>>,
+        #[starlark(default = NoneOr::None)] files: NoneOr<ValueOf<'v, &'v BazelDepset<'v>>>,
         #[starlark(default = NoneOr::None)] executable: NoneOr<
             ValueOf<'v, ValueIsInputArtifactAnnotation>,
         >,
-        #[starlark(default = NoneOr::None)] runfiles: NoneOr<Value<'v>>,
-        #[starlark(default = NoneOr::None)] data_runfiles: NoneOr<Value<'v>>,
-        #[starlark(default = NoneOr::None)] default_runfiles: NoneOr<Value<'v>>,
+        #[starlark(default = NoneOr::None)] runfiles: NoneOr<ValueOf<'v, &'v BazelRunfiles<'v>>>,
+        #[starlark(default = NoneOr::None)] data_runfiles: NoneOr<
+            ValueOf<'v, &'v BazelRunfiles<'v>>,
+        >,
+        #[starlark(default = NoneOr::None)] default_runfiles: NoneOr<
+            ValueOf<'v, &'v BazelRunfiles<'v>>,
+        >,
         #[starlark(default = ValueOf { value: FrozenValue::new_empty_list().to_value(), typed: UnpackList::default()})]
         other_outputs: ValueOf<
             'v,
@@ -446,37 +675,85 @@ fn default_info_creator(builder: &mut GlobalsBuilder) {
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<DefaultInfo<'v>> {
         let heap = eval.heap();
-        let _unused = (runfiles, data_runfiles, default_runfiles);
+        let executable = executable.into_option();
+        let files_to_run_executable = executable
+            .as_ref()
+            .map(|executable| executable.value)
+            .unwrap_or_else(Value::new_none);
 
         // support both list and singular options for now until we migrate all the rules.
-        let valid_default_outputs: ValueOfUnchecked<ListType<ValueIsInputArtifactAnnotation>> =
-            match (
-                default_outputs.into_option(),
-                default_output.into_option(),
-                files.into_option(),
-                executable.into_option(),
-            ) {
-                (Some(list), None, None, None) => list.as_unchecked().cast(),
-                (None, Some(default_output), None, None)
-                | (None, None, None, Some(default_output)) => {
-                    // handle where we didn't specify `default_outputs`, which means we should use the new
-                    // `default_output`.
+        let (valid_default_outputs, valid_files): (
+            ValueOfUnchecked<ListType<ValueIsInputArtifactAnnotation>>,
+            ValueOfUnchecked<FrozenBazelDepset>,
+        ) = match (
+            default_outputs.into_option(),
+            default_output.into_option(),
+            files.into_option(),
+            executable,
+        ) {
+            (Some(list), None, None, None) => {
+                let outputs = ListRef::from_value(list.value)
+                    .expect("validated default outputs should be a list")
+                    .iter()
+                    .collect::<Vec<_>>();
+                (
+                    list.as_unchecked().cast(),
+                    ValueOfUnchecked::<FrozenBazelDepset>::new(bazel_depset_from_values(
+                        heap, outputs,
+                    )?),
+                )
+            }
+            (None, Some(default_output), None, None) | (None, None, None, Some(default_output)) => {
+                // handle where we didn't specify `default_outputs`, which means we should use the new
+                // `default_output`.
+                (
                     eval.heap()
                         .alloc_typed_unchecked(AllocList([default_output.as_unchecked()]))
-                        .cast()
-                }
-                (None, None, Some(files), _) => ValueOfUnchecked::<ListType<_>>::new(
-                    heap.alloc(AllocList(bazel_depset_to_list(files)?)),
+                        .cast(),
+                    ValueOfUnchecked::<FrozenBazelDepset>::new(bazel_depset_from_values(
+                        heap,
+                        vec![default_output.value],
+                    )?),
+                )
+            }
+            (None, None, Some(files), _) => (
+                ValueOfUnchecked::<ListType<_>>::new(
+                    heap.alloc(AllocList(bazel_depset_to_list(files.value)?)),
                 ),
-                (None, None, None, None) => {
-                    ValueOfUnchecked::<ListType<_>>::new(eval.heap().alloc(AllocList::EMPTY))
-                }
-                _ => {
-                    return Err(
-                        buck2_error::Error::from(DefaultOutputError::ConflictingArguments).into(),
-                    );
-                }
-            };
+                ValueOfUnchecked::<FrozenBazelDepset>::new(files.value),
+            ),
+            (None, None, None, None) => (
+                ValueOfUnchecked::<ListType<_>>::new(eval.heap().alloc(AllocList::EMPTY)),
+                ValueOfUnchecked::<FrozenBazelDepset>::new(bazel_depset_empty(heap)),
+            ),
+            _ => {
+                return Err(
+                    buck2_error::Error::from(DefaultOutputError::ConflictingArguments).into(),
+                );
+            }
+        };
+
+        let runfiles = runfiles.into_option();
+        let data_runfiles = data_runfiles.into_option();
+        let default_runfiles = default_runfiles.into_option();
+        if runfiles.is_some() && (data_runfiles.is_some() || default_runfiles.is_some()) {
+            return Err(buck2_error::buck2_error!(
+                buck2_error::ErrorTag::Input,
+                "Cannot specify the provider 'runfiles' together with 'data_runfiles' or 'default_runfiles'"
+            )
+            .into());
+        }
+        let valid_data_runfiles = ValueOfUnchecked::<FrozenBazelRunfiles>::new(
+            data_runfiles
+                .map(|data_runfiles| data_runfiles.value)
+                .unwrap_or_else(|| bazel_runfiles_empty_value(heap)),
+        );
+        let valid_default_runfiles = ValueOfUnchecked::<FrozenBazelRunfiles>::new(
+            default_runfiles
+                .map(|default_runfiles| default_runfiles.value)
+                .or_else(|| runfiles.map(|runfiles| runfiles.value))
+                .unwrap_or_else(|| bazel_runfiles_empty_value(heap)),
+        );
 
         let valid_sub_targets = sub_targets
             .entries
@@ -495,6 +772,13 @@ fn default_info_creator(builder: &mut GlobalsBuilder) {
         Ok(DefaultInfo {
             default_outputs: valid_default_outputs,
             other_outputs: other_outputs.as_unchecked().cast(),
+            files: valid_files,
+            files_to_run: ValueOfUnchecked::<StructRef>::new(bazel_files_to_run(
+                heap,
+                files_to_run_executable,
+            )),
+            data_runfiles: valid_data_runfiles,
+            default_runfiles: valid_default_runfiles,
             sub_targets: heap
                 .alloc_typed_unchecked(AllocDict(valid_sub_targets))
                 .cast(),

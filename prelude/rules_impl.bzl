@@ -12,6 +12,7 @@ load("@prelude//:export_file.bzl", "export_file_impl")
 load("@prelude//:filegroup.bzl", "filegroup_impl")
 load("@prelude//:genrule.bzl", "genrule_attributes", "genrule_impl")
 load("@prelude//:http_file.bzl", "http_file_impl")
+load("@prelude//:bazel_cc_toolchain.bzl", "cc_toolchain_impl", "cc_toolchain_suite_impl")
 load("@prelude//:remote_file.bzl", "remote_file_impl")
 load("@prelude//:sh_binary.bzl", "sh_binary_impl")
 load("@prelude//:sh_test.bzl", "sh_test_impl")
@@ -185,6 +186,8 @@ extra_implemented_rules = struct(
     cxx_library = cxx_library_impl,
     cxx_precompiled_header = cxx_precompiled_header_impl,
     cxx_python_extension = cxx_python_extension_impl,
+    cc_toolchain = cc_toolchain_impl,
+    cc_toolchain_suite = cc_toolchain_suite_impl,
     prebuilt_cxx_library = prebuilt_cxx_library_impl,
     prebuilt_cxx_library_group = prebuilt_cxx_library_group_impl,
     windows_resource = windows_resource_impl,

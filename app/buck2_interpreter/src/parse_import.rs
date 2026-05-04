@@ -15,6 +15,8 @@ use buck2_core::cells::CellAliasResolver;
 use buck2_core::cells::build_file_cell::BuildFileCell;
 use buck2_core::cells::cell_path::CellPath;
 use buck2_core::cells::cell_path_with_allowed_relative_dir::CellPathWithAllowedRelativeDir;
+use buck2_core::cells::external::bzlmod_cell_name;
+use buck2_core::cells::name::CellName;
 use buck2_core::cells::paths::CellRelativePath;
 use buck2_core::cells::paths::CellRelativePathBuf;
 use buck2_fs::paths::RelativePath;
@@ -56,19 +58,47 @@ pub struct ParseImportOptions<'a> {
 
 // Parses a string of the form `(@<cell>)//dir/name` to the corresponding
 // alias and cell relative path.
-fn parse_import_cell_path_parts(path: &str, allow_missing_at_symbol: bool) -> Option<(&str, &str)> {
+enum ImportCell<'a> {
+    Alias(&'a str),
+    Canonical(CellName),
+}
+
+impl ImportCell<'_> {
+    fn resolve(self, cell_resolver: &CellAliasResolver) -> buck2_error::Result<CellName> {
+        match self {
+            ImportCell::Alias(alias) => cell_resolver.resolve(alias),
+            ImportCell::Canonical(cell) => Ok(cell),
+        }
+    }
+}
+
+fn parse_import_cell_path_parts(
+    path: &str,
+    allow_missing_at_symbol: bool,
+) -> Option<(ImportCell<'_>, &str)> {
     let (alias, cell_rel_path) = path.split_once("//")?;
-    let alias = if alias.is_empty() {
-        alias
+    let cell = if let Some(canonical_repo_name) = alias.strip_prefix("@@") {
+        let cell = if canonical_repo_name.is_empty() {
+            // `parse_import` only has the current cell's alias resolver, so this
+            // follows existing `//...` load semantics for the root canonical repo.
+            return Some((ImportCell::Alias(""), cell_rel_path));
+        } else if canonical_repo_name == "bazel_tools" {
+            CellName::unchecked_new("bazel_tools").ok()?
+        } else {
+            CellName::unchecked_new(&bzlmod_cell_name(canonical_repo_name)).ok()?
+        };
+        ImportCell::Canonical(cell)
+    } else if alias.is_empty() {
+        ImportCell::Alias(alias)
     } else if !alias.starts_with('@') {
         if !allow_missing_at_symbol {
             return None;
         }
-        alias
+        ImportCell::Alias(alias)
     } else {
-        &alias[1..]
+        ImportCell::Alias(&alias[1..])
     };
-    Some((alias, cell_rel_path))
+    Some((cell, cell_rel_path))
 }
 
 pub fn parse_import(
@@ -112,8 +142,8 @@ pub fn parse_import_with_config(
                         Err(ImportParseError::ProhibitedRelativeImport(import.to_owned()).into())
                     }
                 }
-                Some((alias, cell_relative_path)) => {
-                    let cell = cell_resolver.resolve(alias)?;
+                Some((cell, cell_relative_path)) => {
+                    let cell = cell.resolve(cell_resolver)?;
                     Ok(CellPath::new(
                         cell,
                         CellRelativePathBuf::try_from(cell_relative_path.to_owned())?,
@@ -139,10 +169,10 @@ pub fn parse_import_with_config(
                     Err(ImportParseError::ProhibitedRelativeImport(import.to_owned()).into())
                 }
             } else {
-                let (alias, cell_relative_path) =
+                let (cell, cell_relative_path) =
                     parse_import_cell_path_parts(path, opts.allow_missing_at_symbol)
                         .ok_or_else(|| ImportParseError::MatchFailed(import.to_owned()))?;
-                let cell = cell_resolver.resolve(alias)?;
+                let cell = cell.resolve(cell_resolver)?;
                 Ok(CellPath::new(
                     cell,
                     <&CellRelativePath>::try_from(cell_relative_path)?.join(filename),
@@ -221,6 +251,24 @@ mod tests {
                     ),
                 },
                 "@cell1//package/path:import.bzl"
+            )?
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn bazel_canonical_repo_package() -> buck2_error::Result<()> {
+        assert_eq!(
+            path("bzlmod_rules_go_0_57_0", "go", "def.bzl"),
+            parse_import(
+                &resolver(),
+                RelativeImports::Allow {
+                    current_dir_with_allowed_relative: &CellPathWithAllowedRelativeDir::new(
+                        CellPath::testing_new("root//"),
+                        None,
+                    ),
+                },
+                "@@rules_go+0.57.0//go:def.bzl"
             )?
         );
         Ok(())

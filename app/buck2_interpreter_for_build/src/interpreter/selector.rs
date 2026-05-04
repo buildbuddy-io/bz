@@ -13,6 +13,7 @@ use std::fmt::Display;
 
 use allocative::Allocative;
 use buck2_error::BuckErrorContext;
+use buck2_interpreter::types::configured_providers_label::StarlarkProvidersLabel;
 use buck2_interpreter::types::select_fail::StarlarkSelectFail;
 use buck2_interpreter::types::select_incompatible::StarlarkSelectIncompatible;
 use serde::Serialize;
@@ -44,11 +45,19 @@ use starlark::values::ValueLifetimeless;
 use starlark::values::ValueLike;
 use starlark::values::ValueOf;
 use starlark::values::ValueOfUncheckedGeneric;
+use starlark::values::dict::AllocDict;
 use starlark::values::dict::Dict;
 use starlark::values::dict::DictRef;
 use starlark::values::dict::DictType;
 use starlark::values::none::NoneOr;
 use starlark::values::starlark_value;
+
+#[derive(Debug, buck2_error::Error)]
+#[buck2(input)]
+enum SelectError {
+    #[error("select() condition was not a string or label, got `{0}`.")]
+    KeyNotStringOrLabel(String),
+}
 
 /// Representation of `select()` in Starlark.
 #[derive(Debug, ProvidesStaticType, Allocative)]
@@ -109,6 +118,16 @@ starlark_complex_value!(pub StarlarkSelector);
 impl<'v> StarlarkSelector<'v> {
     pub fn new(d: ValueOf<'v, DictType<StringValue<'v>, Value<'v>>>) -> Self {
         StarlarkSelector::Primary(d.as_unchecked().cast())
+    }
+
+    fn select_key_to_string(key: Value<'v>) -> starlark::Result<String> {
+        if let Some(key) = key.unpack_str() {
+            Ok(key.to_owned())
+        } else if let Some(key) = StarlarkProvidersLabel::from_value(key) {
+            Ok(key.label().to_string())
+        } else {
+            Err(buck2_error::Error::from(SelectError::KeyNotStringOrLabel(key.to_repr())).into())
+        }
     }
 
     fn sum(left: Value<'v>, right: Value<'v>, heap: Heap<'v>) -> Value<'v> {
@@ -336,9 +355,18 @@ where
 #[starlark_types(StarlarkSelector<'_> as Select)]
 pub fn register_select(globals: &mut GlobalsBuilder) {
     fn select<'v>(
-        #[starlark(require = pos)] d: ValueOf<'v, DictType<StringValue<'v>, Value<'v>>>,
+        #[starlark(require = pos)] d: DictRef<'v>,
+        eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<StarlarkSelector<'v>> {
-        Ok(StarlarkSelector::new(d))
+        let mut normalized = Vec::with_capacity(d.len());
+        for (key, value) in d.iter() {
+            let key = StarlarkSelector::select_key_to_string(key)?;
+            normalized.push((eval.heap().alloc_str(&key).to_value(), value));
+        }
+        Ok(StarlarkSelector::new(
+            ValueOf::unpack_value_err(eval.heap().alloc(AllocDict(normalized)))
+                .internal_error("validated at construction")?,
+        ))
     }
 
     /// Create a value to be used in select() statements to indicate a failure case.

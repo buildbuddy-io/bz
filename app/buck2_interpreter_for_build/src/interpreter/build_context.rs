@@ -283,8 +283,15 @@ pub struct BazelRepositoryRuleInvocation {
 }
 
 #[derive(Debug, Default)]
+pub struct BazelModuleExtensionEvaluationResult {
+    pub repository_rule_invocations: Vec<BazelRepositoryRuleInvocation>,
+    pub registered_toolchains: Vec<String>,
+}
+
+#[derive(Debug, Default)]
 pub(crate) struct BazelRepositoryRuleRecorder {
     invocations: RefCell<Vec<BazelRepositoryRuleInvocation>>,
+    registered_toolchains: RefCell<Vec<String>>,
 }
 
 impl BazelRepositoryRuleRecorder {
@@ -292,8 +299,15 @@ impl BazelRepositoryRuleRecorder {
         self.invocations.borrow_mut().push(invocation);
     }
 
-    pub(crate) fn take_invocations(&self) -> Vec<BazelRepositoryRuleInvocation> {
-        std::mem::take(&mut *self.invocations.borrow_mut())
+    pub(crate) fn record_registered_toolchain(&self, pattern: String) {
+        self.registered_toolchains.borrow_mut().push(pattern);
+    }
+
+    pub(crate) fn take_result(&self) -> BazelModuleExtensionEvaluationResult {
+        BazelModuleExtensionEvaluationResult {
+            repository_rule_invocations: std::mem::take(&mut *self.invocations.borrow_mut()),
+            registered_toolchains: std::mem::take(&mut *self.registered_toolchains.borrow_mut()),
+        }
     }
 }
 

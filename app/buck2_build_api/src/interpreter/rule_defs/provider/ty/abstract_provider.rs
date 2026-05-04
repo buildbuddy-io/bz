@@ -19,7 +19,6 @@ use starlark::typing::TyStarlarkValue;
 use starlark::typing::TyUser;
 use starlark::typing::TyUserFields;
 use starlark::typing::TyUserParams;
-use starlark::values::StarlarkValue;
 use starlark::values::Value;
 use starlark::values::type_repr::StarlarkTypeRepr;
 use starlark::values::typing::TypeInstanceId;
@@ -41,7 +40,7 @@ impl TypeMatcher for ProviderMatcher {
 
 fn mk_ty_provider() -> buck2_error::Result<Ty> {
     Ok(Ty::custom(TyUser::new(
-        UserProvider::TYPE.to_owned(),
+        "Provider".to_owned(),
         // Builtin providers behave like `UserProvider`.
         TyStarlarkValue::new::<UserProvider>(),
         TypeInstanceId::r#gen(),

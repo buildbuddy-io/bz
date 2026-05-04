@@ -260,6 +260,18 @@ impl LoadResolver for InterpreterLoadResolver {
                 }
             }
         }
+
+        // Bazel module repos carry their own repository mappings. A .bzl file loaded from a
+        // bzlmod repo must therefore resolve its own label literals and transitive loads in that
+        // repo's context, not in the context of the BUILD or .bzl file that imported it.
+        if path.cell().as_str().starts_with("bzlmod_") || path.cell().as_str() == "bazel_tools" {
+            let import_path = ImportPath::new_same_cell(path)?;
+            return Ok(match import_path.path().path().extension() {
+                Some("json") => OwnedStarlarkModulePath::JsonFile(import_path),
+                Some("toml") => OwnedStarlarkModulePath::TomlFile(import_path),
+                _ => OwnedStarlarkModulePath::LoadFile(import_path),
+            });
+        }
         let import_path = ImportPath::new_with_build_file_cells(path, self.build_file_cell)?;
         Ok(match import_path.path().path().extension() {
             Some("json") => OwnedStarlarkModulePath::JsonFile(import_path),
@@ -443,7 +455,11 @@ impl InterpreterForDir {
         // This check also prohibits tabs even where spaces are not significant,
         // for example inside parentheses in function call arguments,
         // which restricts what the spec allows.
-        if content.contains('\t') {
+        let import_cell = import.cell();
+        let import_cell_name = import_cell.as_str();
+        let is_bazel_compat_cell =
+            import_cell_name == "bazel_tools" || import_cell_name.starts_with("bzlmod_");
+        if content.contains('\t') && !is_bazel_compat_cell {
             return Err(StarlarkTabsError(OwnedStarlarkPath::new(import)).into());
         }
 
@@ -616,7 +632,8 @@ impl InterpreterForDir {
         buckconfigs: &mut dyn BuckConfigsViewForStarlark,
         eval_provider: StarlarkEvaluatorProvider,
         cancellation: &CancellationContext,
-    ) -> buck2_error::Result<Vec<BazelRepositoryRuleInvocation>> {
+    ) -> buck2_error::Result<crate::interpreter::build_context::BazelModuleExtensionEvaluationResult>
+    {
         BuckStarlarkModule::with_profiling(|env| {
             let extension_value = extension_module
                 .get_option(extension_name)
@@ -665,7 +682,7 @@ impl InterpreterForDir {
                     Ok(())
                 })?;
             let (token, _) = finished_eval.finish()?;
-            Ok((token, recorder.take_invocations()))
+            Ok((token, recorder.take_result()))
         })
     }
 

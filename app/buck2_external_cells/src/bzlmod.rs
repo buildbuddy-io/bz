@@ -10,6 +10,7 @@
 
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
+use std::io::ErrorKind;
 use std::process::Command;
 use std::process::ExitStatus;
 use std::process::Stdio;
@@ -21,6 +22,7 @@ use buck2_common::dice::data::HasIoProvider;
 use buck2_common::file_ops::delegate::FileOpsDelegate;
 use buck2_common::file_ops::dice::ReadFileProxy;
 use buck2_common::file_ops::metadata::FileDigestConfig;
+use buck2_common::file_ops::metadata::FileType;
 use buck2_common::file_ops::metadata::RawDirEntry;
 use buck2_common::file_ops::metadata::RawPathMetadata;
 use buck2_common::http::HasHttpClient;
@@ -40,6 +42,7 @@ use buck2_core::cells::external::BzlmodJavaLocalJdkSetup;
 use buck2_core::cells::external::BzlmodLocalConfigPlatformSetup;
 use buck2_core::cells::external::BzlmodModuleExtensionRepoSetup;
 use buck2_core::cells::external::BzlmodPythonHubSetup;
+use buck2_core::cells::external::BzlmodRepositoryRuleInvocationSetup;
 use buck2_core::cells::external::BzlmodRepositoryRuleSetup;
 use buck2_core::cells::external::BzlmodShellConfigSetup;
 use buck2_core::cells::external::ExternalCellOrigin;
@@ -69,6 +72,7 @@ use buck2_fs::paths::abs_norm_path::AbsNormPath;
 use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
 use buck2_interpreter_for_build::bazel_repository::evaluate_bzlmod_module_extension_repo;
 use buck2_interpreter_for_build::bazel_repository::evaluate_bzlmod_repository_rule;
+use buck2_interpreter_for_build::bazel_repository::evaluate_bzlmod_repository_rule_invocation;
 use cmp_any::PartialEqAny;
 use dice::CancellationContext;
 use dice::DiceComputations;
@@ -114,6 +118,10 @@ enum BzlmodError {
         extension_name: String,
         repo_name: String,
     },
+    #[error(
+        "bzlmod repository_rule invocation for `{repo_name}` cannot be materialized without repository_rule execution"
+    )]
+    RepositoryRuleInvocationNotMaterialized { repo_name: String },
     #[error(
         "bzlmod module extension `{extension_bzl_file}%{extension_name}` did not emit repository `{repo_name}`; emitted repositories: {}",
         emitted.join(", ")
@@ -257,6 +265,9 @@ impl IoRequest for BzlmodGeneratedIoRequest {
                     setup,
                 )?;
             }
+            BzlmodGeneratedCellGenerator::RepositoryRuleInvocation(setup) => {
+                return Err(repository_rule_invocation_not_materialized(setup));
+            }
             BzlmodGeneratedCellGenerator::ModuleExtensionRepo(setup) => {
                 return Err(module_extension_repo_not_materialized(setup));
             }
@@ -272,6 +283,15 @@ fn module_extension_repo_not_materialized(
         parent_canonical_repo_name: setup.parent_canonical_repo_name.to_string(),
         extension_bzl_file: setup.extension_bzl_file.to_string(),
         extension_name: setup.extension_name.to_string(),
+        repo_name: setup.repo_name.to_string(),
+    }
+    .into()
+}
+
+fn repository_rule_invocation_not_materialized(
+    setup: &BzlmodRepositoryRuleInvocationSetup,
+) -> buck2_error::Error {
+    BzlmodError::RepositoryRuleInvocationNotMaterialized {
         repo_name: setup.repo_name.to_string(),
     }
     .into()
@@ -1327,14 +1347,15 @@ async fn materialize_generated(
             match &setup.generator {
                 BzlmodGeneratedCellGenerator::ModuleExtensionRepo(module_extension) => {
                     let module_ctx_working_dir = format!("{}/.buck2_module_ctx", path.as_str());
-                    let invocations = evaluate_bzlmod_module_extension_repo(
+                    let evaluation = evaluate_bzlmod_module_extension_repo(
                         ctx,
                         module_extension,
                         &module_ctx_working_dir,
                         cancellations,
                     )
                     .await?;
-                    if let Some(invocation) = invocations
+                    if let Some(invocation) = evaluation
+                        .repository_rule_invocations
                         .iter()
                         .find(|invocation| invocation.name == module_extension.repo_name.as_ref())
                     {
@@ -1391,7 +1412,8 @@ async fn materialize_generated(
                             .await?;
                         return Ok(());
                     }
-                    let emitted = invocations
+                    let emitted = evaluation
+                        .repository_rule_invocations
                         .into_iter()
                         .map(|invocation| invocation.name)
                         .collect();
@@ -1402,6 +1424,56 @@ async fn materialize_generated(
                         emitted,
                     }
                     .into());
+                }
+                BzlmodGeneratedCellGenerator::RepositoryRuleInvocation(invocation) => {
+                    let repository_ctx_path =
+                        bzlmod_generated_sibling_path(setup, path, "repository_ctx");
+                    ctx.get_blocking_executor()
+                        .execute_io(
+                            Box::new(buck2_execute::execute::clean_output_paths::CleanOutputPaths {
+                                paths: vec![repository_ctx_path.clone()],
+                            }),
+                            cancellations,
+                        )
+                        .await?;
+                    let files = evaluate_bzlmod_repository_rule_invocation(
+                        ctx,
+                        invocation,
+                        repository_ctx_path.as_str(),
+                        cancellations,
+                    )
+                    .await?;
+                    let files_json = serde_json::to_string(&files).buck_error_context(
+                        "Error serializing evaluated repository_rule file manifest",
+                    )?;
+                    ctx.get_blocking_executor()
+                        .execute_io(
+                            Box::new(buck2_execute::execute::clean_output_paths::CleanOutputPaths {
+                                paths: vec![path.to_owned()],
+                            }),
+                            cancellations,
+                        )
+                        .await?;
+                    ctx.get_blocking_executor()
+                        .execute_io(
+                            Box::new(BzlmodGeneratedIoRequest {
+                                setup: BzlmodGeneratedCellSetup {
+                                    canonical_repo_name: setup.canonical_repo_name.dupe(),
+                                    generator: BzlmodGeneratedCellGenerator::RepositoryRule(
+                                        BzlmodRepositoryRuleSetup {
+                                            files_json: Arc::from(files_json),
+                                            source_dir: Some(Arc::from(
+                                                repository_ctx_path.as_str(),
+                                            )),
+                                        },
+                                    ),
+                                },
+                                dest: path.to_owned(),
+                            }),
+                            cancellations,
+                        )
+                        .await?;
+                    return Ok(());
                 }
                 BzlmodGeneratedCellGenerator::HttpArchive(http_archive) => {
                     let archive = bzlmod_generated_sibling_path(setup, path, "source.archive");
@@ -1517,6 +1589,11 @@ impl FileOpsDelegate for BzlmodFileOpsDelegate {
             .read_dir(project_path)
             .await
             .with_buck_error_context(|| format!("Error listing dir `{path}`"))?;
+        follow_bzlmod_symlinked_directory_entries(
+            self.io.project_root(),
+            self.resolve(path).as_ref(),
+            &mut entries,
+        )?;
 
         entries.sort_by(|a, b| a.file_name.cmp(&b.file_name));
         Ok(entries.into())
@@ -1573,6 +1650,34 @@ impl BzlmodGeneratedFileOpsDelegate {
     }
 }
 
+fn follow_bzlmod_symlinked_directory_entries(
+    project_root: &ProjectRoot,
+    project_path: &ProjectRelativePath,
+    entries: &mut [RawDirEntry],
+) -> buck2_error::Result<()> {
+    for entry in entries {
+        if !entry.file_type.is_symlink() {
+            continue;
+        }
+
+        let child_path = project_path.join(ForwardRelativePath::new(entry.file_name.as_str())?);
+        match fs_util::metadata(project_root.resolve(&child_path)) {
+            Ok(metadata) if metadata.is_dir() => {
+                entry.file_type = FileType::Directory;
+            }
+            Ok(_) => {}
+            Err(error)
+                if matches!(
+                    error.io_error_kind(),
+                    Some(ErrorKind::NotFound | ErrorKind::NotADirectory)
+                ) => {}
+            Err(error) => return Err(error.categorize_internal()),
+        }
+    }
+
+    Ok(())
+}
+
 #[pagable_typetag]
 #[async_trait::async_trait]
 impl FileOpsDelegate for BzlmodGeneratedFileOpsDelegate {
@@ -1601,6 +1706,11 @@ impl FileOpsDelegate for BzlmodGeneratedFileOpsDelegate {
             .read_dir(project_path)
             .await
             .with_buck_error_context(|| format!("Error listing dir `{path}`"))?;
+        follow_bzlmod_symlinked_directory_entries(
+            self.io.project_root(),
+            self.resolve(path).as_ref(),
+            &mut entries,
+        )?;
 
         entries.sort_by(|a, b| a.file_name.cmp(&b.file_name));
         Ok(entries.into())

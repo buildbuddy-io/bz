@@ -144,19 +144,19 @@ pub struct LegacyBuckConfigSection {
     pub(crate) values: SortedMap<String, ConfigValue>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Allocative, Pagable)]
 pub(crate) enum BazelCompatExternalModule {
     Registry(BazelCompatRegistryModule),
     Generated(BazelCompatGeneratedModule),
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Allocative, Pagable)]
 pub(crate) struct BazelCompatCellAlias {
     pub alias: String,
     pub cell_name: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Allocative, Pagable)]
 pub(crate) struct BazelCompatRegistryModule {
     pub cell_name: String,
     pub aliases: Vec<String>,
@@ -171,7 +171,7 @@ pub(crate) struct BazelCompatRegistryModule {
     pub patch_strip: u32,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Allocative, Pagable)]
 pub(crate) struct BazelCompatGeneratedModule {
     pub cell_name: String,
     pub aliases: Vec<String>,
@@ -352,6 +352,7 @@ impl LegacyBuckConfig {
                     "target:root//...->platforms//host:host",
                 )],
             ),
+            ("buck2", &[("starlark_max_callstack_size", "1000")]),
         ];
 
         fn synthetic_config_value(raw_value: &str) -> ConfigValue {

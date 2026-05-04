@@ -35,6 +35,7 @@ pub mod run_environment_info;
 pub mod run_info;
 pub mod template_placeholder_info;
 pub mod template_variable_info;
+pub mod testing;
 pub mod toolchain_info;
 pub mod ty;
 pub mod validation_info;

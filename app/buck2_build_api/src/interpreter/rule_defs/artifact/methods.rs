@@ -22,6 +22,7 @@ use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::list::UnpackList;
 use starlark::values::none::NoneOr;
+use starlark::values::structs::AllocStruct;
 use starlark::values::type_repr::StarlarkTypeRepr;
 
 use crate::interpreter::rule_defs::artifact::starlark_artifact::StarlarkArtifact;
@@ -32,6 +33,15 @@ use crate::interpreter::rule_defs::artifact::starlark_declared_artifact::Starlar
 use crate::interpreter::rule_defs::artifact::starlark_output_artifact::StarlarkOutputArtifact;
 use crate::interpreter::rule_defs::artifact::starlark_promise_artifact::StarlarkPromiseArtifact;
 use crate::interpreter::rule_defs::depset::bazel_depset_from_direct;
+
+fn bazel_root_path(path: &str, short_path: &str) -> String {
+    if short_path.is_empty() {
+        return path.trim_end_matches('/').to_owned();
+    }
+    path.strip_suffix(short_path)
+        .map(|root| root.trim_end_matches('/').to_owned())
+        .unwrap_or_default()
+}
 
 #[derive(StarlarkTypeRepr, AllocValue)]
 pub enum EitherStarlarkInputArtifact<'v> {
@@ -49,6 +59,43 @@ pub(crate) fn any_artifact_methods(builder: &mut MethodsBuilder) {
         heap: Heap<'v>,
     ) -> starlark::Result<StringValue<'v>> {
         Ok(this.with_filename(&|filename| heap.alloc_str(filename.as_str()))?)
+    }
+
+    /// The execution path of this artifact.
+    #[starlark(attribute)]
+    fn path<'v>(
+        this: &'v dyn StarlarkArtifactLike<'v>,
+        heap: Heap<'v>,
+    ) -> starlark::Result<StringValue<'v>> {
+        Ok(this.with_bazel_path(&|path| heap.alloc_str(path))?)
+    }
+
+    /// The directory name of this artifact's execution path.
+    #[starlark(attribute)]
+    fn dirname<'v>(
+        this: &'v dyn StarlarkArtifactLike<'v>,
+        heap: Heap<'v>,
+    ) -> starlark::Result<StringValue<'v>> {
+        Ok(this.with_bazel_path(&|path| {
+            let dirname = match path.rsplit_once('/') {
+                Some(("", _)) => "/",
+                Some((dirname, _)) => dirname,
+                None => "/",
+            };
+            heap.alloc_str(dirname)
+        })?)
+    }
+
+    /// The Bazel root object for this file.
+    #[starlark(attribute)]
+    fn root<'v>(
+        this: &'v dyn StarlarkArtifactLike<'v>,
+        heap: Heap<'v>,
+    ) -> starlark::Result<Value<'v>> {
+        let path = this.with_bazel_path(&|path| heap.alloc_str(path))?;
+        let short_path = this.with_short_path(&|short_path| heap.alloc_str(short_path.as_str()))?;
+        let root = bazel_root_path(path.as_str(), short_path.as_str());
+        Ok(heap.alloc(AllocStruct([("path", heap.alloc_str(&root).to_value())])))
     }
 
     /// The file extension of this artifact. e.g. for an artifact at foo/bar.sh,

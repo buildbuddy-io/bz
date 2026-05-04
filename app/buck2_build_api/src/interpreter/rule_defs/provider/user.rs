@@ -109,7 +109,7 @@ impl<'v, V: ValueLike<'v>> Display for UserProviderGen<'v, V> {
     }
 }
 
-#[starlark_value(type = "Provider")]
+#[starlark_value(type = "struct")]
 impl<'v, V: ValueLike<'v>> StarlarkValue<'v> for UserProviderGen<'v, V>
 where
     Self: ProvidesStaticType<'v>,

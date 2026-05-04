@@ -1,0 +1,31 @@
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "pkg_sources",
+    srcs = glob(["**"]),
+)
+
+filegroup(
+    name = "bzl_srcs",
+    srcs = glob(["*.bzl"]),
+)
+
+filegroup(
+    name = "always_false",
+    srcs = [],
+)
+
+filegroup(
+    name = "poison_pill_android_sdk",
+    srcs = [],
+)
+
+filegroup(
+    name = "no_android_sdk_repository_error",
+    srcs = [],
+)
+
+filegroup(
+    name = "empty",
+    srcs = [],
+)

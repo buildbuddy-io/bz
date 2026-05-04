@@ -9,8 +9,10 @@
  */
 
 use buck2_build_api::interpreter::rule_defs::artifact::associated::AssociatedArtifacts;
+use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkArtifactLike;
 use buck2_build_api::interpreter::rule_defs::artifact::starlark_declared_artifact::StarlarkDeclaredArtifact;
 use buck2_build_api::interpreter::rule_defs::artifact_tagging::ArtifactTag;
+use buck2_build_api::interpreter::rule_defs::cmd_args::StarlarkCmdArgs;
 use buck2_build_api::interpreter::rule_defs::context::AnalysisActions;
 use buck2_build_api::interpreter::rule_defs::digest_config::StarlarkDigestConfig;
 use buck2_build_api::interpreter::rule_defs::transitive_set::FrozenTransitiveSetDefinition;
@@ -21,13 +23,93 @@ use starlark::environment::MethodsBuilder;
 use starlark::eval::Evaluator;
 use starlark::starlark_module;
 use starlark::values::FrozenValueTyped;
+use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark::values::ValueOfUnchecked;
 use starlark::values::ValueTyped;
+use starlark::values::none::NoneType;
 use starlark::values::typing::StarlarkIter;
+
+fn bazel_action_output_path<'v>(
+    filename: &str,
+    sibling: Value<'v>,
+    eval: &mut Evaluator<'v, '_, '_>,
+) -> starlark::Result<String> {
+    if sibling.is_none() {
+        return Ok(filename.to_owned());
+    }
+
+    let sibling = <&dyn StarlarkArtifactLike<'v>>::unpack_value(sibling)?.ok_or_else(|| {
+        buck2_error::buck2_error!(
+            buck2_error::ErrorTag::Input,
+            "actions.declare_file sibling must be an artifact or None, got `{}`",
+            sibling.get_type()
+        )
+    })?;
+    let sibling_path = sibling.with_short_path(&|path| eval.heap().alloc_str(path.as_str()))?;
+    let sibling_path = sibling_path.as_str();
+    Ok(match sibling_path.rsplit_once('/') {
+        Some((parent, _)) if !parent.is_empty() => format!("{parent}/{filename}"),
+        _ => filename.to_owned(),
+    })
+}
 
 #[starlark_module]
 pub(crate) fn analysis_actions_methods_unsorted(builder: &mut MethodsBuilder) {
+    /// Bazel spelling for constructing command-line arguments.
+    fn args<'v>(this: &AnalysisActions<'v>) -> starlark::Result<StarlarkCmdArgs<'v>> {
+        let _unused = this;
+        Ok(StarlarkCmdArgs::default())
+    }
+
+    /// Bazel spelling for declaring a file output artifact.
+    fn declare_file<'v>(
+        this: &AnalysisActions<'v>,
+        #[starlark(require = pos)] filename: &str,
+        #[starlark(require = named, default = NoneType)] sibling: Value<'v>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<StarlarkDeclaredArtifact<'v>> {
+        let filename = bazel_action_output_path(filename, sibling, eval)?;
+        let artifact = this.state()?.declare_output(
+            None,
+            &filename,
+            OutputType::File,
+            eval.call_stack_top_location(),
+            BuckOutPathKind::Configuration,
+            eval.heap(),
+        )?;
+
+        Ok(StarlarkDeclaredArtifact::new(
+            eval.call_stack_top_location(),
+            artifact,
+            AssociatedArtifacts::new(),
+        ))
+    }
+
+    /// Bazel spelling for declaring a tree artifact output.
+    fn declare_directory<'v>(
+        this: &AnalysisActions<'v>,
+        #[starlark(require = pos)] filename: &str,
+        #[starlark(require = named, default = NoneType)] sibling: Value<'v>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<StarlarkDeclaredArtifact<'v>> {
+        let filename = bazel_action_output_path(filename, sibling, eval)?;
+        let artifact = this.state()?.declare_output(
+            None,
+            &filename,
+            OutputType::Directory,
+            eval.call_stack_top_location(),
+            BuckOutPathKind::Configuration,
+            eval.heap(),
+        )?;
+
+        Ok(StarlarkDeclaredArtifact::new(
+            eval.call_stack_top_location(),
+            artifact,
+            AssociatedArtifacts::new(),
+        ))
+    }
+
     /// Returns an unbound `artifact`, representing where a file will go, which must be bound before analysis terminates.
     /// The usual way of binding an artifact is with `ctx.actions.run`. As an example:
     ///

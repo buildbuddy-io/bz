@@ -42,6 +42,7 @@ use buck2_core::execution_types::execution::ExecutionPlatformResolution;
 use buck2_core::execution_types::execution::ExecutionPlatformResolutionPartial;
 use buck2_core::pattern::pattern::PackageSpec;
 use buck2_core::pattern::pattern::ParsedPattern;
+use buck2_core::pattern::pattern::TargetParsingRel;
 use buck2_core::pattern::pattern_type::TargetPatternExtra;
 use buck2_core::plugins::PluginKind;
 use buck2_core::plugins::PluginKindSet;
@@ -858,6 +859,61 @@ fn attr_target_labels(attr: &CoercedAttr) -> Vec<TargetLabel> {
     }
 }
 
+fn is_bazel_relative_target_shorthand(value: &str) -> bool {
+    !value.is_empty()
+        && !value.starts_with(['@', ':', '/', '.'])
+        && !value.contains('/')
+        && !value.contains(':')
+        && !value.contains('[')
+        && !value.contains(']')
+}
+
+async fn bazel_toolchain_implementation_label(
+    ctx: &mut DiceComputations<'_>,
+    toolchain_node: &TargetNode,
+    attr: &CoercedAttr,
+) -> buck2_error::Result<Option<TargetLabel>> {
+    match attr {
+        CoercedAttr::String(value) => {
+            let cell_resolver = ctx.get_cell_resolver().await?;
+            let cell_alias_resolver = ctx
+                .get_cell_alias_resolver(toolchain_node.label().pkg().cell_name())
+                .await?;
+            Ok(Some(parse_bazel_nodep_label(
+                value.as_str(),
+                toolchain_node,
+                &cell_resolver,
+                &cell_alias_resolver,
+            )?))
+        }
+        _ => Ok(attr_target_label(attr).map(|label| label.dupe())),
+    }
+}
+
+fn parse_bazel_nodep_label(
+    value: &str,
+    owning_node: &TargetNode,
+    cell_resolver: &buck2_core::cells::CellResolver,
+    cell_alias_resolver: &buck2_core::cells::CellAliasResolver,
+) -> buck2_error::Result<TargetLabel> {
+    let package = owning_node.label().pkg();
+    let parse = |value: &str| {
+        ParsedPattern::<TargetPatternExtra>::parse_not_relaxed(
+            value,
+            TargetParsingRel::AllowLimitedRelative(package.as_cell_path()),
+            cell_resolver,
+            cell_alias_resolver,
+        )?
+        .as_target_label(value)
+    };
+
+    match parse(value) {
+        Ok(label) => Ok(label),
+        Err(_) if is_bazel_relative_target_shorthand(value) => parse(&format!(":{value}")),
+        Err(e) => Err(e),
+    }
+}
+
 fn configuration_constraint_labels(
     cfg: &ConfigurationData,
 ) -> buck2_error::Result<BTreeSet<String>> {
@@ -1039,9 +1095,13 @@ async fn resolve_bazel_toolchain_deps(
             continue;
         };
 
-        let Some(toolchain_impl) = toolchain_node
-            .attr_or_none("toolchain", AttrInspectOptions::All)
-            .and_then(|attr| attr_target_label(&attr.value).map(|label| label.dupe()))
+        let Some(toolchain_attr) =
+            toolchain_node.attr_or_none("toolchain", AttrInspectOptions::All)
+        else {
+            continue;
+        };
+        let Some(toolchain_impl) =
+            bazel_toolchain_implementation_label(ctx, toolchain_node, toolchain_attr.value).await?
         else {
             continue;
         };

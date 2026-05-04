@@ -380,7 +380,8 @@ impl<'c, 'd: 'c> DiceCalculationDelegate<'c, 'd> {
         extension_usages_json: &str,
         module_ctx_working_dir: &str,
         cancellation: &CancellationContext,
-    ) -> buck2_error::Result<Vec<BazelRepositoryRuleInvocation>> {
+    ) -> buck2_error::Result<crate::interpreter::build_context::BazelModuleExtensionEvaluationResult>
+    {
         let buckconfig = self.get_legacy_buck_config_for_starlark().await?;
         let root_buckconfig = self.ctx.get_legacy_root_config_on_dice().await?;
 

@@ -94,6 +94,15 @@ Completed:
 - Generated bzlmod cells now use emitted module-extension repo names as the source of truth for generated cells and same-extension repo mappings, instead of relying on `use_repo(...)`/tag-name prediction.
 - Bazel `module_extension(...)` accepts the implementation function positionally, private `repository_rule(...)` values emitted from module extensions can execute, label values expose Bazel `repo_name`/`workspace_name`, and `json.encode_indent(...)`/`json.indent(...)` are available.
 - Bzlmod cells receive Bazel compatibility config by cell identity, avoiding marker-file probing that materializes generated repos while computing buckconfig.
+- Bazel generic archive extraction in `repository_ctx.download_and_extract` now preserves SDK tar layouts reached by real rules_go repository rules.
+- Bazel `@@canonical_repo//...` load labels, `select()` label keys, and Bazel label attrs with `allow_files`/`allow_single_file` now follow Bazel source-vs-target coercion closely enough for real rules_go packages.
+- Bazel Starlark attribute transitions declared with `attr.label(cfg = transition(...))` execute as Bazel split transitions and expose transitioned deps through `ctx.attr` as lists.
+- Bazel analysis now exposes `ctx.file`, `ctx.files`, `ctx.executable`, `ctx.configuration`, `ctx.bin_dir`, `ctx.genfiles_dir`, `ctx.features`, `ctx.disabled_features`, `ctx.coverage_instrumented()`, and `ctx.runfiles(...)` for the rules_go paths reached so far.
+- Bazel `DefaultInfo` now carries `files`, `files_to_run`, `default_runfiles`, and `data_runfiles`; Bazel rule analysis accepts omitted `DefaultInfo` for positional and named Bazel `rule(...)` declarations.
+- Bazel `ctx.actions.args`, `ctx.actions.declare_file`, `ctx.actions.declare_directory`, `ctx.actions.symlink`, `ctx.actions.run_shell`, and named-parameter `ctx.actions.run` are wired to native Buck actions for the direct/transitive input and output shapes reached by rules_go.
+- Bazel command-line `Args` supports the `add`, `add_all`, `add_joined`, direct depset values, hidden depset/input expansion, map_each, uniquify, and param-file API surface reached by rules_go; real param-file action lowering is still pending.
+- Bazel user provider instances now report Starlark type `struct`, matching Bazel `StarlarkInfo` behavior used by real rules_go provider helpers, while the abstract `Provider` type remains available for provider APIs and type checking.
+- Bazel `ctx.info_file` and `ctx.version_file` now expose stable/volatile workspace-status artifacts backed by a generic Buck write action.
 
 Latest smoke:
 
@@ -103,7 +112,7 @@ BUCK2_HARD_ERROR=false \
 bazel-bin/app/buck2/buck2_bin --isolation-dir real-rules-go-... build //:hello
 ```
 
-After the two-phase bzlmod cutover, the root smoke no longer stops at the pre-analysis cell-graph boundary for dynamically emitted repos such as `rules_go__download_0_darwin_amd64`. The current smoke advances into early evaluation and materialization of transitive generated repos from downloaded modules such as Gazelle. During this step we fixed generic Bazel API gaps found by real extension/repository-rule code (`module_extension` positional implementation, private repository rules, label `workspace_name`/`repo_name`, and `json.encode_indent`). The latest long smoke run timed out while starting a fresh daemon after the generated-cell config probing fix; rerun the smoke and continue from the next concrete failure.
+After the two-phase bzlmod cutover, the root smoke no longer stops at the pre-analysis cell-graph boundary for dynamically emitted repos such as `rules_go__download_0_darwin_amd64`. The current smoke loads rules_go from its downloaded bzlmod module, invokes real module extensions and repository rules, materializes the Go SDK repository, and reaches rules_go analysis/action construction for Go packages. This pass fixed generic Bazel API gaps found by real rules_go analysis: `DefaultInfo.files_to_run/default_runfiles/data_runfiles/files`, runfiles merging, `actions.symlink`, named `actions.run`, build configuration fields, artifact `root.path`, positional Bazel `rule(_impl, ...)` classification, `ctx.features`/`ctx.disabled_features`, `Args.add_all(depset(...))`, provider-instance `type(...) == "struct"`, and `ctx.info_file`/`ctx.version_file`. The latest smoke analyzed 165 targets and logged no failed commands/actions, but the Buck client remained parked waiting for the daemon after analysis/log completion; continue by debugging that client/daemon stream termination boundary before moving to Bazelisk.
 
 ## Constraints
 
@@ -246,7 +255,7 @@ Acceptance:
 
 ## Phase 4: Bazel Rule API Compatibility
 
-Status: load-time rule declaration is partially implemented; rule analysis semantics are still ahead.
+Status: real rules_go analysis is now underway. The simple smoke reaches Go package action construction through downloaded rules_go and the materialized Go SDK, analyzes 165 targets, and then currently leaves the Buck client waiting on an idle daemon stream instead of returning a clean build result. Remaining work is driven by that stream-termination boundary and the next concrete Bazel analysis/action API failures after it.
 
 Implement enough Bazel analysis surface for real rules_go:
 
@@ -263,10 +272,18 @@ Implement enough Bazel analysis surface for real rules_go:
 Completed for current rules_go smoke:
 
 - build-setting rule defaults and `ctx.build_setting_value`
-- Bazel provider return shapes and implicit `DefaultInfo`
-- `DefaultInfo(files = depset(...))`
+- Bazel provider return shapes and implicit `DefaultInfo`, including positional Bazel `rule(_impl, ...)` declarations
+- `DefaultInfo(files = depset(...))`, `files_to_run`, `default_runfiles`, and `data_runfiles`
 - dependency/source `.files`
-- `ctx.attr` alias and empty `ctx.var`
+- `ctx.attr` alias, `ctx.file`, `ctx.files`, `ctx.executable`, and empty `ctx.var`
+- `ctx.configuration.coverage_enabled`, `ctx.configuration.host_path_separator`, `ctx.bin_dir.path`, `ctx.genfiles_dir.path`, `ctx.features`, `ctx.disabled_features`, and `ctx.coverage_instrumented()`
+- `ctx.info_file` and `ctx.version_file` as stable/volatile workspace-status artifacts
+- `ctx.runfiles(files = ..., transitive_files = ...)` with merge and merge_all
+- Bazel artifact `path`, `dirname`, `basename`, `extension`, and `root.path`
+- Bazel Starlark attribute split transitions for `attr.label(cfg = transition(...))`
+- Bazel label attrs that admit source files via `allow_files`/`allow_single_file`
+- Bazel user provider instances report `struct` for `type(...)`, while provider identity remains available for indexing and membership.
+- Bazel `Args.add_all`/`add_joined` accept direct depset values in addition to iterable sequences.
 
 Acceptance:
 
@@ -275,17 +292,14 @@ Acceptance:
 
 ## Phase 5: Actions, Toolchains, and Go Execution
 
-Implement:
+Implement remaining:
 
-- `ctx.actions.declare_file`
-- `ctx.actions.declare_directory`
-- `ctx.actions.write`
-- `ctx.actions.run`
-- `ctx.actions.run_shell`
-- args/depset behavior used by rules_go
-- `register_toolchains`
-- toolchain target resolution
-- host Go SDK/toolchain repository generation
+- Debug the current post-analysis client/daemon stream wait in the rules_go smoke and make it return a clean success or concrete failure.
+- Complete `ctx.actions.write` Bazel keyword compatibility as failures require.
+- Complete `ctx.actions.run` metadata/tool/input-manifest/unused-inputs behavior beyond the named executable/arguments/inputs/outputs/env shape reached so far.
+- Complete `ctx.actions.run_shell` parity beyond the direct command/arguments shape reached so far.
+- Lower Bazel Args param files to real action param files instead of accepting the API as a no-op.
+- Add remaining args/depset behavior used by rules_go and later validation repos.
 - exec platform selection sufficient for host builds
 
 Acceptance:

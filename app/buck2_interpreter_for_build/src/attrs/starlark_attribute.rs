@@ -45,6 +45,7 @@ enum StarlarkAttributeError {
 pub struct StarlarkAttribute {
     attr: Attribute,
     bazel_output_kind: Option<BazelOutputAttrKind>,
+    is_bazel: bool,
 }
 
 starlark_simple_value!(StarlarkAttribute);
@@ -67,6 +68,15 @@ impl StarlarkAttribute {
         Self {
             attr,
             bazel_output_kind: None,
+            is_bazel: false,
+        }
+    }
+
+    pub fn new_bazel(attr: Attribute) -> Self {
+        Self {
+            attr,
+            bazel_output_kind: None,
+            is_bazel: true,
         }
     }
 
@@ -74,6 +84,7 @@ impl StarlarkAttribute {
         Self {
             attr,
             bazel_output_kind: Some(kind),
+            is_bazel: true,
         }
     }
 
@@ -83,6 +94,10 @@ impl StarlarkAttribute {
 
     pub fn bazel_output_kind(&self) -> Option<BazelOutputAttrKind> {
         self.bazel_output_kind.dupe()
+    }
+
+    pub fn is_bazel(&self) -> bool {
+        self.is_bazel
     }
 
     /// Coercer to put into higher lever coercer (e. g. for `attrs.list(xxx)`).

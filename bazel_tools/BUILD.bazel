@@ -12,6 +12,8 @@ filegroup(
         ],
     ) + [
         "//bazel_tools/tools/allowlists/function_transition_allowlist:pkg_sources",
+        "//bazel_tools/src/conditions:pkg_sources",
+        "//bazel_tools/tools/android:pkg_sources",
         "//bazel_tools/tools/build_defs/cc:pkg_sources",
         "//bazel_tools/tools/build_defs/repo:pkg_sources",
         "//bazel_tools/tools/cpp:pkg_sources",
