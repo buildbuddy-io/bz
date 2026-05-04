@@ -112,7 +112,7 @@ BUCK2_HARD_ERROR=false \
 bazel-bin/app/buck2/buck2_bin --isolation-dir real-rules-go-... build //:hello
 ```
 
-After the two-phase bzlmod cutover, the root smoke no longer stops at the pre-analysis cell-graph boundary for dynamically emitted repos such as `rules_go__download_0_darwin_amd64`. The current smoke loads rules_go from its downloaded bzlmod module, invokes real module extensions and repository rules, materializes the Go SDK repository, and reaches rules_go analysis/action construction for Go packages. This pass fixed generic Bazel API gaps found by real rules_go analysis: `DefaultInfo.files_to_run/default_runfiles/data_runfiles/files`, runfiles merging, `actions.symlink`, named `actions.run`, build configuration fields, artifact `root.path`, positional Bazel `rule(_impl, ...)` classification, `ctx.features`/`ctx.disabled_features`, `Args.add_all(depset(...))`, provider-instance `type(...) == "struct"`, and `ctx.info_file`/`ctx.version_file`. The latest smoke analyzed 165 targets and logged no failed commands/actions, but the Buck client remained parked waiting for the daemon after analysis/log completion; continue by debugging that client/daemon stream termination boundary before moving to Bazelisk.
+After the two-phase bzlmod cutover, the root smoke no longer stops at the pre-analysis cell-graph boundary for dynamically emitted repos such as `rules_go__download_0_darwin_amd64`. The current smoke loads rules_go from its downloaded bzlmod module, invokes real module extensions and repository rules, materializes the Go SDK repository, and reaches rules_go analysis/action construction for Go packages. This pass fixed generic Bazel API gaps found by real rules_go analysis: `DefaultInfo.files_to_run/default_runfiles/data_runfiles/files`, runfiles merging, `actions.symlink`, named `actions.run`, build configuration fields, artifact `root.path`, positional Bazel `rule(_impl, ...)` classification, `ctx.features`/`ctx.disabled_features`, `Args.add_all(depset(...))`, provider-instance `type(...) == "struct"`, and `ctx.info_file`/`ctx.version_file`. The latest smoke now starts real `rules_go` local actions instead of parking after analysis: action outputs embedded in Bazel action command lines are rendered as outputs and filtered out of input visitation, removing the self-dependency hang. The next boundary is generic external-source path parity for generated bzlmod repos: `sdk.go.path` currently expands to a repo-name path such as `bzlmod_rules_go_0_57_0_go_sdk_go_default_sdk/bin/go`, while the generated repository contents live under Buck-owned external-cell paths.
 
 ## Constraints
 
@@ -255,7 +255,7 @@ Acceptance:
 
 ## Phase 4: Bazel Rule API Compatibility
 
-Status: real rules_go analysis is now underway. The simple smoke reaches Go package action construction through downloaded rules_go and the materialized Go SDK, analyzes 165 targets, and then currently leaves the Buck client waiting on an idle daemon stream instead of returning a clean build result. Remaining work is driven by that stream-termination boundary and the next concrete Bazel analysis/action API failures after it.
+Status: real rules_go analysis is now underway. The simple smoke reaches Go package action construction through downloaded rules_go and the materialized Go SDK, analyzes 165 targets, and starts real local actions. The former post-analysis wait was a generic action self-dependency: Bazel rules may pass outputs as command-line arguments to `ctx.actions.run/run_shell`, and those frozen output artifacts must not be visited as action inputs. Remaining work is driven by the next concrete action-execution failure.
 
 Implement enough Bazel analysis surface for real rules_go:
 
@@ -284,6 +284,7 @@ Completed for current rules_go smoke:
 - Bazel label attrs that admit source files via `allow_files`/`allow_single_file`
 - Bazel user provider instances report `struct` for `type(...)`, while provider identity remains available for indexing and membership.
 - Bazel `Args.add_all`/`add_joined` accept direct depset values in addition to iterable sequences.
+- Bazel action outputs embedded in command-line artifacts render with the action output path and are not collected as inputs, matching `ctx.actions.run/run_shell` output-argument usage in rules_go.
 
 Acceptance:
 
@@ -294,7 +295,7 @@ Acceptance:
 
 Implement remaining:
 
-- Debug the current post-analysis client/daemon stream wait in the rules_go smoke and make it return a clean success or concrete failure.
+- Make Bazel `File.path`/`dirname` for generated bzlmod external source artifacts resolve to the same execution-root paths Buck materializes for action inputs/tools.
 - Complete `ctx.actions.write` Bazel keyword compatibility as failures require.
 - Complete `ctx.actions.run` metadata/tool/input-manifest/unused-inputs behavior beyond the named executable/arguments/inputs/outputs/env shape reached so far.
 - Complete `ctx.actions.run_shell` parity beyond the direct command/arguments shape reached so far.

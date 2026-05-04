@@ -423,6 +423,96 @@ impl ArtifactPathMapper for DepFilesPlaceholderArtifactPathMapper {
     }
 }
 
+fn artifact_is_run_action_output(
+    outputs: &BoxSliceSet<BuildArtifact>,
+    artifact: &Artifact,
+) -> bool {
+    match artifact.as_parts().0 {
+        BaseArtifactKind::Build(build) => outputs.iter().any(|output| output == build),
+        BaseArtifactKind::Source(_) => false,
+    }
+}
+
+fn artifact_group_is_run_action_output(
+    outputs: &BoxSliceSet<BuildArtifact>,
+    artifact_group: &ArtifactGroup,
+) -> bool {
+    match artifact_group {
+        ArtifactGroup::Artifact(artifact) => artifact_is_run_action_output(outputs, artifact),
+        ArtifactGroup::TransitiveSetProjection(_) | ArtifactGroup::Promise(_) => false,
+    }
+}
+
+struct RunActionOutputArtifactPathMapper<'a> {
+    outputs: &'a BoxSliceSet<BuildArtifact>,
+    inner: &'a dyn ArtifactPathMapper,
+    output_hash: ContentBasedPathHash,
+}
+
+impl<'a> RunActionOutputArtifactPathMapper<'a> {
+    fn new(outputs: &'a BoxSliceSet<BuildArtifact>, inner: &'a dyn ArtifactPathMapper) -> Self {
+        Self {
+            outputs,
+            inner,
+            output_hash: ContentBasedPathHash::for_output_artifact(),
+        }
+    }
+}
+
+impl ArtifactPathMapper for RunActionOutputArtifactPathMapper<'_> {
+    fn get(&self, artifact: &Artifact) -> Option<&ContentBasedPathHash> {
+        if artifact_is_run_action_output(self.outputs, artifact) {
+            Some(&self.output_hash)
+        } else {
+            self.inner.get(artifact)
+        }
+    }
+}
+
+struct RunActionOutputFilteringArtifactVisitor<'a, 'v> {
+    outputs: &'a BoxSliceSet<BuildArtifact>,
+    inner: &'a mut dyn CommandLineArtifactVisitor<'v>,
+}
+
+impl<'a, 'v> RunActionOutputFilteringArtifactVisitor<'a, 'v> {
+    fn new(
+        outputs: &'a BoxSliceSet<BuildArtifact>,
+        inner: &'a mut dyn CommandLineArtifactVisitor<'v>,
+    ) -> Self {
+        Self { outputs, inner }
+    }
+}
+
+impl<'v> CommandLineArtifactVisitor<'v> for RunActionOutputFilteringArtifactVisitor<'_, 'v> {
+    fn visit_input(&mut self, input: ArtifactGroup, tags: Vec<&ArtifactTag>) {
+        if !artifact_group_is_run_action_output(self.outputs, &input) {
+            self.inner.visit_input(input, tags);
+        }
+    }
+
+    fn visit_declared_output(&mut self, artifact: OutputArtifact<'v>, tags: Vec<&ArtifactTag>) {
+        self.inner.visit_declared_output(artifact, tags);
+    }
+
+    fn visit_frozen_output(&mut self, artifact: Artifact, tags: Vec<&ArtifactTag>) {
+        if !artifact_is_run_action_output(self.outputs, &artifact) {
+            self.inner.visit_frozen_output(artifact, tags);
+        }
+    }
+
+    fn push_frame(&mut self) -> buck2_error::Result<()> {
+        self.inner.push_frame()
+    }
+
+    fn pop_frame(&mut self) {
+        self.inner.pop_frame()
+    }
+
+    fn skip_hidden(&self) -> bool {
+        self.inner.skip_hidden()
+    }
+}
+
 type ExpandedCommandLineDigestForDepFiles = ExpandedCommandLineDigest;
 
 /// A CommandLineArtifactVisitor that gathers non-hidden inputs.
@@ -452,25 +542,39 @@ impl CommandLineArtifactVisitor<'_> for SkipHiddenCommandLineArtifactVisitor {
     }
 }
 
+fn visit_run_action_command_line_artifacts<'v>(
+    outputs: &BoxSliceSet<BuildArtifact>,
+    command_line: &dyn CommandLineArgLike<'v>,
+    artifact_visitor: &mut dyn CommandLineArtifactVisitor<'v>,
+) -> buck2_error::Result<()> {
+    let mut artifact_visitor =
+        RunActionOutputFilteringArtifactVisitor::new(outputs, artifact_visitor);
+    command_line.visit_artifacts(&mut artifact_visitor)
+}
+
 impl RunAction {
     fn visit_artifacts<'a>(
         &'a self,
         artifact_visitor: &mut dyn CommandLineArtifactVisitor<'a>,
     ) -> buck2_error::Result<()> {
         let values = Self::unpack(&self.starlark_values)?;
-        values.args.visit_artifacts(artifact_visitor)?;
-        values.exe.visit_artifacts(artifact_visitor)?;
+        visit_run_action_command_line_artifacts(&self.outputs, values.args, artifact_visitor)?;
+        visit_run_action_command_line_artifacts(&self.outputs, values.exe, artifact_visitor)?;
         if let Some(worker) = values.worker {
-            worker.exe.visit_artifacts(artifact_visitor)?;
+            visit_run_action_command_line_artifacts(&self.outputs, worker.exe, artifact_visitor)?;
         }
         if let Some(remote_worker) = values.remote_worker {
-            remote_worker.exe.visit_artifacts(artifact_visitor)?;
+            visit_run_action_command_line_artifacts(
+                &self.outputs,
+                remote_worker.exe,
+                artifact_visitor,
+            )?;
             for (_, v) in remote_worker.env.iter() {
-                v.visit_artifacts(artifact_visitor)?;
+                visit_run_action_command_line_artifacts(&self.outputs, *v, artifact_visitor)?;
             }
         }
         for (_, v) in values.env.iter() {
-            v.visit_artifacts(artifact_visitor)?;
+            visit_run_action_command_line_artifacts(&self.outputs, *v, artifact_visitor)?;
         }
         Ok(())
     }
@@ -552,9 +656,13 @@ impl RunAction {
         // is not hidden.
         let mut skip_hidden_visitor = SkipHiddenCommandLineArtifactVisitor::new();
         self.visit_artifacts(&mut skip_hidden_visitor)?;
-        let artifact_path_mapping =
+        let input_artifact_path_mapping =
             action_execution_ctx.artifact_path_mapping(Some(skip_hidden_visitor.inputs));
-        let artifact_path_mapping_for_dep_files = DepFilesPlaceholderArtifactPathMapper {};
+        let artifact_path_mapping =
+            RunActionOutputArtifactPathMapper::new(&self.outputs, &input_artifact_path_mapping);
+        let dep_files_artifact_path_mapping = DepFilesPlaceholderArtifactPathMapper {};
+        let artifact_path_mapping_for_dep_files =
+            RunActionOutputArtifactPathMapper::new(&self.outputs, &dep_files_artifact_path_mapping);
         values
             .exe
             .add_to_command_line(&mut exe_rendered, &mut cli_ctx, &artifact_path_mapping)?;
@@ -563,7 +671,7 @@ impl RunAction {
             &mut cli_ctx,
             &artifact_path_mapping_for_dep_files,
         )?;
-        values.exe.visit_artifacts(artifact_visitor)?;
+        visit_run_action_command_line_artifacts(&self.outputs, values.exe, artifact_visitor)?;
         command_line_digest_for_dep_files.push_count();
 
         let worker = if let Some(worker) = values.worker {
@@ -579,7 +687,11 @@ impl RunAction {
                 &mut cli_ctx,
                 &artifact_path_mapping_for_dep_files,
             )?;
-            worker.exe.visit_artifacts(&mut local_worker_visitor)?;
+            visit_run_action_command_line_artifacts(
+                &self.outputs,
+                worker.exe,
+                &mut local_worker_visitor,
+            )?;
             let worker_env: buck2_error::Result<SortedVectorMap<_, _>> = worker
                 .env
                 .into_iter()
@@ -591,7 +703,11 @@ impl RunAction {
                         &mut ctx,
                         &artifact_path_mapping,
                     )?;
-                    v.visit_artifacts(&mut local_worker_visitor)?;
+                    visit_run_action_command_line_artifacts(
+                        &self.outputs,
+                        v,
+                        &mut local_worker_visitor,
+                    )?;
 
                     command_line_digest_for_dep_files.push_arg(k.to_owned());
                     v.add_to_command_line(
@@ -625,7 +741,11 @@ impl RunAction {
 
             let worker_key = if worker.supports_bazel_remote_persistent_worker_protocol {
                 let mut worker_visitor = SimpleCommandLineArtifactVisitor::new();
-                worker.exe.visit_artifacts(&mut worker_visitor)?;
+                visit_run_action_command_line_artifacts(
+                    &self.outputs,
+                    worker.exe,
+                    &mut worker_visitor,
+                )?;
                 if !worker_visitor.declared_outputs.is_empty()
                     && !worker_visitor.frozen_outputs.is_empty()
                 {
@@ -675,9 +795,11 @@ impl RunAction {
                 &mut cli_ctx,
                 &artifact_path_mapping_for_dep_files,
             )?;
-            remote_worker
-                .exe
-                .visit_artifacts(&mut remote_worker_init_visitor)?;
+            visit_run_action_command_line_artifacts(
+                &self.outputs,
+                remote_worker.exe,
+                &mut remote_worker_init_visitor,
+            )?;
 
             let remote_worker_env: buck2_error::Result<SortedVectorMap<_, _>> = remote_worker
                 .env
@@ -690,7 +812,11 @@ impl RunAction {
                         &mut ctx,
                         &artifact_path_mapping,
                     )?;
-                    v.visit_artifacts(&mut remote_worker_init_visitor)?;
+                    visit_run_action_command_line_artifacts(
+                        &self.outputs,
+                        v,
+                        &mut remote_worker_init_visitor,
+                    )?;
 
                     command_line_digest_for_dep_files.push_arg(k.to_owned());
                     v.add_to_command_line(
@@ -743,7 +869,7 @@ impl RunAction {
             &mut cli_ctx,
             &artifact_path_mapping_for_dep_files,
         )?;
-        values.args.visit_artifacts(artifact_visitor)?;
+        visit_run_action_command_line_artifacts(&self.outputs, values.args, artifact_visitor)?;
         command_line_digest_for_dep_files.push_count();
 
         let env_len = values.env.len();
@@ -758,7 +884,7 @@ impl RunAction {
                     &mut ctx,
                     &artifact_path_mapping,
                 )?;
-                v.visit_artifacts(artifact_visitor)?;
+                visit_run_action_command_line_artifacts(&self.outputs, v, artifact_visitor)?;
 
                 command_line_digest_for_dep_files.push_arg(k.to_owned());
                 v.add_to_command_line(
