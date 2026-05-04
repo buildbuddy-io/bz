@@ -39,19 +39,24 @@ use starlark::environment::GlobalsBuilder;
 use starlark::eval::Evaluator;
 use starlark::starlark_module;
 use starlark::values::StringValue;
+use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::ValueTypedComplex;
 use starlark::values::dict::AllocDict;
 use starlark::values::list::AllocList;
+use starlark::values::list::ListRef;
 use starlark::values::list_or_tuple::UnpackListOrTuple;
 use starlark::values::none::NoneOr;
+use starlark::values::tuple::TupleRef;
 use starlark::values::tuple::UnpackTuple;
+use starlark::values::typing::StarlarkCallable;
 
 use crate::attrs::coerce::attr_type::AttrTypeExt;
 use crate::attrs::coerce::ctx::BuildAttrCoercionContext;
 use crate::attrs::starlark_attribute::StarlarkAttribute;
 use crate::attrs::starlark_attribute::register_attr_type;
+use crate::bazel_config::bazel_exec_transition_from_value;
 use crate::bazel_configuration_field::BazelConfigurationField;
 use crate::interpreter::build_context::BuildContext;
 use crate::interpreter::build_context::PerFileTypeContext;
@@ -73,12 +78,10 @@ enum AttrError {
     DefaultOnlyMustHaveDefault,
     #[error("unsupported Bazel attr cfg string `{0}`")]
     UnsupportedBazelAttrCfg(String),
-    #[error(
-        "unsupported Bazel configuration_field(fragment = {fragment:?}, name = {name:?}) as attr.label default"
-    )]
-    UnsupportedBazelConfigurationField { fragment: String, name: String },
     #[error("providers argument contains non-provider value `{0}`")]
     InvalidProviderValue(String),
+    #[error("providers argument cannot mix provider values with provider lists")]
+    InvalidProviderListShape,
 }
 
 pub(crate) trait AttributeExt {
@@ -174,7 +177,11 @@ fn bazel_attr_with_allowed_values<'v>(
     let default = if mandatory {
         None
     } else {
-        Some(default.unwrap_or(fallback))
+        Some(match default {
+            Some(default) if bazel_is_computed_default(default) => fallback,
+            Some(default) => default,
+            None => fallback,
+        })
     };
     let default = match default {
         None => None,
@@ -191,6 +198,10 @@ fn bazel_attr_with_allowed_values<'v>(
     Ok(StarlarkAttribute::new_bazel(
         Attribute::new_with_allowed_values(default, doc, coercer, allowed_values)?,
     ))
+}
+
+fn bazel_is_computed_default<'v>(value: Value<'v>) -> bool {
+    <StarlarkCallable<'v> as UnpackValue<'v>>::unpack_value_opt(value).is_some()
 }
 
 fn bazel_label_default<'v>(
@@ -225,11 +236,9 @@ fn bazel_label_default<'v>(
         return Ok(Some(eval.heap().alloc(label)));
     }
 
-    Err(AttrError::UnsupportedBazelConfigurationField {
-        fragment: configuration_field.fragment().to_owned(),
-        name: configuration_field.name().to_owned(),
-    }
-    .into())
+    // Buck2 does not currently model Bazel fragment option values. For label attrs,
+    // unresolved late-bound defaults behave like an unset Bazel configuration field.
+    Ok(Some(Value::new_none()))
 }
 
 fn bazel_attr_required<'v>(
@@ -253,6 +262,9 @@ fn bazel_dep_attr_type<'v>(
     match cfg {
         None => Ok(AttrType::dep(required_providers, PluginKindSet::EMPTY)),
         Some(cfg) if cfg.is_none() => Ok(AttrType::dep(required_providers, PluginKindSet::EMPTY)),
+        Some(cfg) if bazel_exec_transition_from_value(cfg).is_some() => {
+            Ok(AttrType::exec_dep(required_providers))
+        }
         Some(cfg) => match cfg.unpack_str() {
             Some("target") => Ok(AttrType::dep(required_providers, PluginKindSet::EMPTY)),
             Some("exec") => Ok(AttrType::exec_dep(required_providers)),
@@ -331,12 +343,46 @@ pub(crate) fn init_coerce_providers_label_for_bzl() {
 
 /// Common code to handle `providers` argument of dep-like attrs.
 fn dep_like_attr_handle_providers_arg(providers: Vec<Value>) -> buck2_error::Result<ProviderIdSet> {
-    Ok(ProviderIdSet::from(providers.try_map(
-        |v| match v.as_provider_callable() {
+    fn provider_id_from_value(
+        v: Value,
+    ) -> buck2_error::Result<Arc<buck2_core::provider::id::ProviderId>> {
+        match v.as_provider_callable() {
             Some(callable) => buck2_error::Ok(callable.id()?.dupe()),
             None => Err(AttrError::InvalidProviderValue(v.to_repr()).into()),
-        },
-    )?))
+        }
+    }
+
+    fn provider_list_from_value<'v>(v: Value<'v>) -> Option<Vec<Value<'v>>> {
+        if let Some(list) = ListRef::from_value(v) {
+            Some(list.iter().collect())
+        } else {
+            TupleRef::from_value(v).map(|tuple| tuple.iter().collect())
+        }
+    }
+
+    let mut direct_providers = Vec::new();
+    let mut provider_groups = Vec::new();
+    for provider in providers {
+        if let Some(group) = provider_list_from_value(provider) {
+            provider_groups.push(
+                group
+                    .into_iter()
+                    .map(provider_id_from_value)
+                    .collect::<buck2_error::Result<Vec<_>>>()?,
+            );
+        } else {
+            direct_providers.push(provider_id_from_value(provider)?);
+        }
+    }
+
+    if !direct_providers.is_empty() && !provider_groups.is_empty() {
+        return Err(AttrError::InvalidProviderListShape.into());
+    }
+    if provider_groups.is_empty() {
+        Ok(ProviderIdSet::from(direct_providers))
+    } else {
+        Ok(ProviderIdSet::any_of(provider_groups))
+    }
 }
 
 /// This type is available as a global `attrs` symbol, to allow the definition of attributes to the `rule` function.

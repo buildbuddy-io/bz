@@ -45,6 +45,7 @@ use buck2_core::cells::external::ExternalCellOrigin;
 use buck2_core::cells::external::GitCellSetup;
 use buck2_core::cells::external::GitObjectFormat;
 use buck2_core::cells::external::bzlmod_cell_name;
+use buck2_core::cells::external::register_bzlmod_cell_aliases;
 use buck2_core::cells::external::register_external_cell_origin;
 use buck2_core::cells::name::CellName;
 use buck2_core::fs::project::ProjectRoot;
@@ -124,6 +125,7 @@ pub struct ExternalPathBuckconfigData {
 #[derive(Debug, Clone, PartialEq, Eq, Allocative, Pagable)]
 pub struct BzlmodModuleExtensionEvaluationRequest {
     pub parent_canonical_repo_name: Arc<str>,
+    pub parent_is_root: bool,
     pub extension_bzl_file: Arc<str>,
     pub extension_bzl_cell: Arc<str>,
     pub extension_bzl_path: Arc<str>,
@@ -135,6 +137,7 @@ pub struct BzlmodModuleExtensionEvaluationRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Allocative, Pagable)]
 pub struct BzlmodEvaluatedModuleExtension {
     pub parent_canonical_repo_name: Arc<str>,
+    pub parent_is_root: bool,
     pub extension_bzl_file: Arc<str>,
     pub extension_bzl_cell: Arc<str>,
     pub extension_bzl_path: Arc<str>,
@@ -162,6 +165,8 @@ pub struct BzlmodEvaluatedRepositoryRule {
     pub rule_bzl_build_file_cell: String,
     pub rule_name: String,
     pub attrs: Vec<(String, String)>,
+    #[serde(default)]
+    pub label_deps: Vec<String>,
 }
 
 impl ExternalBuckconfigData {
@@ -849,6 +854,7 @@ impl BuckConfigBasedCells {
                     rule_bzl_build_file_cell,
                     rule_name,
                     attrs,
+                    label_deps,
                 } => BzlmodGeneratedCellGenerator::RepositoryRuleInvocation(
                     BzlmodRepositoryRuleInvocationSetup {
                         repo_name: Arc::from(repo_name),
@@ -862,10 +868,12 @@ impl BuckConfigBasedCells {
                                 .map(|(key, value)| (Arc::from(key), Arc::from(value)))
                                 .collect(),
                         ),
+                        label_deps: Arc::new(label_deps.into_iter().map(Arc::from).collect()),
                     },
                 ),
                 BzlmodGeneratedRepoConfig::ModuleExtensionRepo {
                     parent_canonical_repo_name,
+                    parent_is_root,
                     extension_bzl_file,
                     extension_name,
                     repo_name,
@@ -873,6 +881,7 @@ impl BuckConfigBasedCells {
                 } => BzlmodGeneratedCellGenerator::ModuleExtensionRepo(
                     BzlmodModuleExtensionRepoSetup {
                         parent_canonical_repo_name: Arc::from(parent_canonical_repo_name),
+                        parent_is_root,
                         extension_bzl_file: Arc::from(extension_bzl_file),
                         extension_name: Arc::from(extension_name),
                         repo_name: Arc::from(repo_name),
@@ -982,6 +991,23 @@ impl BazelModuleCellAliases {
             ))
         });
     }
+
+    fn register_for_starlark_label_resolution(&self) {
+        register_bzlmod_cell_aliases(
+            "root",
+            self.root_aliases
+                .iter()
+                .map(|alias| (alias.alias.clone(), alias.cell_name.clone())),
+        );
+        for (cell_name, aliases) in &self.cell_aliases {
+            register_bzlmod_cell_aliases(
+                cell_name,
+                aliases
+                    .iter()
+                    .map(|alias| (alias.alias.clone(), alias.cell_name.clone())),
+            );
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -1001,6 +1027,15 @@ struct DiscoveredBcrModule {
     constants: Vec<(String, String)>,
     registered_toolchains: Vec<String>,
     deps: Vec<BazelDep>,
+}
+
+#[derive(Clone, Debug)]
+struct RootBzlmodModule {
+    name: String,
+    version: String,
+    canonical_repo_name: String,
+    constants: Vec<(String, String)>,
+    extension_usages: Vec<BzlmodExtensionUsage>,
 }
 
 #[derive(Clone, Debug)]
@@ -1089,9 +1124,13 @@ enum BzlmodGeneratedRepoConfig {
         rule_bzl_build_file_cell: String,
         rule_name: String,
         attrs: Vec<(String, String)>,
+        #[serde(default)]
+        label_deps: Vec<String>,
     },
     ModuleExtensionRepo {
         parent_canonical_repo_name: String,
+        #[serde(default)]
+        parent_is_root: bool,
         extension_bzl_file: String,
         extension_name: String,
         repo_name: String,
@@ -1147,6 +1186,7 @@ async fn get_bazel_module_resolution(
 ) -> buck2_error::Result<BazelModuleCellAliases> {
     let mut aliases = BazelModuleCellAliases::default();
     let mut root_deps = Vec::new();
+    let mut root_module_lines = Vec::new();
     let mut seen = BTreeSet::new();
     let mut stack = vec!["MODULE.bazel".to_owned()];
 
@@ -1160,6 +1200,7 @@ async fn get_bazel_module_resolution(
         let Some(lines) = file_ops.read_file_lines_if_exists(&path).await? else {
             continue;
         };
+        root_module_lines.extend(lines.iter().cloned());
 
         for call in collect_bzl_calls(&lines, "module(") {
             for arg in ["name", "repo_name"] {
@@ -1214,16 +1255,6 @@ async fn get_bazel_module_resolution(
             ));
         }
 
-        for call in collect_bzl_calls(&lines, "use_repo(") {
-            if !bzl_use_repo_aliases(&call, &[]).is_empty() {
-                return Err(buck2_error!(
-                    buck2_error::ErrorTag::Input,
-                    "module extensions are not implemented in Buck2 bzlmod resolution yet: {}",
-                    call
-                ));
-            }
-        }
-
         for repo_rule in bzl_use_repo_rule_names(&lines) {
             for call in collect_bzl_calls(&lines, &format!("{repo_rule}(")) {
                 return Err(buck2_error!(
@@ -1247,8 +1278,10 @@ async fn get_bazel_module_resolution(
         }
     }
 
+    let root_module = bzlmod_root_module_from_lines(&root_module_lines);
     let bcr_resolution = resolve_bcr_modules(
         root_deps,
+        root_module,
         bzlmod_module_extension_results_complete,
         bzlmod_module_extension_results,
     )
@@ -1262,6 +1295,7 @@ async fn get_bazel_module_resolution(
     aliases.module_extension_evaluation_requests =
         bcr_resolution.module_extension_evaluation_requests;
     aliases.normalize();
+    aliases.register_for_starlark_label_resolution();
     Ok(aliases)
 }
 
@@ -1278,6 +1312,7 @@ async fn bzlmod_http_client() -> buck2_error::Result<HttpClient> {
 
 async fn resolve_bcr_modules(
     root_deps: Vec<BazelDep>,
+    root_module: RootBzlmodModule,
     bzlmod_module_extension_results_complete: bool,
     bzlmod_module_extension_results: &[BzlmodEvaluatedModuleExtension],
 ) -> buck2_error::Result<BcrResolution> {
@@ -1293,6 +1328,7 @@ async fn resolve_bcr_modules(
                 let client = bzlmod_http_client().await?;
                 resolve_bcr_modules_with_client(
                     root_deps,
+                    root_module,
                     &client,
                     bzlmod_module_extension_results_complete,
                     &bzlmod_module_extension_results,
@@ -1312,6 +1348,7 @@ async fn resolve_bcr_modules(
 
 async fn resolve_bcr_modules_with_client(
     root_deps: Vec<BazelDep>,
+    root_module: RootBzlmodModule,
     client: &HttpClient,
     bzlmod_module_extension_results_complete: bool,
     bzlmod_module_extension_results: &[BzlmodEvaluatedModuleExtension],
@@ -1422,6 +1459,7 @@ async fn resolve_bcr_modules_with_client(
     let selected_keys_for_generated = selected_keys.clone();
     let mut canonical_repo_names_by_cell = BTreeMap::<String, String>::new();
     canonical_repo_names_by_cell.insert("bazel_tools".to_owned(), "bazel_tools".to_owned());
+    canonical_repo_names_by_cell.insert("root".to_owned(), root_module.canonical_repo_name.clone());
     for key in &selected_keys_for_generated {
         let canonical_repo_name = bzlmod_canonical_repo_name(&key.0, &key.1);
         canonical_repo_names_by_cell
@@ -1466,6 +1504,7 @@ async fn resolve_bcr_modules_with_client(
 
     let mut resolved = resolved.into_values().collect::<Vec<_>>();
     let generated_resolution = resolve_generated_bzlmod_repos(
+        &root_module,
         &discovered,
         &selected_keys_for_generated,
         &mut cell_aliases_by_cell,
@@ -1502,6 +1541,7 @@ struct GeneratedBzlmodReposResolution {
 }
 
 fn resolve_generated_bzlmod_repos(
+    root_module: &RootBzlmodModule,
     discovered: &BTreeMap<(String, String), DiscoveredBcrModule>,
     selected_keys: &BTreeSet<(String, String)>,
     cell_aliases_by_cell: &mut BTreeMap<String, BTreeMap<String, String>>,
@@ -1514,6 +1554,7 @@ fn resolve_generated_bzlmod_repos(
     let mut generated_repo_declaring_cells = Vec::new();
     let mut extension_generated_repo_groups = BTreeMap::<String, Vec<(String, String)>>::new();
     let extension_unique_names = bzlmod_extension_unique_names(
+        root_module,
         discovered,
         selected_keys,
         cell_aliases_by_cell,
@@ -1694,165 +1735,46 @@ fn resolve_generated_bzlmod_repos(
         }
 
         for usage in &module.extension_usages {
-            let resolved_extension = bzlmod_resolve_extension(
-                &parent_cell_name,
+            resolve_bzlmod_extension_usage_generated_repos(
                 usage,
-                cell_aliases_by_cell,
-                &extension_unique_names,
-            )?;
-            let extension_usages_json = bzlmod_module_extension_evaluation_config_json(
+                &parent_canonical_repo_name,
+                &parent_cell_name,
+                false,
+                root_module,
                 discovered,
                 selected_keys,
                 cell_aliases_by_cell,
-                &resolved_extension.id,
                 &extension_unique_names,
+                bzlmod_module_extension_results_complete,
+                bzlmod_module_extension_results,
+                &mut generated,
+                &mut module_extension_evaluation_requests,
+                &mut generated_repo_declaring_cells,
+                &mut extension_generated_repo_groups,
             )?;
-            let extension_group_key = resolved_extension.unique_name.clone();
-
-            let imports_needing_generic_repos = usage
-                .imports
-                .iter()
-                .filter(|import| {
-                    bzlmod_cell_alias_target(cell_aliases_by_cell, &parent_cell_name, &import.alias)
-                        .is_none()
-                })
-                .collect::<Vec<_>>();
-            let mut static_repo_names = imports_needing_generic_repos
-                .iter()
-                .map(|import| import.repo_name.clone())
-                .collect::<BTreeSet<_>>();
-            static_repo_names.extend(bzlmod_extension_tag_repo_names(usage));
-
-            let evaluated_extension = bzlmod_module_extension_results.iter().find(|result| {
-                result.extension_bzl_cell.as_ref() == resolved_extension.id.bzl_cell_name.as_str()
-                    && result.extension_bzl_path.as_ref() == resolved_extension.id.bzl_path.as_str()
-                    && result.extension_name.as_ref() == usage.extension_name.as_str()
-            });
-
-            let mut generated_repo_names = if bzlmod_module_extension_results_complete {
-                if static_repo_names.is_empty() && evaluated_extension.is_none() {
-                    continue;
-                }
-                let Some(evaluated_extension) = evaluated_extension else {
-                    return Err(buck2_error!(
-                        buck2_error::ErrorTag::Input,
-                        "bzlmod module extension `{}`%`{}` for `{}` was not evaluated before cell graph finalization",
-                        usage.extension_bzl_file,
-                        usage.extension_name,
-                        parent_canonical_repo_name
-                    ));
-                };
-                evaluated_extension
-                    .repo_names
-                    .iter()
-                    .map(|repo_name| repo_name.to_string())
-                    .collect::<BTreeSet<_>>()
-            } else {
-                if static_repo_names.is_empty() {
-                    continue;
-                }
-                if let Some(evaluated_extension) = evaluated_extension {
-                    static_repo_names.extend(
-                        evaluated_extension
-                            .repo_names
-                            .iter()
-                            .map(|repo_name| repo_name.to_string()),
-                    );
-                } else {
-                    module_extension_evaluation_requests.push(
-                        BzlmodModuleExtensionEvaluationRequest {
-                            parent_canonical_repo_name: Arc::from(
-                                parent_canonical_repo_name.clone(),
-                            ),
-                            extension_bzl_file: Arc::from(usage.extension_bzl_file.clone()),
-                            extension_bzl_cell: Arc::from(
-                                resolved_extension.id.bzl_cell_name.clone(),
-                            ),
-                            extension_bzl_path: Arc::from(resolved_extension.id.bzl_path.clone()),
-                            extension_unique_name: Arc::from(
-                                resolved_extension.unique_name.clone(),
-                            ),
-                            extension_name: Arc::from(usage.extension_name.clone()),
-                            extension_usages_json: Arc::from(extension_usages_json.clone()),
-                        },
-                    );
-                }
-                static_repo_names
-            };
-
-            for import in imports_needing_generic_repos {
-                if bzlmod_module_extension_results_complete
-                    && !generated_repo_names.contains(&import.repo_name)
-                {
-                    return Err(buck2_error!(
-                        buck2_error::ErrorTag::Input,
-                        "bzlmod module extension `{}`%`{}` for `{}` did not emit imported repository `{}`",
-                        usage.extension_bzl_file,
-                        usage.extension_name,
-                        parent_canonical_repo_name,
-                        import.repo_name
-                    ));
-                }
-
-                let canonical_repo_name = bzlmod_extension_repo_canonical_repo_name(
-                    &resolved_extension,
-                    &import.repo_name,
-                );
-                let generator_json = serde_json::to_string(&bzlmod_module_extension_repo_config(
-                    bzlmod_module_extension_results_complete,
-                    evaluated_extension,
-                    &parent_canonical_repo_name,
-                    usage,
-                    &import.repo_name,
-                    &extension_usages_json,
-                )?)
-                .buck_error_context(
-                    "Error serializing generated module extension repo configuration",
-                )?;
-                let generated_cell_name = add_generated_bzlmod_repo(
-                    &mut generated,
-                    &mut generated_repo_declaring_cells,
-                    cell_aliases_by_cell,
-                    &parent_cell_name,
-                    &import.alias,
-                    &canonical_repo_name,
-                    generator_json,
-                );
-                extension_generated_repo_groups
-                    .entry(extension_group_key.clone())
-                    .or_default()
-                    .push((import.repo_name.clone(), generated_cell_name));
-                generated_repo_names.remove(&import.repo_name);
-            }
-
-            for repo_name in generated_repo_names {
-                let canonical_repo_name =
-                    bzlmod_extension_repo_canonical_repo_name(&resolved_extension, &repo_name);
-                let generator_json = serde_json::to_string(&bzlmod_module_extension_repo_config(
-                    bzlmod_module_extension_results_complete,
-                    evaluated_extension,
-                    &parent_canonical_repo_name,
-                    usage,
-                    &repo_name,
-                    &extension_usages_json,
-                )?)
-                .buck_error_context(
-                    "Error serializing generated module extension repo configuration",
-                )?;
-                let generated_cell_name = add_unimported_generated_bzlmod_repo(
-                    &mut generated,
-                    &mut generated_repo_declaring_cells,
-                    &parent_cell_name,
-                    &canonical_repo_name,
-                    generator_json,
-                );
-                extension_generated_repo_groups
-                    .entry(extension_group_key.clone())
-                    .or_default()
-                    .push((repo_name, generated_cell_name));
-            }
         }
     }
+
+    for usage in &root_module.extension_usages {
+        resolve_bzlmod_extension_usage_generated_repos(
+            usage,
+            &root_module.canonical_repo_name,
+            "root",
+            true,
+            root_module,
+            discovered,
+            selected_keys,
+            cell_aliases_by_cell,
+            &extension_unique_names,
+            bzlmod_module_extension_results_complete,
+            bzlmod_module_extension_results,
+            &mut generated,
+            &mut module_extension_evaluation_requests,
+            &mut generated_repo_declaring_cells,
+            &mut extension_generated_repo_groups,
+        )?;
+    }
+
     if needs_local_config_platform {
         let canonical_repo_name = "local_config_platform".to_owned();
         let generator_json =
@@ -1894,7 +1816,176 @@ fn resolve_generated_bzlmod_repos(
     })
 }
 
+fn resolve_bzlmod_extension_usage_generated_repos(
+    usage: &BzlmodExtensionUsage,
+    parent_canonical_repo_name: &str,
+    parent_cell_name: &str,
+    parent_is_root: bool,
+    root_module: &RootBzlmodModule,
+    discovered: &BTreeMap<(String, String), DiscoveredBcrModule>,
+    selected_keys: &BTreeSet<(String, String)>,
+    cell_aliases_by_cell: &mut BTreeMap<String, BTreeMap<String, String>>,
+    extension_unique_names: &BTreeMap<BzlmodExtensionId, String>,
+    bzlmod_module_extension_results_complete: bool,
+    bzlmod_module_extension_results: &[BzlmodEvaluatedModuleExtension],
+    generated: &mut Vec<BazelCompatExternalModule>,
+    module_extension_evaluation_requests: &mut Vec<BzlmodModuleExtensionEvaluationRequest>,
+    generated_repo_declaring_cells: &mut Vec<(String, String)>,
+    extension_generated_repo_groups: &mut BTreeMap<String, Vec<(String, String)>>,
+) -> buck2_error::Result<()> {
+    let resolved_extension = bzlmod_resolve_extension(
+        parent_cell_name,
+        usage,
+        cell_aliases_by_cell,
+        extension_unique_names,
+    )?;
+    let extension_usages_json = bzlmod_module_extension_evaluation_config_json(
+        root_module,
+        discovered,
+        selected_keys,
+        cell_aliases_by_cell,
+        &resolved_extension.id,
+        extension_unique_names,
+    )?;
+    let extension_group_key = resolved_extension.unique_name.clone();
+
+    let imports_needing_generic_repos = usage
+        .imports
+        .iter()
+        .filter(|import| {
+            bzlmod_cell_alias_target(cell_aliases_by_cell, parent_cell_name, &import.alias)
+                .is_none()
+        })
+        .collect::<Vec<_>>();
+    let mut static_repo_names = imports_needing_generic_repos
+        .iter()
+        .map(|import| import.repo_name.clone())
+        .collect::<BTreeSet<_>>();
+    static_repo_names.extend(bzlmod_extension_tag_repo_names(usage));
+
+    let evaluated_extension = bzlmod_module_extension_results.iter().find(|result| {
+        result.extension_bzl_cell.as_ref() == resolved_extension.id.bzl_cell_name.as_str()
+            && result.extension_bzl_path.as_ref() == resolved_extension.id.bzl_path.as_str()
+            && result.extension_name.as_ref() == usage.extension_name.as_str()
+    });
+
+    let mut generated_repo_names = if bzlmod_module_extension_results_complete {
+        if static_repo_names.is_empty() && evaluated_extension.is_none() {
+            return Ok(());
+        }
+        let Some(evaluated_extension) = evaluated_extension else {
+            return Err(buck2_error!(
+                buck2_error::ErrorTag::Input,
+                "bzlmod module extension `{}`%`{}` for `{}` was not evaluated before cell graph finalization",
+                usage.extension_bzl_file,
+                usage.extension_name,
+                parent_canonical_repo_name
+            ));
+        };
+        evaluated_extension
+            .repo_names
+            .iter()
+            .map(|repo_name| repo_name.to_string())
+            .collect::<BTreeSet<_>>()
+    } else {
+        if static_repo_names.is_empty() {
+            return Ok(());
+        }
+        if let Some(evaluated_extension) = evaluated_extension {
+            static_repo_names.extend(
+                evaluated_extension
+                    .repo_names
+                    .iter()
+                    .map(|repo_name| repo_name.to_string()),
+            );
+        } else {
+            module_extension_evaluation_requests.push(BzlmodModuleExtensionEvaluationRequest {
+                parent_canonical_repo_name: Arc::from(parent_canonical_repo_name),
+                parent_is_root,
+                extension_bzl_file: Arc::from(usage.extension_bzl_file.clone()),
+                extension_bzl_cell: Arc::from(resolved_extension.id.bzl_cell_name.clone()),
+                extension_bzl_path: Arc::from(resolved_extension.id.bzl_path.clone()),
+                extension_unique_name: Arc::from(resolved_extension.unique_name.clone()),
+                extension_name: Arc::from(usage.extension_name.clone()),
+                extension_usages_json: Arc::from(extension_usages_json.clone()),
+            });
+        }
+        static_repo_names
+    };
+
+    for import in imports_needing_generic_repos {
+        if bzlmod_module_extension_results_complete
+            && !generated_repo_names.contains(&import.repo_name)
+        {
+            return Err(buck2_error!(
+                buck2_error::ErrorTag::Input,
+                "bzlmod module extension `{}`%`{}` for `{}` did not emit imported repository `{}`",
+                usage.extension_bzl_file,
+                usage.extension_name,
+                parent_canonical_repo_name,
+                import.repo_name
+            ));
+        }
+
+        let canonical_repo_name =
+            bzlmod_extension_repo_canonical_repo_name(&resolved_extension, &import.repo_name);
+        let generator_json = serde_json::to_string(&bzlmod_module_extension_repo_config(
+            bzlmod_module_extension_results_complete,
+            evaluated_extension,
+            parent_canonical_repo_name,
+            parent_is_root,
+            usage,
+            &import.repo_name,
+            &extension_usages_json,
+        )?)
+        .buck_error_context("Error serializing generated module extension repo configuration")?;
+        let generated_cell_name = add_generated_bzlmod_repo(
+            generated,
+            generated_repo_declaring_cells,
+            cell_aliases_by_cell,
+            parent_cell_name,
+            &import.alias,
+            &canonical_repo_name,
+            generator_json,
+        );
+        extension_generated_repo_groups
+            .entry(extension_group_key.clone())
+            .or_default()
+            .push((import.repo_name.clone(), generated_cell_name));
+        generated_repo_names.remove(&import.repo_name);
+    }
+
+    for repo_name in generated_repo_names {
+        let canonical_repo_name =
+            bzlmod_extension_repo_canonical_repo_name(&resolved_extension, &repo_name);
+        let generator_json = serde_json::to_string(&bzlmod_module_extension_repo_config(
+            bzlmod_module_extension_results_complete,
+            evaluated_extension,
+            parent_canonical_repo_name,
+            parent_is_root,
+            usage,
+            &repo_name,
+            &extension_usages_json,
+        )?)
+        .buck_error_context("Error serializing generated module extension repo configuration")?;
+        let generated_cell_name = add_unimported_generated_bzlmod_repo(
+            generated,
+            generated_repo_declaring_cells,
+            parent_cell_name,
+            &canonical_repo_name,
+            generator_json,
+        );
+        extension_generated_repo_groups
+            .entry(extension_group_key.clone())
+            .or_default()
+            .push((repo_name, generated_cell_name));
+    }
+
+    Ok(())
+}
+
 fn bzlmod_module_extension_evaluation_config_json(
+    root_module: &RootBzlmodModule,
     discovered: &BTreeMap<(String, String), DiscoveredBcrModule>,
     selected_keys: &BTreeSet<(String, String)>,
     cell_aliases_by_cell: &BTreeMap<String, BTreeMap<String, String>>,
@@ -1902,6 +1993,33 @@ fn bzlmod_module_extension_evaluation_config_json(
     extension_unique_names: &BTreeMap<BzlmodExtensionId, String>,
 ) -> buck2_error::Result<String> {
     let mut modules = Vec::new();
+    let mut root_has_usage = false;
+    let mut root_tags = Vec::new();
+    for usage in &root_module.extension_usages {
+        let resolved_extension =
+            bzlmod_resolve_extension("root", usage, cell_aliases_by_cell, extension_unique_names)?;
+        if &resolved_extension.id != extension_id {
+            continue;
+        }
+        root_has_usage = true;
+        root_tags.extend(usage.tags.iter().map(|tag| BzlmodModuleExtensionTagConfig {
+            tag_name: tag.tag_name.clone(),
+            dev_dependency: usage.dev_dependency,
+            bindings: tag.bindings.clone(),
+            kwargs: tag.kwargs.clone(),
+        }));
+    }
+    if root_has_usage {
+        modules.push(BzlmodModuleExtensionModuleConfig {
+            name: root_module.name.clone(),
+            version: root_module.version.clone(),
+            canonical_repo_name: root_module.canonical_repo_name.clone(),
+            is_root: true,
+            constants: root_module.constants.clone(),
+            tags: root_tags,
+        });
+    }
+
     for key in selected_keys {
         let Some(module) = discovered.get(key) else {
             continue;
@@ -1950,6 +2068,7 @@ fn bzlmod_module_extension_repo_config(
     bzlmod_module_extension_results_complete: bool,
     evaluated_extension: Option<&BzlmodEvaluatedModuleExtension>,
     parent_canonical_repo_name: &str,
+    parent_is_root: bool,
     usage: &BzlmodExtensionUsage,
     repo_name: &str,
     extension_usages_json: &str,
@@ -1967,6 +2086,7 @@ fn bzlmod_module_extension_repo_config(
                 rule_bzl_build_file_cell: invocation.rule_bzl_build_file_cell.clone(),
                 rule_name: invocation.rule_name.clone(),
                 attrs: invocation.attrs.clone(),
+                label_deps: invocation.label_deps.clone(),
             });
         }
 
@@ -1992,6 +2112,7 @@ fn bzlmod_module_extension_repo_config(
 
     Ok(BzlmodGeneratedRepoConfig::ModuleExtensionRepo {
         parent_canonical_repo_name: parent_canonical_repo_name.to_owned(),
+        parent_is_root,
         extension_bzl_file: usage.extension_bzl_file.clone(),
         extension_name: usage.extension_name.clone(),
         repo_name: repo_name.to_owned(),
@@ -2087,12 +2208,20 @@ fn bzlmod_extension_tag_repo_names(usage: &BzlmodExtensionUsage) -> Vec<String> 
 }
 
 fn bzlmod_extension_unique_names(
+    root_module: &RootBzlmodModule,
     discovered: &BTreeMap<(String, String), DiscoveredBcrModule>,
     selected_keys: &BTreeSet<(String, String)>,
     cell_aliases_by_cell: &BTreeMap<String, BTreeMap<String, String>>,
     canonical_repo_names_by_cell: &BTreeMap<String, String>,
 ) -> buck2_error::Result<BTreeMap<BzlmodExtensionId, String>> {
     let mut extension_ids = BTreeSet::new();
+    for usage in &root_module.extension_usages {
+        extension_ids.insert(bzlmod_resolve_extension_id(
+            "root",
+            usage,
+            cell_aliases_by_cell,
+        )?);
+    }
     for key in selected_keys {
         let Some(module) = discovered.get(key) else {
             continue;
@@ -2335,6 +2464,11 @@ fn qualify_bzlmod_extension_registered_toolchain(
     result: &BzlmodEvaluatedModuleExtension,
     cell_aliases_by_cell: &BTreeMap<String, BTreeMap<String, String>>,
 ) -> buck2_error::Result<String> {
+    let parent_cell_name = if result.parent_is_root {
+        "root".to_owned()
+    } else {
+        bzlmod_cell_name(&result.parent_canonical_repo_name)
+    };
     if let Some(repo_relative) = pattern.strip_prefix('@') {
         let Some((repo_name, package_and_target)) = repo_relative.split_once("//") else {
             return Err(buck2_error!(
@@ -2350,7 +2484,7 @@ fn qualify_bzlmod_extension_registered_toolchain(
         {
             return qualify_bzlmod_registered_toolchain(
                 pattern,
-                &bzlmod_cell_name(&result.parent_canonical_repo_name),
+                &parent_cell_name,
                 cell_aliases_by_cell,
             );
         }
@@ -2366,11 +2500,7 @@ fn qualify_bzlmod_extension_registered_toolchain(
     }
 
     if let Some(package_and_target) = pattern.strip_prefix("//") {
-        return Ok(format!(
-            "{}//{}",
-            bzlmod_cell_name(&result.parent_canonical_repo_name),
-            package_and_target
-        ));
+        return Ok(format!("{parent_cell_name}//{package_and_target}"));
     }
 
     Err(buck2_error!(
@@ -2595,6 +2725,36 @@ fn bzlmod_module_aliases(lines: &[String]) -> Vec<String> {
         }
     }
     aliases
+}
+
+fn bzlmod_root_module_from_lines(lines: &[String]) -> RootBzlmodModule {
+    let mut name = "root".to_owned();
+    let mut version = String::new();
+    let mut canonical_repo_name = "root".to_owned();
+    for call in collect_bzl_calls(lines, "module(") {
+        if let Some(module_name) = bzl_string_arg(&call, "name") {
+            if !module_name.is_empty() {
+                name = module_name;
+            }
+        }
+        if let Some(module_version) = bzl_string_arg(&call, "version") {
+            version = module_version;
+        }
+        if let Some(repo_name) = bzl_repo_name_arg(&call, &name) {
+            if !repo_name.is_empty() {
+                canonical_repo_name = repo_name;
+            }
+        }
+    }
+    let constants = bzlmod_module_constants_from_lines(lines);
+    let extension_usages = bzlmod_extension_usages_from_lines(lines, &constants, false);
+    RootBzlmodModule {
+        name,
+        version,
+        canonical_repo_name,
+        constants,
+        extension_usages,
+    }
 }
 
 fn bzlmod_use_repo_aliases_from_usages(usages: &[BzlmodExtensionUsage]) -> Vec<String> {
@@ -3343,13 +3503,6 @@ fn bzl_repo_name_arg(call: &str, module_name: &str) -> Option<String> {
 fn bzl_first_string_arg(call: &str) -> Option<String> {
     let (_, args) = call.split_once('(')?;
     bzl_string_value(args.trim_start())
-}
-
-fn bzl_use_repo_aliases(call: &str, constants: &[(String, String)]) -> Vec<String> {
-    bzl_use_repo_imports(call, constants)
-        .into_iter()
-        .map(|import| import.alias)
-        .collect()
 }
 
 fn bzl_use_repo_imports(call: &str, constants: &[(String, String)]) -> Vec<BzlmodUseRepoImport> {

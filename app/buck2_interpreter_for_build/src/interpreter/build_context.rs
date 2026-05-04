@@ -280,6 +280,7 @@ pub struct BazelRepositoryRuleInvocation {
     pub rule_id: StarlarkRuleType,
     pub name: String,
     pub attrs: Vec<(String, String)>,
+    pub label_deps: Vec<String>,
 }
 
 #[derive(Debug, Default)]

@@ -11,6 +11,8 @@ use std::fmt;
 
 use allocative::Allocative;
 use buck2_core::cells::external::BZLMOD_BAZEL_COMPAT_VERSION;
+use buck2_interpreter::types::configured_providers_label::StarlarkProvidersLabel;
+use buck2_node::attrs::coercion_context::AttrCoercionContext;
 use starlark::any::ProvidesStaticType;
 use starlark::environment::GlobalsBuilder;
 use starlark::eval::Arguments;
@@ -21,11 +23,13 @@ use starlark::values::StarlarkValue;
 use starlark::values::Value;
 use starlark::values::ValueLike;
 use starlark::values::dict::AllocDict;
+use starlark::values::list::ListRef;
 use starlark::values::none::NoneType;
 use starlark::values::starlark_value;
 use starlark::values::tuple::UnpackTuple;
 
 use crate::interpreter::build_context::BuildContext;
+use crate::interpreter::module_internals::ModuleInternals;
 
 #[derive(Debug, buck2_error::Error)]
 #[buck2(tag = Input)]
@@ -36,6 +40,8 @@ enum BazelNativeError {
     MissingAliasRule,
     #[error("Bazel native rule `{0}` requires a loaded Buck rule with the same name")]
     MissingNativeRule(&'static str),
+    #[error("`native.package_relative_label` expected a string or label, got `{0}`")]
+    PackageRelativeLabelInvalidInput(String),
 }
 
 #[derive(Debug, ProvidesStaticType, NoSerialize, Allocative)]
@@ -62,8 +68,54 @@ impl<'v> StarlarkValue<'v> for NativeRuleCallable {
         let rule = eval.module().get(self.name).ok_or_else(|| {
             buck2_error::Error::from(BazelNativeError::MissingNativeRule(self.name))
         })?;
+        if self.name == "sh_binary" {
+            return invoke_bazel_sh_binary(rule, args, eval);
+        }
         ValueLike::invoke(rule, args, eval)
     }
+}
+
+fn list_first<'v>(value: Value<'v>) -> Option<Value<'v>> {
+    ListRef::from_value(value).and_then(|list| list.iter().next())
+}
+
+fn invoke_bazel_sh_binary<'v>(
+    rule: Value<'v>,
+    args: &Arguments<'v, '_>,
+    eval: &mut Evaluator<'v, '_, '_>,
+) -> starlark::Result<Value<'v>> {
+    let positions = args.positions(eval.heap())?.collect::<Vec<_>>();
+    let named = args.names_map()?;
+    let has_main = named.iter().any(|(name, _)| name.as_str() == "main");
+    let has_resources = named.iter().any(|(name, _)| name.as_str() == "resources");
+    let srcs = named
+        .iter()
+        .find(|(name, _)| name.as_str() == "srcs")
+        .map(|(_, value)| *value);
+    let data = named
+        .iter()
+        .find(|(name, _)| name.as_str() == "data")
+        .map(|(_, value)| *value);
+
+    let mut kwargs_owned = Vec::new();
+    for (name, value) in named {
+        match name.as_str() {
+            "srcs" | "data" => {}
+            _ => kwargs_owned.push((name.as_str().to_owned(), value)),
+        }
+    }
+    if !has_main && let Some(main) = srcs.and_then(list_first) {
+        kwargs_owned.push(("main".to_owned(), main));
+    }
+    if !has_resources && let Some(data) = data {
+        kwargs_owned.push(("resources".to_owned(), data));
+    }
+
+    let kwargs = kwargs_owned
+        .iter()
+        .map(|(name, value)| (name.as_str(), *value))
+        .collect::<Vec<_>>();
+    eval.eval_function(rule, &positions, &kwargs)
 }
 
 #[starlark_module]
@@ -98,6 +150,26 @@ fn bazel_native_module(builder: &mut GlobalsBuilder) {
             }
         }
         Ok(NoneType)
+    }
+
+    fn package_relative_label<'v>(
+        input: Value<'v>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<Value<'v>> {
+        if StarlarkProvidersLabel::from_value(input).is_some() {
+            return Ok(input);
+        }
+        let Some(label) = input.unpack_str() else {
+            return Err(buck2_error::Error::from(
+                BazelNativeError::PackageRelativeLabelInvalidInput(input.get_type().to_owned()),
+            )
+            .into());
+        };
+        let build_context = ModuleInternals::from_context(eval, "native.package_relative_label")?;
+        let label = build_context
+            .attr_coercion_context()
+            .coerce_providers_label(label)?;
+        Ok(eval.heap().alloc(StarlarkProvidersLabel::new(label)))
     }
 }
 

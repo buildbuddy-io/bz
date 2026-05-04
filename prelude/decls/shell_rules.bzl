@@ -54,9 +54,17 @@ sh_binary = prelude_rule(
     attrs = (
         # @unsorted-dict-items
         {
-            "main": attrs.source(doc = """
+            "main": attrs.option(attrs.source(), default = None, doc = """
                 Either the path to the script (relative to the build file), or a `build target`.
-                 This file must be executable in order to be run.
+                 This file must be executable in order to be run. If omitted, `srcs` must contain
+                 exactly one file and that file is used as the main script.
+            """),
+            "srcs": attrs.list(attrs.source(), default = [], doc = """
+                Bazel-compatible spelling for the main shell script. This must contain exactly one
+                 file when `main` is omitted.
+            """),
+            "data": attrs.list(attrs.source(allow_directory = True), default = [], doc = """
+                Bazel-compatible runtime data files for the shell executable.
             """),
             "resources": attrs.list(attrs.source(allow_directory = True), default = [], doc = """
                 A list of files or build rules that this rule requires in order to run. These could be things such as

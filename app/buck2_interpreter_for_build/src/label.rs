@@ -8,7 +8,13 @@
  * above-listed licenses.
  */
 
+use buck2_core::cells::CellAliasResolver;
+use buck2_core::cells::alias::NonEmptyCellAlias;
+use buck2_core::cells::external::bzlmod_cell_aliases_for_cell;
+use buck2_core::cells::name::CellName;
 use buck2_core::configuration::data::ConfigurationData;
+use buck2_core::fs::project_rel_path::ProjectRelativePath;
+use buck2_core::package::PackageLabel;
 use buck2_core::pattern::pattern::ParsedPattern;
 use buck2_core::pattern::pattern_type::ProvidersPatternExtra;
 use buck2_core::pattern::pattern_type::TargetPatternExtra;
@@ -16,6 +22,7 @@ use buck2_core::target::label::label::TargetLabel;
 use buck2_interpreter::types::configured_providers_label::StarlarkConfiguredProvidersLabel;
 use buck2_interpreter::types::configured_providers_label::StarlarkProvidersLabel;
 use buck2_interpreter::types::target_label::StarlarkTargetLabel;
+use dupe::Dupe;
 use starlark::environment::GlobalsBuilder;
 use starlark::eval::Evaluator;
 use starlark::starlark_module;
@@ -31,21 +38,105 @@ enum LabelCreatorError {
     ExpectedTarget(String),
 }
 
+struct LabelParseContext {
+    cell_name: CellName,
+    cell_alias_resolver: CellAliasResolver,
+    package: Option<PackageLabel>,
+}
+
+fn is_bazel_compat_cell(cell_name: CellName) -> bool {
+    let cell = cell_name.as_str();
+    cell == "root" || cell == "bazel_tools" || cell.starts_with("bzlmod_")
+}
+
+fn default_label_parse_context(c: &BuildContext<'_>) -> LabelParseContext {
+    LabelParseContext {
+        cell_name: c.cell_info().name().name(),
+        cell_alias_resolver: c.cell_info().cell_alias_resolver().dupe(),
+        package: c.require_package().ok(),
+    }
+}
+
+fn bzlmod_cell_alias_resolver(
+    c: &BuildContext<'_>,
+    cell_name: CellName,
+) -> buck2_error::Result<CellAliasResolver> {
+    let aliases = bzlmod_cell_aliases_for_cell(cell_name.as_str())
+        .into_iter()
+        .map(|(alias, destination)| {
+            Ok((
+                NonEmptyCellAlias::new(alias)?,
+                NonEmptyCellAlias::new(destination)?,
+            ))
+        })
+        .collect::<buck2_error::Result<Vec<_>>>()?;
+    CellAliasResolver::new_for_non_root_cell(
+        cell_name,
+        c.cell_info()
+            .cell_resolver()
+            .root_cell_cell_alias_resolver(),
+        aliases,
+    )
+}
+
+fn label_parse_context<'v>(
+    c: &BuildContext<'_>,
+    eval: &Evaluator<'v, '_, '_>,
+) -> buck2_error::Result<LabelParseContext> {
+    let default = || default_label_parse_context(c);
+    let Some(location) = eval.call_stack_top_location() else {
+        return Ok(default());
+    };
+    let Ok(project_relative_path) = ProjectRelativePath::new(location.filename()) else {
+        return Ok(default());
+    };
+    let callsite_path = c
+        .cell_info()
+        .cell_resolver()
+        .get_cell_path(project_relative_path);
+    let cell_name = callsite_path.cell();
+    let package = callsite_path
+        .parent()
+        .map(PackageLabel::from_cell_path)
+        .transpose()?;
+
+    let cell_alias_resolver = if cell_name == c.cell_info().name().name() {
+        c.cell_info().cell_alias_resolver().dupe()
+    } else if is_bazel_compat_cell(cell_name) {
+        bzlmod_cell_alias_resolver(c, cell_name)?
+    } else {
+        c.cell_info().cell_alias_resolver().dupe()
+    };
+
+    Ok(LabelParseContext {
+        cell_name,
+        cell_alias_resolver,
+        package,
+    })
+}
+
 fn parse_providers_label<'v>(
     s: &str,
     eval: &mut Evaluator<'v, '_, '_>,
 ) -> starlark::Result<StarlarkProvidersLabel> {
     let c = BuildContext::from_context(eval)?;
+    let label_context = label_parse_context(c, eval)?;
     let label = if s.starts_with(':') {
-        format!("{}{}", c.require_package()?, s)
+        let package = match label_context.package {
+            Some(package) => package,
+            None => c.require_package()?,
+        };
+        format!("{}{}", package, s)
+    } else if let Some(root_label) = s.strip_prefix("@@root//") {
+        format!("root//{root_label}")
     } else {
         s.to_owned()
     };
     let target = match ParsedPattern::<ProvidersPatternExtra>::parse_precise(
         &label,
-        c.cell_info().name().name(),
+        label_context.cell_name,
         c.cell_info().cell_resolver(),
-        c.cell_info().cell_alias_resolver(),
+        &label_context.cell_alias_resolver,
     )? {
         ParsedPattern::Target(package, target_name, providers) => {
             providers.into_providers_label(package, target_name.as_ref())

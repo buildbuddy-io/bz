@@ -36,6 +36,21 @@ enum ResolutionError {
     MissingRequiredProvider(String, ConfiguredProvidersLabel, Vec<String>),
 }
 
+fn required_providers_description(required_providers: &ProviderIdSet) -> String {
+    required_providers
+        .provider_groups()
+        .iter()
+        .map(|group| {
+            group
+                .iter()
+                .map(|provider_id| provider_id.name())
+                .collect::<Vec<_>>()
+                .join(", ")
+        })
+        .collect::<Vec<_>>()
+        .join(" or ")
+}
+
 pub trait DepAttrTypeExt {
     fn check_providers(
         required_providers: &ProviderIdSet,
@@ -69,17 +84,20 @@ impl DepAttrTypeExt for DepAttrType {
         providers: &FrozenProviderCollection,
         target: &ConfiguredProvidersLabel,
     ) -> buck2_error::Result<()> {
-        for provider_id in required_providers {
-            if !providers.contains_provider(provider_id) {
-                return Err(ResolutionError::MissingRequiredProvider(
-                    provider_id.name().to_owned(),
-                    target.clone(),
-                    providers.provider_names(),
-                )
-                .into());
-            }
+        if required_providers.is_empty()
+            || required_providers
+                .provider_groups()
+                .iter()
+                .any(|group| group.iter().all(|id| providers.contains_provider(id)))
+        {
+            return Ok(());
         }
-        Ok(())
+        Err(ResolutionError::MissingRequiredProvider(
+            required_providers_description(required_providers),
+            target.clone(),
+            providers.provider_names(),
+        )
+        .into())
     }
 
     fn alloc_dependency<'v>(

@@ -40,6 +40,9 @@ pub fn bzlmod_cell_name(canonical_repo_name: &str) -> String {
 static BZLMOD_CANONICAL_REPO_NAMES: Lazy<Mutex<BTreeMap<String, String>>> =
     Lazy::new(|| Mutex::new(BTreeMap::new()));
 
+static BZLMOD_CELL_ALIASES: Lazy<Mutex<BTreeMap<String, BTreeMap<String, String>>>> =
+    Lazy::new(|| Mutex::new(BTreeMap::new()));
+
 pub fn register_bzlmod_cell_canonical_repo_name(canonical_repo_name: &str) {
     BZLMOD_CANONICAL_REPO_NAMES
         .lock()
@@ -56,6 +59,30 @@ pub fn bzlmod_canonical_repo_name_for_cell(cell_name: &str) -> Option<String> {
         .expect("bzlmod canonical repo map poisoned")
         .get(cell_name)
         .cloned()
+}
+
+pub fn register_bzlmod_cell_aliases(
+    cell_name: &str,
+    aliases: impl IntoIterator<Item = (String, String)>,
+) {
+    BZLMOD_CELL_ALIASES
+        .lock()
+        .expect("bzlmod cell alias map poisoned")
+        .insert(cell_name.to_owned(), aliases.into_iter().collect());
+}
+
+pub fn bzlmod_cell_aliases_for_cell(cell_name: &str) -> Vec<(String, String)> {
+    BZLMOD_CELL_ALIASES
+        .lock()
+        .expect("bzlmod cell alias map poisoned")
+        .get(cell_name)
+        .map(|aliases| {
+            aliases
+                .iter()
+                .map(|(alias, cell_name)| (alias.clone(), cell_name.clone()))
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 #[derive(Debug, Clone, Dupe, Allocative, PartialEq, Eq, Pagable)]
@@ -341,6 +368,7 @@ pub struct BzlmodRepositoryRuleInvocationSetup {
     pub rule_bzl_build_file_cell: Arc<str>,
     pub rule_name: Arc<str>,
     pub attrs: Arc<Vec<(Arc<str>, Arc<str>)>>,
+    pub label_deps: Arc<Vec<Arc<str>>>,
 }
 
 #[derive(
@@ -355,6 +383,7 @@ pub struct BzlmodRepositoryRuleInvocationSetup {
 )]
 pub struct BzlmodModuleExtensionRepoSetup {
     pub parent_canonical_repo_name: Arc<str>,
+    pub parent_is_root: bool,
     pub extension_bzl_file: Arc<str>,
     pub extension_name: Arc<str>,
     pub repo_name: Arc<str>,

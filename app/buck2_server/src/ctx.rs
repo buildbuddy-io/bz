@@ -60,8 +60,6 @@ use buck2_common::legacy_configs::dice::HasInjectedLegacyConfigs;
 use buck2_common::legacy_configs::file_ops::ConfigPath;
 use buck2_common::legacy_configs::key::BuckconfigKeyRef;
 use buck2_configured::cycle::ConfiguredGraphCycleDescriptor;
-use buck2_error::BuckErrorContext;
-use buck2_node::bzl_or_bxl_path::BzlOrBxlPath;
 use buck2_core::cells::external::BzlmodModuleExtensionRepoSetup;
 use buck2_core::cells::external::bzlmod_cell_name;
 use buck2_core::execution_types::executor_config::CommandExecutorConfig;
@@ -76,6 +74,7 @@ use buck2_core::pattern::pattern_type::ConfiguredProvidersPatternExtra;
 use buck2_core::rollout_percentage::RolloutPercentage;
 use buck2_core::target::label::interner::ConcurrentTargetLabelInterner;
 use buck2_directory::directory::dashmap_directory_interner::DashMapDirectoryInterner;
+use buck2_error::BuckErrorContext;
 use buck2_events::dispatch::EventDispatcher;
 use buck2_events::metadata;
 use buck2_events::schedule_type::SandcastleScheduleType;
@@ -111,6 +110,7 @@ use buck2_interpreter_for_build::bazel_repository::evaluate_bzlmod_module_extens
 use buck2_interpreter_for_build::interpreter::configuror::BuildInterpreterConfiguror;
 use buck2_interpreter_for_build::interpreter::cycles::LoadCycleDescriptor;
 use buck2_interpreter_for_build::interpreter::interpreter_setup::setup_interpreter;
+use buck2_node::bzl_or_bxl_path::BzlOrBxlPath;
 use buck2_resource_control::HasResourceControl;
 use buck2_server_ctx::bxl::InitBxlStreamingTracker;
 use buck2_server_ctx::concurrency::DiceUpdater;
@@ -813,6 +813,7 @@ impl DiceCommandUpdater<'_, '_> {
                 ctx,
                 &BzlmodModuleExtensionRepoSetup {
                     parent_canonical_repo_name: request.parent_canonical_repo_name.dupe(),
+                    parent_is_root: request.parent_is_root,
                     extension_bzl_file: request.extension_bzl_file.dupe(),
                     extension_name: request.extension_name.dupe(),
                     repo_name: Arc::from(""),
@@ -839,9 +840,14 @@ impl DiceCommandUpdater<'_, '_> {
                     repo_name: invocation.name,
                     rule_bzl_cell: rule_path.path().cell().as_str().to_owned(),
                     rule_bzl_path: rule_path.path().path().as_str().to_owned(),
-                    rule_bzl_build_file_cell: rule_path.build_file_cell().name().as_str().to_owned(),
+                    rule_bzl_build_file_cell: rule_path
+                        .build_file_cell()
+                        .name()
+                        .as_str()
+                        .to_owned(),
                     rule_name: invocation.rule_id.name,
                     attrs: invocation.attrs,
+                    label_deps: invocation.label_deps,
                 });
             }
 
@@ -862,6 +868,7 @@ impl DiceCommandUpdater<'_, '_> {
             registered_toolchains.dedup();
             results.push(BzlmodEvaluatedModuleExtension {
                 parent_canonical_repo_name: request.parent_canonical_repo_name.dupe(),
+                parent_is_root: request.parent_is_root,
                 extension_bzl_file: request.extension_bzl_file.dupe(),
                 extension_bzl_cell: request.extension_bzl_cell.dupe(),
                 extension_bzl_path: request.extension_bzl_path.dupe(),

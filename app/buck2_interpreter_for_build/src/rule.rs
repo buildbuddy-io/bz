@@ -96,6 +96,28 @@ use crate::plugins::PluginKindArg;
 
 pub static NAME_ATTRIBUTE_FIELD: &str = "name";
 
+#[derive(Debug, ProvidesStaticType, NoSerialize, Allocative)]
+struct StarlarkExecGroup {
+    toolchains: Vec<String>,
+    exec_compatible_with: Vec<String>,
+}
+
+impl fmt::Display for StarlarkExecGroup {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "<exec_group toolchains={} exec_compatible_with={}>",
+            self.toolchains.len(),
+            self.exec_compatible_with.len()
+        )
+    }
+}
+
+starlark_simple_value!(StarlarkExecGroup);
+
+#[starlark_value(type = "exec_group")]
+impl<'v> StarlarkValue<'v> for StarlarkExecGroup {}
+
 #[derive(Debug, ProvidesStaticType, Trace, NoSerialize, Allocative, Clone, Copy)]
 enum RuleImpl<'v> {
     BuildRule(StarlarkCallable<'v, (FrozenValue,), ListType<FrozenValue>>),
@@ -134,6 +156,10 @@ pub struct StarlarkRuleCallable<'v> {
     is_bazel_rule: bool,
     /// Whether the rule was declared with Bazel's `build_setting = ...`.
     is_bazel_build_setting: bool,
+    /// Bazel rule initializer called at target declaration time before attr coercion.
+    bazel_initializer: Option<Value<'v>>,
+    /// Public Starlark attrs passed to the Bazel initializer when explicitly provided.
+    bazel_initializer_attrs: Vec<String>,
     /// This kind of the rule, e.g. whether it can be used in configuration context.
     rule_kind: RuleKind,
     /// The raw docstring for this rule
@@ -196,6 +222,14 @@ enum RuleError {
     UnsupportedBazelToolchain(String),
     #[error("unsupported Bazel rule outputs declaration `{0}`")]
     UnsupportedBazelOutputs(String),
+    #[error("Bazel rule initializer only supports named rule arguments")]
+    BazelInitializerPositionalArgs,
+    #[error("Bazel rule initializer returned `{0}`, expected a dict or None")]
+    InvalidBazelInitializerReturn(String),
+    #[error("Bazel rule initializer returned non-string key `{0}`")]
+    InvalidBazelInitializerReturnKey(String),
+    #[error("Bazel rule initializer cannot change the target name")]
+    BazelInitializerChangedName,
 }
 
 fn bazel_build_setting_default_attr(
@@ -426,6 +460,8 @@ impl<'v> StarlarkRuleCallable<'v> {
         is_bazel_test_rule: bool,
         is_bazel_executable_rule: bool,
         build_setting: Option<Value<'v>>,
+        bazel_initializer: Option<Value<'v>>,
+        bazel_initializer_attrs: Vec<String>,
         artifact_promise_mappings: Option<ArtifactPromiseMappings<'v>>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> buck2_error::Result<StarlarkRuleCallable<'v>> {
@@ -528,6 +564,8 @@ impl<'v> StarlarkRuleCallable<'v> {
             bazel_implicit_outputs,
             is_bazel_rule,
             is_bazel_build_setting,
+            bazel_initializer,
+            bazel_initializer_attrs,
             docs: Some(doc.to_owned()),
             ignore_attrs_for_profiling: build_context.ignore_attrs_for_profiling,
             artifact_promise_mappings,
@@ -559,6 +597,8 @@ impl<'v> StarlarkRuleCallable<'v> {
             false,
             false,
             None,
+            None,
+            Vec::new(),
             Some(ArtifactPromiseMappings {
                 mappings: artifact_promise_mappings
                     .iter()
@@ -726,6 +766,10 @@ impl<'v> Freeze for StarlarkRuleCallable<'v> {
             }
             None => None,
         };
+        let bazel_initializer = match self.bazel_initializer {
+            Some(initializer) => Some(initializer.freeze(freezer)?),
+            None => None,
+        };
 
         Ok(FrozenStarlarkRuleCallable {
             rule: Arc::new(Rule {
@@ -747,6 +791,8 @@ impl<'v> Freeze for StarlarkRuleCallable<'v> {
             ty: self.ty,
             ignore_attrs_for_profiling: self.ignore_attrs_for_profiling,
             artifact_promise_mappings,
+            bazel_initializer,
+            bazel_initializer_attrs: self.bazel_initializer_attrs,
         })
     }
 }
@@ -765,6 +811,8 @@ pub struct FrozenStarlarkRuleCallable {
     ty: Ty,
     ignore_attrs_for_profiling: bool,
     artifact_promise_mappings: Option<FrozenArtifactPromiseMappings>,
+    bazel_initializer: Option<FrozenValue>,
+    bazel_initializer_attrs: Vec<String>,
 }
 starlark_simple_value!(FrozenStarlarkRuleCallable);
 
@@ -803,6 +851,109 @@ impl FrozenStarlarkRuleCallable {
     pub fn artifact_promise_mappings(&self) -> &Option<FrozenArtifactPromiseMappings> {
         &self.artifact_promise_mappings
     }
+
+    fn named_value<'v>(
+        named: &SmallMap<StringValue<'v>, Value<'v>>,
+        key: &str,
+    ) -> Option<Value<'v>> {
+        named
+            .iter()
+            .find_map(|(name, value)| (name.as_str() == key).then_some(*value))
+    }
+
+    fn insert_named_value<'v>(
+        named: &mut SmallMap<StringValue<'v>, Value<'v>>,
+        key: &str,
+        value: Option<Value<'v>>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) {
+        let mut updated = SmallMap::with_capacity(named.len() + usize::from(value.is_some()));
+        let mut found = false;
+        for (existing_key, existing_value) in std::mem::take(named) {
+            if existing_key.as_str() == key {
+                found = true;
+                if let Some(value) = value {
+                    updated.insert(existing_key, value);
+                }
+            } else {
+                updated.insert(existing_key, existing_value);
+            }
+        }
+        if !found && let Some(value) = value {
+            updated.insert(eval.heap().alloc_str(key), value);
+        }
+        *named = updated;
+    }
+
+    fn apply_bazel_initializer<'v>(
+        &self,
+        args: &Arguments<'v, '_>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<SmallMap<StringValue<'v>, Value<'v>>> {
+        if args.positions(eval.heap())?.next().is_some() {
+            return Err(buck2_error::Error::from(RuleError::BazelInitializerPositionalArgs).into());
+        }
+
+        let mut named = args.names_map()?;
+        let Some(initializer) = self.bazel_initializer else {
+            return Ok(named);
+        };
+
+        let mut initializer_kwargs_owned = Vec::new();
+        if let Some(value) = Self::named_value(&named, NAME_ATTRIBUTE_FIELD)
+            && !value.is_none()
+        {
+            initializer_kwargs_owned.push((NAME_ATTRIBUTE_FIELD.to_owned(), value));
+        }
+        for attr_name in &self.bazel_initializer_attrs {
+            if let Some(value) = Self::named_value(&named, attr_name)
+                && !value.is_none()
+            {
+                initializer_kwargs_owned.push((attr_name.clone(), value));
+            }
+        }
+        let initializer_kwargs = initializer_kwargs_owned
+            .iter()
+            .map(|(name, value)| (name.as_str(), *value))
+            .collect::<Vec<_>>();
+        let initialized = eval.eval_function(initializer.to_value(), &[], &initializer_kwargs)?;
+        if initialized.is_none() {
+            return Ok(named);
+        }
+        let initialized = DictRef::from_value(initialized).ok_or_else(|| {
+            buck2_error::Error::from(RuleError::InvalidBazelInitializerReturn(
+                initialized.get_type().to_owned(),
+            ))
+        })?;
+
+        for (key, value) in initialized.iter() {
+            let Some(key) = key.unpack_str() else {
+                return Err(buck2_error::Error::from(
+                    RuleError::InvalidBazelInitializerReturnKey(key.get_type().to_owned()),
+                )
+                .into());
+            };
+            if key == NAME_ATTRIBUTE_FIELD {
+                if Self::named_value(&named, NAME_ATTRIBUTE_FIELD)
+                    .and_then(|name| name.unpack_str())
+                    != value.unpack_str()
+                {
+                    return Err(
+                        buck2_error::Error::from(RuleError::BazelInitializerChangedName).into(),
+                    );
+                }
+                continue;
+            }
+            Self::insert_named_value(
+                &mut named,
+                key,
+                (!value.is_none()).then_some(value),
+                eval,
+            );
+        }
+
+        Ok(named)
+    }
 }
 
 #[starlark_value(type = "Rule")]
@@ -823,6 +974,24 @@ impl<'v> StarlarkValue<'v> for FrozenStarlarkRuleCallable {
         } else {
             None
         };
+        if self.bazel_initializer.is_some() {
+            let named = self.apply_bazel_initializer(args, eval)?;
+            let internals = ModuleInternals::from_context(eval, self.rule.rule_type.name())?;
+            let target_node = TargetNode::from_named_values(
+                self.rule.dupe(),
+                internals.package(),
+                internals,
+                &named,
+                self.ignore_attrs_for_profiling,
+                call_stack,
+            )?;
+            let output_file_targets = bazel_output_file_targets(&target_node, internals)?;
+            internals.record(target_node)?;
+            for output_file_target in output_file_targets {
+                internals.record(output_file_target)?;
+            }
+            return Ok(Value::new_none());
+        }
         let arg_count = args.len()?;
         self.signature.parser(args, eval, |param_parser, eval| {
             // The body of the callable returned by `rule()`.
@@ -862,6 +1031,50 @@ impl<'v> StarlarkValue<'v> for FrozenStarlarkRuleCallable {
 #[starlark_module]
 #[starlark_types(StarlarkRuleCallable<'_> as Rule)]
 pub fn register_rule_function(builder: &mut GlobalsBuilder) {
+    /// Define a Bazel symbolic macro. The returned callable currently preserves the implementation
+    /// function so macro definitions can be loaded and invoked through Buck's existing package
+    /// loading path while broader symbolic macro metadata is added.
+    fn r#macro<'v>(
+        #[starlark(require = named)] implementation: Value<'v>,
+        #[starlark(require = named)] attrs: Option<Value<'v>>,
+        #[starlark(require = named)] inherit_attrs: Option<Value<'v>>,
+        #[starlark(require = named, default = false)] finalizer: bool,
+        #[starlark(require = named)] doc: Option<&str>,
+    ) -> starlark::Result<Value<'v>> {
+        let _ = (attrs, inherit_attrs, finalizer, doc);
+        Ok(implementation)
+    }
+
+    /// Define a Bazel subrule. This keeps the implementation callable available for Starlark that
+    /// gates behavior on the existence of the Bazel builtin; full subrule execution is still owned
+    /// by the rules that request it.
+    fn subrule<'v>(
+        #[starlark(require = named)] implementation: Value<'v>,
+        #[starlark(require = named)] attrs: Option<Value<'v>>,
+        #[starlark(require = named)] fragments: Option<Value<'v>>,
+        #[starlark(require = named)] toolchains: Option<Value<'v>>,
+    ) -> starlark::Result<Value<'v>> {
+        let _ = (attrs, fragments, toolchains);
+        Ok(implementation)
+    }
+
+    /// Define a Bazel execution group for rules that declare per-action toolchain sets.
+    fn exec_group<'v>(
+        #[starlark(require = named, default = UnpackListOrTuple::default())]
+        toolchains: UnpackListOrTuple<Value<'v>>,
+        #[starlark(require = named, default = UnpackListOrTuple::default())]
+        exec_compatible_with: UnpackListOrTuple<Value<'v>>,
+    ) -> starlark::Result<StarlarkExecGroup> {
+        Ok(StarlarkExecGroup {
+            toolchains: toolchains.items.into_iter().map(|v| v.to_repr()).collect(),
+            exec_compatible_with: exec_compatible_with
+                .items
+                .into_iter()
+                .map(|v| v.to_repr())
+                .collect(),
+        })
+    }
+
     /// Define a rule. As a simple example:
     ///
     /// ```python
@@ -925,6 +1138,11 @@ pub fn register_rule_function(builder: &mut GlobalsBuilder) {
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<StarlarkRuleCallable<'v>> {
         let has_bazel_attrs = attrs.entries.iter().any(|(_, attr)| attr.is_bazel());
+        let bazel_initializer_attrs = attrs
+            .entries
+            .iter()
+            .filter_map(|(name, _)| (!name.starts_with('_')).then_some((*name).to_owned()))
+            .collect::<Vec<_>>();
         let bazel_toolchains = toolchains
             .items
             .into_iter()
@@ -942,7 +1160,6 @@ pub fn register_rule_function(builder: &mut GlobalsBuilder) {
             exec_compatible_with,
             analysis_test,
             exec_groups,
-            initializer,
             parent,
             extendable,
             subrules,
@@ -952,7 +1169,10 @@ pub fn register_rule_function(builder: &mut GlobalsBuilder) {
             || !bazel_implicit_outputs.is_empty()
             || executable
             || test.is_some()
-            || build_setting.is_some();
+            || build_setting.is_some()
+            || initializer
+                .as_ref()
+                .is_some_and(|initializer| !initializer.is_none());
         let (implementation, is_bazel_rule) = match (r#impl, implementation) {
             (Some(r#impl), None) => (r#impl, has_bazel_rule_options),
             (None, Some(implementation)) => (implementation, true),
@@ -982,6 +1202,8 @@ pub fn register_rule_function(builder: &mut GlobalsBuilder) {
             is_bazel_rule && test.unwrap_or(false),
             is_bazel_rule && executable,
             build_setting,
+            initializer.filter(|initializer| !initializer.is_none()),
+            bazel_initializer_attrs,
             None,
             eval,
         )?)

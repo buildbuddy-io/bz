@@ -9,6 +9,7 @@
 load("@prelude//:native.bzl", "native")
 
 def exports_files(srcs, visibility = None, **_kwargs):
+    visibility = visibility or ["//visibility:public"]
     for src in srcs:
         native.export_file(
             name = src,

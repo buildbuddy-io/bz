@@ -7,11 +7,44 @@
  * You may select, at your option, one of the above-listed licenses.
  */
 
+use allocative::Allocative;
+use starlark::any::ProvidesStaticType;
 use starlark::environment::GlobalsBuilder;
 use starlark::eval::Evaluator;
 use starlark::starlark_module;
+use starlark::starlark_simple_value;
+use starlark::values::NoSerialize;
+use starlark::values::StarlarkValue;
 use starlark::values::Value;
+use starlark::values::ValueLike;
+use starlark::values::none::NoneOr;
+use starlark::values::starlark_value;
 use starlark::values::structs::AllocStruct;
+
+use std::fmt;
+
+#[derive(Debug, ProvidesStaticType, NoSerialize, Allocative)]
+pub(crate) struct BazelExecTransition {
+    exec_group: Option<String>,
+}
+
+impl fmt::Display for BazelExecTransition {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self.exec_group {
+            Some(exec_group) => write!(f, "<exec transition for {exec_group}>"),
+            None => f.write_str("<exec transition>"),
+        }
+    }
+}
+
+starlark_simple_value!(BazelExecTransition);
+
+#[starlark_value(type = "ExecTransitionFactory")]
+impl<'v> StarlarkValue<'v> for BazelExecTransition {}
+
+pub(crate) fn bazel_exec_transition_from_value(value: Value<'_>) -> Option<&BazelExecTransition> {
+    value.downcast_ref::<BazelExecTransition>()
+}
 
 fn build_setting<'v>(
     kind: &'static str,
@@ -52,6 +85,14 @@ fn bazel_config_module(builder: &mut GlobalsBuilder) {
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {
         Ok(build_setting("string_list", flag, eval))
+    }
+
+    fn exec(
+        #[starlark(require = named, default = NoneOr::None)] exec_group: NoneOr<&str>,
+    ) -> starlark::Result<BazelExecTransition> {
+        Ok(BazelExecTransition {
+            exec_group: exec_group.into_option().map(str::to_owned),
+        })
     }
 }
 

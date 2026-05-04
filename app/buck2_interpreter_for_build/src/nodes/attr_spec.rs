@@ -38,11 +38,24 @@ use starlark::typing::ParamIsRequired;
 use starlark::typing::ParamSpec;
 use starlark::typing::Ty;
 use starlark::typing::TyFunction;
+use starlark::values::StringValue;
 use starlark::values::Value;
+use starlark_map::small_map::SmallMap;
 
 use crate::attrs::AttributeCoerceExt;
 use crate::interpreter::module_internals::ModuleInternals;
 use crate::nodes::check_within_view::check_within_view;
+
+#[derive(Debug, buck2_error::Error)]
+#[buck2(tag = Input)]
+enum AttributeSpecParseError {
+    #[error("Missing required attribute `{0}` for `{1}`")]
+    MissingRequiredAttribute(String, String),
+    #[error("Unknown attribute `{0}` for `{1}`")]
+    UnknownAttribute(String, String),
+    #[error("Expected string value for `name`, got `{0}`")]
+    ExpectedStringName(String),
+}
 
 pub trait AttributeSpecExt {
     fn start_parse<'a, 'v>(
@@ -63,6 +76,13 @@ pub trait AttributeSpecExt {
         param_parser: &mut ParametersParser<'v, '_>,
         arg_count: usize,
         internals: &ModuleInternals,
+    ) -> buck2_error::Result<(&'v TargetNameRef, AttrValues)>;
+
+    fn parse_named_values<'v>(
+        &self,
+        named: &SmallMap<StringValue<'v>, Value<'v>>,
+        internals: &ModuleInternals,
+        rule_name: &str,
     ) -> buck2_error::Result<(&'v TargetNameRef, AttrValues)>;
 
     /// Returns a starlark Parameters for the rule callable, but not default values.
@@ -183,6 +203,138 @@ impl AttributeSpecExt for AttributeSpec {
         attr_values.shrink_to_fit();
 
         // For now `within_view` is always set, but let's make code more robust.
+        if let Some(within_view) = attr_values.get(WITHIN_VIEW_ATTRIBUTE.id) {
+            let within_view = match within_view {
+                CoercedAttr::WithinView(within_view) => within_view,
+                _ => return Err(internal_error!("`within_view` coerced incorrectly")),
+            };
+            for a in self.attrs(&attr_values, AttrInspectOptions::DefinedOnly) {
+                let default_deps = default_allowed_deps.get(&a.name).copied().flatten();
+                check_within_view(
+                    a.value,
+                    internals.buildfile_path().package(),
+                    a.attr.coercer(),
+                    within_view,
+                    default_deps,
+                )
+                .with_buck_error_context(|| {
+                    format!(
+                        "checking `within_view` for attribute `{}` of `{}`",
+                        a.name, target_label,
+                    )
+                })?;
+            }
+        }
+
+        Ok((name, attr_values))
+    }
+
+    fn parse_named_values<'v>(
+        &self,
+        named: &SmallMap<StringValue<'v>, Value<'v>>,
+        internals: &ModuleInternals,
+        rule_name: &str,
+    ) -> buck2_error::Result<(&'v TargetNameRef, AttrValues)> {
+        for (provided_name, _) in named {
+            if !self
+                .attr_specs()
+                .any(|(attr_name, _, _)| attr_name == provided_name.as_str())
+            {
+                return Err(AttributeSpecParseError::UnknownAttribute(
+                    provided_name.as_str().to_owned(),
+                    rule_name.to_owned(),
+                )
+                .into());
+            }
+        }
+
+        let name_value = named
+            .iter()
+            .find_map(|(key, value)| (key.as_str() == NAME_ATTRIBUTE.name).then_some(*value))
+            .ok_or_else(|| {
+                AttributeSpecParseError::MissingRequiredAttribute(
+                    NAME_ATTRIBUTE.name.to_owned(),
+                    rule_name.to_owned(),
+                )
+            })?;
+        let Some(name) = name_value.unpack_str() else {
+            return Err(
+                AttributeSpecParseError::ExpectedStringName(name_value.get_type().to_owned())
+                    .into(),
+            );
+        };
+        let name = TargetNameRef::new(name)?;
+        let target_label = TargetLabelRef::new(internals.buildfile_path().package(), name);
+        let mut attr_values = AttrValues::with_capacity(named.len());
+        let mut default_allowed_deps = HashMap::new();
+
+        for (attr_name, attr_idx, attribute) in self.attr_specs() {
+            let attr_is_visibility = attr_name == VISIBILITY_ATTRIBUTE.name;
+            let attr_is_within_view = attr_name == WITHIN_VIEW_ATTRIBUTE.name;
+            let value = named
+                .iter()
+                .find_map(|(key, value)| (key.as_str() == attr_name).then_some(*value));
+
+            if attr_name == NAME_ATTRIBUTE.name {
+                attr_values.push_sorted(
+                    attr_idx,
+                    CoercedAttr::String(StringLiteral(ArcStr::from(name.as_str()))),
+                );
+                continue;
+            }
+
+            if let Some(v) = value {
+                let configurable = attr_is_configurable(attr_name);
+                let mut coerced = attribute
+                    .coerce(attr_name, configurable, internals.attr_coercion_context(), v)
+                    .with_buck_error_context(|| {
+                        format!("Error coercing attribute `{attr_name}` of `{target_label}`",)
+                    })?;
+
+                if attr_is_visibility {
+                    if coerced == CoercedValue::Default {
+                        let super_package = internals.super_package();
+                        coerced = CoercedValue::Custom(CoercedAttr::Visibility(
+                            super_package.visibility().dupe(),
+                        ));
+                    }
+                } else if attr_is_within_view && coerced == CoercedValue::Default {
+                    let super_package = internals.super_package();
+                    coerced = CoercedValue::Custom(CoercedAttr::WithinView(
+                        super_package.within_view().dupe(),
+                    ));
+                }
+
+                match coerced {
+                    CoercedValue::Custom(v) => {
+                        attr_values.push_sorted(attr_idx, v);
+                        default_allowed_deps.insert(attr_name, attribute.default_allowed_deps());
+                    }
+                    CoercedValue::Default => {}
+                }
+            } else if attr_is_visibility {
+                let super_package = internals.super_package();
+                attr_values.push_sorted(
+                    attr_idx,
+                    CoercedAttr::Visibility(super_package.visibility().dupe()),
+                );
+            } else if attr_is_within_view {
+                let super_package = internals.super_package();
+                attr_values.push_sorted(
+                    attr_idx,
+                    CoercedAttr::WithinView(super_package.within_view().dupe()),
+                );
+            } else if attribute.default().is_none() {
+                return Err(AttributeSpecParseError::MissingRequiredAttribute(
+                    attr_name.to_owned(),
+                    rule_name.to_owned(),
+                )
+                .into());
+            }
+        }
+
+        attr_values.shrink_to_fit();
+
         if let Some(within_view) = attr_values.get(WITHIN_VIEW_ATTRIBUTE.id) {
             let within_view = match within_view {
                 CoercedAttr::WithinView(within_view) => within_view,

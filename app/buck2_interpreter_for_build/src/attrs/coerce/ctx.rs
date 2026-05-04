@@ -216,6 +216,13 @@ impl BuildAttrCoercionContext {
 
     fn coerce_label_no_cache(&self, value: &str) -> buck2_error::Result<ProvidersLabel> {
         // TODO(nmj): Make this take an import path / package
+        let normalized_value;
+        let value = if let Some(root_label) = value.strip_prefix("@@root//") {
+            normalized_value = format!("root//{root_label}");
+            normalized_value.as_str()
+        } else {
+            value
+        };
         let pattern = match self.parse_pattern::<ProvidersPatternExtra>(value) {
             Ok(pattern) => pattern,
             Err(_)
@@ -225,6 +232,9 @@ impl BuildAttrCoercionContext {
                 self.parse_pattern::<ProvidersPatternExtra>(&format!(":{value}"))?
             }
             Err(e) => {
+                if let Some(label) = self.coerce_bazel_repo_shorthand_label(value)? {
+                    return Ok(label);
+                }
                 if let Some(label) = self.coerce_bazel_non_visible_repo_label(value)? {
                     return Ok(label);
                 }
@@ -249,6 +259,44 @@ impl BuildAttrCoercionContext {
             }
             _ => Err(BuildAttrCoercionContextError::RequiredLabel(value.to_owned()).into()),
         }
+    }
+
+    fn coerce_bazel_repo_shorthand_label(
+        &self,
+        value: &str,
+    ) -> buck2_error::Result<Option<ProvidersLabel>> {
+        if !self.is_bazel_compat_cell() {
+            return Ok(None);
+        }
+
+        let (repo, cell_name) = if let Some(repo) = value.strip_prefix("@@") {
+            if repo.is_empty() || repo.contains(['/', ':', '[', ']']) {
+                return Ok(None);
+            }
+            let cell_name = if repo == "bazel_tools" {
+                CellName::unchecked_new("bazel_tools")?
+            } else {
+                CellName::unchecked_new(&bzlmod_cell_name(repo))?
+            };
+            (repo, cell_name)
+        } else if let Some(repo) = value.strip_prefix('@') {
+            if repo.is_empty() || repo.contains(['/', ':', '[', ']']) {
+                return Ok(None);
+            }
+            (repo, self.cell_alias_resolver.resolve(repo)?)
+        } else {
+            return Ok(None);
+        };
+
+        let package = PackageLabel::new(
+            cell_name,
+            CellRelativePathBuf::try_from(String::new())?.as_ref(),
+        )?;
+        let target = TargetNameRef::new(repo)?;
+        Ok(Some(ProvidersLabel::new(
+            buck2_core::target::label::label::TargetLabel::new(package, target),
+            ProvidersName::Default,
+        )))
     }
 
     fn coerce_bazel_non_visible_repo_label(

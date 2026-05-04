@@ -1430,9 +1430,11 @@ async fn materialize_generated(
                         bzlmod_generated_sibling_path(setup, path, "repository_ctx");
                     ctx.get_blocking_executor()
                         .execute_io(
-                            Box::new(buck2_execute::execute::clean_output_paths::CleanOutputPaths {
-                                paths: vec![repository_ctx_path.clone()],
-                            }),
+                            Box::new(
+                                buck2_execute::execute::clean_output_paths::CleanOutputPaths {
+                                    paths: vec![repository_ctx_path.clone()],
+                                },
+                            ),
                             cancellations,
                         )
                         .await?;
@@ -1448,9 +1450,11 @@ async fn materialize_generated(
                     )?;
                     ctx.get_blocking_executor()
                         .execute_io(
-                            Box::new(buck2_execute::execute::clean_output_paths::CleanOutputPaths {
-                                paths: vec![path.to_owned()],
-                            }),
+                            Box::new(
+                                buck2_execute::execute::clean_output_paths::CleanOutputPaths {
+                                    paths: vec![path.to_owned()],
+                                },
+                            ),
                             cancellations,
                         )
                         .await?;

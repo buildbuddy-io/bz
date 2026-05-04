@@ -391,6 +391,18 @@ fn java_common_internal_methods(builder: &mut MethodsBuilder) {
     ) -> starlark::Result<bool> {
         Ok(false)
     }
+
+    fn google_legacy_api_enabled(
+        #[starlark(this)] _this: &JavaCommonInternal,
+    ) -> starlark::Result<bool> {
+        Ok(false)
+    }
+
+    fn _google_legacy_api_enabled(
+        #[starlark(this)] _this: &JavaCommonInternal,
+    ) -> starlark::Result<bool> {
+        Ok(false)
+    }
 }
 
 pub(crate) fn register_java_common(globals: &mut GlobalsBuilder) {

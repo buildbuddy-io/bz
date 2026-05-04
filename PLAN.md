@@ -108,6 +108,7 @@ Completed:
 - Bazel compatibility cells now use Bazel-native `filegroup` semantics, returning only the declared source files in `DefaultInfo.files` instead of creating Buck synthetic directory outputs for empty filegroups.
 - Bazel `File.path`/`dirname` for declared output artifacts now resolves through the active Buck output root/configuration path, so real rules can pass output directories to actions.
 - The simple downloaded `rules_go` bzlmod smoke repo now builds `//:hello` with Buck2 actions.
+- Bazelisk now advances through real Gazelle bzlmod setup: `native.package_relative_label`, Bazel rule initializers, public-by-default `exports_files(...)`, repository-rule label attrs, same-module generated-repo label prefetch, and repository-rule command/symlink path remapping are implemented generically.
 
 Latest smoke:
 
@@ -117,7 +118,15 @@ BUCK2_HARD_ERROR=false \
 bazel-bin/app/buck2/buck2_bin --isolation-dir real-rules-go-output-path-2 build //:hello
 ```
 
-After the two-phase bzlmod cutover, the root smoke no longer stops at the pre-analysis cell-graph boundary for dynamically emitted repos such as `rules_go__download_0_darwin_amd64`. The current smoke loads rules_go from its downloaded bzlmod module, invokes real module extensions and repository rules, materializes the Go SDK repository, analyzes the simple Go package, and runs the real `rules_go` local actions needed for `//:hello`. This pass fixed the last rules_go smoke boundaries found so far: external source `File.path` parity for generated repos, directory artifact expansion in `Args.add_all`/`add_joined`, empty Bazel `filegroup` semantics for rules_go's PGO label, and declared output artifact `File.path`/`dirname` parity for actions that receive output directories. The next validation target is Bazelisk.
+After the two-phase bzlmod cutover, the root smoke no longer stops at the pre-analysis cell-graph boundary for dynamically emitted repos such as `rules_go__download_0_darwin_amd64`. The simple rules_go smoke loads rules_go from its downloaded bzlmod module, invokes real module extensions and repository rules, materializes the Go SDK repository, analyzes the simple Go package, and runs the real `rules_go` local actions needed for `//:hello`.
+
+Bazelisk is now the active validation target. The latest Bazelisk smoke gets through Gazelle's generated config repo, materializes the Gazelle cache repo from real `non_module_deps`, builds far enough to invoke the real `go_repository_tools` repository rule, and now fails while running Gazelle's helper source-list check:
+
+```text
+list_repository_tools_srcs: open internal/go_repository_tools_srcs.bzl: no such file or directory
+```
+
+The next cut is to finish repository-rule execution-root parity for `ctx.symlink(...)` and command working directories so the symlinked Gazelle source tree is visible exactly where the helper expects it.
 
 ## Constraints
 

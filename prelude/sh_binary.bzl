@@ -113,7 +113,9 @@ def _generate_script(
 
 # Attrs:
 # "deps": attrs.list(attrs.dep(), default = []),
-# "main": attrs.source(),
+# "main": attrs.option(attrs.source(), default = None),
+# "srcs": attrs.list(attrs.source(), default = []),
+# "data": attrs.list(attrs.source(), default = []),
 # "resources": attrs.list(attrs.source(), default = []),
 # "copy_resources": attrs.bool(default = False),
 def sh_binary_impl(ctx):
@@ -121,11 +123,18 @@ def sh_binary_impl(ctx):
     if len(ctx.attrs.deps) > 0:
         fail("sh_binary deps unsupported. Got `{}`".format(repr(ctx.attrs)))
 
+    main = ctx.attrs.main
+    if main == None:
+        if len(ctx.attrs.srcs) != 1:
+            fail("sh_binary expected exactly one item in `srcs` when `main` is omitted, got {}".format(len(ctx.attrs.srcs)))
+        main = ctx.attrs.srcs[0]
+    resources = ctx.attrs.resources + ctx.attrs.data
+
     is_windows = ctx.attrs._target_os_type[OsLookup].os == Os("windows")
     (script, resources_dir) = _generate_script(
         ctx.label.name,
-        ctx.attrs.main,
-        ctx.attrs.resources,
+        main,
+        resources,
         ctx.attrs.append_script_extension,
         ctx.actions,
         is_windows,
