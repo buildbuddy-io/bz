@@ -24,6 +24,9 @@ use starlark::docs::DocItem;
 use starlark::docs::DocMember;
 use starlark::docs::DocStringKind;
 use starlark::environment::GlobalsBuilder;
+use starlark::environment::Methods;
+use starlark::environment::MethodsBuilder;
+use starlark::environment::MethodsStatic;
 use starlark::eval::Arguments;
 use starlark::eval::Evaluator;
 use starlark::eval::ParametersSpec;
@@ -42,8 +45,11 @@ use starlark::values::NoSerialize;
 use starlark::values::StarlarkValue;
 use starlark::values::Trace;
 use starlark::values::Value;
+use starlark::values::ValueLike;
 use starlark::values::ValueTypedComplex;
+use starlark::values::dict::AllocDict;
 use starlark::values::dict::UnpackDictEntries;
+use starlark::values::list::AllocList;
 use starlark::values::list_or_tuple::UnpackListOrTuple;
 use starlark::values::none::NoneOr;
 use starlark::values::starlark_value;
@@ -136,6 +142,10 @@ fn record_repository_rule_invocation<'v>(
     });
 
     Ok(Value::new_none())
+}
+
+fn empty_dict_value<'v>(heap: Heap<'v>) -> Value<'v> {
+    heap.alloc(AllocDict(Vec::<(Value<'v>, Value<'v>)>::new()))
 }
 
 #[derive(Debug, Allocative)]
@@ -587,6 +597,470 @@ starlark_simple_value!(FrozenStarlarkModuleExtension);
 #[starlark_value(type = "module_extension")]
 impl<'v> StarlarkValue<'v> for FrozenStarlarkModuleExtension {
     type Canonical = StarlarkModuleExtension<'v>;
+}
+
+#[allow(dead_code)]
+#[derive(Debug, ProvidesStaticType, Trace, NoSerialize, Allocative)]
+pub(crate) struct StarlarkModuleExtensionContext<'v> {
+    modules: Vec<Value<'v>>,
+}
+
+#[allow(dead_code)]
+impl<'v> StarlarkModuleExtensionContext<'v> {
+    pub(crate) fn new(modules: Vec<Value<'v>>) -> Self {
+        Self { modules }
+    }
+}
+
+impl<'v> Display for StarlarkModuleExtensionContext<'v> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "<module_ctx>")
+    }
+}
+
+impl<'v> AllocValue<'v> for StarlarkModuleExtensionContext<'v> {
+    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
+        heap.alloc_complex(self)
+    }
+}
+
+#[starlark_value(type = "module_ctx")]
+impl<'v> StarlarkValue<'v> for StarlarkModuleExtensionContext<'v> {
+    fn dir_attr(&self) -> Vec<String> {
+        vec!["facts".to_owned(), "modules".to_owned()]
+    }
+
+    fn get_attr(&self, attribute: &str, heap: Heap<'v>) -> Option<Value<'v>> {
+        match attribute {
+            "facts" => Some(empty_dict_value(heap)),
+            "modules" => Some(heap.alloc(AllocList(self.modules.iter().copied()))),
+            _ => None,
+        }
+    }
+
+    fn get_methods() -> Option<&'static Methods> {
+        static RES: MethodsStatic = MethodsStatic::new();
+        RES.methods_for_type::<Self::Canonical>(module_extension_context_methods)
+    }
+}
+
+impl<'v> Freeze for StarlarkModuleExtensionContext<'v> {
+    type Frozen = FrozenStarlarkModuleExtensionContext;
+
+    fn freeze(self, freezer: &Freezer) -> FreezeResult<Self::Frozen> {
+        let modules = self
+            .modules
+            .into_iter()
+            .map(|module| module.freeze(freezer))
+            .collect::<FreezeResult<Vec<_>>>()?;
+        Ok(FrozenStarlarkModuleExtensionContext { modules })
+    }
+}
+
+#[allow(dead_code)]
+#[derive(Debug, ProvidesStaticType, NoSerialize, Allocative)]
+pub(crate) struct FrozenStarlarkModuleExtensionContext {
+    modules: Vec<FrozenValue>,
+}
+
+impl Display for FrozenStarlarkModuleExtensionContext {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "<module_ctx>")
+    }
+}
+
+starlark_simple_value!(FrozenStarlarkModuleExtensionContext);
+
+#[starlark_value(type = "module_ctx")]
+impl<'v> StarlarkValue<'v> for FrozenStarlarkModuleExtensionContext {
+    type Canonical = StarlarkModuleExtensionContext<'v>;
+
+    fn dir_attr(&self) -> Vec<String> {
+        vec!["facts".to_owned(), "modules".to_owned()]
+    }
+
+    fn get_attr(&self, attribute: &str, heap: Heap<'v>) -> Option<Value<'v>> {
+        match attribute {
+            "facts" => Some(empty_dict_value(heap)),
+            "modules" => Some(heap.alloc(AllocList(
+                self.modules.iter().map(|module| module.to_value()),
+            ))),
+            _ => None,
+        }
+    }
+
+    fn get_methods() -> Option<&'static Methods> {
+        static RES: MethodsStatic = MethodsStatic::new();
+        RES.methods_for_type::<Self::Canonical>(module_extension_context_methods)
+    }
+}
+
+#[allow(dead_code)]
+#[derive(Debug, ProvidesStaticType, Trace, NoSerialize, Allocative)]
+pub(crate) struct StarlarkBazelModule<'v> {
+    name: String,
+    version: String,
+    tags: Value<'v>,
+    is_root: bool,
+}
+
+#[allow(dead_code)]
+impl<'v> StarlarkBazelModule<'v> {
+    pub(crate) fn new(name: String, version: String, tags: Value<'v>, is_root: bool) -> Self {
+        Self {
+            name,
+            version,
+            tags,
+            is_root,
+        }
+    }
+}
+
+impl<'v> Display for StarlarkBazelModule<'v> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "<bazel_module {}@{}>", self.name, self.version)
+    }
+}
+
+impl<'v> AllocValue<'v> for StarlarkBazelModule<'v> {
+    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
+        heap.alloc_complex(self)
+    }
+}
+
+#[starlark_value(type = "bazel_module")]
+impl<'v> StarlarkValue<'v> for StarlarkBazelModule<'v> {
+    fn dir_attr(&self) -> Vec<String> {
+        vec![
+            "is_root".to_owned(),
+            "name".to_owned(),
+            "tags".to_owned(),
+            "version".to_owned(),
+        ]
+    }
+
+    fn get_attr(&self, attribute: &str, heap: Heap<'v>) -> Option<Value<'v>> {
+        match attribute {
+            "is_root" => Some(Value::new_bool(self.is_root)),
+            "name" => Some(heap.alloc_str(&self.name).to_value()),
+            "tags" => Some(self.tags),
+            "version" => Some(heap.alloc_str(&self.version).to_value()),
+            _ => None,
+        }
+    }
+}
+
+impl<'v> Freeze for StarlarkBazelModule<'v> {
+    type Frozen = FrozenStarlarkBazelModule;
+
+    fn freeze(self, freezer: &Freezer) -> FreezeResult<Self::Frozen> {
+        Ok(FrozenStarlarkBazelModule {
+            name: self.name,
+            version: self.version,
+            tags: self.tags.freeze(freezer)?,
+            is_root: self.is_root,
+        })
+    }
+}
+
+#[allow(dead_code)]
+#[derive(Debug, ProvidesStaticType, NoSerialize, Allocative)]
+pub(crate) struct FrozenStarlarkBazelModule {
+    name: String,
+    version: String,
+    tags: FrozenValue,
+    is_root: bool,
+}
+
+impl Display for FrozenStarlarkBazelModule {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "<bazel_module {}@{}>", self.name, self.version)
+    }
+}
+
+starlark_simple_value!(FrozenStarlarkBazelModule);
+
+#[starlark_value(type = "bazel_module")]
+impl<'v> StarlarkValue<'v> for FrozenStarlarkBazelModule {
+    type Canonical = StarlarkBazelModule<'v>;
+
+    fn dir_attr(&self) -> Vec<String> {
+        vec![
+            "is_root".to_owned(),
+            "name".to_owned(),
+            "tags".to_owned(),
+            "version".to_owned(),
+        ]
+    }
+
+    fn get_attr(&self, attribute: &str, heap: Heap<'v>) -> Option<Value<'v>> {
+        match attribute {
+            "is_root" => Some(Value::new_bool(self.is_root)),
+            "name" => Some(heap.alloc_str(&self.name).to_value()),
+            "tags" => Some(self.tags.to_value()),
+            "version" => Some(heap.alloc_str(&self.version).to_value()),
+            _ => None,
+        }
+    }
+}
+
+#[allow(dead_code)]
+#[derive(Debug, ProvidesStaticType, Trace, NoSerialize, Allocative)]
+pub(crate) struct StarlarkBazelModuleTags<'v> {
+    tags: SmallMap<String, Vec<Value<'v>>>,
+}
+
+#[allow(dead_code)]
+impl<'v> StarlarkBazelModuleTags<'v> {
+    pub(crate) fn new(tags: SmallMap<String, Vec<Value<'v>>>) -> Self {
+        Self { tags }
+    }
+}
+
+impl<'v> Display for StarlarkBazelModuleTags<'v> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "<bazel_module_tags>")
+    }
+}
+
+impl<'v> AllocValue<'v> for StarlarkBazelModuleTags<'v> {
+    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
+        heap.alloc_complex(self)
+    }
+}
+
+#[starlark_value(type = "bazel_module_tags")]
+impl<'v> StarlarkValue<'v> for StarlarkBazelModuleTags<'v> {
+    fn dir_attr(&self) -> Vec<String> {
+        self.tags.keys().cloned().collect()
+    }
+
+    fn get_attr(&self, attribute: &str, heap: Heap<'v>) -> Option<Value<'v>> {
+        self.tags
+            .get(attribute)
+            .map(|tags| heap.alloc(AllocList(tags.iter().copied())))
+    }
+}
+
+impl<'v> Freeze for StarlarkBazelModuleTags<'v> {
+    type Frozen = FrozenStarlarkBazelModuleTags;
+
+    fn freeze(self, freezer: &Freezer) -> FreezeResult<Self::Frozen> {
+        let tags = self
+            .tags
+            .into_iter()
+            .map(|(name, values)| {
+                let values = values
+                    .into_iter()
+                    .map(|value| value.freeze(freezer))
+                    .collect::<FreezeResult<Vec<_>>>()?;
+                Ok((name, values))
+            })
+            .collect::<FreezeResult<SmallMap<_, _>>>()?;
+        Ok(FrozenStarlarkBazelModuleTags { tags })
+    }
+}
+
+#[allow(dead_code)]
+#[derive(Debug, ProvidesStaticType, NoSerialize, Allocative)]
+pub(crate) struct FrozenStarlarkBazelModuleTags {
+    tags: SmallMap<String, Vec<FrozenValue>>,
+}
+
+impl Display for FrozenStarlarkBazelModuleTags {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "<bazel_module_tags>")
+    }
+}
+
+starlark_simple_value!(FrozenStarlarkBazelModuleTags);
+
+#[starlark_value(type = "bazel_module_tags")]
+impl<'v> StarlarkValue<'v> for FrozenStarlarkBazelModuleTags {
+    type Canonical = StarlarkBazelModuleTags<'v>;
+
+    fn dir_attr(&self) -> Vec<String> {
+        self.tags.keys().cloned().collect()
+    }
+
+    fn get_attr(&self, attribute: &str, heap: Heap<'v>) -> Option<Value<'v>> {
+        self.tags.get(attribute).map(|tags| {
+            heap.alloc(AllocList(tags.iter().map(|tag| tag.to_value())))
+        })
+    }
+}
+
+#[allow(dead_code)]
+#[derive(Debug, ProvidesStaticType, Trace, NoSerialize, Allocative)]
+pub(crate) struct StarlarkBazelModuleTag<'v> {
+    tag_name: String,
+    dev_dependency: bool,
+    sort_key: i32,
+    attrs: SmallMap<String, Value<'v>>,
+}
+
+#[allow(dead_code)]
+impl<'v> StarlarkBazelModuleTag<'v> {
+    pub(crate) fn new(
+        tag_name: String,
+        dev_dependency: bool,
+        sort_key: i32,
+        attrs: SmallMap<String, Value<'v>>,
+    ) -> Self {
+        Self {
+            tag_name,
+            dev_dependency,
+            sort_key,
+            attrs,
+        }
+    }
+}
+
+impl<'v> Display for StarlarkBazelModuleTag<'v> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "<module_extension_tag {}>", self.tag_name)
+    }
+}
+
+impl<'v> AllocValue<'v> for StarlarkBazelModuleTag<'v> {
+    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
+        heap.alloc_complex(self)
+    }
+}
+
+#[starlark_value(type = "module_extension_tag")]
+impl<'v> StarlarkValue<'v> for StarlarkBazelModuleTag<'v> {
+    fn dir_attr(&self) -> Vec<String> {
+        self.attrs.keys().cloned().collect()
+    }
+
+    fn get_attr(&self, attribute: &str, _heap: Heap<'v>) -> Option<Value<'v>> {
+        self.attrs.get(attribute).copied()
+    }
+}
+
+impl<'v> Freeze for StarlarkBazelModuleTag<'v> {
+    type Frozen = FrozenStarlarkBazelModuleTag;
+
+    fn freeze(self, freezer: &Freezer) -> FreezeResult<Self::Frozen> {
+        let attrs = self
+            .attrs
+            .into_iter()
+            .map(|(name, value)| Ok((name, value.freeze(freezer)?)))
+            .collect::<FreezeResult<SmallMap<_, _>>>()?;
+        Ok(FrozenStarlarkBazelModuleTag {
+            tag_name: self.tag_name,
+            dev_dependency: self.dev_dependency,
+            sort_key: self.sort_key,
+            attrs,
+        })
+    }
+}
+
+#[allow(dead_code)]
+#[derive(Debug, ProvidesStaticType, NoSerialize, Allocative)]
+pub(crate) struct FrozenStarlarkBazelModuleTag {
+    tag_name: String,
+    dev_dependency: bool,
+    sort_key: i32,
+    attrs: SmallMap<String, FrozenValue>,
+}
+
+impl Display for FrozenStarlarkBazelModuleTag {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "<module_extension_tag {}>", self.tag_name)
+    }
+}
+
+starlark_simple_value!(FrozenStarlarkBazelModuleTag);
+
+#[starlark_value(type = "module_extension_tag")]
+impl<'v> StarlarkValue<'v> for FrozenStarlarkBazelModuleTag {
+    type Canonical = StarlarkBazelModuleTag<'v>;
+
+    fn dir_attr(&self) -> Vec<String> {
+        self.attrs.keys().cloned().collect()
+    }
+
+    fn get_attr(&self, attribute: &str, _heap: Heap<'v>) -> Option<Value<'v>> {
+        self.attrs.get(attribute).map(|value| value.to_value())
+    }
+}
+
+#[derive(Debug, Display, ProvidesStaticType, NoSerialize, Allocative)]
+#[display("<extension_metadata>")]
+pub(crate) struct StarlarkModuleExtensionMetadata {
+    #[allow(dead_code)]
+    reproducible: bool,
+}
+
+starlark_simple_value!(StarlarkModuleExtensionMetadata);
+
+#[starlark_value(type = "extension_metadata")]
+impl<'v> StarlarkValue<'v> for StarlarkModuleExtensionMetadata {}
+
+fn bazel_module_tag_dev_dependency<'v>(tag: Value<'v>) -> starlark::Result<bool> {
+    if let Some(tag) = tag.downcast_ref::<StarlarkBazelModuleTag>() {
+        return Ok(tag.dev_dependency);
+    }
+    if let Some(tag) = tag.downcast_ref::<FrozenStarlarkBazelModuleTag>() {
+        return Ok(tag.dev_dependency);
+    }
+    Err(buck2_error::buck2_error!(
+        buck2_error::ErrorTag::Input,
+        "expected module extension tag, got `{}`",
+        tag.get_type()
+    )
+    .into())
+}
+
+fn bazel_module_tag_sort_key<'v>(tag: Value<'v>) -> starlark::Result<i32> {
+    if let Some(tag) = tag.downcast_ref::<StarlarkBazelModuleTag>() {
+        return Ok(tag.sort_key);
+    }
+    if let Some(tag) = tag.downcast_ref::<FrozenStarlarkBazelModuleTag>() {
+        return Ok(tag.sort_key);
+    }
+    Err(buck2_error::buck2_error!(
+        buck2_error::ErrorTag::Input,
+        "expected module extension tag, got `{}`",
+        tag.get_type()
+    )
+    .into())
+}
+
+#[starlark_module]
+fn module_extension_context_methods(builder: &mut MethodsBuilder) {
+    fn is_dev_dependency<'v>(
+        this: ValueTypedComplex<'v, StarlarkModuleExtensionContext<'v>>,
+        tag: Value<'v>,
+    ) -> starlark::Result<bool> {
+        let _unused = this;
+        bazel_module_tag_dev_dependency(tag)
+    }
+
+    fn tag_sort_key<'v>(
+        this: ValueTypedComplex<'v, StarlarkModuleExtensionContext<'v>>,
+        tag: Value<'v>,
+    ) -> starlark::Result<i32> {
+        let _unused = this;
+        bazel_module_tag_sort_key(tag)
+    }
+
+    fn extension_metadata<'v>(
+        this: ValueTypedComplex<'v, StarlarkModuleExtensionContext<'v>>,
+        #[starlark(require = named, default = false)] reproducible: bool,
+        #[starlark(require = named, default = NoneOr::None)] _root_module_direct_deps: NoneOr<
+            Value<'v>,
+        >,
+        #[starlark(require = named, default = NoneOr::None)] _root_module_direct_dev_deps: NoneOr<
+            Value<'v>,
+        >,
+        #[starlark(require = named, default = NoneOr::None)] _facts: NoneOr<Value<'v>>,
+    ) -> starlark::Result<StarlarkModuleExtensionMetadata> {
+        let _unused = this;
+        Ok(StarlarkModuleExtensionMetadata { reproducible })
+    }
 }
 
 #[starlark_module]
