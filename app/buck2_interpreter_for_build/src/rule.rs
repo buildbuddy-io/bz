@@ -272,6 +272,58 @@ fn add_bazel_common_implicit_attrs(
     Ok(())
 }
 
+fn add_bazel_test_implicit_attrs(attrs: &mut Vec<(String, Attribute)>) -> buck2_error::Result<()> {
+    fn add_if_absent(
+        attrs: &mut Vec<(String, Attribute)>,
+        name: &str,
+        default: CoercedAttr,
+        attr_type: AttrType,
+    ) -> buck2_error::Result<()> {
+        if attrs.iter().any(|(existing, _)| existing == name) {
+            return Ok(());
+        }
+        attrs.push((
+            name.to_owned(),
+            Attribute::new(Some(Arc::new(default)), "", attr_type)?,
+        ));
+        Ok(())
+    }
+
+    add_if_absent(
+        attrs,
+        "size",
+        CoercedAttr::String(StringLiteral(ArcStr::from("medium"))),
+        AttrType::string(),
+    )?;
+    add_if_absent(
+        attrs,
+        "timeout",
+        CoercedAttr::String(StringLiteral(ArcStr::from("moderate"))),
+        AttrType::string(),
+    )?;
+    add_if_absent(
+        attrs,
+        "flaky",
+        CoercedAttr::Bool(BoolLiteral(false)),
+        AttrType::bool(),
+    )?;
+    add_if_absent(attrs, "shard_count", CoercedAttr::Int(-1), AttrType::int())?;
+    add_if_absent(
+        attrs,
+        "local",
+        CoercedAttr::Bool(BoolLiteral(false)),
+        AttrType::bool(),
+    )?;
+    add_if_absent(
+        attrs,
+        "args",
+        CoercedAttr::List(ListLiteral(ArcSlice::new([]))),
+        AttrType::list(AttrType::string()),
+    )?;
+    attrs.sort_by(|(a, _), (b, _)| a.cmp(b));
+    Ok(())
+}
+
 fn normalize_bazel_toolchain_key(key: &str) -> String {
     key.strip_prefix('@').unwrap_or(key).to_owned()
 }
@@ -344,6 +396,7 @@ impl<'v> StarlarkRuleCallable<'v> {
         bazel_toolchains: Vec<String>,
         bazel_implicit_outputs: Vec<BazelImplicitOutput>,
         is_bazel_rule: bool,
+        is_bazel_test_rule: bool,
         build_setting: Option<Value<'v>>,
         artifact_promise_mappings: Option<ArtifactPromiseMappings<'v>>,
         eval: &mut Evaluator<'v, '_, '_>,
@@ -391,6 +444,9 @@ impl<'v> StarlarkRuleCallable<'v> {
             sorted_validated_attrs.sort_by(|(a, _), (b, _)| a.cmp(b));
         }
         add_bazel_common_implicit_attrs(&mut sorted_validated_attrs)?;
+        if is_bazel_test_rule {
+            add_bazel_test_implicit_attrs(&mut sorted_validated_attrs)?;
+        }
 
         let cfg = match (cfg, supports_incoming_transition) {
             (Some(_), Some(_)) => return Err(RuleError::CfgAndSupportsIncomingTransition.into()),
@@ -468,6 +524,7 @@ impl<'v> StarlarkRuleCallable<'v> {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            false,
             false,
             None,
             Some(ArtifactPromiseMappings {
@@ -844,7 +901,6 @@ pub fn register_rule_function(builder: &mut GlobalsBuilder) {
 
         let _unused = (
             executable,
-            test,
             output_to_genfiles,
             fragments,
             host_fragments,
@@ -885,6 +941,7 @@ pub fn register_rule_function(builder: &mut GlobalsBuilder) {
             bazel_toolchains,
             bazel_implicit_outputs,
             is_bazel_rule,
+            is_bazel_rule && test.unwrap_or(false),
             build_setting,
             None,
             eval,
