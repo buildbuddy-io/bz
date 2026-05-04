@@ -124,7 +124,7 @@ Acceptance:
 
 ## Phase 2: Module Extensions and Generated Repos
 
-Status: module dependencies, generic `use_extension(...)` bindings, extension tags, and `use_repo(...)` imports are discovered. Repo aliases are now applied through per-module bzlmod mappings: the root module sees its root-visible imports, while downloaded module cells see the deps and extension imports declared by their own `MODULE.bazel`. Extension-imported repos are represented as generated bzlmod cells using module/extension/repo canonical names, and there is a generic generated-repository file materializer for future `repository_ctx.file/template` output. `repository_rule(...)` calls can now record exported rule id, repo name, and generic keyword values when evaluated under a bzlmod repository-rule recorder. Generated repos are still not created by real bzlmod extension evaluation. The previous Go/Kotlin Rust-side generated repo materializers have been removed; the remaining generated-repo paths must be replaced by generic `module_extension(...)` evaluation and repository-rule execution rather than more module-specific generators.
+Status: module dependencies, generic `use_extension(...)` bindings, extension tags, and `use_repo(...)` imports are discovered. Repo aliases are now applied through per-module bzlmod mappings: the root module sees its root-visible imports, while downloaded module cells see the deps and extension imports declared by their own `MODULE.bazel`. Extension-imported repos are represented as generated bzlmod cells using module/extension/repo canonical names, and each generated module-extension repo now carries a serialized generic module/tag usage graph for its extension, including dev-dependency tagging. There is a generic generated-repository file materializer for future `repository_ctx.file/template` output. `repository_rule(...)` calls can now record exported rule id, repo name, and generic keyword values when evaluated under a bzlmod repository-rule recorder. Generated repos are still not created by real bzlmod extension evaluation. The previous Go/Kotlin Rust-side generated repo materializers have been removed; the remaining generated-repo paths must be replaced by generic `module_extension(...)` evaluation and repository-rule execution rather than more module-specific generators.
 
 Implement:
 
@@ -132,6 +132,7 @@ Implement:
 - Capture extension tag calls as structured Starlark calls associated with their extension proxy.
 - Preserve `use_repo(...)` imports, including aliasing syntax and imports from non-root modules.
 - Preserve per-module repo mappings so aliases imported by `rules_go`, `gazelle`, and other dependencies do not collide in the root alias set.
+- Carry the generic module/tag usage graph needed to populate `module_ctx.modules`.
 - Load and evaluate real `module_extension(...)` definitions.
 - Provide `module_ctx`, `tag_class`, `extension_metadata`, and the module/tag data model needed by rules_go and Gazelle.
 - Execute repository rules emitted by module extensions into generated external cells using the generic recorded repository-rule invocations.

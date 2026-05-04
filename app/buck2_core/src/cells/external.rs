@@ -283,6 +283,7 @@ pub struct BzlmodModuleExtensionRepoSetup {
     pub extension_bzl_file: Arc<str>,
     pub extension_name: Arc<str>,
     pub repo_name: Arc<str>,
+    pub extension_usages_json: Arc<str>,
 }
 
 impl fmt::Display for ExternalCellOrigin {

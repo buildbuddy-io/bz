@@ -724,12 +724,14 @@ impl BuckConfigBasedCells {
                     extension_bzl_file,
                     extension_name,
                     repo_name,
+                    extension_usages_json,
                 } => BzlmodGeneratedCellGenerator::ModuleExtensionRepo(
                     BzlmodModuleExtensionRepoSetup {
                         parent_canonical_repo_name: Arc::from(parent_canonical_repo_name),
                         extension_bzl_file: Arc::from(extension_bzl_file),
                         extension_name: Arc::from(extension_name),
                         repo_name: Arc::from(repo_name),
+                        extension_usages_json: Arc::from(extension_usages_json),
                     },
                 ),
             };
@@ -837,6 +839,7 @@ struct BzlmodExtensionUsage {
     proxy_name: String,
     extension_bzl_file: String,
     extension_name: String,
+    dev_dependency: bool,
     imports: Vec<BzlmodUseRepoImport>,
     tags: Vec<BzlmodExtensionTag>,
 }
@@ -894,6 +897,7 @@ enum BzlmodGeneratedRepoConfig {
         extension_bzl_file: String,
         extension_name: String,
         repo_name: String,
+        extension_usages_json: String,
     },
 }
 
@@ -902,6 +906,27 @@ struct BzlmodRepositoryRuleFileConfig {
     path: String,
     content: String,
     executable: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct BzlmodModuleExtensionEvaluationConfig {
+    modules: Vec<BzlmodModuleExtensionModuleConfig>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct BzlmodModuleExtensionModuleConfig {
+    name: String,
+    version: String,
+    canonical_repo_name: String,
+    is_root: bool,
+    tags: Vec<BzlmodModuleExtensionTagConfig>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct BzlmodModuleExtensionTagConfig {
+    tag_name: String,
+    dev_dependency: bool,
+    kwargs: Vec<(String, String)>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -1446,6 +1471,12 @@ fn resolve_generated_bzlmod_repos(
                 {
                     continue;
                 }
+                let extension_usages_json = bzlmod_module_extension_evaluation_config_json(
+                    discovered,
+                    selected_keys,
+                    &usage.extension_bzl_file,
+                    &usage.extension_name,
+                )?;
                 let canonical_repo_name =
                     bzlmod_extension_repo_canonical_repo_name(module, usage, &import.repo_name);
                 let generator_json =
@@ -1454,6 +1485,7 @@ fn resolve_generated_bzlmod_repos(
                         extension_bzl_file: usage.extension_bzl_file.clone(),
                         extension_name: usage.extension_name.clone(),
                         repo_name: import.repo_name.clone(),
+                        extension_usages_json,
                     })
                     .buck_error_context(
                         "Error serializing generated module extension repo configuration",
@@ -1497,6 +1529,49 @@ fn resolve_generated_bzlmod_repos(
         ));
     }
     Ok(generated)
+}
+
+fn bzlmod_module_extension_evaluation_config_json(
+    discovered: &BTreeMap<(String, String), DiscoveredBcrModule>,
+    selected_keys: &BTreeSet<(String, String)>,
+    extension_bzl_file: &str,
+    extension_name: &str,
+) -> buck2_error::Result<String> {
+    let mut modules = Vec::new();
+    for key in selected_keys {
+        let Some(module) = discovered.get(key) else {
+            continue;
+        };
+        let mut has_usage = false;
+        let mut tags = Vec::new();
+        for usage in &module.extension_usages {
+            if usage.extension_bzl_file != extension_bzl_file
+                || usage.extension_name != extension_name
+            {
+                continue;
+            }
+            has_usage = true;
+            tags.extend(usage.tags.iter().map(|tag| BzlmodModuleExtensionTagConfig {
+                tag_name: tag.tag_name.clone(),
+                dev_dependency: usage.dev_dependency,
+                kwargs: tag.kwargs.clone(),
+            }));
+        }
+        if !has_usage {
+            continue;
+        }
+        let canonical_repo_name = bzlmod_canonical_repo_name(&module.dep.name, &module.dep.version);
+        modules.push(BzlmodModuleExtensionModuleConfig {
+            name: module.dep.name.clone(),
+            version: module.dep.version.clone(),
+            canonical_repo_name,
+            is_root: false,
+            tags,
+        });
+    }
+
+    serde_json::to_string(&BzlmodModuleExtensionEvaluationConfig { modules })
+        .buck_error_context("Error serializing module extension evaluation configuration")
 }
 
 fn add_generated_bzlmod_repo(
@@ -1757,6 +1832,7 @@ fn bzlmod_extension_usages_from_lines(lines: &[String]) -> Vec<BzlmodExtensionUs
                 proxy_name: name.to_owned(),
                 extension_bzl_file,
                 extension_name,
+                dev_dependency: bzl_bool_arg(value, "dev_dependency"),
                 imports: bzlmod_extension_imports(lines, name),
                 tags: bzlmod_extension_tags(lines, name),
             })
