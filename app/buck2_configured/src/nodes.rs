@@ -843,11 +843,18 @@ fn attr_target_label(attr: &CoercedAttr) -> Option<&TargetLabel> {
     }
 }
 
-fn attr_target_labels(attr: &CoercedAttr) -> Vec<&TargetLabel> {
+fn attr_target_labels(attr: &CoercedAttr) -> Vec<TargetLabel> {
     match attr {
-        CoercedAttr::List(list) => list.iter().filter_map(attr_target_label).collect(),
+        CoercedAttr::List(list) => list
+            .iter()
+            .filter_map(attr_target_label)
+            .map(|label| label.dupe())
+            .collect(),
         CoercedAttr::OneOf(inner, _) => attr_target_labels(inner),
-        _ => attr_target_label(attr).into_iter().collect(),
+        _ => attr_target_label(attr)
+            .map(|label| label.dupe())
+            .into_iter()
+            .collect(),
     }
 }
 
@@ -862,7 +869,40 @@ fn configuration_constraint_labels(
         .collect())
 }
 
-fn toolchain_constraints_match(
+async fn constraint_label_matches(
+    ctx: &mut DiceComputations<'_>,
+    label: &TargetLabel,
+    constraints: &BTreeSet<String>,
+) -> buck2_error::Result<bool> {
+    let mut pending = vec![label.dupe()];
+    let mut seen = BTreeSet::new();
+
+    while let Some(label) = pending.pop() {
+        let key = label.to_string();
+        if constraints.contains(&key) {
+            return Ok(true);
+        }
+        if !seen.insert(key) {
+            continue;
+        }
+
+        let node = ctx.get_target_node(&label).await?;
+        if node.rule_type().name() != "alias" {
+            continue;
+        }
+        if let Some(actual) = node
+            .attr_or_none("actual", AttrInspectOptions::All)
+            .and_then(|attr| attr_target_label(&attr.value).map(|label| label.dupe()))
+        {
+            pending.push(actual);
+        }
+    }
+
+    Ok(false)
+}
+
+async fn toolchain_constraints_match(
+    ctx: &mut DiceComputations<'_>,
     target_node: &TargetNode,
     target_constraints: &BTreeSet<String>,
     exec_constraints: &BTreeSet<String>,
@@ -871,22 +911,20 @@ fn toolchain_constraints_match(
         .known_attr_or_none(TARGET_COMPATIBLE_WITH_ATTRIBUTE.id, AttrInspectOptions::All)
         .map(|attr| attr_target_labels(&attr.value))
         .unwrap_or_default();
-    if !target_compatible_with
-        .iter()
-        .all(|label| target_constraints.contains(&label.to_string()))
-    {
-        return Ok(false);
+    for label in &target_compatible_with {
+        if !constraint_label_matches(ctx, label, target_constraints).await? {
+            return Ok(false);
+        }
     }
 
     let exec_compatible_with = target_node
         .known_attr_or_none(EXEC_COMPATIBLE_WITH_ATTRIBUTE.id, AttrInspectOptions::All)
         .map(|attr| attr_target_labels(&attr.value))
         .unwrap_or_default();
-    if !exec_compatible_with
-        .iter()
-        .all(|label| exec_constraints.contains(&label.to_string()))
-    {
-        return Ok(false);
+    for label in &exec_compatible_with {
+        if !constraint_label_matches(ctx, label, exec_constraints).await? {
+            return Ok(false);
+        }
     }
 
     Ok(true)
@@ -973,25 +1011,31 @@ async fn resolve_bazel_toolchain_deps(
     let mut resolved = Vec::new();
     for declared in target_node.bazel_toolchains() {
         let declared = normalize_bazel_toolchain_key(declared);
-        let Some(toolchain_node) = registered.iter().find(|candidate| {
+        let mut toolchain_node = None;
+        for candidate in &registered {
             if candidate.rule_type().name() != "toolchain" {
-                return false;
+                continue;
             }
             let Some(toolchain_type) = candidate
                 .attr_or_none("toolchain_type", AttrInspectOptions::All)
                 .and_then(|attr| attr_target_label(&attr.value).map(|label| label.to_string()))
             else {
-                return false;
+                continue;
             };
             if !bazel_toolchain_keys_match(
                 &declared,
                 &normalize_bazel_toolchain_key(&toolchain_type),
             ) {
-                return false;
+                continue;
             }
-            toolchain_constraints_match(candidate, &target_constraints, &exec_constraints)
-                .unwrap_or(false)
-        }) else {
+            if toolchain_constraints_match(ctx, candidate, &target_constraints, &exec_constraints)
+                .await?
+            {
+                toolchain_node = Some(candidate);
+                break;
+            }
+        }
+        let Some(toolchain_node) = toolchain_node else {
             continue;
         };
 

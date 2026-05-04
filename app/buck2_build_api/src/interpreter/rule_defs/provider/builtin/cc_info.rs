@@ -257,7 +257,7 @@ fn bazel_cc_common_module(builder: &mut GlobalsBuilder) {
         Ok(make_cc_native_provider(
             CC_TOOLCHAIN_CONFIG_INFO,
             CcNativeProviderCallable::new(CC_TOOLCHAIN_CONFIG_INFO).id,
-            kwargs,
+            kwargs.into_iter().filter(|(name, _)| name != "ctx"),
         ))
     }
 }

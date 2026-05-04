@@ -54,8 +54,10 @@ pub(crate) fn register_path(builder: &mut GlobalsBuilder) {
         include: UnpackListOrTuple<String>,
         #[starlark(require = named, default=UnpackListOrTuple::default())]
         exclude: UnpackListOrTuple<String>,
+        #[starlark(require = named, default = true)] allow_empty: bool,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<ValueOfUnchecked<'v, UnpackList<String>>> {
+        let _unused = allow_empty;
         let extra = ModuleInternals::from_context(eval, "glob")?;
         let spec = GlobSpec::new(&include.items, &exclude.items)?;
         let res = extra.resolve_glob(&spec).map(|path| path.as_str());

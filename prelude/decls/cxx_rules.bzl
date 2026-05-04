@@ -1422,6 +1422,8 @@ cc_toolchain = prelude_rule(
         "strip_files": attrs.option(attrs.dep(), default = None),
         "as_files": attrs.option(attrs.dep(), default = None),
         "ar_files": attrs.option(attrs.dep(), default = None),
+        "module_map": attrs.option(attrs.source(), default = None),
+        "supports_header_parsing": attrs.bool(default = False),
         "supports_param_files": attrs.bool(default = True),
         "toolchain_config": attrs.option(attrs.dep(), default = None),
         "toolchain_identifier": attrs.option(attrs.string(), default = None),
@@ -1429,7 +1431,6 @@ cc_toolchain = prelude_rule(
         "compiler": attrs.option(attrs.string(), default = None),
         "tags": attrs.list(attrs.string(), default = []),
     } | buck.licenses_arg() | buck.labels_arg() | buck.contacts_arg(),
-    is_toolchain_rule = True,
 )
 
 cc_toolchain_suite = prelude_rule(
