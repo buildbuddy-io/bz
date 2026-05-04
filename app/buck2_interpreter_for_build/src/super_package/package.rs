@@ -20,6 +20,7 @@ use buck2_node::visibility::WithinViewSpecification;
 use starlark::environment::GlobalsBuilder;
 use starlark::eval::Evaluator;
 use starlark::starlark_module;
+use starlark::values::Value;
 use starlark::values::list_or_tuple::UnpackListOrTuple;
 use starlark::values::none::NoneType;
 
@@ -125,14 +126,35 @@ pub(crate) fn register_package_function(globals: &mut GlobalsBuilder) {
         Ok(NoneType)
     }
 
-    fn package(
+    fn package<'v>(
         #[starlark(require=named)] inherit: Option<bool>,
         #[starlark(require=named)] visibility: Option<UnpackListOrTuple<String>>,
         #[starlark(require=named)] within_view: Option<UnpackListOrTuple<String>>,
         #[starlark(require=named)] default_visibility: Option<UnpackListOrTuple<String>>,
-        eval: &mut Evaluator,
+        #[starlark(require=named)] default_testonly: Option<bool>,
+        #[starlark(require=named)] default_deprecation: Option<String>,
+        #[starlark(require=named)] features: Option<UnpackListOrTuple<String>>,
+        #[starlark(require=named)] licenses: Option<Value<'v>>,
+        #[starlark(require=named)] default_compatible_with: Option<UnpackListOrTuple<String>>,
+        #[starlark(require=named)] default_restricted_to: Option<UnpackListOrTuple<String>>,
+        #[starlark(require=named)] default_applicable_licenses: Option<UnpackListOrTuple<String>>,
+        #[starlark(require=named)] default_package_metadata: Option<UnpackListOrTuple<String>>,
+        #[starlark(require=named)] default_hdrs_check: Option<String>,
+        #[starlark(require=named)] transitive_visibility: Option<String>,
+        eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<NoneType> {
         let build_context = BuildContext::from_context(eval)?;
+        let has_bazel_build_arg = default_visibility.is_some()
+            || default_testonly.is_some()
+            || default_deprecation.is_some()
+            || features.is_some()
+            || licenses.is_some()
+            || default_compatible_with.is_some()
+            || default_restricted_to.is_some()
+            || default_applicable_licenses.is_some()
+            || default_package_metadata.is_some()
+            || default_hdrs_check.is_some()
+            || transitive_visibility.is_some();
         match &build_context.additional {
             PerFileTypeContext::Package(package_file_eval_ctx) => {
                 if default_visibility.is_some() {
@@ -140,6 +162,31 @@ pub(crate) fn register_package_function(globals: &mut GlobalsBuilder) {
                         "default_visibility",
                     ))
                     .into());
+                }
+                for name in [
+                    ("default_testonly", default_testonly.is_some()),
+                    ("default_deprecation", default_deprecation.is_some()),
+                    ("features", features.is_some()),
+                    ("licenses", licenses.is_some()),
+                    ("default_compatible_with", default_compatible_with.is_some()),
+                    ("default_restricted_to", default_restricted_to.is_some()),
+                    (
+                        "default_applicable_licenses",
+                        default_applicable_licenses.is_some(),
+                    ),
+                    (
+                        "default_package_metadata",
+                        default_package_metadata.is_some(),
+                    ),
+                    ("default_hdrs_check", default_hdrs_check.is_some()),
+                    ("transitive_visibility", transitive_visibility.is_some()),
+                ] {
+                    if name.1 {
+                        return Err(buck2_error::Error::from(PackageFileError::BuildFileOnlyArg(
+                            name.0,
+                        ))
+                        .into());
+                    }
                 }
 
                 let visibility = visibility.unwrap_or_default();
@@ -195,12 +242,14 @@ pub(crate) fn register_package_function(globals: &mut GlobalsBuilder) {
                     );
                 }
 
-                let Some(default_visibility) = default_visibility else {
+                if !has_bazel_build_arg {
                     return Err(buck2_error::Error::from(PackageFileError::NoArguments).into());
                 };
-                let default_visibility =
-                    parse_build_default_visibility(&default_visibility.items, internals)?;
-                internals.set_bazel_package_default_visibility(default_visibility)?;
+                if let Some(default_visibility) = default_visibility {
+                    let default_visibility =
+                        parse_build_default_visibility(&default_visibility.items, internals)?;
+                    internals.set_bazel_package_default_visibility(default_visibility)?;
+                }
             }
             _ => {
                 build_context.additional.require_build("package")?;

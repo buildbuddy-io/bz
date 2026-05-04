@@ -292,6 +292,30 @@ fn bazel_transition_result_to_configuration(
     )?))
 }
 
+fn bazel_analysis_test_transition_to_configuration(
+    settings: &BTreeMap<String, BazelBuildSettingValue>,
+    conf: &ConfigurationData,
+) -> buck2_error::Result<TransitionApplied> {
+    if settings.is_empty() {
+        return Ok(TransitionApplied::Single(conf.dupe()));
+    }
+
+    let original_data = conf.data()?.clone();
+    let mut data = conf.data()?.clone();
+    for (key, value) in settings {
+        data.build_settings.insert(key.clone(), value.clone());
+    }
+    if data == original_data {
+        return Ok(TransitionApplied::Single(conf.dupe()));
+    }
+    let label = bazel_transitioned_label(&data, conf.is_marked_as_exec_platform());
+    Ok(TransitionApplied::Single(ConfigurationData::from_platform(
+        label,
+        data,
+        conf.is_marked_as_exec_platform(),
+    )?))
+}
+
 fn call_transition_function<'v>(
     transition: &TransitionData,
     defaults: &BTreeMap<String, BazelBuildSettingValue>,
@@ -313,6 +337,9 @@ fn call_transition_function<'v>(
             attrs.unwrap_or_else(|| eval.heap().alloc(AllocStruct(Vec::<(&str, Value)>::new())));
         let impl_ = match transition {
             TransitionData::MagicObject(v) => v.implementation.to_value(),
+            TransitionData::AnalysisTest(_) => {
+                unreachable!("analysis test transitions are applied without Starlark evaluation")
+            }
             TransitionData::Target(_) => {
                 unreachable!("target transitions are not Bazel transitions")
             }
@@ -332,6 +359,9 @@ fn call_transition_function<'v>(
         TransitionData::MagicObject(v) => {
             args.push(("refs", refs));
             v.implementation.to_value()
+        }
+        TransitionData::AnalysisTest(_) => {
+            unreachable!("analysis test transitions are applied without Starlark evaluation")
         }
         TransitionData::Target(v) => v.r#impl.to_value().get(),
     };
@@ -375,6 +405,9 @@ async fn do_apply_transition(
     cancellation: &CancellationContext,
 ) -> buck2_error::Result<TransitionApplied> {
     let transition = ctx.fetch_transition(transition_id).await?;
+    if let Some(settings) = transition.bazel_analysis_test_settings() {
+        return bazel_analysis_test_transition_to_configuration(settings, conf);
+    }
     let bazel_defaults = if transition.is_bazel() {
         bazel_transition_input_defaults(ctx, &transition).await?
     } else {

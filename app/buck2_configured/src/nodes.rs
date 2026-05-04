@@ -930,13 +930,21 @@ async fn registered_bazel_toolchain_nodes(
                 if let Some(missing) = missing {
                     return Err(missing.into_first_error().into());
                 }
-                nodes.extend(targets.into_values());
+                nodes.extend(
+                    targets
+                        .into_values()
+                        .filter(|node| node.rule_type().name() == "toolchain"),
+                );
             }
             ParsedPattern::Package(package) => {
                 let result = ctx.get_interpreter_results(package).await?;
                 let (targets, _missing) =
                     result.apply_spec(PackageSpec::<TargetPatternExtra>::All());
-                nodes.extend(targets.into_values());
+                nodes.extend(
+                    targets
+                        .into_values()
+                        .filter(|node| node.rule_type().name() == "toolchain"),
+                );
             }
             ParsedPattern::Recursive(_) => {}
         }

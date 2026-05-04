@@ -26,6 +26,8 @@ use buck2_core::cells::cell_root_path::CellRootPathBuf;
 use buck2_core::cells::external::BZLMOD_BAZEL_COMPAT_VERSION;
 use buck2_core::cells::external::BzlmodBazelFeaturesGlobalsSetup;
 use buck2_core::cells::external::BzlmodBazelFeaturesVersionSetup;
+use buck2_core::cells::external::BzlmodCcAutoconfSetup;
+use buck2_core::cells::external::BzlmodCcAutoconfToolchainsSetup;
 use buck2_core::cells::external::BzlmodCellSetup;
 use buck2_core::cells::external::BzlmodGeneratedCellGenerator;
 use buck2_core::cells::external::BzlmodGeneratedCellSetup;
@@ -36,7 +38,12 @@ use buck2_core::cells::external::BzlmodGoSdkHostCompatibleSetup;
 use buck2_core::cells::external::BzlmodGoSdkRepositorySetup;
 use buck2_core::cells::external::BzlmodGoSdkToolchainsSetup;
 use buck2_core::cells::external::BzlmodHostPlatformSetup;
+use buck2_core::cells::external::BzlmodHttpArchiveSetup;
+use buck2_core::cells::external::BzlmodJavaLocalJdkSetup;
+use buck2_core::cells::external::BzlmodLocalConfigPlatformSetup;
 use buck2_core::cells::external::BzlmodPatch;
+use buck2_core::cells::external::BzlmodPythonHubSetup;
+use buck2_core::cells::external::BzlmodShellConfigSetup;
 use buck2_core::cells::external::ExternalCellOrigin;
 use buck2_core::cells::external::GitCellSetup;
 use buck2_core::cells::external::GitObjectFormat;
@@ -693,6 +700,43 @@ impl BuckConfigBasedCells {
                     host_goos: Arc::from(host_goos),
                     host_goarch: Arc::from(host_goarch),
                 }),
+                BzlmodGeneratedRepoConfig::LocalConfigPlatform {} => {
+                    BzlmodGeneratedCellGenerator::LocalConfigPlatform(
+                        BzlmodLocalConfigPlatformSetup {},
+                    )
+                }
+                BzlmodGeneratedRepoConfig::CcAutoconfToolchains {
+                    parent_canonical_repo_name,
+                } => BzlmodGeneratedCellGenerator::CcAutoconfToolchains(
+                    BzlmodCcAutoconfToolchainsSetup {
+                        parent_canonical_repo_name: Arc::from(parent_canonical_repo_name),
+                    },
+                ),
+                BzlmodGeneratedRepoConfig::CcAutoconf {} => {
+                    BzlmodGeneratedCellGenerator::CcAutoconf(BzlmodCcAutoconfSetup {})
+                }
+                BzlmodGeneratedRepoConfig::ShellConfig {} => {
+                    BzlmodGeneratedCellGenerator::ShellConfig(BzlmodShellConfigSetup {})
+                }
+                BzlmodGeneratedRepoConfig::HttpArchive {
+                    repo_name,
+                    url,
+                    sha256,
+                    strip_prefix,
+                    archive_type,
+                } => BzlmodGeneratedCellGenerator::HttpArchive(BzlmodHttpArchiveSetup {
+                    repo_name: Arc::from(repo_name),
+                    url: Arc::from(url),
+                    sha256: Arc::from(sha256),
+                    strip_prefix: strip_prefix.map(Arc::from),
+                    archive_type: archive_type.map(Arc::from),
+                }),
+                BzlmodGeneratedRepoConfig::JavaLocalJdk {} => {
+                    BzlmodGeneratedCellGenerator::JavaLocalJdk(BzlmodJavaLocalJdkSetup {})
+                }
+                BzlmodGeneratedRepoConfig::PythonHub {} => {
+                    BzlmodGeneratedCellGenerator::PythonHub(BzlmodPythonHubSetup {})
+                }
                 BzlmodGeneratedRepoConfig::GoDepsModule {
                     parent_canonical_repo_name,
                     go_mod,
@@ -860,6 +904,21 @@ enum BzlmodGeneratedRepoConfig {
         host_goos: String,
         host_goarch: String,
     },
+    LocalConfigPlatform {},
+    CcAutoconfToolchains {
+        parent_canonical_repo_name: String,
+    },
+    CcAutoconf {},
+    ShellConfig {},
+    HttpArchive {
+        repo_name: String,
+        url: String,
+        sha256: String,
+        strip_prefix: Option<String>,
+        archive_type: Option<String>,
+    },
+    JavaLocalJdk {},
+    PythonHub {},
     GoDepsModule {
         parent_canonical_repo_name: String,
         go_mod: String,
@@ -973,7 +1032,7 @@ async fn get_bazel_module_resolution(
 
         aliases
             .registered_toolchains
-            .extend(bzlmod_registered_toolchains_from_lines(&lines));
+            .extend(bzlmod_registered_toolchains_from_lines(&lines, false));
 
         for call in collect_bzl_calls(&lines, "include(") {
             if let Some(label) = bzl_first_string_arg(&call) {
@@ -1175,6 +1234,7 @@ fn resolve_generated_bzlmod_repos(
     selected_keys: &BTreeSet<(String, String)>,
 ) -> buck2_error::Result<Vec<BazelCompatExternalModule>> {
     let mut generated = Vec::new();
+    let mut needs_local_config_platform = false;
     for key in selected_keys {
         let Some(module) = discovered.get(key) else {
             continue;
@@ -1271,6 +1331,125 @@ fn resolve_generated_bzlmod_repos(
                     BazelCompatGeneratedModule {
                         cell_name: bzlmod_cell_name(&canonical_repo_name),
                         aliases: vec![sdk.name.clone()],
+                        canonical_repo_name,
+                        generator_json,
+                    },
+                ));
+            }
+        }
+
+        if module.dep.name == "rules_cc" {
+            for alias in &module.use_repo_aliases {
+                let generator = match alias.as_str() {
+                    "local_config_cc_toolchains" => {
+                        needs_local_config_platform = true;
+                        Some(BzlmodGeneratedRepoConfig::CcAutoconfToolchains {
+                            parent_canonical_repo_name: parent_canonical_repo_name.clone(),
+                        })
+                    }
+                    "local_config_cc" => Some(BzlmodGeneratedRepoConfig::CcAutoconf {}),
+                    _ => None,
+                };
+                let Some(generator) = generator else {
+                    continue;
+                };
+                let canonical_repo_name = format!(
+                    "{}+{}+cc_configure+{}",
+                    module.dep.name, module.dep.version, alias
+                );
+                let generator_json = serde_json::to_string(&generator).buck_error_context(
+                    "Error serializing generated rules_cc configure repo configuration",
+                )?;
+                generated.push(BazelCompatExternalModule::Generated(
+                    BazelCompatGeneratedModule {
+                        cell_name: bzlmod_cell_name(&canonical_repo_name),
+                        aliases: vec![alias.clone()],
+                        canonical_repo_name,
+                        generator_json,
+                    },
+                ));
+            }
+        }
+
+        if module.dep.name == "rules_shell" {
+            for alias in &module.use_repo_aliases {
+                if alias != "local_config_shell" {
+                    continue;
+                }
+                let canonical_repo_name = format!(
+                    "{}+{}+sh_configure+{}",
+                    module.dep.name, module.dep.version, alias
+                );
+                let generator_json =
+                    serde_json::to_string(&BzlmodGeneratedRepoConfig::ShellConfig {})
+                        .buck_error_context(
+                            "Error serializing generated rules_shell configure repo configuration",
+                        )?;
+                generated.push(BazelCompatExternalModule::Generated(
+                    BazelCompatGeneratedModule {
+                        cell_name: bzlmod_cell_name(&canonical_repo_name),
+                        aliases: vec![alias.clone()],
+                        canonical_repo_name,
+                        generator_json,
+                    },
+                ));
+            }
+        }
+
+        if module.dep.name == "rules_java" {
+            for alias in &module.use_repo_aliases {
+                let generator = if alias == "local_jdk" {
+                    Some(BzlmodGeneratedRepoConfig::JavaLocalJdk {})
+                } else {
+                    rules_java_remote_tools_archive(alias).map(|(repo_name, url, sha256)| {
+                        BzlmodGeneratedRepoConfig::HttpArchive {
+                            repo_name: repo_name.to_owned(),
+                            url: url.to_owned(),
+                            sha256: sha256.to_owned(),
+                            strip_prefix: None,
+                            archive_type: Some("zip".to_owned()),
+                        }
+                    })
+                };
+                let Some(generator) = generator else {
+                    continue;
+                };
+                let canonical_repo_name = format!(
+                    "{}+{}+toolchains+{}",
+                    module.dep.name, module.dep.version, alias
+                );
+                let generator_json = serde_json::to_string(&generator).buck_error_context(
+                    "Error serializing generated rules_java toolchains repo configuration",
+                )?;
+                generated.push(BazelCompatExternalModule::Generated(
+                    BazelCompatGeneratedModule {
+                        cell_name: bzlmod_cell_name(&canonical_repo_name),
+                        aliases: vec![alias.clone()],
+                        canonical_repo_name,
+                        generator_json,
+                    },
+                ));
+            }
+        }
+
+        if module.dep.name == "rules_python" {
+            for alias in &module.use_repo_aliases {
+                if alias != "pythons_hub" {
+                    continue;
+                }
+                let canonical_repo_name = format!(
+                    "{}+{}+python+{}",
+                    module.dep.name, module.dep.version, alias
+                );
+                let generator_json =
+                    serde_json::to_string(&BzlmodGeneratedRepoConfig::PythonHub {})
+                        .buck_error_context(
+                            "Error serializing generated rules_python hub repo configuration",
+                        )?;
+                generated.push(BazelCompatExternalModule::Generated(
+                    BazelCompatGeneratedModule {
+                        cell_name: bzlmod_cell_name(&canonical_repo_name),
+                        aliases: vec![alias.clone()],
                         canonical_repo_name,
                         generator_json,
                     },
@@ -1383,6 +1562,22 @@ fn resolve_generated_bzlmod_repos(
             }
         }
     }
+    if needs_local_config_platform {
+        let canonical_repo_name = "local_config_platform".to_owned();
+        let generator_json =
+            serde_json::to_string(&BzlmodGeneratedRepoConfig::LocalConfigPlatform {})
+                .buck_error_context(
+                    "Error serializing generated local_config_platform repo configuration",
+                )?;
+        generated.push(BazelCompatExternalModule::Generated(
+            BazelCompatGeneratedModule {
+                cell_name: bzlmod_cell_name(&canonical_repo_name),
+                aliases: vec!["local_config_platform".to_owned()],
+                canonical_repo_name,
+                generator_json,
+            },
+        ));
+    }
     Ok(generated)
 }
 
@@ -1461,7 +1656,7 @@ async fn fetch_bcr_module(
         ),
         go_sdk_extensions: bzlmod_go_sdk_extensions_from_lines(&module_lines),
         go_deps_extensions: bzlmod_go_deps_extensions_from_lines(&module_lines),
-        registered_toolchains: bzlmod_registered_toolchains_from_lines(&module_lines),
+        registered_toolchains: bzlmod_registered_toolchains_from_lines(&module_lines, true),
         deps: bzlmod_deps_from_lines(&module_lines, true),
     })
 }
@@ -1572,9 +1767,13 @@ fn bzlmod_go_deps_extensions_from_lines(lines: &[String]) -> Vec<BzlmodGoDepsExt
     extensions
 }
 
-fn bzlmod_registered_toolchains_from_lines(lines: &[String]) -> Vec<String> {
+fn bzlmod_registered_toolchains_from_lines(
+    lines: &[String],
+    ignore_dev_dependency: bool,
+) -> Vec<String> {
     let mut toolchains = collect_bzl_calls(lines, "register_toolchains(")
         .into_iter()
+        .filter(|call| !(ignore_dev_dependency && bzl_bool_arg(call, "dev_dependency")))
         .flat_map(|call| {
             bzl_call_args(&call)
                 .into_iter()
@@ -1673,6 +1872,39 @@ fn bzlmod_canonical_repo_name(module_name: &str, version: &str) -> String {
         "bazel_tools" => "bazel_tools".to_owned(),
         "platforms" => "platforms".to_owned(),
         _ => format!("{module_name}+{version}"),
+    }
+}
+
+fn rules_java_remote_tools_archive(
+    alias: &str,
+) -> Option<(&'static str, &'static str, &'static str)> {
+    match alias {
+        "remote_java_tools" => Some((
+            "remote_java_tools",
+            "https://mirror.bazel.build/bazel_java_tools/releases/java/v13.9/java_tools-v13.9.zip",
+            "3b92e0c1884ac0e9683e87c3c49e1098cff91faeacdb76cc90d92efb0df861cf",
+        )),
+        "remote_java_tools_linux" => Some((
+            "remote_java_tools_linux",
+            "https://mirror.bazel.build/bazel_java_tools/releases/java/v13.9/java_tools_linux-v13.9.zip",
+            "7a3d7b1cd080efdf49ab2a3818177799416734acf2bd23040aa9037141287548",
+        )),
+        "remote_java_tools_windows" => Some((
+            "remote_java_tools_windows",
+            "https://mirror.bazel.build/bazel_java_tools/releases/java/v13.9/java_tools_windows-v13.9.zip",
+            "6a17ac1921d60af5dca780f4200fd0f9963441bd7afff53b9efad6e7156c699d",
+        )),
+        "remote_java_tools_darwin_x86_64" => Some((
+            "remote_java_tools_darwin_x86_64",
+            "https://mirror.bazel.build/bazel_java_tools/releases/java/v13.9/java_tools_darwin_x86_64-v13.9.zip",
+            "802bfb5085cec0ac5745a637ae2e7a7152c54230ba542d093a10bd48ba29ba6f",
+        )),
+        "remote_java_tools_darwin_arm64" => Some((
+            "remote_java_tools_darwin_arm64",
+            "https://mirror.bazel.build/bazel_java_tools/releases/java/v13.9/java_tools_darwin_arm64-v13.9.zip",
+            "9fa400a43153b048ae5a785e3ee533d675ed6a994ab3c763f50bd15a28544c10",
+        )),
+        _ => None,
     }
 }
 

@@ -815,6 +815,7 @@ genrule = prelude_rule(
             """),
             "output_to_bindir": attrs.option(attrs.one_of(attrs.bool(), attrs.int()), default = None),
             "tools": attrs.list(attrs.string(), default = []),
+            "toolchains": attrs.list(attrs.dep(), default = []),
         } |
         _has_content_based_path_attr() |
         genrule_common.env_arg() |

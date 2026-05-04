@@ -27,7 +27,9 @@ use crate::interpreter::rule_defs::command_executor_config::register_command_exe
 use crate::interpreter::rule_defs::context::register_analysis_context;
 use crate::interpreter::rule_defs::depset::register_bazel_depset;
 use crate::interpreter::rule_defs::digest_config::register_digest_config_type;
+use crate::interpreter::rule_defs::provider::builtin::cc_info::register_cc_common;
 use crate::interpreter::rule_defs::provider::builtin::coverage_info::register_coverage_common;
+use crate::interpreter::rule_defs::provider::builtin::java_info::register_java_common;
 use crate::interpreter::rule_defs::provider::builtin::template_variable_info::register_platform_common;
 use crate::interpreter::rule_defs::provider::callable::register_provider;
 use crate::interpreter::rule_defs::provider::collection::register_provider_collection;
@@ -46,8 +48,10 @@ fn register_build_api_globals(globals: &mut GlobalsBuilder) {
     register_command_executor_config(globals);
     register_provider(globals);
     register_provider_collection(globals);
+    register_cc_common(globals);
     register_coverage_common(globals);
     register_platform_common(globals);
+    register_java_common(globals);
     register_rule_defs(globals);
     register_string_with_macros(globals);
     register_transitive_set(globals);

@@ -30,6 +30,8 @@ use buck2_common::io::fs::FsIoProvider;
 use buck2_core::cells::cell_path::CellPath;
 use buck2_core::cells::external::BzlmodBazelFeaturesGlobalsSetup;
 use buck2_core::cells::external::BzlmodBazelFeaturesVersionSetup;
+use buck2_core::cells::external::BzlmodCcAutoconfSetup;
+use buck2_core::cells::external::BzlmodCcAutoconfToolchainsSetup;
 use buck2_core::cells::external::BzlmodCellSetup;
 use buck2_core::cells::external::BzlmodGeneratedCellGenerator;
 use buck2_core::cells::external::BzlmodGeneratedCellSetup;
@@ -40,6 +42,11 @@ use buck2_core::cells::external::BzlmodGoSdkHostCompatibleSetup;
 use buck2_core::cells::external::BzlmodGoSdkRepositorySetup;
 use buck2_core::cells::external::BzlmodGoSdkToolchainsSetup;
 use buck2_core::cells::external::BzlmodHostPlatformSetup;
+use buck2_core::cells::external::BzlmodHttpArchiveSetup;
+use buck2_core::cells::external::BzlmodJavaLocalJdkSetup;
+use buck2_core::cells::external::BzlmodLocalConfigPlatformSetup;
+use buck2_core::cells::external::BzlmodPythonHubSetup;
+use buck2_core::cells::external::BzlmodShellConfigSetup;
 use buck2_core::cells::external::ExternalCellOrigin;
 use buck2_core::cells::name::CellName;
 use buck2_core::cells::paths::CellRelativePath;
@@ -171,6 +178,50 @@ struct BzlmodGeneratedIoRequest {
     dest: ProjectRelativePathBuf,
 }
 
+struct BzlmodGeneratedHttpArchiveIoRequest {
+    setup: BzlmodHttpArchiveSetup,
+    archive: ProjectRelativePathBuf,
+    temp: ProjectRelativePathBuf,
+    dest: ProjectRelativePathBuf,
+}
+
+impl IoRequest for BzlmodGeneratedHttpArchiveIoRequest {
+    fn execute(self: Box<Self>, project_fs: &ProjectRoot) -> buck2_error::Result<()> {
+        let archive = project_fs.resolve(&self.archive);
+        let temp = project_fs.resolve(&self.temp);
+        let dest = project_fs.resolve(&self.dest);
+
+        fs_util::create_dir_all(temp.clone())?;
+        fs_util::create_dir_all(dest.clone())?;
+
+        let extract_setup = BzlmodCellSetup {
+            module_name: self.setup.repo_name.dupe(),
+            version: Arc::from(""),
+            canonical_repo_name: self.setup.repo_name.dupe(),
+            url: self.setup.url.dupe(),
+            integrity: Arc::from(""),
+            strip_prefix: self.setup.strip_prefix.dupe(),
+            archive_type: self.setup.archive_type.dupe(),
+            patches: Arc::new(Vec::new()),
+            patch_strip: 0,
+        };
+        extract_archive(&extract_setup, &archive, &temp)?;
+
+        let source = match self.setup.strip_prefix.as_ref() {
+            Some(strip_prefix) if !strip_prefix.is_empty() => {
+                temp.join(ForwardRelativePath::new(&**strip_prefix)?)
+            }
+            _ => temp.clone(),
+        };
+        if !source.exists() {
+            return Err(BzlmodError::MissingExtractedDirectory(source.to_string()).into());
+        }
+        copy_dir_contents(&source, &dest)?;
+        write_generated_module_file(&dest, &self.setup.repo_name)?;
+        Ok(())
+    }
+}
+
 impl IoRequest for BzlmodGeneratedIoRequest {
     fn execute(self: Box<Self>, project_fs: &ProjectRoot) -> buck2_error::Result<()> {
         let dest = project_fs.resolve(&self.dest);
@@ -196,6 +247,27 @@ impl IoRequest for BzlmodGeneratedIoRequest {
             }
             BzlmodGeneratedCellGenerator::GoSdkRepository(setup) => {
                 write_go_sdk_repository(project_fs, &self.dest, &dest, setup)?;
+            }
+            BzlmodGeneratedCellGenerator::LocalConfigPlatform(setup) => {
+                write_local_config_platform_repo(&dest, setup)?;
+            }
+            BzlmodGeneratedCellGenerator::CcAutoconfToolchains(setup) => {
+                write_cc_autoconf_toolchains_repo(project_fs, &self.dest, &dest, setup)?;
+            }
+            BzlmodGeneratedCellGenerator::CcAutoconf(setup) => {
+                write_cc_autoconf_repo(&dest, setup)?;
+            }
+            BzlmodGeneratedCellGenerator::ShellConfig(setup) => {
+                write_shell_config_repo(&dest, setup)?;
+            }
+            BzlmodGeneratedCellGenerator::HttpArchive(setup) => {
+                write_generated_module_file(&dest, &setup.repo_name)?;
+            }
+            BzlmodGeneratedCellGenerator::JavaLocalJdk(setup) => {
+                write_java_local_jdk_repo(&dest, setup)?;
+            }
+            BzlmodGeneratedCellGenerator::PythonHub(setup) => {
+                write_python_hub_repo(&dest, setup)?;
             }
             BzlmodGeneratedCellGenerator::GoDepsModule(setup) => {
                 write_go_deps_module_repo(project_fs, &self.dest, &dest, setup)?;
@@ -442,6 +514,195 @@ fn go_sdk_version_parts(version: &str) -> (String, String, String, String) {
         patch_digits
     };
     (major, minor, patch, prerelease)
+}
+
+fn write_local_config_platform_repo(
+    dest: &AbsNormPath,
+    _setup: &BzlmodLocalConfigPlatformSetup,
+) -> buck2_error::Result<()> {
+    write_generated_module_file(dest, "local_config_platform")?;
+    fs_util::write(
+        dest.join(ForwardRelativePath::new("BUILD.bazel")?),
+        "# DO NOT EDIT: automatically generated BUILD file\nexports_files([\"constraints.bzl\"])\n",
+    )
+    .categorize_internal()?;
+
+    let mut constraints = Vec::new();
+    if let Some(cpu) = host_platform_cpu_constraint() {
+        constraints.push(format!("    Label('@platforms//cpu:{cpu}'),"));
+    }
+    if let Some(os) = host_platform_os_constraint() {
+        constraints.push(format!("    Label('@platforms//os:{os}'),"));
+    }
+    fs_util::write(
+        dest.join(ForwardRelativePath::new("constraints.bzl")?),
+        format!(
+            "# DO NOT EDIT: automatically generated constraints list\nHOST_CONSTRAINTS = [\n{}\n]\n",
+            constraints.join("\n")
+        ),
+    )
+    .categorize_internal()?;
+    Ok(())
+}
+
+fn write_cc_autoconf_toolchains_repo(
+    project_fs: &ProjectRoot,
+    dest_rel: &ProjectRelativePath,
+    dest: &AbsNormPath,
+    setup: &BzlmodCcAutoconfToolchainsSetup,
+) -> buck2_error::Result<()> {
+    write_generated_module_file(dest, "local_config_cc_toolchains")?;
+    let template =
+        cc_toolchains_build_template(project_fs, dest_rel, &setup.parent_canonical_repo_name)?;
+    let build = template.replace("%{name}", host_cc_cpu_value());
+    fs_util::write(dest.join(ForwardRelativePath::new("BUILD.bazel")?), build)
+        .categorize_internal()?;
+    Ok(())
+}
+
+fn write_cc_autoconf_repo(
+    dest: &AbsNormPath,
+    _setup: &BzlmodCcAutoconfSetup,
+) -> buck2_error::Result<()> {
+    write_generated_module_file(dest, "local_config_cc")?;
+    fs_util::write(
+        dest.join(ForwardRelativePath::new("BUILD.bazel")?),
+        "# DO NOT EDIT: C++ toolchain implementation repo generated by cc_configure.\n",
+    )
+    .categorize_internal()?;
+    Ok(())
+}
+
+fn write_shell_config_repo(
+    dest: &AbsNormPath,
+    _setup: &BzlmodShellConfigSetup,
+) -> buck2_error::Result<()> {
+    write_generated_module_file(dest, "local_config_shell")?;
+    let mut toolchains = Vec::new();
+    for (os, default_shell_path) in [
+        ("windows", "c:/msys64/usr/bin/bash.exe"),
+        ("linux", "/bin/bash"),
+        ("osx", "/bin/bash"),
+        ("freebsd", "/usr/local/bin/bash"),
+        ("openbsd", "/usr/local/bin/bash"),
+    ] {
+        let is_host = host_platform_os_constraint() == Some(os);
+        let sh_path = if is_host {
+            std::env::var("BAZEL_SH").unwrap_or_else(|_| default_shell_path.to_owned())
+        } else {
+            default_shell_path.to_owned()
+        };
+        if os == "windows" {
+            toolchains.push(format!(
+                r#"sh_toolchain(
+    name = "{os}_sh",
+    path = {sh_path:?},
+    launcher = "@bazel_tools//tools/launcher",
+    launcher_maker = "@bazel_tools//tools/launcher:launcher_maker",
+)"#
+            ));
+        } else {
+            toolchains.push(format!(
+                r#"sh_toolchain(
+    name = "{os}_sh",
+    path = {sh_path:?},
+)"#
+            ));
+        }
+        toolchains.push(format!(
+            r#"toolchain(
+    name = "{os}_sh_toolchain",
+    toolchain = ":{os}_sh",
+    toolchain_type = "@rules_shell//shell:toolchain_type",
+    target_compatible_with = [
+        "@platforms//os:{os}",
+    ],
+)"#
+        ));
+    }
+    let build = format!(
+        "load(\"@rules_shell//shell/toolchains:sh_toolchain.bzl\", \"sh_toolchain\")\n\n{}\n",
+        toolchains.join("\n\n")
+    );
+    fs_util::write(dest.join(ForwardRelativePath::new("BUILD.bazel")?), build)
+        .categorize_internal()?;
+    Ok(())
+}
+
+fn write_java_local_jdk_repo(
+    dest: &AbsNormPath,
+    _setup: &BzlmodJavaLocalJdkSetup,
+) -> buck2_error::Result<()> {
+    write_generated_module_file(dest, "local_jdk")?;
+    let build = r#"toolchain(
+    name = "runtime_toolchain_definition",
+    toolchain = ":runtime",
+    toolchain_type = "@bazel_tools//tools/jdk:runtime_toolchain_type",
+)
+
+toolchain(
+    name = "bootstrap_runtime_toolchain_definition",
+    toolchain = ":bootstrap_runtime",
+    toolchain_type = "@bazel_tools//tools/jdk:runtime_toolchain_type",
+)
+"#;
+    fs_util::write(dest.join(ForwardRelativePath::new("BUILD.bazel")?), build)
+        .categorize_internal()?;
+    Ok(())
+}
+
+fn write_python_hub_repo(
+    dest: &AbsNormPath,
+    _setup: &BzlmodPythonHubSetup,
+) -> buck2_error::Result<()> {
+    write_generated_module_file(dest, "pythons_hub")?;
+    let build = r#"toolchain(
+    name = "python_3_11_toolchain",
+    toolchain = ":python_3_11",
+    toolchain_type = "@rules_python//python:toolchain_type",
+)
+"#;
+    fs_util::write(dest.join(ForwardRelativePath::new("BUILD.bazel")?), build)
+        .categorize_internal()?;
+    Ok(())
+}
+
+fn cc_toolchains_build_template(
+    project_fs: &ProjectRoot,
+    dest_rel: &ProjectRelativePath,
+    parent_canonical_repo_name: &str,
+) -> buck2_error::Result<String> {
+    let Some((external_cells_root, _)) = dest_rel.as_str().split_once("/bzlmod_generated/") else {
+        return Err(BzlmodError::InvalidGeneratedRepoPath(dest_rel.to_string()).into());
+    };
+    let template_path = ProjectRelativePathBuf::unchecked_new(format!(
+        "{external_cells_root}/bzlmod/{parent_canonical_repo_name}/cc/private/toolchain/BUILD.toolchains.tpl",
+    ));
+    fs_util::read_to_string(project_fs.resolve(&template_path))
+        .categorize_internal()
+        .with_buck_error_context(|| {
+            format!("Error reading rules_cc toolchains template `{template_path}`")
+        })
+}
+
+fn host_cc_cpu_value() -> &'static str {
+    match (std::env::consts::OS, std::env::consts::ARCH) {
+        ("macos", "aarch64") => "darwin_arm64",
+        ("macos", _) => "darwin_x86_64",
+        ("freebsd", _) => "freebsd",
+        ("openbsd", _) => "openbsd",
+        ("windows", "aarch64") => "arm64_windows",
+        ("windows", _) => "x64_windows",
+        (_, "power" | "powerpc" | "powerpc64" | "powerpc64le") => "ppc",
+        (_, "s390x") => "s390x",
+        (_, "mips64") => "mips64",
+        (_, "riscv64") => "riscv64",
+        (_, "arm" | "armv7" | "armv7l") => "arm",
+        (_, "aarch64") => "aarch64",
+        (_, "x86_64") => "k8",
+        (_, "x86" | "i386" | "i486" | "i586" | "i686" | "i786") => "piii",
+        _ => "k8",
+    }
 }
 
 fn write_bazel_features_version_repo(
@@ -1225,6 +1486,22 @@ fn bzlmod_path(setup: &BzlmodCellSetup, suffix: &str) -> ProjectRelativePathBuf 
     ))
 }
 
+fn bzlmod_generated_sibling_path(
+    setup: &BzlmodGeneratedCellSetup,
+    dest: &ProjectRelativePath,
+    suffix: &str,
+) -> ProjectRelativePathBuf {
+    let parent = dest
+        .as_str()
+        .rsplit_once('/')
+        .map(|(parent, _)| parent)
+        .unwrap_or("");
+    ProjectRelativePathBuf::unchecked_new(format!(
+        "{}/{}.{}",
+        parent, setup.canonical_repo_name, suffix
+    ))
+}
+
 async fn download_impl(
     ctx: &mut DiceComputations<'_>,
     setup: &BzlmodCellSetup,
@@ -1367,25 +1644,66 @@ async fn materialize_generated(
 
     cancellations
         .critical_section(|| async move {
-            ctx.get_blocking_executor()
-                .execute_io(
-                    Box::new(
-                        buck2_execute::execute::clean_output_paths::CleanOutputPaths {
-                            paths: vec![path.to_owned()],
-                        },
-                    ),
-                    cancellations,
+            if let BzlmodGeneratedCellGenerator::HttpArchive(http_archive) = &setup.generator {
+                let archive = bzlmod_generated_sibling_path(setup, path, "source.archive");
+                let temp = bzlmod_generated_sibling_path(setup, path, "extract-tmp");
+                ctx.get_blocking_executor()
+                    .execute_io(
+                        Box::new(
+                            buck2_execute::execute::clean_output_paths::CleanOutputPaths {
+                                paths: vec![path.to_owned(), archive.clone(), temp.clone()],
+                            },
+                        ),
+                        cancellations,
+                    )
+                    .await?;
+                let io_provider = ctx.global_data().get_io_provider();
+                let project_root = io_provider.project_root();
+                let digest_config = ctx.global_data().get_digest_config();
+                let client = ctx.per_transaction_data().get_http_client();
+                let archive_checksum = Checksum::new(None, Some(&*http_archive.sha256))?;
+                http_download(
+                    &client,
+                    project_root,
+                    digest_config.dupe(),
+                    &archive,
+                    &http_archive.url,
+                    &archive_checksum,
+                    false,
                 )
                 .await?;
-            ctx.get_blocking_executor()
-                .execute_io(
-                    Box::new(BzlmodGeneratedIoRequest {
-                        setup: setup.dupe(),
-                        dest: path.to_owned(),
-                    }),
-                    cancellations,
-                )
-                .await?;
+                ctx.get_blocking_executor()
+                    .execute_io(
+                        Box::new(BzlmodGeneratedHttpArchiveIoRequest {
+                            setup: http_archive.dupe(),
+                            archive,
+                            temp,
+                            dest: path.to_owned(),
+                        }),
+                        cancellations,
+                    )
+                    .await?;
+            } else {
+                ctx.get_blocking_executor()
+                    .execute_io(
+                        Box::new(
+                            buck2_execute::execute::clean_output_paths::CleanOutputPaths {
+                                paths: vec![path.to_owned()],
+                            },
+                        ),
+                        cancellations,
+                    )
+                    .await?;
+                ctx.get_blocking_executor()
+                    .execute_io(
+                        Box::new(BzlmodGeneratedIoRequest {
+                            setup: setup.dupe(),
+                            dest: path.to_owned(),
+                        }),
+                        cancellations,
+                    )
+                    .await?;
+            }
             declare_existing_directory(ctx, path, &*materializer).await
         })
         .await

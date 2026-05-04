@@ -33,7 +33,6 @@ use starlark::eval::Evaluator;
 use starlark::starlark_module;
 use starlark::values::StringValue;
 use starlark::values::Value;
-use starlark::values::ValueError;
 use starlark::values::ValueOf;
 use starlark::values::ValueTypedComplex;
 use starlark::values::dict::AllocDict;
@@ -70,6 +69,8 @@ enum AttrError {
         "unsupported Bazel configuration_field(fragment = {fragment:?}, name = {name:?}) as attr.label default"
     )]
     UnsupportedBazelConfigurationField { fragment: String, name: String },
+    #[error("providers argument contains non-provider value `{0}`")]
+    InvalidProviderValue(String),
 }
 
 pub(crate) trait AttributeExt {
@@ -256,17 +257,12 @@ pub(crate) fn init_coerce_providers_label_for_bzl() {
 
 /// Common code to handle `providers` argument of dep-like attrs.
 fn dep_like_attr_handle_providers_arg(providers: Vec<Value>) -> buck2_error::Result<ProviderIdSet> {
-    Ok(ProviderIdSet::from(providers.try_map(|v| {
-        match v.as_provider_callable() {
+    Ok(ProviderIdSet::from(providers.try_map(
+        |v| match v.as_provider_callable() {
             Some(callable) => buck2_error::Ok(callable.id()?.dupe()),
-            None => Err(
-                starlark::Error::from(ValueError::IncorrectParameterTypeNamed(
-                    "providers".to_owned(),
-                ))
-                .into(),
-            ),
-        }
-    })?))
+            None => Err(AttrError::InvalidProviderValue(v.to_repr()).into()),
+        },
+    )?))
 }
 
 /// This type is available as a global `attrs` symbol, to allow the definition of attributes to the `rule` function.

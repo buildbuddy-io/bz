@@ -8,6 +8,7 @@
  * above-listed licenses.
  */
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -15,6 +16,7 @@ use buck2_build_api::analysis::calculation::RuleAnalysisCalculation;
 use buck2_build_api::transition::TRANSITION_ATTRS_PROVIDER;
 use buck2_build_api::transition::TransitionAttrProvider;
 use buck2_build_api::transition::TransitionAttrs;
+use buck2_core::configuration::data::BazelBuildSettingValue;
 use buck2_core::configuration::transition::id::TransitionId;
 use buck2_core::provider::label::ProvidersLabel;
 use buck2_interpreter::load_module::InterpreterCalculation;
@@ -34,6 +36,7 @@ use crate::transition::starlark::FrozenTransition;
 
 pub(crate) enum TransitionData {
     MagicObject(OwnedFrozenValueTyped<FrozenTransition>),
+    AnalysisTest(BTreeMap<String, BazelBuildSettingValue>),
     Target(OwnedFrozenValueTyped<FrozenTransitionInfo>),
 }
 
@@ -43,7 +46,9 @@ impl TransitionData {
     ) -> impl Iterator<Item = (&FrozenStringValue, &ProvidersLabel)> + Send + Sync {
         match self {
             TransitionData::MagicObject(v) => Either::Left(v.refs.iter()),
-            TransitionData::Target(_) => Either::Right([].into_iter()),
+            TransitionData::AnalysisTest(_) | TransitionData::Target(_) => {
+                Either::Right([].into_iter())
+            }
         }
         .into_iter()
     }
@@ -63,6 +68,7 @@ impl TransitionData {
                     )
                 })
                 .unwrap_or(TransitionAttrs::None),
+            TransitionData::AnalysisTest(_) => TransitionAttrs::None,
             TransitionData::Target(v) => v
                 .as_ref()
                 .get_attrs_names()
@@ -81,14 +87,14 @@ impl TransitionData {
     pub(crate) fn is_split(&self) -> bool {
         match self {
             TransitionData::MagicObject(v) => v.split,
-            TransitionData::Target(_) => false,
+            TransitionData::AnalysisTest(_) | TransitionData::Target(_) => false,
         }
     }
 
     pub(crate) fn is_bazel(&self) -> bool {
         match self {
             TransitionData::MagicObject(v) => v.is_bazel,
-            TransitionData::Target(_) => false,
+            TransitionData::AnalysisTest(_) | TransitionData::Target(_) => false,
         }
     }
 
@@ -107,10 +113,21 @@ impl TransitionData {
             TransitionData::MagicObject(v) if v.is_bazel && key.starts_with("//") => {
                 match v.id.as_ref() {
                     TransitionId::MagicObject { path, .. } => format!("{}{}", path.cell(), key),
-                    TransitionId::Target(_) => key.to_owned(),
+                    TransitionId::BazelAnalysisTest { .. } | TransitionId::Target(_) => {
+                        key.to_owned()
+                    }
                 }
             }
             _ => key.to_owned(),
+        }
+    }
+
+    pub(crate) fn bazel_analysis_test_settings(
+        &self,
+    ) -> Option<&BTreeMap<String, BazelBuildSettingValue>> {
+        match self {
+            TransitionData::AnalysisTest(settings) => Some(settings),
+            TransitionData::MagicObject(_) | TransitionData::Target(_) => None,
         }
     }
 }
@@ -161,6 +178,9 @@ impl FetchTransition for DiceComputations<'_> {
                             })
                     })?;
                 Ok(TransitionData::Target(transition_info))
+            }
+            TransitionId::BazelAnalysisTest { settings } => {
+                Ok(TransitionData::AnalysisTest(settings.clone()))
             }
         }
     }

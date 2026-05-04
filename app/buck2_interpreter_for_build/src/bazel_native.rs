@@ -7,13 +7,22 @@
  * You may select, at your option, one of the above-listed licenses.
  */
 
+use std::fmt;
+
+use allocative::Allocative;
 use buck2_core::cells::external::BZLMOD_BAZEL_COMPAT_VERSION;
+use starlark::any::ProvidesStaticType;
 use starlark::environment::GlobalsBuilder;
+use starlark::eval::Arguments;
 use starlark::eval::Evaluator;
 use starlark::starlark_module;
+use starlark::values::NoSerialize;
+use starlark::values::StarlarkValue;
 use starlark::values::Value;
+use starlark::values::ValueLike;
 use starlark::values::dict::AllocDict;
 use starlark::values::none::NoneType;
+use starlark::values::starlark_value;
 use starlark::values::tuple::UnpackTuple;
 
 #[derive(Debug, buck2_error::Error)]
@@ -23,6 +32,36 @@ enum BazelNativeError {
     RegisterToolchainsNotImplemented,
     #[error("Bazel label build setting requires the prelude `alias` rule to be loaded")]
     MissingAliasRule,
+    #[error("Bazel native rule `{0}` requires a loaded Buck rule with the same name")]
+    MissingNativeRule(&'static str),
+}
+
+#[derive(Debug, ProvidesStaticType, NoSerialize, Allocative)]
+struct NativeRuleCallable {
+    name: &'static str,
+}
+
+impl fmt::Display for NativeRuleCallable {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "native.{}", self.name)
+    }
+}
+
+starlark::starlark_simple_value!(NativeRuleCallable);
+
+#[starlark_value(type = "native_rule_callable")]
+impl<'v> StarlarkValue<'v> for NativeRuleCallable {
+    fn invoke(
+        &self,
+        _me: Value<'v>,
+        args: &Arguments<'v, '_>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<Value<'v>> {
+        let rule = eval.module().get(self.name).ok_or_else(|| {
+            buck2_error::Error::from(BazelNativeError::MissingNativeRule(self.name))
+        })?;
+        ValueLike::invoke(rule, args, eval)
+    }
 }
 
 #[starlark_module]
@@ -90,6 +129,39 @@ pub(crate) fn register_bazel_native(builder: &mut GlobalsBuilder) {
     builder.namespace("native", |globals| {
         globals.set("bazel_version", BZLMOD_BAZEL_COMPAT_VERSION);
         bazel_native_module(globals);
+        for name in [
+            "alias",
+            "cc_binary",
+            "cc_import",
+            "cc_library",
+            "cc_proto_library",
+            "cc_shared_library",
+            "cc_test",
+            "cc_toolchain",
+            "cc_toolchain_suite",
+            "config_setting",
+            "filegroup",
+            "genrule",
+            "java_binary",
+            "java_import",
+            "java_library",
+            "java_lite_proto_library",
+            "java_package_configuration",
+            "java_plugin",
+            "java_proto_library",
+            "java_runtime",
+            "java_test",
+            "java_toolchain",
+            "proto_library",
+            "sh_binary",
+            "sh_library",
+            "sh_test",
+            "test_suite",
+            "toolchain",
+            "toolchain_type",
+        ] {
+            globals.set(name, NativeRuleCallable { name });
+        }
     });
     bazel_build_setting_rules(builder);
 }

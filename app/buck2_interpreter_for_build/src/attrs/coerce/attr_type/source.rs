@@ -48,7 +48,10 @@ impl AttrTypeCoerce for SourceAttrType {
 
         let source_label = value.unpack_str_err()?;
 
-        let label_err = if source_label.contains(':') {
+        let label_err = if source_label.contains(':')
+            || source_label.starts_with('@')
+            || source_label.starts_with("//")
+        {
             match ctx.coerce_providers_label(source_label) {
                 Ok(l) => return Ok(CoercedAttr::SourceLabel(l)),
                 Err(e) => Some(e),

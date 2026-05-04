@@ -564,6 +564,7 @@ __overridden_builtins__ = {
 } if log_buckconfigs else {}
 
 __shimmed_native__ = __struct_to_dict(__buck2_builtins__)
+__shimmed_native__.update(__struct_to_dict(__buck2_builtins__.native))
 __shimmed_native__.update(__overridden_builtins__)
 __shimmed_native__.update(__rules__)
 __shimmed_native__.update(_user_rules)

@@ -105,24 +105,30 @@ fn declared_toolchain_info_creator(globals: &mut GlobalsBuilder) {
         Ok(DeclaredToolchainInfo {
             toolchain_type: ValueOfUnchecked::new(heap.alloc(toolchain_type)),
             toolchain: ValueOfUnchecked::new(heap.alloc(toolchain)),
-            exec_compatible_with: ValueOfUnchecked::new(heap.alloc(AllocList(
-                exec_compatible_with
-                    .items
-                    .into_iter()
-                    .map(|label| label.to_owned()),
-            ))),
-            target_compatible_with: ValueOfUnchecked::new(heap.alloc(AllocList(
-                target_compatible_with
-                    .items
-                    .into_iter()
-                    .map(|label| label.to_owned()),
-            ))),
-            target_settings: ValueOfUnchecked::new(heap.alloc(AllocList(
-                target_settings
-                    .items
-                    .into_iter()
-                    .map(|label| label.to_owned()),
-            ))),
+            exec_compatible_with: ValueOfUnchecked::new(
+                heap.alloc(AllocList(
+                    exec_compatible_with
+                        .items
+                        .into_iter()
+                        .map(|label| label.to_owned()),
+                )),
+            ),
+            target_compatible_with: ValueOfUnchecked::new(
+                heap.alloc(AllocList(
+                    target_compatible_with
+                        .items
+                        .into_iter()
+                        .map(|label| label.to_owned()),
+                )),
+            ),
+            target_settings: ValueOfUnchecked::new(
+                heap.alloc(AllocList(
+                    target_settings
+                        .items
+                        .into_iter()
+                        .map(|label| label.to_owned()),
+                )),
+            ),
             use_target_platform_constraints: ValueOfUnchecked::new(
                 heap.alloc(use_target_platform_constraints),
             ),

@@ -65,6 +65,14 @@ Completed:
 - Configured targets now resolve declared Bazel toolchain types against registered native `toolchain(...)` targets and expose resolved `platform_common.ToolchainInfo` providers through `ctx.toolchains[...]`.
 - Bazel `Label(...)` Starlark values now coerce through plain `attrs.label()` values as well as dependency/source attrs.
 - `cc_common.is_cc_toolchain_resolution_enabled_do_not_use(ctx = ctx)` is available.
+- Native Bazel C/C++ providers needed by rules_cc (`DebugPackageInfo`, `CcToolchainConfigInfo`, `CcSharedLibraryInfo`, `CcSharedLibraryHintInfo`, and `cc_common.CcToolchainInfo`) are provider callables with native provider identity.
+- `native.*` exports in the prelude now include Bazel native names that are not Buck prelude rules, while existing Buck native rules still win for concrete rule creation.
+- Bazel native `cc_*` declarations are present for rules_cc wrapper calls.
+- Bazel native Java declarations are present for `java_import`, `java_runtime`, `java_toolchain`, `java_package_configuration`, `java_proto_library`, and `java_lite_proto_library`.
+- Bazel `genrule(toolchains = ...)` is accepted.
+- Bzlmod generated repos can materialize checksum-verified `http_archive` outputs.
+- `rules_java` `toolchains` extension imports for `@remote_java_tools` and platform-specific Java tools archives are generated as bzlmod external cells from the module's `use_repo(...)` imports.
+- Bazel compatibility cells admit source labels for files that do not exist at package-load time, matching Bazel's source-file target behavior for generated JDK header filegroups.
 - `ctx.build_setting_value`, `ctx.attr`, and `ctx.var` are available during Bazel rule analysis.
 - Bazel-declared rules accept `None`, a single provider, or provider sequences from analysis and receive an implicit empty `DefaultInfo` when omitted.
 - `DefaultInfo(files = depset(...))`, dependency `.files`, and source-artifact `.files` are available with Bazel depset values.
@@ -77,14 +85,14 @@ BUCK2_HARD_ERROR=false \
 bazel-bin/app/buck2/buck2_bin --isolation-dir real-rules-go-... build //:hello
 ```
 
-The smoke now loads real `rules_go`, `rules_cc`, `rules_proto`, `protobuf`, `bazel_skylib`, `bazel_features`, and `gazelle` load-time Starlark from bzlmod, gets past the generated `@io_bazel_rules_nogo` repository, Gazelle `go_deps` aliases, `bazel_features` generated globals, Bazel build-setting defaults, rules_go's incoming Go transitions, bundled `@bazel_tools` package targets, Bazel provider return semantics, source `.files` access, native Bazel toolchain declaration rules, generated rules_go Go SDK repos, and Bazel `:all` toolchain registration expansion. The current failure is registered-toolchain collection reaching transitive module-extension repos that Buck does not yet create:
+The smoke now loads real `rules_go`, `rules_cc`, `rules_proto`, `protobuf`, `bazel_skylib`, `bazel_features`, `gazelle`, `rules_java`, and `rules_kotlin` load-time Starlark from bzlmod. It gets past the generated `@io_bazel_rules_nogo` repository, Gazelle `go_deps` aliases, `bazel_features` generated globals, Bazel build-setting defaults, rules_go's incoming Go transitions, bundled `@bazel_tools` package targets, Bazel provider return semantics, source `.files` access, native Bazel toolchain declaration rules, generated rules_go Go SDK repos, generated rules_java Java tools repos, rules_cc native provider exports, rules_java toolchain BUILD-file evaluation, and Bazel `:all` toolchain registration expansion. The current failure is another transitive module-extension repo that Buck does not yet create:
 
 ```text
-Error parsing target pattern `@local_config_cc_toolchains//:all`
-unknown cell alias: `local_config_cc_toolchains`
+Error loading `load` of `@com_github_jetbrains_kotlin//:capabilities.bzl`
+unknown cell alias: `com_github_jetbrains_kotlin`
 ```
 
-The direct `//:hello` smoke now reaches configured target analysis through the real `go_binary`, `go_library`, Go configuration transition, standard-library transition, generated `@go_toolchains` loading, and registered-toolchain expansion. The next gap is real module-extension evaluation/repository-rule execution for transitive generated repos such as `@local_config_cc_toolchains`, `@local_config_shell`, `@local_jdk`, `@pythons_hub`, and `@rules_pkg_rpmbuild`.
+The direct `//:hello` smoke now reaches configured target analysis through the real `go_binary`, `go_library`, Go configuration transition, standard-library transition, generated `@go_toolchains` loading, rules_java/rules_cc toolchain package loading, and registered-toolchain expansion. The next gap is real module-extension evaluation/repository-rule execution for transitive generated repos such as `@com_github_jetbrains_kotlin`, remaining Maven/Kotlin generated repos, and other repositories currently produced by extension-specific parsing.
 
 ## Constraints
 
@@ -112,7 +120,7 @@ Acceptance:
 
 ## Phase 2: Module Extensions and Generated Repos
 
-Status: generated repo imports for external-module `go_deps.from_file(...)`, rules_go `go_sdk.from_file(...)`, and `bazel_features` `version_extension` are parsed and materialized; full extension evaluation, repository-rule execution, and scoped repo mappings still remain.
+Status: generated repo imports for external-module `go_deps.from_file(...)`, rules_go `go_sdk.from_file(...)`, rules_java `toolchains` Java tools archives, and `bazel_features` `version_extension` are parsed and materialized; full extension evaluation, repository-rule execution, and scoped repo mappings still remain.
 
 Implement:
 
@@ -185,6 +193,11 @@ Completed:
 - Internal `DeclaredToolchainInfo` provider emitted by native `toolchain(...)`
 - Bazel `ctx.toolchains[...]` access shape and optional `None` result
 - `cc_common.is_cc_toolchain_resolution_enabled_do_not_use(ctx = ctx)`
+- Native rules_cc provider exports and `cc_common.CcToolchainInfo`
+- `native.*` names bridged into Buck's prelude `native` struct
+- Bazel native `cc_*` declaration surface for rules_cc wrappers
+- Bazel native Java toolchain/runtime/import/proto declaration surface for rules_java wrappers
+- Bazel `genrule(toolchains = ...)`
 
 Immediate target:
 

@@ -114,6 +114,13 @@ pub enum BzlmodGeneratedCellGenerator {
     GoSdkToolchains(BzlmodGoSdkToolchainsSetup),
     GoSdkHostCompatible(BzlmodGoSdkHostCompatibleSetup),
     GoSdkRepository(BzlmodGoSdkRepositorySetup),
+    LocalConfigPlatform(BzlmodLocalConfigPlatformSetup),
+    CcAutoconfToolchains(BzlmodCcAutoconfToolchainsSetup),
+    CcAutoconf(BzlmodCcAutoconfSetup),
+    ShellConfig(BzlmodShellConfigSetup),
+    HttpArchive(BzlmodHttpArchiveSetup),
+    JavaLocalJdk(BzlmodJavaLocalJdkSetup),
+    PythonHub(BzlmodPythonHubSetup),
     GoDepsModule(BzlmodGoDepsModuleSetup),
     GoDepsRepositoryConfig(BzlmodGoDepsRepositoryConfigSetup),
 }
@@ -224,6 +231,98 @@ pub struct BzlmodGoSdkRepositorySetup {
     pub host_goos: Arc<str>,
     pub host_goarch: Arc<str>,
 }
+
+#[derive(
+    Debug,
+    Clone,
+    Dupe,
+    allocative::Allocative,
+    PartialEq,
+    Eq,
+    Hash,
+    Pagable
+)]
+pub struct BzlmodLocalConfigPlatformSetup {}
+
+#[derive(
+    Debug,
+    Clone,
+    Dupe,
+    allocative::Allocative,
+    PartialEq,
+    Eq,
+    Hash,
+    Pagable
+)]
+pub struct BzlmodCcAutoconfToolchainsSetup {
+    pub parent_canonical_repo_name: Arc<str>,
+}
+
+#[derive(
+    Debug,
+    Clone,
+    Dupe,
+    allocative::Allocative,
+    PartialEq,
+    Eq,
+    Hash,
+    Pagable
+)]
+pub struct BzlmodCcAutoconfSetup {}
+
+#[derive(
+    Debug,
+    Clone,
+    Dupe,
+    allocative::Allocative,
+    PartialEq,
+    Eq,
+    Hash,
+    Pagable
+)]
+pub struct BzlmodShellConfigSetup {}
+
+#[derive(
+    Debug,
+    Clone,
+    Dupe,
+    allocative::Allocative,
+    PartialEq,
+    Eq,
+    Hash,
+    Pagable
+)]
+pub struct BzlmodHttpArchiveSetup {
+    pub repo_name: Arc<str>,
+    pub url: Arc<str>,
+    pub sha256: Arc<str>,
+    pub strip_prefix: Option<Arc<str>>,
+    pub archive_type: Option<Arc<str>>,
+}
+
+#[derive(
+    Debug,
+    Clone,
+    Dupe,
+    allocative::Allocative,
+    PartialEq,
+    Eq,
+    Hash,
+    Pagable
+)]
+pub struct BzlmodJavaLocalJdkSetup {}
+
+#[derive(
+    Debug,
+    Clone,
+    Dupe,
+    allocative::Allocative,
+    PartialEq,
+    Eq,
+    Hash,
+    Pagable
+)]
+pub struct BzlmodPythonHubSetup {}
 
 #[derive(
     Debug,

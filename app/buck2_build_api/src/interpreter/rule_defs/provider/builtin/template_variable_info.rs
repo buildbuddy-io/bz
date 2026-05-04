@@ -48,7 +48,7 @@ fn template_variable_info_creator(globals: &mut GlobalsBuilder) {
 
 pub(crate) fn register_platform_common(globals: &mut GlobalsBuilder) {
     globals.namespace("platform_common", |globals| {
-        template_variable_info_creator(globals);
+        globals.set("TemplateVariableInfo", TemplateVariableInfoCallable::new());
         register_toolchain_info(globals);
     });
 }

@@ -377,6 +377,115 @@ java_plugin = prelude_rule(
     ),
 )
 
+java_import = prelude_rule(
+    name = "java_import",
+    docs = "Declares a Bazel prebuilt Java archive target.",
+    examples = None,
+    further = None,
+    attrs = {
+        "jars": attrs.list(attrs.source(), default = []),
+        "srcjar": attrs.option(attrs.source(), default = None),
+        "deps": attrs.list(attrs.dep(), default = []),
+        "exports": attrs.list(attrs.dep(), default = []),
+        "runtime_deps": attrs.list(attrs.dep(), default = []),
+        "neverlink": attrs.bool(default = False),
+        "features": attrs.list(attrs.string(), default = []),
+        "tags": attrs.list(attrs.string(), default = []),
+        "testonly": attrs.bool(default = False),
+    } | buck.licenses_arg() | buck.labels_arg() | buck.contacts_arg(),
+)
+
+java_runtime = prelude_rule(
+    name = "java_runtime",
+    docs = "Declares a Bazel Java runtime target.",
+    examples = None,
+    further = None,
+    attrs = {
+        "srcs": attrs.list(attrs.source(allow_directory = True), default = []),
+        "java": attrs.option(attrs.source(), default = None),
+        "java_home": attrs.option(attrs.string(), default = None),
+        "version": attrs.option(attrs.string(), default = None),
+        "hermetic_srcs": attrs.list(attrs.source(allow_directory = True), default = []),
+        "features": attrs.list(attrs.string(), default = []),
+        "tags": attrs.list(attrs.string(), default = []),
+        "testonly": attrs.bool(default = False),
+    } | buck.licenses_arg() | buck.labels_arg() | buck.contacts_arg(),
+    is_toolchain_rule = True,
+)
+
+java_toolchain = prelude_rule(
+    name = "java_toolchain",
+    docs = "Declares a Bazel Java compilation toolchain target.",
+    examples = None,
+    further = None,
+    attrs = {
+        "source_version": attrs.option(attrs.string(), default = None),
+        "target_version": attrs.option(attrs.string(), default = None),
+        "bootclasspath": attrs.list(attrs.dep(), default = []),
+        "extclasspath": attrs.list(attrs.dep(), default = []),
+        "javabuilder": attrs.list(attrs.dep(), default = []),
+        "genclass": attrs.list(attrs.dep(), default = []),
+        "header_compiler": attrs.list(attrs.dep(), default = []),
+        "header_compiler_direct": attrs.list(attrs.dep(), default = []),
+        "ijar": attrs.list(attrs.dep(), default = []),
+        "singlejar": attrs.list(attrs.dep(), default = []),
+        "oneversion": attrs.option(attrs.dep(), default = None),
+        "jacocorunner": attrs.option(attrs.dep(), default = None),
+        "java_runtime": attrs.option(attrs.dep(), default = None),
+        "java_runtime_alias": attrs.option(attrs.dep(), default = None),
+        "jvm_opts": attrs.list(attrs.string(), default = []),
+        "turbine_jvm_opts": attrs.list(attrs.string(), default = []),
+        "misc": attrs.list(attrs.string(), default = []),
+        "javacopts": attrs.list(attrs.string(), default = []),
+        "compatible_javacopts": attrs.dict(key = attrs.string(), value = attrs.list(attrs.string()), sorted = False, default = {}),
+        "reduced_classpath_incompatible_processors": attrs.list(attrs.string(), default = []),
+        "javac_supports_workers": attrs.bool(default = False),
+        "forcibly_disable_header_compilation": attrs.bool(default = False),
+        "features": attrs.list(attrs.string(), default = []),
+        "tags": attrs.list(attrs.string(), default = []),
+        "testonly": attrs.bool(default = False),
+    } | buck.licenses_arg() | buck.labels_arg() | buck.contacts_arg(),
+    is_toolchain_rule = True,
+)
+
+java_package_configuration = prelude_rule(
+    name = "java_package_configuration",
+    docs = "Declares Bazel Java package-specific compiler options.",
+    examples = None,
+    further = None,
+    attrs = {
+        "packages": attrs.list(attrs.string(), default = []),
+        "javacopts": attrs.list(attrs.string(), default = []),
+        "data": attrs.list(attrs.dep(), default = []),
+        "features": attrs.list(attrs.string(), default = []),
+        "tags": attrs.list(attrs.string(), default = []),
+        "testonly": attrs.bool(default = False),
+    } | buck.licenses_arg() | buck.labels_arg() | buck.contacts_arg(),
+)
+
+java_proto_library = prelude_rule(
+    name = "java_proto_library",
+    docs = "Declares a Bazel Java proto library target.",
+    examples = None,
+    further = None,
+    attrs = {
+        "deps": attrs.list(attrs.dep(), default = []),
+        "exports": attrs.list(attrs.dep(), default = []),
+        "runtime_deps": attrs.list(attrs.dep(), default = []),
+        "features": attrs.list(attrs.string(), default = []),
+        "tags": attrs.list(attrs.string(), default = []),
+        "testonly": attrs.bool(default = False),
+    } | buck.licenses_arg() | buck.labels_arg() | buck.contacts_arg(),
+)
+
+java_lite_proto_library = prelude_rule(
+    name = "java_lite_proto_library",
+    docs = "Declares a Bazel Java lite proto library target.",
+    examples = None,
+    further = None,
+    attrs = java_proto_library.attrs,
+)
+
 java_test = prelude_rule(
     name = "java_test",
     docs = """
@@ -608,9 +717,15 @@ java_rules = struct(
     jar_genrule = jar_genrule,
     java_annotation_processor = java_annotation_processor,
     java_binary = java_binary,
+    java_import = java_import,
     java_library = java_library,
+    java_lite_proto_library = java_lite_proto_library,
+    java_package_configuration = java_package_configuration,
     java_plugin = java_plugin,
+    java_proto_library = java_proto_library,
+    java_runtime = java_runtime,
     java_test = java_test,
+    java_toolchain = java_toolchain,
     java_test_runner = java_test_runner,
     prebuilt_jar = prebuilt_jar,
 )

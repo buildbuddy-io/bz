@@ -9,12 +9,14 @@
  */
 
 use std::cell::RefCell;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::sync::LazyLock;
 
 use allocative::Allocative;
 use buck2_build_api::interpreter::rule_defs::provider::builtin::platform_info::PlatformInfo;
 use buck2_core::bzl::ImportPath;
+use buck2_core::configuration::data::BazelBuildSettingValue;
 use buck2_core::configuration::transition::id::TransitionId;
 use buck2_core::provider::label::ProvidersLabel;
 use buck2_error::BuckErrorContext;
@@ -34,10 +36,12 @@ use starlark::environment::GlobalsBuilder;
 use starlark::eval::Evaluator;
 use starlark::starlark_complex_values;
 use starlark::starlark_module;
+use starlark::starlark_simple_value;
 use starlark::typing::ParamIsRequired;
 use starlark::typing::ParamSpec;
 use starlark::typing::Ty;
 use starlark::util::ArcStr;
+use starlark::values::AllocValue;
 use starlark::values::Demand;
 use starlark::values::Freeze;
 use starlark::values::FreezeError;
@@ -45,6 +49,7 @@ use starlark::values::FreezeResult;
 use starlark::values::Freezer;
 use starlark::values::FrozenStringValue;
 use starlark::values::FrozenValue;
+use starlark::values::Heap;
 use starlark::values::NoSerialize;
 use starlark::values::StarlarkValue;
 use starlark::values::StringValue;
@@ -52,6 +57,7 @@ use starlark::values::Trace;
 use starlark::values::Value;
 use starlark::values::dict::DictType;
 use starlark::values::dict::UnpackDictEntries;
+use starlark::values::list::ListRef;
 use starlark::values::list_or_tuple::UnpackListOrTuple;
 use starlark::values::starlark_value;
 use starlark::values::structs::StructRef;
@@ -241,6 +247,62 @@ impl StarlarkCallableParamSpec for TransitionImplParams {
     }
 }
 
+#[derive(Debug, Display, Trace, ProvidesStaticType, NoSerialize, Allocative)]
+#[display("analysis_test_transition")]
+pub(crate) struct AnalysisTestTransition {
+    id: Arc<TransitionId>,
+}
+
+#[derive(Debug, Display, ProvidesStaticType, NoSerialize, Allocative)]
+#[display("analysis_test_transition")]
+pub(crate) struct FrozenAnalysisTestTransition {
+    id: Arc<TransitionId>,
+}
+
+#[starlark_value(type = "analysis_test_transition")]
+impl<'v> StarlarkValue<'v> for AnalysisTestTransition {
+    fn provide(&'v self, demand: &mut Demand<'_, 'v>) {
+        demand.provide_value::<&dyn TransitionValue>(self);
+    }
+}
+
+#[starlark_value(type = "analysis_test_transition")]
+impl<'v> StarlarkValue<'v> for FrozenAnalysisTestTransition {
+    type Canonical = AnalysisTestTransition;
+
+    fn provide(&'v self, demand: &mut Demand<'_, 'v>) {
+        demand.provide_value::<&dyn TransitionValue>(self);
+    }
+}
+
+impl Freeze for AnalysisTestTransition {
+    type Frozen = FrozenAnalysisTestTransition;
+
+    fn freeze(self, _freezer: &Freezer) -> FreezeResult<FrozenAnalysisTestTransition> {
+        Ok(FrozenAnalysisTestTransition { id: self.id })
+    }
+}
+
+impl<'v> AllocValue<'v> for AnalysisTestTransition {
+    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
+        heap.alloc_complex(self)
+    }
+}
+
+starlark_simple_value!(FrozenAnalysisTestTransition);
+
+impl TransitionValue for AnalysisTestTransition {
+    fn transition_id(&self) -> buck2_error::Result<Arc<TransitionId>> {
+        Ok(self.id.dupe())
+    }
+}
+
+impl TransitionValue for FrozenAnalysisTestTransition {
+    fn transition_id(&self) -> buck2_error::Result<Arc<TransitionId>> {
+        Ok(self.id.dupe())
+    }
+}
+
 // This function is not optimized, but it is called like 10 times during the heavy build.
 fn validate_transition_impl(
     implementation: Value,
@@ -269,6 +331,39 @@ fn validate_transition_impl(
             &expected_return_type,
         )
         .buck_error_context("`impl` function signature is incorrect")
+}
+
+fn bazel_analysis_test_transition_setting_key(key: &str, path: &ImportPath) -> String {
+    if key.starts_with("//command_line_option:") {
+        key.to_owned()
+    } else if key.starts_with("//") {
+        format!("{}{}", path.cell(), key)
+    } else {
+        key.to_owned()
+    }
+}
+
+fn bazel_analysis_test_transition_setting_value(value: Value) -> BazelBuildSettingValue {
+    if let Some(value) = value.unpack_bool() {
+        BazelBuildSettingValue::Bool(value)
+    } else if let Some(value) = value.unpack_i32() {
+        BazelBuildSettingValue::Int(value.into())
+    } else if let Some(value) = value.unpack_str() {
+        BazelBuildSettingValue::String(value.to_owned())
+    } else if let Some(values) = ListRef::from_value(value) {
+        BazelBuildSettingValue::StringList(
+            values
+                .iter()
+                .map(|value| {
+                    value
+                        .unpack_str()
+                        .map_or_else(|| value.to_repr(), str::to_owned)
+                })
+                .collect(),
+        )
+    } else {
+        BazelBuildSettingValue::String(value.to_repr())
+    }
 }
 
 #[starlark_module]
@@ -346,6 +441,31 @@ fn register_transition_function(builder: &mut GlobalsBuilder) {
             is_bazel: is_bazel_transition,
             inputs: inputs.items,
             outputs: outputs.items,
+        })
+    }
+
+    fn analysis_test_transition<'v>(
+        #[starlark(require = named)] settings: UnpackDictEntries<StringValue<'v>, Value<'v>>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<AnalysisTestTransition> {
+        let path: ImportPath = (*starlark_path_from_build_context(eval)?
+            .unpack_load_file()
+            .ok_or(buck2_error::Error::from(TransitionError::OnlyBzl))?)
+        .clone();
+
+        let settings = settings
+            .entries
+            .into_iter()
+            .map(|(key, value)| {
+                (
+                    bazel_analysis_test_transition_setting_key(key.as_str(), &path),
+                    bazel_analysis_test_transition_setting_value(value),
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+
+        Ok(AnalysisTestTransition {
+            id: Arc::new(TransitionId::BazelAnalysisTest { settings }),
         })
     }
 }

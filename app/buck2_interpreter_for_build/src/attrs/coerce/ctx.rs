@@ -29,8 +29,10 @@ use buck2_core::pattern::pattern_type::PatternType;
 use buck2_core::pattern::pattern_type::ProvidersPatternExtra;
 use buck2_core::pattern::pattern_type::TargetPatternExtra;
 use buck2_core::provider::label::ProvidersLabel;
+use buck2_core::provider::label::ProvidersName;
 use buck2_core::soft_error;
 use buck2_core::target::label::interner::ConcurrentTargetLabelInterner;
+use buck2_core::target::name::TargetNameRef;
 use buck2_node::attrs::coerced_attr::CoercedAttr;
 use buck2_node::attrs::coerced_path::CoercedDirectory;
 use buck2_node::attrs::coerced_path::CoercedPath;
@@ -113,6 +115,11 @@ impl Debug for BuildAttrCoercionContext {
 }
 
 impl BuildAttrCoercionContext {
+    fn is_bazel_compat_cell(&self) -> bool {
+        let cell = self.cell_name.as_str();
+        cell == "root" || cell == "bazel_tools" || cell.starts_with("bzlmod_")
+    }
+
     fn new(
         cell_resolver: CellResolver,
         cell_name: CellName,
@@ -222,6 +229,18 @@ impl BuildAttrCoercionContext {
             ParsedPattern::Target(package, target_name, providers) => {
                 Ok(providers.into_providers_label(package, target_name.as_ref()))
             }
+            ParsedPattern::Package(package) => {
+                let Some(target_name) = package.cell_relative_path().file_name() else {
+                    return Err(
+                        BuildAttrCoercionContextError::RequiredLabel(value.to_owned()).into(),
+                    );
+                };
+                let target_name = TargetNameRef::new(target_name.as_str())?;
+                Ok(ProvidersLabel::new(
+                    buck2_core::target::label::label::TargetLabel::new(package, target_name),
+                    ProvidersName::Default,
+                ))
+            }
             _ => Err(BuildAttrCoercionContextError::RequiredLabel(value.to_owned()).into()),
         }
     }
@@ -330,7 +349,12 @@ impl AttrCoercionContext for BuildAttrCoercionContext {
             if self.package_boundary_exception {
                 info!("{} (could be due to a package boundary violation)", e);
             } else {
-                soft_error!("source_file_missing", e.into(), quiet: true, error_on_oss: true)?;
+                soft_error!(
+                    "source_file_missing",
+                    e.into(),
+                    quiet: true,
+                    error_on_oss: !self.is_bazel_compat_cell()
+                )?;
             }
 
             Ok(CoercedPath::File(path.to_arc()))
