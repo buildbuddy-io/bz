@@ -669,6 +669,69 @@ impl InterpreterForDir {
         })
     }
 
+    pub(crate) fn eval_bzlmod_repository_rule(
+        self: &Arc<Self>,
+        rule_path: &ImportPath,
+        rule_module: &FrozenModule,
+        invocation: &BazelRepositoryRuleInvocation,
+        repository_ctx_working_dir: &str,
+        buckconfigs: &mut dyn BuckConfigsViewForStarlark,
+        eval_provider: StarlarkEvaluatorProvider,
+        cancellation: &CancellationContext,
+    ) -> buck2_error::Result<Vec<crate::bazel_repository::BazelRepositoryGeneratedFile>> {
+        BuckStarlarkModule::with_profiling(|env| {
+            let rule_value = rule_module
+                .get_option(&invocation.rule_id.name)
+                .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::Input))?
+                .ok_or_else(|| {
+                    buck2_error::Error::from(
+                        crate::bazel_repository::BazelRepositoryError::RepositoryRuleSymbolMissing {
+                            path: rule_path.to_string(),
+                            rule: invocation.rule_id.name.clone(),
+                        },
+                    )
+                })?;
+            let repository_rule = crate::bazel_repository::repository_rule_from_loaded_module(
+                rule_path,
+                &invocation.rule_id.name,
+                rule_value,
+            )?;
+            let extra_context = PerFileTypeContext::Bzl(BzlEvalCtx::new(rule_path.clone()));
+            let extra = BuildContext::new(
+                &self.cell_info,
+                buckconfigs,
+                self.global_state.configuror.host_info(),
+                extra_context,
+                self.ignore_attrs_for_profiling,
+            );
+
+            let print = EventDispatcherPrintHandler(get_dispatcher());
+            let globals = self.global_state.globals();
+            let (finished_eval, files) =
+                eval_provider.with_evaluator(&env, cancellation.into(), |eval, _| {
+                    eval.set_print_handler(&print);
+                    eval.set_soft_error_handler(&Buck2StarlarkSoftErrorHandler);
+                    eval.extra = Some(&extra);
+
+                    let repository_ctx = crate::bazel_repository::alloc_bzlmod_repository_context(
+                        repository_rule.as_ref(),
+                        invocation,
+                        repository_ctx_working_dir,
+                        globals,
+                        eval,
+                    )?;
+                    repository_rule
+                        .as_ref()
+                        .invoke_implementation(repository_ctx, eval)?;
+                    Ok(crate::bazel_repository::take_repository_ctx_files(
+                        repository_ctx,
+                    )?)
+                })?;
+            let (token, _) = finished_eval.finish()?;
+            Ok((token, files))
+        })
+    }
+
     pub(crate) fn eval_package_file(
         self: &Arc<Self>,
         package_file_path: &PackageFilePath,

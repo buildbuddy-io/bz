@@ -68,6 +68,7 @@ use buck2_fs::fs_util;
 use buck2_fs::paths::abs_norm_path::AbsNormPath;
 use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
 use buck2_interpreter_for_build::bazel_repository::evaluate_bzlmod_module_extension_repo;
+use buck2_interpreter_for_build::bazel_repository::evaluate_bzlmod_repository_rule;
 use cmp_any::PartialEqAny;
 use dice::CancellationContext;
 use dice::DiceComputations;
@@ -123,10 +124,6 @@ enum BzlmodError {
         repo_name: String,
         emitted: Vec<String>,
     },
-    #[error(
-        "bzlmod module extension repo `{repo_name}` was emitted by repository rule `{rule_id}`, but repository_rule implementation execution is not wired yet"
-    )]
-    ModuleExtensionRepositoryRuleNotExecuted { repo_name: String, rule_id: String },
 }
 
 struct BzlmodExtractIoRequest {
@@ -1330,11 +1327,45 @@ async fn materialize_generated(
                         .iter()
                         .find(|invocation| invocation.name == module_extension.repo_name.as_ref())
                     {
-                        return Err(BzlmodError::ModuleExtensionRepositoryRuleNotExecuted {
-                            repo_name: module_extension.repo_name.to_string(),
-                            rule_id: invocation.rule_id.to_string(),
-                        }
-                        .into());
+                        let repository_ctx_working_dir =
+                            format!("{}/.buck2_repository_ctx", path.as_str());
+                        let files = evaluate_bzlmod_repository_rule(
+                            ctx,
+                            invocation,
+                            &repository_ctx_working_dir,
+                            cancellations,
+                        )
+                        .await?;
+                        let files_json = serde_json::to_string(&files).buck_error_context(
+                            "Error serializing evaluated repository_rule file manifest",
+                        )?;
+                        ctx.get_blocking_executor()
+                            .execute_io(
+                                Box::new(
+                                    buck2_execute::execute::clean_output_paths::CleanOutputPaths {
+                                        paths: vec![path.to_owned()],
+                                    },
+                                ),
+                                cancellations,
+                            )
+                            .await?;
+                        ctx.get_blocking_executor()
+                            .execute_io(
+                                Box::new(BzlmodGeneratedIoRequest {
+                                    setup: BzlmodGeneratedCellSetup {
+                                        canonical_repo_name: setup.canonical_repo_name.dupe(),
+                                        generator: BzlmodGeneratedCellGenerator::RepositoryRule(
+                                            BzlmodRepositoryRuleSetup {
+                                                files_json: Arc::from(files_json),
+                                            },
+                                        ),
+                                    },
+                                    dest: path.to_owned(),
+                                }),
+                                cancellations,
+                            )
+                            .await?;
+                        return Ok(());
                     }
                     let emitted = invocations
                         .into_iter()
