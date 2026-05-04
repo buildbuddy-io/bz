@@ -70,6 +70,7 @@ use crate::legacy_configs::aggregator::CellsAggregator;
 use crate::legacy_configs::args::ResolvedLegacyConfigArg;
 use crate::legacy_configs::args::resolve_config_args;
 use crate::legacy_configs::args::to_proto_config_args;
+use crate::legacy_configs::configs::BazelCompatCellAlias;
 use crate::legacy_configs::configs::BazelCompatExternalModule;
 use crate::legacy_configs::configs::BazelCompatGeneratedModule;
 use crate::legacy_configs::configs::BazelCompatRegistryModule;
@@ -273,6 +274,17 @@ impl BuckConfigBasedCells {
             follow_includes,
         )
         .await?;
+        let config = if should_apply_bazel_compat_defaults(cell_path, file_ops).await? {
+            let root_path = CellRootPathBuf::new(ProjectRelativePath::empty().to_owned());
+            let module_aliases = get_bazel_module_resolution(&root_path, file_ops).await?;
+            config.with_bazel_compat_defaults(
+                module_aliases.aliases_for_cell(cell_name.as_str()),
+                &module_aliases.external_modules,
+                &module_aliases.registered_toolchains,
+            )
+        } else {
+            config
+        };
 
         CellAliasResolver::new_for_non_root_cell(
             cell_name,
@@ -383,7 +395,7 @@ impl BuckConfigBasedCells {
         let root_config = if should_apply_bazel_compat_defaults(&root_path, &mut file_ops).await? {
             let module_aliases = get_bazel_module_resolution(&root_path, &mut file_ops).await?;
             root_config.with_bazel_compat_defaults(
-                &module_aliases.root_aliases,
+                module_aliases.aliases_for_cell("root"),
                 &module_aliases.external_modules,
                 &module_aliases.registered_toolchains,
             )
@@ -483,10 +495,17 @@ impl BuckConfigBasedCells {
         let io_provider = ctx.global_data().get_io_provider();
         let project_fs = io_provider.project_root();
         let external_data = ctx.get_injected_external_buckconfig_data().await?;
+        let cell_name = resolver.find(cell_path.as_project_relative_path());
 
         let mut file_ops = DiceConfigFileOps::new(ctx, project_fs, &resolver);
 
-        Self::parse_single_cell_with_file_ops_inner(&external_data, &mut file_ops, cell_path).await
+        Self::parse_single_cell_with_file_ops_inner(
+            &external_data,
+            &mut file_ops,
+            cell_name.as_str(),
+            cell_path,
+        )
+        .await
     }
 
     pub async fn parse_single_cell(
@@ -511,6 +530,7 @@ impl BuckConfigBasedCells {
         Self::parse_single_cell_with_file_ops_inner(
             &self.external_data,
             file_ops,
+            cell.as_str(),
             self.cell_resolver.get(cell)?.path(),
         )
         .await
@@ -519,6 +539,7 @@ impl BuckConfigBasedCells {
     async fn parse_single_cell_with_file_ops_inner(
         external_data: &ExternalBuckconfigData,
         file_ops: &mut dyn ConfigParserFileOps,
+        cell_name: &str,
         cell_path: &CellRootPath,
     ) -> buck2_error::Result<LegacyBuckConfig> {
         let config_paths = get_project_buckconfig_paths(cell_path, file_ops).await?;
@@ -536,7 +557,7 @@ impl BuckConfigBasedCells {
             let root_path = CellRootPathBuf::new(ProjectRelativePath::empty().to_owned());
             let module_aliases = get_bazel_module_resolution(&root_path, file_ops).await?;
             Ok(config.with_bazel_compat_defaults(
-                &module_aliases.root_aliases,
+                module_aliases.aliases_for_cell(cell_name),
                 &module_aliases.external_modules,
                 &module_aliases.registered_toolchains,
             ))
@@ -731,15 +752,31 @@ async fn should_apply_bazel_compat_defaults(
 
 #[derive(Default)]
 struct BazelModuleCellAliases {
-    root_aliases: Vec<String>,
+    root_aliases: Vec<BazelCompatCellAlias>,
+    cell_aliases: BTreeMap<String, Vec<BazelCompatCellAlias>>,
     external_modules: Vec<BazelCompatExternalModule>,
     registered_toolchains: Vec<String>,
 }
 
 impl BazelModuleCellAliases {
+    fn aliases_for_cell(&self, cell_name: &str) -> &[BazelCompatCellAlias] {
+        if cell_name == "root" {
+            &self.root_aliases
+        } else {
+            self.cell_aliases
+                .get(cell_name)
+                .map(Vec::as_slice)
+                .unwrap_or(&[])
+        }
+    }
+
     fn normalize(&mut self) {
         self.root_aliases.sort();
         self.root_aliases.dedup();
+        for aliases in self.cell_aliases.values_mut() {
+            aliases.sort();
+            aliases.dedup();
+        }
         self.registered_toolchains.sort();
         self.registered_toolchains.dedup();
         self.external_modules
@@ -762,8 +799,7 @@ struct DiscoveredBcrModule {
     source_json: BcrSourceJson,
     module_aliases: Vec<String>,
     use_repo_aliases: Vec<String>,
-    host_platform_extension_imports: Vec<BzlmodUseRepoImport>,
-    version_extension_imports: Vec<BzlmodUseRepoImport>,
+    extension_usages: Vec<BzlmodExtensionUsage>,
     registered_toolchains: Vec<String>,
     deps: Vec<BazelDep>,
 }
@@ -791,6 +827,8 @@ struct BzlmodExtensionTag {
 
 struct BcrResolution {
     external_modules: Vec<BazelCompatExternalModule>,
+    root_aliases: Vec<BazelCompatCellAlias>,
+    cell_aliases: BTreeMap<String, Vec<BazelCompatCellAlias>>,
     registered_toolchains: Vec<String>,
 }
 
@@ -864,7 +902,10 @@ async fn get_bazel_module_resolution(
                     continue;
                 }
                 if let Some(alias) = bzl_string_arg(&call, arg) {
-                    aliases.root_aliases.push(alias);
+                    aliases.root_aliases.push(BazelCompatCellAlias {
+                        alias,
+                        cell_name: "root".to_owned(),
+                    });
                 }
             }
         }
@@ -943,6 +984,8 @@ async fn get_bazel_module_resolution(
 
     let bcr_resolution = resolve_bcr_modules(root_deps).await?;
     aliases.external_modules = bcr_resolution.external_modules;
+    aliases.root_aliases.extend(bcr_resolution.root_aliases);
+    aliases.cell_aliases = bcr_resolution.cell_aliases;
     aliases
         .registered_toolchains
         .extend(bcr_resolution.registered_toolchains);
@@ -1052,13 +1095,35 @@ async fn resolve_bcr_modules_with_client(
         }
     }
 
-    let mut aliases_by_key = BTreeMap::<(String, String), BTreeSet<String>>::new();
+    let mut root_aliases_by_key = BTreeMap::<(String, String), BTreeSet<String>>::new();
+    let mut cell_aliases_by_cell = BTreeMap::<String, BTreeMap<String, String>>::new();
     for dep in &root_deps {
-        add_bzlmod_dep_alias(dep, &selected_versions, &mut aliases_by_key);
+        add_bzlmod_dep_alias(dep, &selected_versions, &mut root_aliases_by_key);
+        add_bzlmod_dep_cell_alias("root", dep, &selected_versions, &mut cell_aliases_by_cell);
     }
-    for module in discovered.values() {
+    for key in &selected_keys {
+        let Some(module) = discovered.get(key) else {
+            continue;
+        };
+        let canonical_repo_name = bzlmod_canonical_repo_name(&module.dep.name, &module.dep.version);
+        let cell_name = bzlmod_cell_name(&canonical_repo_name);
+        if module.dep.name == "platforms" {
+            root_aliases_by_key
+                .entry(key.clone())
+                .or_default()
+                .insert("platforms".to_owned());
+            add_bzlmod_cell_alias(&mut cell_aliases_by_cell, "root", "platforms", &cell_name);
+        }
+        for alias in &module.module_aliases {
+            add_bzlmod_cell_alias(&mut cell_aliases_by_cell, &cell_name, alias, &cell_name);
+        }
         for dep in &module.deps {
-            add_bzlmod_dep_alias(dep, &selected_versions, &mut aliases_by_key);
+            add_bzlmod_dep_cell_alias(
+                &cell_name,
+                dep,
+                &selected_versions,
+                &mut cell_aliases_by_cell,
+            );
         }
     }
 
@@ -1084,12 +1149,11 @@ async fn resolve_bcr_modules_with_client(
         let Some(module) = discovered.get(&key) else {
             continue;
         };
-        let mut aliases = aliases_by_key
+        let mut aliases = root_aliases_by_key
             .remove(&key)
             .unwrap_or_default()
             .into_iter()
             .collect::<Vec<_>>();
-        aliases.extend(module.module_aliases.clone());
         aliases.sort();
         aliases.dedup();
 
@@ -1120,9 +1184,18 @@ async fn resolve_bcr_modules_with_client(
     resolved.extend(resolve_generated_bzlmod_repos(
         &discovered,
         &selected_keys_for_generated,
+        &mut cell_aliases_by_cell,
     )?);
     Ok(BcrResolution {
         external_modules: resolved,
+        root_aliases: cell_aliases_by_cell
+            .remove("root")
+            .map(bzlmod_cell_alias_map_to_vec)
+            .unwrap_or_default(),
+        cell_aliases: cell_aliases_by_cell
+            .into_iter()
+            .map(|(cell, aliases)| (cell, bzlmod_cell_alias_map_to_vec(aliases)))
+            .collect(),
         registered_toolchains,
     })
 }
@@ -1130,20 +1203,24 @@ async fn resolve_bcr_modules_with_client(
 fn resolve_generated_bzlmod_repos(
     discovered: &BTreeMap<(String, String), DiscoveredBcrModule>,
     selected_keys: &BTreeSet<(String, String)>,
+    cell_aliases_by_cell: &mut BTreeMap<String, BTreeMap<String, String>>,
 ) -> buck2_error::Result<Vec<BazelCompatExternalModule>> {
     let mut generated = Vec::new();
     let mut needs_local_config_platform = false;
+    let mut local_config_platform_importing_cells = Vec::new();
     for key in selected_keys {
         let Some(module) = discovered.get(key) else {
             continue;
         };
         let parent_canonical_repo_name =
             bzlmod_canonical_repo_name(&module.dep.name, &module.dep.version);
+        let parent_cell_name = bzlmod_cell_name(&parent_canonical_repo_name);
         if module.dep.name == "rules_cc" {
             for alias in &module.use_repo_aliases {
                 let generator = match alias.as_str() {
                     "local_config_cc_toolchains" => {
                         needs_local_config_platform = true;
+                        local_config_platform_importing_cells.push(parent_cell_name.clone());
                         Some(BzlmodGeneratedRepoConfig::CcAutoconfToolchains {
                             parent_canonical_repo_name: parent_canonical_repo_name.clone(),
                         })
@@ -1161,14 +1238,14 @@ fn resolve_generated_bzlmod_repos(
                 let generator_json = serde_json::to_string(&generator).buck_error_context(
                     "Error serializing generated rules_cc configure repo configuration",
                 )?;
-                generated.push(BazelCompatExternalModule::Generated(
-                    BazelCompatGeneratedModule {
-                        cell_name: bzlmod_cell_name(&canonical_repo_name),
-                        aliases: vec![alias.clone()],
-                        canonical_repo_name,
-                        generator_json,
-                    },
-                ));
+                add_generated_bzlmod_repo(
+                    &mut generated,
+                    cell_aliases_by_cell,
+                    &parent_cell_name,
+                    alias,
+                    &canonical_repo_name,
+                    generator_json,
+                );
             }
         }
 
@@ -1186,14 +1263,14 @@ fn resolve_generated_bzlmod_repos(
                         .buck_error_context(
                             "Error serializing generated rules_shell configure repo configuration",
                         )?;
-                generated.push(BazelCompatExternalModule::Generated(
-                    BazelCompatGeneratedModule {
-                        cell_name: bzlmod_cell_name(&canonical_repo_name),
-                        aliases: vec![alias.clone()],
-                        canonical_repo_name,
-                        generator_json,
-                    },
-                ));
+                add_generated_bzlmod_repo(
+                    &mut generated,
+                    cell_aliases_by_cell,
+                    &parent_cell_name,
+                    alias,
+                    &canonical_repo_name,
+                    generator_json,
+                );
             }
         }
 
@@ -1222,14 +1299,14 @@ fn resolve_generated_bzlmod_repos(
                 let generator_json = serde_json::to_string(&generator).buck_error_context(
                     "Error serializing generated rules_java toolchains repo configuration",
                 )?;
-                generated.push(BazelCompatExternalModule::Generated(
-                    BazelCompatGeneratedModule {
-                        cell_name: bzlmod_cell_name(&canonical_repo_name),
-                        aliases: vec![alias.clone()],
-                        canonical_repo_name,
-                        generator_json,
-                    },
-                ));
+                add_generated_bzlmod_repo(
+                    &mut generated,
+                    cell_aliases_by_cell,
+                    &parent_cell_name,
+                    alias,
+                    &canonical_repo_name,
+                    generator_json,
+                );
             }
         }
 
@@ -1247,19 +1324,21 @@ fn resolve_generated_bzlmod_repos(
                         .buck_error_context(
                             "Error serializing generated rules_python hub repo configuration",
                         )?;
-                generated.push(BazelCompatExternalModule::Generated(
-                    BazelCompatGeneratedModule {
-                        cell_name: bzlmod_cell_name(&canonical_repo_name),
-                        aliases: vec![alias.clone()],
-                        canonical_repo_name,
-                        generator_json,
-                    },
-                ));
+                add_generated_bzlmod_repo(
+                    &mut generated,
+                    cell_aliases_by_cell,
+                    &parent_cell_name,
+                    alias,
+                    &canonical_repo_name,
+                    generator_json,
+                );
             }
         }
 
         if module.dep.name == "platforms" {
-            for import in &module.host_platform_extension_imports {
+            for import in
+                bzlmod_extension_imports_from_usages(&module.extension_usages, "host_platform")
+            {
                 if import.repo_name != "host_platform" {
                     continue;
                 }
@@ -1272,19 +1351,21 @@ fn resolve_generated_bzlmod_repos(
                         .buck_error_context(
                             "Error serializing generated host_platform repo configuration",
                         )?;
-                generated.push(BazelCompatExternalModule::Generated(
-                    BazelCompatGeneratedModule {
-                        cell_name: bzlmod_cell_name(&canonical_repo_name),
-                        aliases: vec![import.alias.clone()],
-                        canonical_repo_name,
-                        generator_json,
-                    },
-                ));
+                add_generated_bzlmod_repo(
+                    &mut generated,
+                    cell_aliases_by_cell,
+                    &parent_cell_name,
+                    &import.alias,
+                    &canonical_repo_name,
+                    generator_json,
+                );
             }
         }
 
         if module.dep.name == "bazel_features" {
-            for import in &module.version_extension_imports {
+            for import in
+                bzlmod_extension_imports_from_usages(&module.extension_usages, "version_extension")
+            {
                 let generator = match import.repo_name.as_str() {
                     "bazel_features_globals" => {
                         Some(BzlmodGeneratedRepoConfig::BazelFeaturesGlobals {
@@ -1309,14 +1390,14 @@ fn resolve_generated_bzlmod_repos(
                 let generator_json = serde_json::to_string(&generator).buck_error_context(
                     "Error serializing generated bazel_features repo configuration",
                 )?;
-                generated.push(BazelCompatExternalModule::Generated(
-                    BazelCompatGeneratedModule {
-                        cell_name: bzlmod_cell_name(&canonical_repo_name),
-                        aliases: vec![import.alias.clone()],
-                        canonical_repo_name,
-                        generator_json,
-                    },
-                ));
+                add_generated_bzlmod_repo(
+                    &mut generated,
+                    cell_aliases_by_cell,
+                    &parent_cell_name,
+                    &import.alias,
+                    &canonical_repo_name,
+                    generator_json,
+                );
             }
         }
     }
@@ -1327,16 +1408,47 @@ fn resolve_generated_bzlmod_repos(
                 .buck_error_context(
                     "Error serializing generated local_config_platform repo configuration",
                 )?;
+        let cell_name = bzlmod_cell_name(&canonical_repo_name);
+        local_config_platform_importing_cells.sort();
+        local_config_platform_importing_cells.dedup();
+        for parent_cell_name in &local_config_platform_importing_cells {
+            add_bzlmod_cell_alias(
+                cell_aliases_by_cell,
+                parent_cell_name,
+                "local_config_platform",
+                &cell_name,
+            );
+        }
         generated.push(BazelCompatExternalModule::Generated(
             BazelCompatGeneratedModule {
-                cell_name: bzlmod_cell_name(&canonical_repo_name),
-                aliases: vec!["local_config_platform".to_owned()],
+                cell_name,
+                aliases: Vec::new(),
                 canonical_repo_name,
                 generator_json,
             },
         ));
     }
     Ok(generated)
+}
+
+fn add_generated_bzlmod_repo(
+    generated: &mut Vec<BazelCompatExternalModule>,
+    cell_aliases_by_cell: &mut BTreeMap<String, BTreeMap<String, String>>,
+    declaring_cell_name: &str,
+    alias: &str,
+    canonical_repo_name: &str,
+    generator_json: String,
+) {
+    let cell_name = bzlmod_cell_name(canonical_repo_name);
+    add_bzlmod_cell_alias(cell_aliases_by_cell, declaring_cell_name, alias, &cell_name);
+    generated.push(BazelCompatExternalModule::Generated(
+        BazelCompatGeneratedModule {
+            cell_name,
+            aliases: Vec::new(),
+            canonical_repo_name: canonical_repo_name.to_owned(),
+            generator_json,
+        },
+    ));
 }
 
 fn qualify_bzlmod_registered_toolchain(pattern: &str, module_cell_name: &str) -> String {
@@ -1363,6 +1475,42 @@ fn add_bzlmod_dep_alias(
         .entry((dep.name.clone(), version.clone()))
         .or_default()
         .insert(alias.clone());
+}
+
+fn add_bzlmod_dep_cell_alias(
+    current_cell_name: &str,
+    dep: &BazelDep,
+    selected_versions: &BTreeMap<String, String>,
+    aliases_by_cell: &mut BTreeMap<String, BTreeMap<String, String>>,
+) {
+    let Some(alias) = dep.apparent_name.as_ref() else {
+        return;
+    };
+    let Some(version) = selected_versions.get(&dep.name) else {
+        return;
+    };
+    let canonical_repo_name = bzlmod_canonical_repo_name(&dep.name, version);
+    let cell_name = bzlmod_cell_name(&canonical_repo_name);
+    add_bzlmod_cell_alias(aliases_by_cell, current_cell_name, alias, &cell_name);
+}
+
+fn add_bzlmod_cell_alias(
+    aliases_by_cell: &mut BTreeMap<String, BTreeMap<String, String>>,
+    current_cell_name: &str,
+    alias: &str,
+    target_cell_name: &str,
+) {
+    aliases_by_cell
+        .entry(current_cell_name.to_owned())
+        .or_default()
+        .insert(alias.to_owned(), target_cell_name.to_owned());
+}
+
+fn bzlmod_cell_alias_map_to_vec(aliases: BTreeMap<String, String>) -> Vec<BazelCompatCellAlias> {
+    aliases
+        .into_iter()
+        .map(|(alias, cell_name)| BazelCompatCellAlias { alias, cell_name })
+        .collect()
 }
 
 type BcrModuleFetch = BoxFuture<'static, buck2_error::Result<DiscoveredBcrModule>>;
@@ -1398,20 +1546,14 @@ async fn fetch_bcr_module(
             .with_buck_error_context(|| format!("Invalid BCR source metadata at `{source_url}`"))?;
     let module_text = http_get_text(&client, &module_url).await?;
     let module_lines = module_text.lines().map(str::to_owned).collect::<Vec<_>>();
+    let extension_usages = bzlmod_extension_usages_from_lines(&module_lines);
 
     Ok(DiscoveredBcrModule {
         dep,
         source_json,
         module_aliases: bzlmod_module_aliases(&module_lines),
-        use_repo_aliases: bzlmod_use_repo_aliases_from_lines(&module_lines),
-        host_platform_extension_imports: bzlmod_extension_imports_from_lines(
-            &module_lines,
-            "host_platform",
-        ),
-        version_extension_imports: bzlmod_extension_imports_from_lines(
-            &module_lines,
-            "version_extension",
-        ),
+        use_repo_aliases: bzlmod_use_repo_aliases_from_usages(&extension_usages),
+        extension_usages,
         registered_toolchains: bzlmod_registered_toolchains_from_lines(&module_lines, true),
         deps: bzlmod_deps_from_lines(&module_lines, true),
     })
@@ -1470,11 +1612,11 @@ fn bzlmod_module_aliases(lines: &[String]) -> Vec<String> {
     aliases
 }
 
-fn bzlmod_use_repo_aliases_from_lines(lines: &[String]) -> Vec<String> {
-    bzlmod_extension_usages_from_lines(lines)
-        .into_iter()
-        .flat_map(|usage| usage.imports)
-        .map(|import| import.alias)
+fn bzlmod_use_repo_aliases_from_usages(usages: &[BzlmodExtensionUsage]) -> Vec<String> {
+    usages
+        .iter()
+        .flat_map(|usage| usage.imports.iter())
+        .map(|import| import.alias.clone())
         .collect()
 }
 
@@ -1497,14 +1639,14 @@ fn bzlmod_registered_toolchains_from_lines(
     toolchains
 }
 
-fn bzlmod_extension_imports_from_lines(
-    lines: &[String],
+fn bzlmod_extension_imports_from_usages(
+    usages: &[BzlmodExtensionUsage],
     extension: &str,
 ) -> Vec<BzlmodUseRepoImport> {
-    bzlmod_extension_usages_from_lines(lines)
-        .into_iter()
+    usages
+        .iter()
         .filter(|usage| usage.extension_name == extension)
-        .flat_map(|usage| usage.imports)
+        .flat_map(|usage| usage.imports.iter().cloned())
         .collect()
 }
 
@@ -2282,6 +2424,7 @@ mod tests {
     use buck2_core::cells::external::ExternalCellOrigin;
     use buck2_core::cells::external::GitCellSetup;
     use buck2_core::cells::name::CellName;
+    use buck2_core::fs::project_rel_path::ProjectRelativePath;
     use dice::DiceComputations;
     use indoc::indoc;
 
@@ -2384,6 +2527,10 @@ mod tests {
                 "#
                 ),
             ),
+            (
+                "buck-out/v2/external_cells/bzlmod/rules_go+0.57.0/MODULE.bazel",
+                "module(name = \"rules_go\")\n",
+            ),
         ])?;
 
         let cells = BuckConfigBasedCells::testing_parse_with_file_ops(&mut file_ops, &[]).await?;
@@ -2413,6 +2560,16 @@ mod tests {
                 .root_cell_cell_alias_resolver()
                 .resolve("platforms")?
                 .as_str()
+        );
+        let rules_go_resolver = cells
+            .get_cell_alias_resolver_for_cwd_fast_with_file_ops(
+                &mut file_ops,
+                ProjectRelativePath::new("buck-out/v2/external_cells/bzlmod/rules_go+0.57.0")?,
+            )
+            .await?;
+        assert_eq!(
+            "bzlmod_platforms",
+            rules_go_resolver.resolve("platforms")?.as_str()
         );
         assert_eq!(
             "bzlmod_rules_shell_0_3_0",

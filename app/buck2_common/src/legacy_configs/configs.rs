@@ -149,6 +149,12 @@ pub(crate) enum BazelCompatExternalModule {
     Generated(BazelCompatGeneratedModule),
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct BazelCompatCellAlias {
+    pub alias: String,
+    pub cell_name: String,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct BazelCompatRegistryModule {
     pub cell_name: String,
@@ -299,7 +305,7 @@ impl LegacyBuckConfig {
 
     pub(crate) fn with_bazel_compat_defaults(
         &self,
-        root_module_aliases: &[String],
+        current_cell_aliases: &[BazelCompatCellAlias],
         external_modules: &[BazelCompatExternalModule],
         registered_toolchains: &[String],
     ) -> Self {
@@ -387,17 +393,18 @@ impl LegacyBuckConfig {
                 }
             }
             if is_cell_aliases {
-                for alias in root_module_aliases {
-                    section_values
-                        .entry(alias.clone())
-                        .or_insert_with(|| synthetic_config_value("root"));
-                }
                 for module in external_modules {
                     for alias in module.aliases() {
                         section_values
                             .entry(alias.clone())
                             .or_insert_with(|| synthetic_config_value(module.cell_name()));
                     }
+                }
+                for alias in current_cell_aliases {
+                    section_values.insert(
+                        alias.alias.clone(),
+                        synthetic_config_value(&alias.cell_name),
+                    );
                 }
             }
             if *section_name == "external_cells" {
