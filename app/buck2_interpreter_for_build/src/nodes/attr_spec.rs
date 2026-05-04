@@ -17,6 +17,7 @@ use buck2_error::BuckErrorContext;
 use buck2_error::internal_error;
 use buck2_node::attrs::attr::Attribute;
 use buck2_node::attrs::attr::CoercedValue;
+use buck2_node::attrs::attr_type::bool::BoolLiteral;
 use buck2_node::attrs::attr_type::string::StringLiteral;
 use buck2_node::attrs::coerced_attr::CoercedAttr;
 use buck2_node::attrs::configurable::AttrIsConfigurable;
@@ -39,6 +40,7 @@ use starlark::typing::ParamSpec;
 use starlark::typing::Ty;
 use starlark::typing::TyFunction;
 use starlark::values::StringValue;
+use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark_map::small_map::SmallMap;
 
@@ -55,6 +57,30 @@ enum AttributeSpecParseError {
     UnknownAttribute(String, String),
     #[error("Expected string value for `name`, got `{0}`")]
     ExpectedStringName(String),
+}
+
+fn coerce_attr_value(
+    attr_name: &str,
+    attribute: &Attribute,
+    configurable: AttrIsConfigurable,
+    internals: &ModuleInternals,
+    value: Value,
+) -> buck2_error::Result<CoercedValue> {
+    if attr_name == "testonly"
+        && let Some(value) = i64::unpack_value(value)?
+        && (value == 0 || value == 1)
+    {
+        return Ok(CoercedValue::Custom(CoercedAttr::Bool(BoolLiteral(
+            value != 0,
+        ))));
+    }
+
+    attribute.coerce(
+        attr_name,
+        configurable,
+        internals.attr_coercion_context(),
+        value,
+    )
 }
 
 pub trait AttributeSpecExt {
@@ -151,16 +177,11 @@ impl AttributeSpecExt for AttributeSpec {
             let attr_is_visibility = attr_name == VISIBILITY_ATTRIBUTE.name;
             let attr_is_within_view = attr_name == WITHIN_VIEW_ATTRIBUTE.name;
             if let Some(v) = user_value {
-                let mut coerced = attribute
-                    .coerce(
-                        attr_name,
-                        configurable,
-                        internals.attr_coercion_context(),
-                        v,
-                    )
-                    .with_buck_error_context(|| {
-                        format!("Error coercing attribute `{attr_name}` of `{target_label}`",)
-                    })?;
+                let mut coerced =
+                    coerce_attr_value(attr_name, attribute, configurable, internals, v)
+                        .with_buck_error_context(|| {
+                            format!("Error coercing attribute `{attr_name}` of `{target_label}`",)
+                        })?;
 
                 if attr_is_visibility {
                     if coerced == CoercedValue::Default {
@@ -258,10 +279,10 @@ impl AttributeSpecExt for AttributeSpec {
                 )
             })?;
         let Some(name) = name_value.unpack_str() else {
-            return Err(
-                AttributeSpecParseError::ExpectedStringName(name_value.get_type().to_owned())
-                    .into(),
-            );
+            return Err(AttributeSpecParseError::ExpectedStringName(
+                name_value.get_type().to_owned(),
+            )
+            .into());
         };
         let name = TargetNameRef::new(name)?;
         let target_label = TargetLabelRef::new(internals.buildfile_path().package(), name);
@@ -285,11 +306,11 @@ impl AttributeSpecExt for AttributeSpec {
 
             if let Some(v) = value {
                 let configurable = attr_is_configurable(attr_name);
-                let mut coerced = attribute
-                    .coerce(attr_name, configurable, internals.attr_coercion_context(), v)
-                    .with_buck_error_context(|| {
-                        format!("Error coercing attribute `{attr_name}` of `{target_label}`",)
-                    })?;
+                let mut coerced =
+                    coerce_attr_value(attr_name, attribute, configurable, internals, v)
+                        .with_buck_error_context(|| {
+                            format!("Error coercing attribute `{attr_name}` of `{target_label}`",)
+                        })?;
 
                 if attr_is_visibility {
                     if coerced == CoercedValue::Default {

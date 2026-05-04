@@ -19,6 +19,7 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::time::Duration;
 
 use allocative::Allocative;
 use base64::Engine;
@@ -351,15 +352,7 @@ fn collect_repository_rule_label_deps(
     label_deps: &mut BTreeSet<String>,
 ) -> starlark::Result<()> {
     if let Some(label) = StarlarkProvidersLabel::from_value(value) {
-        label_deps.insert(
-            label
-                .label()
-                .target()
-                .pkg()
-                .cell_name()
-                .as_str()
-                .to_owned(),
-        );
+        label_deps.insert(label.label().target().pkg().cell_name().as_str().to_owned());
         return Ok(());
     }
     if let Some(dict) = DictRef::from_value(value) {
@@ -675,6 +668,7 @@ async fn materialize_repository_rule_label_deps(
 pub async fn evaluate_bzlmod_repository_rule_invocation(
     ctx: &mut DiceComputations<'_>,
     setup: &BzlmodRepositoryRuleInvocationSetup,
+    canonical_repo_name: &str,
     repository_ctx_working_dir: &str,
     cancellation: &CancellationContext,
 ) -> buck2_error::Result<Vec<BazelRepositoryGeneratedFile>> {
@@ -691,7 +685,7 @@ pub async fn evaluate_bzlmod_repository_rule_invocation(
             path: BzlOrBxlPath::Bzl(rule_path),
             name: setup.rule_name.to_string(),
         },
-        name: setup.repo_name.to_string(),
+        name: canonical_repo_name.to_owned(),
         attrs: setup
             .attrs
             .iter()
@@ -1849,22 +1843,58 @@ fn repository_path_for_read_abs(path: &str) -> PathBuf {
 }
 
 fn repository_path_for_read_abs_relative_to(path: &str, working_dir: &str) -> PathBuf {
-    let logical_external_suffix = path
-        .strip_prefix("buck-out/v2/external_cells/")
-        .or_else(|| {
-            path.split_once("/buck-out/v2/external_cells/")
-                .map(|(_, suffix)| suffix)
-        });
-    if let Some(suffix) = logical_external_suffix
-        && let Some((buck_out_root, _)) = working_dir.split_once("/external_cells/")
+    if let Some(suffix) = repository_external_cell_suffix(path)
+        && let Some(candidate) =
+            repository_external_cell_existing_path_relative_to(suffix, working_dir)
     {
-        let candidate = format!("{buck_out_root}/external_cells/{suffix}");
-        if Path::new(&candidate).exists() {
-            return repository_path_for_write(&candidate)
-                .unwrap_or_else(|_| PathBuf::from(candidate));
-        }
+        return candidate;
     }
     repository_path_for_read_abs(path)
+}
+
+fn repository_external_cell_suffix(path: &str) -> Option<&str> {
+    let buck_out_relative = path
+        .strip_prefix("buck-out/")
+        .or_else(|| path.split_once("/buck-out/").map(|(_, suffix)| suffix))?;
+    let (_, suffix) = buck_out_relative.split_once("/external_cells/")?;
+    (!suffix.is_empty()).then_some(suffix)
+}
+
+fn repository_external_cell_path_relative_to(suffix: &str, working_dir: &str) -> Option<PathBuf> {
+    let (buck_out_root, _) = working_dir.split_once("/external_cells/")?;
+    let candidate = format!("{buck_out_root}/external_cells/{suffix}");
+    Some(repository_path_for_write(&candidate).unwrap_or_else(|_| PathBuf::from(candidate)))
+}
+
+fn repository_external_cell_existing_path_relative_to(
+    suffix: &str,
+    working_dir: &str,
+) -> Option<PathBuf> {
+    let candidate = repository_external_cell_path_relative_to(suffix, working_dir)?;
+    if candidate.exists() {
+        return Some(candidate);
+    }
+    let candidate = repository_external_cell_repository_ctx_path_relative_to(suffix, working_dir)?;
+    candidate.exists().then_some(candidate)
+}
+
+fn repository_external_cell_repository_ctx_path_relative_to(
+    suffix: &str,
+    working_dir: &str,
+) -> Option<PathBuf> {
+    let generated_suffix = suffix.strip_prefix("bzlmod_generated/")?;
+    let (repo_name, repo_path) = generated_suffix
+        .split_once('/')
+        .unwrap_or((generated_suffix, ""));
+    if repo_name.ends_with(".repository_ctx") {
+        return None;
+    }
+    let source_suffix = if repo_path.is_empty() {
+        format!("bzlmod_generated/{repo_name}.repository_ctx")
+    } else {
+        format!("bzlmod_generated/{repo_name}.repository_ctx/{repo_path}")
+    };
+    repository_external_cell_path_relative_to(&source_suffix, working_dir)
 }
 
 fn repository_project_relative_path_for_read(path: &str) -> Option<String> {
@@ -2219,31 +2249,103 @@ fn repository_ctx_command_env(value: &str, working_dir: &str) -> String {
 }
 
 fn repository_ctx_command_path(path: &str, working_dir: &str) -> String {
-    if Path::new(path).is_absolute() {
-        return path.to_owned();
+    if let Some(path) = repository_ctx_command_external_path(path, working_dir) {
+        return path;
     }
-    if let Some((name, value)) = path.split_once('=')
-        && !name.is_empty()
-        && name
-            .chars()
-            .all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
-        && value.starts_with("buck-out/")
+    if let Some((prefix, value)) = path.split_once('=')
+        && !prefix.is_empty()
+        && let Some(value) = repository_ctx_command_external_path(value, working_dir)
     {
-        return format!(
-            "{name}={}",
-            repository_ctx_command_external_path(value, working_dir)
-        );
+        return format!("{prefix}={value}");
     }
-    if path.starts_with("buck-out/") {
-        return repository_ctx_command_external_path(path, working_dir);
+    if let Some((prefix, value)) = path.rsplit_once('=')
+        && !prefix.is_empty()
+        && let Some(value) = repository_ctx_command_external_path(value, working_dir)
+    {
+        return format!("{prefix}={value}");
     }
     path.to_owned()
 }
 
-fn repository_ctx_command_external_path(path: &str, working_dir: &str) -> String {
-    repository_path_for_read_abs_relative_to(path, working_dir)
-        .to_string_lossy()
-        .into_owned()
+fn repository_ctx_command_external_path(path: &str, working_dir: &str) -> Option<String> {
+    let suffix = repository_external_cell_suffix(path)?;
+    let path = repository_external_cell_repository_ctx_path_relative_to(suffix, working_dir)
+        .or_else(|| repository_external_cell_existing_path_relative_to(suffix, working_dir))
+        .or_else(|| repository_external_cell_path_relative_to(suffix, working_dir))?;
+    Some(path.to_string_lossy().into_owned())
+}
+
+fn repository_ctx_command_external_input_path(
+    value: &str,
+    repository_working_dir: &Path,
+) -> Option<PathBuf> {
+    if !Path::new(value).is_absolute() {
+        return None;
+    }
+    if !value.contains("/external_cells/") {
+        return None;
+    }
+    let path = PathBuf::from(value);
+    if path == repository_working_dir || path.starts_with(repository_working_dir) {
+        return None;
+    }
+    Some(path)
+}
+
+fn repository_ctx_wait_for_external_inputs(
+    values: impl IntoIterator<Item = String>,
+    repository_working_dir: &Path,
+    program: &str,
+) -> starlark::Result<()> {
+    let mut seen = BTreeSet::new();
+    for value in values {
+        let Some(path) = repository_ctx_command_external_input_path(&value, repository_working_dir)
+        else {
+            continue;
+        };
+        if !seen.insert(path.clone()) {
+            continue;
+        }
+        let mut materialized = repository_ctx_external_input_ready(&path);
+        for _ in 0..1200 {
+            if materialized {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+            materialized = repository_ctx_external_input_ready(&path);
+        }
+        if !materialized {
+            return Err(buck2_error::Error::from(BazelRepositoryError::RepositoryCtxExecuteFailed {
+                program: program.to_owned(),
+                error: format!(
+                    "external input `{}` was not materialized",
+                    path.to_string_lossy()
+                ),
+            })
+            .into());
+        }
+    }
+    Ok(())
+}
+
+fn repository_ctx_external_input_ready(path: &Path) -> bool {
+    if !path.exists() {
+        return false;
+    }
+    let Some(root) = repository_ctx_generated_repository_root(path) else {
+        return true;
+    };
+    root.join("BUILD.bazel").exists() || root.join("BUILD").exists()
+}
+
+fn repository_ctx_generated_repository_root(path: &Path) -> Option<PathBuf> {
+    let path = path.to_string_lossy();
+    let (prefix, suffix) = path.split_once("/bzlmod_generated/")?;
+    let repo_end = suffix.find(".repository_ctx")? + ".repository_ctx".len();
+    Some(PathBuf::from(format!(
+        "{prefix}/bzlmod_generated/{}",
+        &suffix[..repo_end]
+    )))
 }
 
 fn repository_ctx_download_error<'v>(
@@ -2390,7 +2492,7 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
         this: ValueTypedComplex<'v, StarlarkRepositoryContext<'v>>,
         #[starlark(require = pos)] path: Value<'v>,
         #[starlark(default = "")] content: &str,
-        #[starlark(require = named, default = true)] executable: bool,
+        #[starlark(default = true)] executable: bool,
         #[starlark(require = named, default = false)] _legacy_utf8: bool,
     ) -> starlark::Result<NoneType> {
         let path = repository_ctx_output_path_from_value(path, repository_ctx_working_dir(this))?;
@@ -2637,10 +2739,27 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
             .into());
         }
         let program = arguments.remove(0);
+        let repository_working_dir_abs = repository_path_for_write(&repository_working_dir)?;
+        let environment = environment
+            .entries
+            .into_iter()
+            .map(|(key, value)| {
+                (
+                    key,
+                    repository_ctx_command_env(value, &repository_working_dir),
+                )
+            })
+            .collect::<Vec<_>>();
+        repository_ctx_wait_for_external_inputs(
+            std::iter::once(program.clone())
+                .chain(arguments.iter().cloned()),
+            &repository_working_dir_abs,
+            &program,
+        )?;
         let mut command = Command::new(&program);
         command.args(arguments);
-        for (key, value) in environment.entries {
-            command.env(key, repository_ctx_command_env(value, &repository_working_dir));
+        for (key, value) in environment {
+            command.env(key, value);
         }
         let working_directory = match working_directory {
             Some(working_directory) => repository_path_from_value_relative_to(
@@ -2648,9 +2767,13 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
                 eval,
                 Some(&repository_working_dir),
             )?,
-            None => repository_working_dir,
+            None => repository_working_dir.clone(),
         };
-        let working_directory = repository_path_for_write(&working_directory)?;
+        let working_directory = if working_directory == repository_working_dir {
+            repository_working_dir_abs
+        } else {
+            repository_path_for_write(&working_directory)?
+        };
         fs::create_dir_all(&working_directory).map_err(|error| {
             buck2_error::Error::from(BazelRepositoryError::RepositoryCtxExecuteFailed {
                 program: program.clone(),

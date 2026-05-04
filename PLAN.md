@@ -108,25 +108,22 @@ Completed:
 - Bazel compatibility cells now use Bazel-native `filegroup` semantics, returning only the declared source files in `DefaultInfo.files` instead of creating Buck synthetic directory outputs for empty filegroups.
 - Bazel `File.path`/`dirname` for declared output artifacts now resolves through the active Buck output root/configuration path, so real rules can pass output directories to actions.
 - The simple downloaded `rules_go` bzlmod smoke repo now builds `//:hello` with Buck2 actions.
-- Bazelisk now advances through real Gazelle bzlmod setup: `native.package_relative_label`, Bazel rule initializers, public-by-default `exports_files(...)`, repository-rule label attrs, same-module generated-repo label prefetch, and repository-rule command/symlink path remapping are implemented generically.
+- Bzlmod canonical repo names now follow Bazel 9 naming for the validation path: unique selected modules use `name+`, multi-version modules keep `name+version`, and module-extension repos use `module++extension+repo`.
+- Repository rules emitted by module extensions now expose Bazel canonical names through `repository_ctx.name` and `repository_ctx.attr.name`, matching Bazel's generated repo behavior.
+- Bazel common rule attrs now include `applicable_licenses`, and Bazel `testonly = 0/1` values are accepted for common attrs reached by downloaded rules.
+- `platform_common.ConstraintValueInfo` and `ctx.target_platform_has_constraint(...)` are available with native provider identity and target-platform constraint lookup.
+- Bazelisk now builds `//:bazelisk` end to end with downloaded bzlmod modules, generated Gazelle/rules_go repos, the downloaded Go SDK, and Buck2 actions.
 
 Latest smoke:
 
 ```sh
-BUCK2_TEST_SKIP_DEFAULT_EXTERNAL_CONFIG=true \
-BUCK2_HARD_ERROR=false \
-bazel-bin/app/buck2/buck2_bin --isolation-dir real-rules-go-output-path-2 build //:hello
+/Users/siggi/Code/buck2/bazel-bin/app/buck2/buck2_bin \
+  build --isolation-dir bazelisk-target-platform-constraint-1 //:bazelisk
 ```
 
 After the two-phase bzlmod cutover, the root smoke no longer stops at the pre-analysis cell-graph boundary for dynamically emitted repos such as `rules_go__download_0_darwin_amd64`. The simple rules_go smoke loads rules_go from its downloaded bzlmod module, invokes real module extensions and repository rules, materializes the Go SDK repository, analyzes the simple Go package, and runs the real `rules_go` local actions needed for `//:hello`.
 
-Bazelisk is now the active validation target. The latest Bazelisk smoke gets through Gazelle's generated config repo, materializes the Gazelle cache repo from real `non_module_deps`, builds far enough to invoke the real `go_repository_tools` repository rule, and now fails while running Gazelle's helper source-list check:
-
-```text
-list_repository_tools_srcs: open internal/go_repository_tools_srcs.bzl: no such file or directory
-```
-
-The next cut is to finish repository-rule execution-root parity for `ctx.symlink(...)` and command working directories so the symlinked Gazelle source tree is visible exactly where the helper expects it.
+Bazelisk has passed the second validation rung. The next active validation target is BuildBuddy's server target; keep Bazelisk as a regression check while working the first concrete BuildBuddy failure.
 
 ## Constraints
 
@@ -154,7 +151,7 @@ Acceptance:
 
 ## Phase 2: Module Extensions and Generated Repos
 
-Status: module dependencies, generic `use_extension(...)` bindings, extension tags, and `use_repo(...)` imports are discovered. Repo aliases are now applied through per-module bzlmod mappings: the root module sees its root-visible imports, while downloaded module cells see the deps and extension imports declared by their own `MODULE.bazel`. Extension-imported repos are represented as generated bzlmod cells using module/extension/repo canonical names, and each generated module-extension repo now carries a serialized generic module/tag usage graph for its extension, including dev-dependency tagging. The interpreter loads the downloaded `module_extension(...)` symbol, coerces tags through the extension's real `tag_class` attrs, populates `module_ctx.modules`, and invokes the real implementation. `module_ctx` currently supports the APIs reached by rules_go's `go_sdk` extension path: `ctx.os`, `ctx.getenv`, `ctx.path`, `ctx.read`, `ctx.download`, and `extension_metadata(...)`. `repository_rule(...)` calls emitted by real module extensions are recorded with exported rule id, repo name, and generic keyword values, and those downloaded repository-rule implementation functions now execute into generated external cells via `repository_ctx.file`, `repository_ctx.template`, `repository_ctx.path`, `repository_ctx.read`, `repository_ctx.report_progress`, `repository_ctx.delete`, `repository_ctx.download`, and `repository_ctx.download_and_extract`. The previous Go/Kotlin Rust-side generated repo materializers have been removed; the remaining work is to move extension evaluation early enough that dynamically emitted repos are known before the cell resolver is finalized.
+Status: module dependencies, generic `use_extension(...)` bindings, extension tags, and `use_repo(...)` imports are discovered. Repo aliases are now applied through per-module bzlmod mappings: the root module sees its root-visible imports, while downloaded module cells see the deps and extension imports declared by their own `MODULE.bazel`. Extension-imported repos are represented as generated bzlmod cells using Bazel canonical module/extension/repo names, and each generated module-extension repo now carries a serialized generic module/tag usage graph for its extension, including dev-dependency tagging. The interpreter loads the downloaded `module_extension(...)` symbol, coerces tags through the extension's real `tag_class` attrs, populates `module_ctx.modules`, and invokes the real implementation before the final cell graph is rebuilt. `module_ctx` currently supports the APIs reached by rules_go's `go_sdk` and Gazelle `go_deps` extension paths: `ctx.os`, `ctx.getenv`, `ctx.path`, `ctx.read`, `ctx.download`, and `extension_metadata(...)`. `repository_rule(...)` calls emitted by real module extensions are recorded with exported rule id, Bazel canonical repo name, original apparent repo name, and generic keyword values, and those downloaded repository-rule implementation functions now execute into generated external cells via `repository_ctx.file`, `repository_ctx.template`, `repository_ctx.path`, `repository_ctx.read`, `repository_ctx.report_progress`, `repository_ctx.delete`, `repository_ctx.download`, and `repository_ctx.download_and_extract`. The previous Go/Kotlin Rust-side generated repo materializers have been removed from this path.
 
 Implement:
 
@@ -177,13 +174,12 @@ Implement:
 
 Immediate target:
 
-- Persist the emitted repository-rule invocation payloads in generated-cell setup so materialization does not re-evaluate the extension to rediscover the matching invocation.
-- Rerun the rules_go smoke after the generated-cell config probing fix and continue from the next concrete failure in real generated repository materialization.
-- Retire the remaining module-specific generated-repo materializers as their extensions become executable.
+- Use the successful Bazelisk build as a regression check while expanding the same generic bzlmod/module-extension machinery to BuildBuddy's larger module graph.
+- Retire any remaining module-specific generated-repo materializers as their extensions become executable.
 
 Current validation boundary:
 
-- A Bazel-valid rules_go smoke repo with direct `rules_proto` visibility now resolves root and downloaded-module aliases separately, loads rules_go through its real downloaded module cell, evaluates downloaded module extensions before final cell graph injection, rebuilds generated bzlmod cells from emitted repo names, and advances into materializing transitive generated repos from downloaded modules. The old `rules_go__download_0_darwin_amd64` unknown-alias boundary has been removed.
+- The simple rules_go smoke and Bazelisk both resolve root and downloaded-module aliases separately, load rules_go/Gazelle through downloaded bzlmod module cells, evaluate downloaded module extensions before final cell graph injection, rebuild generated bzlmod cells from emitted repo names, materialize generated repos from downloaded repository-rule implementations, and run Buck2 actions.
 - The older smoke fixture's root-level `@rules_proto` load is intentionally not root-visible without a direct `bazel_dep`, matching Bazel 9.1.0 behavior.
 
 Acceptance:
@@ -212,6 +208,7 @@ Completed:
 - `InstrumentedFilesInfo`
 - `platform_common.TemplateVariableInfo`
 - `platform_common.ToolchainInfo`
+- `platform_common.ConstraintValueInfo`
 - `OutputGroupInfo`
 - `CcInfo`
 - `RunEnvironmentInfo`
@@ -292,6 +289,7 @@ Completed for current rules_go smoke:
 - `ctx.attr` alias, `ctx.file`, `ctx.files`, `ctx.executable`, and empty `ctx.var`
 - `ctx.configuration.coverage_enabled`, `ctx.configuration.host_path_separator`, `ctx.bin_dir.path`, `ctx.genfiles_dir.path`, `ctx.features`, `ctx.disabled_features`, and `ctx.coverage_instrumented()`
 - `ctx.info_file` and `ctx.version_file` as stable/volatile workspace-status artifacts
+- `ctx.target_platform_has_constraint(...)`
 - `ctx.runfiles(files = ..., transitive_files = ...)` with merge and merge_all
 - Bazel artifact `path`, `dirname`, `basename`, `extension`, and `root.path`
 - Bazel Starlark attribute split transitions for `attr.label(cfg = transition(...))`
@@ -326,14 +324,14 @@ Acceptance:
 
 ## Phase 6: Bazelisk
 
-Run Bazelisk after the simple rules_go fixture passes.
+Status: accepted.
 
-Work failures in this order:
+The Bazelisk validation target now builds successfully with:
 
-1. Missing bzlmod/module-extension generated repos.
-2. Missing load-time builtins.
-3. Missing rule/provider/action semantics.
-4. Missing Go/toolchain execution support.
+```sh
+/Users/siggi/Code/buck2/bazel-bin/app/buck2/buck2_bin \
+  build --isolation-dir bazelisk-target-platform-constraint-1 //:bazelisk
+```
 
 Acceptance:
 

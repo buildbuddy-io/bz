@@ -280,6 +280,12 @@ fn add_bazel_common_implicit_attrs(
 
     add_if_absent(
         attrs,
+        "applicable_licenses",
+        CoercedAttr::List(ListLiteral(ArcSlice::new([]))),
+        AttrType::list(AttrType::label()),
+    )?;
+    add_if_absent(
+        attrs,
         "deprecation",
         CoercedAttr::String(StringLiteral(ArcStr::from(""))),
         AttrType::string(),
@@ -928,10 +934,12 @@ impl FrozenStarlarkRuleCallable {
 
         for (key, value) in initialized.iter() {
             let Some(key) = key.unpack_str() else {
-                return Err(buck2_error::Error::from(
-                    RuleError::InvalidBazelInitializerReturnKey(key.get_type().to_owned()),
-                )
-                .into());
+                return Err(
+                    buck2_error::Error::from(RuleError::InvalidBazelInitializerReturnKey(
+                        key.get_type().to_owned(),
+                    ))
+                    .into(),
+                );
             };
             if key == NAME_ATTRIBUTE_FIELD {
                 if Self::named_value(&named, NAME_ATTRIBUTE_FIELD)
@@ -944,12 +952,7 @@ impl FrozenStarlarkRuleCallable {
                 }
                 continue;
             }
-            Self::insert_named_value(
-                &mut named,
-                key,
-                (!value.is_none()).then_some(value),
-                eval,
-            );
+            Self::insert_named_value(&mut named, key, (!value.is_none()).then_some(value), eval);
         }
 
         Ok(named)

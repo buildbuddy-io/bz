@@ -25,6 +25,7 @@ use starlark::values::dict::DictType;
 use starlark::values::dict::UnpackDictEntries;
 
 use crate as buck2_build_api;
+use crate::interpreter::rule_defs::provider::builtin::constraint_value_info::ConstraintValueInfoCallable;
 use crate::interpreter::rule_defs::provider::builtin::toolchain_info::register_toolchain_info;
 
 #[internal_provider(template_variable_info_creator)]
@@ -48,6 +49,7 @@ fn template_variable_info_creator(globals: &mut GlobalsBuilder) {
 
 pub(crate) fn register_platform_common(globals: &mut GlobalsBuilder) {
     globals.namespace("platform_common", |globals| {
+        globals.set("ConstraintValueInfo", ConstraintValueInfoCallable::new());
         globals.set("TemplateVariableInfo", TemplateVariableInfoCallable::new());
         register_toolchain_info(globals);
     });

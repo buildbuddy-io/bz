@@ -49,6 +49,7 @@ use starlark::values::Trace;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark::values::ValueLike;
+use starlark::values::ValueOf;
 use starlark::values::ValueOfUnchecked;
 use starlark::values::ValueTyped;
 use starlark::values::ValueTypedComplex;
@@ -73,6 +74,7 @@ use crate::interpreter::rule_defs::artifact::starlark_declared_artifact::Starlar
 use crate::interpreter::rule_defs::plugins::AnalysisPlugins;
 use crate::interpreter::rule_defs::provider::builtin::default_info::BazelRunfiles;
 use crate::interpreter::rule_defs::provider::builtin::default_info::bazel_runfiles_from_files;
+use crate::interpreter::rule_defs::provider::builtin::constraint_value_info::ConstraintValueInfo;
 use crate::interpreter::rule_defs::provider::dependency::Dependency;
 use buck2_hash::BuckIndexSet;
 
@@ -747,6 +749,27 @@ fn analysis_context_methods(builder: &mut MethodsBuilder) {
     ) -> starlark::Result<bool> {
         let _ = (this, target);
         Ok(false)
+    }
+
+    /// Returns true if the given constraint value is part of the current target platform.
+    fn target_platform_has_constraint<'v>(
+        this: RefAnalysisContext<'v>,
+        #[starlark(require = pos)] constraint_value: ValueOf<'v, &'v ConstraintValueInfo<'v>>,
+    ) -> starlark::Result<bool> {
+        let Some(label) = this.0.label else {
+            return Ok(false);
+        };
+        let cfg = label.label().target().cfg();
+        if !cfg.is_bound() {
+            return Ok(false);
+        }
+        let (constraint_key, expected_constraint_value) =
+            constraint_value.typed.to_constraint_key_value();
+        Ok(cfg
+            .get_constraint_value(&constraint_key)?
+            .is_some_and(|actual_constraint_value| {
+                actual_constraint_value == &expected_constraint_value
+            }))
     }
 
     /// Returns a Bazel runfiles object.

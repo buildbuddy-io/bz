@@ -11,6 +11,7 @@
 use buck2_core::cells::CellAliasResolver;
 use buck2_core::cells::alias::NonEmptyCellAlias;
 use buck2_core::cells::external::bzlmod_cell_aliases_for_cell;
+use buck2_core::cells::external::bzlmod_cell_name;
 use buck2_core::cells::name::CellName;
 use buck2_core::configuration::data::ConfigurationData;
 use buck2_core::fs::project_rel_path::ProjectRelativePath;
@@ -129,6 +130,8 @@ fn parse_providers_label<'v>(
         format!("{}{}", package, s)
     } else if let Some(root_label) = s.strip_prefix("@@root//") {
         format!("root//{root_label}")
+    } else if let Some(canonical_label) = bazel_canonical_label_to_buck_label(s) {
+        canonical_label
     } else {
         s.to_owned()
     };
@@ -148,6 +151,19 @@ fn parse_providers_label<'v>(
         }
     };
     Ok(StarlarkProvidersLabel::new(target))
+}
+
+fn bazel_canonical_label_to_buck_label(label: &str) -> Option<String> {
+    let label = label.strip_prefix("@@")?;
+    let (repo_name, package_and_target) = label.split_once("//")?;
+    let cell_name = if repo_name.is_empty() || repo_name == "root" {
+        "root".to_owned()
+    } else if repo_name == "bazel_tools" {
+        "bazel_tools".to_owned()
+    } else {
+        bzlmod_cell_name(repo_name)
+    };
+    Some(format!("{cell_name}//{package_and_target}"))
 }
 
 #[starlark_module]

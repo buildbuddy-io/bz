@@ -1416,18 +1416,29 @@ async fn resolve_bcr_modules_with_client(
             }
         }
     }
+    let canonical_repo_names_by_key = bzlmod_canonical_repo_names_by_key(&selected_keys);
 
     let mut root_aliases_by_key = BTreeMap::<(String, String), BTreeSet<String>>::new();
     let mut cell_aliases_by_cell = BTreeMap::<String, BTreeMap<String, String>>::new();
     for dep in &root_deps {
         add_bzlmod_dep_alias(dep, &selected_versions, &mut root_aliases_by_key);
-        add_bzlmod_dep_cell_alias("root", dep, &selected_versions, &mut cell_aliases_by_cell);
+        add_bzlmod_dep_cell_alias(
+            "root",
+            dep,
+            &selected_versions,
+            &canonical_repo_names_by_key,
+            &mut cell_aliases_by_cell,
+        )?;
     }
     for key in &selected_keys {
         let Some(module) = discovered.get(key) else {
             continue;
         };
-        let canonical_repo_name = bzlmod_canonical_repo_name(&module.dep.name, &module.dep.version);
+        let canonical_repo_name = bzlmod_selected_canonical_repo_name(
+            &canonical_repo_names_by_key,
+            &module.dep.name,
+            &module.dep.version,
+        )?;
         let cell_name = bzlmod_cell_name(&canonical_repo_name);
         add_bzlmod_cell_alias(
             &mut cell_aliases_by_cell,
@@ -1451,8 +1462,9 @@ async fn resolve_bcr_modules_with_client(
                 &cell_name,
                 dep,
                 &selected_versions,
+                &canonical_repo_names_by_key,
                 &mut cell_aliases_by_cell,
-            );
+            )?;
         }
     }
 
@@ -1461,7 +1473,10 @@ async fn resolve_bcr_modules_with_client(
     canonical_repo_names_by_cell.insert("bazel_tools".to_owned(), "bazel_tools".to_owned());
     canonical_repo_names_by_cell.insert("root".to_owned(), root_module.canonical_repo_name.clone());
     for key in &selected_keys_for_generated {
-        let canonical_repo_name = bzlmod_canonical_repo_name(&key.0, &key.1);
+        let canonical_repo_name = canonical_repo_names_by_key
+            .get(key)
+            .expect("selected key should have canonical repo name")
+            .clone();
         canonical_repo_names_by_cell
             .insert(bzlmod_cell_name(&canonical_repo_name), canonical_repo_name);
     }
@@ -1479,7 +1494,11 @@ async fn resolve_bcr_modules_with_client(
         aliases.sort();
         aliases.dedup();
 
-        let canonical_repo_name = bzlmod_canonical_repo_name(&module.dep.name, &module.dep.version);
+        let canonical_repo_name = bzlmod_selected_canonical_repo_name(
+            &canonical_repo_names_by_key,
+            &module.dep.name,
+            &module.dep.version,
+        )?;
         let patch_configs = bzlmod_patch_configs(registry, &module.dep, &module.source_json);
         let patches_json = serde_json::to_string(&patch_configs)
             .buck_error_context("Error serializing bzlmod patch configuration")?;
@@ -1507,6 +1526,7 @@ async fn resolve_bcr_modules_with_client(
         &root_module,
         &discovered,
         &selected_keys_for_generated,
+        &canonical_repo_names_by_key,
         &mut cell_aliases_by_cell,
         &canonical_repo_names_by_cell,
         bzlmod_module_extension_results_complete,
@@ -1516,6 +1536,7 @@ async fn resolve_bcr_modules_with_client(
     let registered_toolchains = resolve_bzlmod_registered_toolchains(
         &discovered,
         &selected_keys_for_generated,
+        &canonical_repo_names_by_key,
         &cell_aliases_by_cell,
         bzlmod_module_extension_results,
     )?;
@@ -1544,6 +1565,7 @@ fn resolve_generated_bzlmod_repos(
     root_module: &RootBzlmodModule,
     discovered: &BTreeMap<(String, String), DiscoveredBcrModule>,
     selected_keys: &BTreeSet<(String, String)>,
+    canonical_repo_names_by_key: &BTreeMap<(String, String), String>,
     cell_aliases_by_cell: &mut BTreeMap<String, BTreeMap<String, String>>,
     canonical_repo_names_by_cell: &BTreeMap<String, String>,
     bzlmod_module_extension_results_complete: bool,
@@ -1557,6 +1579,7 @@ fn resolve_generated_bzlmod_repos(
         root_module,
         discovered,
         selected_keys,
+        canonical_repo_names_by_key,
         cell_aliases_by_cell,
         canonical_repo_names_by_cell,
     )?;
@@ -1565,8 +1588,11 @@ fn resolve_generated_bzlmod_repos(
         let Some(module) = discovered.get(key) else {
             continue;
         };
-        let parent_canonical_repo_name =
-            bzlmod_canonical_repo_name(&module.dep.name, &module.dep.version);
+        let parent_canonical_repo_name = bzlmod_selected_canonical_repo_name(
+            canonical_repo_names_by_key,
+            &module.dep.name,
+            &module.dep.version,
+        )?;
         let parent_cell_name = bzlmod_cell_name(&parent_canonical_repo_name);
         if module.dep.name == "rules_cc" {
             for alias in &module.use_repo_aliases {
@@ -1583,10 +1609,8 @@ fn resolve_generated_bzlmod_repos(
                 let Some(generator) = generator else {
                     continue;
                 };
-                let canonical_repo_name = format!(
-                    "{}+{}+cc_configure+{}",
-                    module.dep.name, module.dep.version, alias
-                );
+                let canonical_repo_name =
+                    format!("{parent_canonical_repo_name}+cc_configure+{alias}");
                 let generator_json = serde_json::to_string(&generator).buck_error_context(
                     "Error serializing generated rules_cc configure repo configuration",
                 )?;
@@ -1607,10 +1631,8 @@ fn resolve_generated_bzlmod_repos(
                 if alias != "local_config_shell" {
                     continue;
                 }
-                let canonical_repo_name = format!(
-                    "{}+{}+sh_configure+{}",
-                    module.dep.name, module.dep.version, alias
-                );
+                let canonical_repo_name =
+                    format!("{parent_canonical_repo_name}+sh_configure+{alias}");
                 let generator_json =
                     serde_json::to_string(&BzlmodGeneratedRepoConfig::ShellConfig {})
                         .buck_error_context(
@@ -1647,10 +1669,8 @@ fn resolve_generated_bzlmod_repos(
                 let Some(generator) = generator else {
                     continue;
                 };
-                let canonical_repo_name = format!(
-                    "{}+{}+toolchains+{}",
-                    module.dep.name, module.dep.version, alias
-                );
+                let canonical_repo_name =
+                    format!("{parent_canonical_repo_name}+toolchains+{alias}");
                 let generator_json = serde_json::to_string(&generator).buck_error_context(
                     "Error serializing generated rules_java toolchains repo configuration",
                 )?;
@@ -1716,8 +1736,8 @@ fn resolve_generated_bzlmod_repos(
                     continue;
                 };
                 let canonical_repo_name = format!(
-                    "{}+{}+version_extension+{}",
-                    module.dep.name, module.dep.version, import.repo_name
+                    "{}+version_extension+{}",
+                    parent_canonical_repo_name, import.repo_name
                 );
                 let generator_json = serde_json::to_string(&generator).buck_error_context(
                     "Error serializing generated bazel_features repo configuration",
@@ -1743,6 +1763,7 @@ fn resolve_generated_bzlmod_repos(
                 root_module,
                 discovered,
                 selected_keys,
+                canonical_repo_names_by_key,
                 cell_aliases_by_cell,
                 &extension_unique_names,
                 bzlmod_module_extension_results_complete,
@@ -1764,6 +1785,7 @@ fn resolve_generated_bzlmod_repos(
             root_module,
             discovered,
             selected_keys,
+            canonical_repo_names_by_key,
             cell_aliases_by_cell,
             &extension_unique_names,
             bzlmod_module_extension_results_complete,
@@ -1824,6 +1846,7 @@ fn resolve_bzlmod_extension_usage_generated_repos(
     root_module: &RootBzlmodModule,
     discovered: &BTreeMap<(String, String), DiscoveredBcrModule>,
     selected_keys: &BTreeSet<(String, String)>,
+    canonical_repo_names_by_key: &BTreeMap<(String, String), String>,
     cell_aliases_by_cell: &mut BTreeMap<String, BTreeMap<String, String>>,
     extension_unique_names: &BTreeMap<BzlmodExtensionId, String>,
     bzlmod_module_extension_results_complete: bool,
@@ -1843,6 +1866,7 @@ fn resolve_bzlmod_extension_usage_generated_repos(
         root_module,
         discovered,
         selected_keys,
+        canonical_repo_names_by_key,
         cell_aliases_by_cell,
         &resolved_extension.id,
         extension_unique_names,
@@ -1988,6 +2012,7 @@ fn bzlmod_module_extension_evaluation_config_json(
     root_module: &RootBzlmodModule,
     discovered: &BTreeMap<(String, String), DiscoveredBcrModule>,
     selected_keys: &BTreeSet<(String, String)>,
+    canonical_repo_names_by_key: &BTreeMap<(String, String), String>,
     cell_aliases_by_cell: &BTreeMap<String, BTreeMap<String, String>>,
     extension_id: &BzlmodExtensionId,
     extension_unique_names: &BTreeMap<BzlmodExtensionId, String>,
@@ -2024,7 +2049,11 @@ fn bzlmod_module_extension_evaluation_config_json(
         let Some(module) = discovered.get(key) else {
             continue;
         };
-        let canonical_repo_name = bzlmod_canonical_repo_name(&module.dep.name, &module.dep.version);
+        let canonical_repo_name = bzlmod_selected_canonical_repo_name(
+            canonical_repo_names_by_key,
+            &module.dep.name,
+            &module.dep.version,
+        )?;
         let module_cell_name = bzlmod_cell_name(&canonical_repo_name);
         let mut has_usage = false;
         let mut tags = Vec::new();
@@ -2049,7 +2078,11 @@ fn bzlmod_module_extension_evaluation_config_json(
         if !has_usage {
             continue;
         }
-        let canonical_repo_name = bzlmod_canonical_repo_name(&module.dep.name, &module.dep.version);
+        let canonical_repo_name = bzlmod_selected_canonical_repo_name(
+            canonical_repo_names_by_key,
+            &module.dep.name,
+            &module.dep.version,
+        )?;
         modules.push(BzlmodModuleExtensionModuleConfig {
             name: module.dep.name.clone(),
             version: module.dep.version.clone(),
@@ -2211,6 +2244,7 @@ fn bzlmod_extension_unique_names(
     root_module: &RootBzlmodModule,
     discovered: &BTreeMap<(String, String), DiscoveredBcrModule>,
     selected_keys: &BTreeSet<(String, String)>,
+    canonical_repo_names_by_key: &BTreeMap<(String, String), String>,
     cell_aliases_by_cell: &BTreeMap<String, BTreeMap<String, String>>,
     canonical_repo_names_by_cell: &BTreeMap<String, String>,
 ) -> buck2_error::Result<BTreeMap<BzlmodExtensionId, String>> {
@@ -2226,7 +2260,11 @@ fn bzlmod_extension_unique_names(
         let Some(module) = discovered.get(key) else {
             continue;
         };
-        let canonical_repo_name = bzlmod_canonical_repo_name(&module.dep.name, &module.dep.version);
+        let canonical_repo_name = bzlmod_selected_canonical_repo_name(
+            canonical_repo_names_by_key,
+            &module.dep.name,
+            &module.dep.version,
+        )?;
         let module_cell_name = bzlmod_cell_name(&canonical_repo_name);
         for usage in &module.extension_usages {
             extension_ids.insert(bzlmod_resolve_extension_id(
@@ -2427,6 +2465,7 @@ fn bzlmod_extension_unique_repo_canonical_repo_name(
 fn resolve_bzlmod_registered_toolchains(
     discovered: &BTreeMap<(String, String), DiscoveredBcrModule>,
     selected_keys: &BTreeSet<(String, String)>,
+    canonical_repo_names_by_key: &BTreeMap<(String, String), String>,
     cell_aliases_by_cell: &BTreeMap<String, BTreeMap<String, String>>,
     bzlmod_module_extension_results: &[BzlmodEvaluatedModuleExtension],
 ) -> buck2_error::Result<Vec<String>> {
@@ -2435,7 +2474,11 @@ fn resolve_bzlmod_registered_toolchains(
         let Some(module) = discovered.get(key) else {
             continue;
         };
-        let canonical_repo_name = bzlmod_canonical_repo_name(&module.dep.name, &module.dep.version);
+        let canonical_repo_name = bzlmod_selected_canonical_repo_name(
+            canonical_repo_names_by_key,
+            &module.dep.name,
+            &module.dep.version,
+        )?;
         let cell_name = bzlmod_cell_name(&canonical_repo_name);
         for pattern in &module.registered_toolchains {
             registered_toolchains.push(qualify_bzlmod_registered_toolchain(
@@ -2583,17 +2626,20 @@ fn add_bzlmod_dep_cell_alias(
     current_cell_name: &str,
     dep: &BazelDep,
     selected_versions: &BTreeMap<String, String>,
+    canonical_repo_names_by_key: &BTreeMap<(String, String), String>,
     aliases_by_cell: &mut BTreeMap<String, BTreeMap<String, String>>,
-) {
+) -> buck2_error::Result<()> {
     let Some(alias) = dep.apparent_name.as_ref() else {
-        return;
+        return Ok(());
     };
     let Some(version) = selected_versions.get(&dep.name) else {
-        return;
+        return Ok(());
     };
-    let canonical_repo_name = bzlmod_canonical_repo_name(&dep.name, version);
+    let canonical_repo_name =
+        bzlmod_selected_canonical_repo_name(canonical_repo_names_by_key, &dep.name, version)?;
     let cell_name = bzlmod_cell_name(&canonical_repo_name);
     add_bzlmod_cell_alias(aliases_by_cell, current_cell_name, alias, &cell_name);
+    Ok(())
 }
 
 fn add_bzlmod_cell_alias(
@@ -3148,11 +3194,55 @@ fn bzlmod_patch_configs(
         .collect()
 }
 
-fn bzlmod_canonical_repo_name(module_name: &str, version: &str) -> String {
+fn bzlmod_canonical_repo_names_by_key(
+    selected_keys: &BTreeSet<(String, String)>,
+) -> BTreeMap<(String, String), String> {
+    let mut selected_versions_by_name = BTreeMap::<&str, BTreeSet<&str>>::new();
+    for (module_name, version) in selected_keys {
+        selected_versions_by_name
+            .entry(module_name.as_str())
+            .or_default()
+            .insert(version.as_str());
+    }
+
+    selected_keys
+        .iter()
+        .map(|(module_name, version)| {
+            let multiple_versions = selected_versions_by_name
+                .get(module_name.as_str())
+                .map_or(false, |versions| versions.len() > 1);
+            (
+                (module_name.clone(), version.clone()),
+                bzlmod_canonical_repo_name(module_name, version, multiple_versions),
+            )
+        })
+        .collect()
+}
+
+fn bzlmod_selected_canonical_repo_name(
+    canonical_repo_names_by_key: &BTreeMap<(String, String), String>,
+    module_name: &str,
+    version: &str,
+) -> buck2_error::Result<String> {
+    canonical_repo_names_by_key
+        .get(&(module_name.to_owned(), version.to_owned()))
+        .cloned()
+        .ok_or_else(|| {
+            buck2_error!(
+                buck2_error::ErrorTag::Input,
+                "selected bzlmod module `{}@{}` does not have a canonical repository name",
+                module_name,
+                version
+            )
+        })
+}
+
+fn bzlmod_canonical_repo_name(module_name: &str, version: &str, multiple_versions: bool) -> String {
     match module_name {
         "bazel_tools" => "bazel_tools".to_owned(),
         "platforms" => "platforms".to_owned(),
-        _ => format!("{module_name}+{version}"),
+        _ if multiple_versions => format!("{module_name}+{version}"),
+        _ => format!("{module_name}+"),
     }
 }
 

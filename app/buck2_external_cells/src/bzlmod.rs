@@ -1359,6 +1359,8 @@ async fn materialize_generated(
                         .iter()
                         .find(|invocation| invocation.name == module_extension.repo_name.as_ref())
                     {
+                        let mut invocation = invocation.clone();
+                        invocation.name = setup.canonical_repo_name.to_string();
                         let repository_ctx_path =
                             bzlmod_generated_sibling_path(setup, path, "repository_ctx");
                         ctx.get_blocking_executor()
@@ -1373,7 +1375,7 @@ async fn materialize_generated(
                             .await?;
                         let files = evaluate_bzlmod_repository_rule(
                             ctx,
-                            invocation,
+                            &invocation,
                             repository_ctx_path.as_str(),
                             cancellations,
                         )
@@ -1441,6 +1443,7 @@ async fn materialize_generated(
                     let files = evaluate_bzlmod_repository_rule_invocation(
                         ctx,
                         invocation,
+                        &setup.canonical_repo_name,
                         repository_ctx_path.as_str(),
                         cancellations,
                     )
