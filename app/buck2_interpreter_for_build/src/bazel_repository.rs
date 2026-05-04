@@ -15,6 +15,7 @@ use std::fmt;
 use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
+use std::process::Command;
 use std::sync::Arc;
 use std::sync::Mutex;
 
@@ -141,6 +142,12 @@ pub(crate) enum BazelRepositoryError {
     RepositoryCtxOutputPathUnsupportedValue(String),
     #[error("repository_ctx.template could not read `{path}`: {error}")]
     RepositoryCtxTemplateReadFile { path: String, error: String },
+    #[error("repository_ctx could not write `{path}`: {error}")]
+    RepositoryCtxWriteFile { path: String, error: String },
+    #[error("repository_ctx could not delete `{path}`: {error}")]
+    RepositoryCtxDeletePath { path: String, error: String },
+    #[error("repository_ctx.download_and_extract could not extract `{archive}`: {error}")]
+    RepositoryCtxExtractArchive { archive: String, error: String },
     #[error("attempting to instantiate a non-exported module extension")]
     ModuleExtensionNotExported,
     #[error("expected module extension `{0}` to return None or extension_metadata, got `{1}`")]
@@ -1674,6 +1681,170 @@ fn repository_ctx_push_file<'v>(
     }
 }
 
+fn repository_ctx_write_bytes(path: &str, bytes: &[u8], executable: bool) -> starlark::Result<()> {
+    let write_path = repository_path_for_write(path)?;
+    if let Some(parent) = write_path.parent() {
+        fs::create_dir_all(parent).map_err(|e| {
+            buck2_error::Error::from(BazelRepositoryError::RepositoryCtxWriteFile {
+                path: write_path.to_string_lossy().into_owned(),
+                error: e.to_string(),
+            })
+        })?;
+    }
+    fs::write(&write_path, bytes).map_err(|e| {
+        buck2_error::Error::from(BazelRepositoryError::RepositoryCtxWriteFile {
+            path: write_path.to_string_lossy().into_owned(),
+            error: e.to_string(),
+        })
+    })?;
+    if executable {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            fs::set_permissions(&write_path, fs::Permissions::from_mode(0o755)).map_err(|e| {
+                buck2_error::Error::from(BazelRepositoryError::RepositoryCtxWriteFile {
+                    path: write_path.to_string_lossy().into_owned(),
+                    error: e.to_string(),
+                })
+            })?;
+        }
+    }
+    Ok(())
+}
+
+fn repository_ctx_download_error<'v>(
+    allow_fail: bool,
+    error: buck2_error::Error,
+    eval: &mut Evaluator<'v, '_, '_>,
+) -> starlark::Result<Value<'v>> {
+    if allow_fail {
+        Ok(module_ctx_download_result(
+            false,
+            None,
+            None,
+            Some(&error.to_string()),
+            eval,
+        ))
+    } else {
+        Err(error.into())
+    }
+}
+
+fn repository_ctx_download_to_path<'v>(
+    urls: Vec<String>,
+    output_path: String,
+    sha256: &str,
+    executable: bool,
+    allow_fail: bool,
+    integrity: &str,
+    eval: &mut Evaluator<'v, '_, '_>,
+) -> starlark::Result<(Value<'v>, bool)> {
+    let expected_sha256 = match module_ctx_sha256_from_integrity(integrity) {
+        Ok(Some(integrity_sha256)) => Some(integrity_sha256),
+        Ok(None) if !sha256.is_empty() => Some(sha256.to_ascii_lowercase()),
+        Ok(None) => None,
+        Err(error) => {
+            return Ok((
+                repository_ctx_download_error(allow_fail, error, eval)?,
+                false,
+            ));
+        }
+    };
+    let bytes = match module_ctx_download_bytes_blocking(&urls) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            return Ok((
+                repository_ctx_download_error(allow_fail, error, eval)?,
+                false,
+            ));
+        }
+    };
+    let got_sha256 = module_ctx_sha256_hex(&bytes);
+    if let Some(expected_sha256) = &expected_sha256
+        && *expected_sha256 != got_sha256
+    {
+        return Ok((
+            repository_ctx_download_error(
+                allow_fail,
+                BazelRepositoryError::ModuleCtxDownloadChecksumMismatch {
+                    path: output_path.clone(),
+                    expected: expected_sha256.clone(),
+                    got: got_sha256,
+                }
+                .into(),
+                eval,
+            )?,
+            false,
+        ));
+    }
+    let got_integrity = match module_ctx_integrity_from_sha256_hex(&got_sha256) {
+        Ok(integrity) => integrity,
+        Err(error) => {
+            return Ok((
+                repository_ctx_download_error(allow_fail, error, eval)?,
+                false,
+            ));
+        }
+    };
+    if let Err(error) = repository_ctx_write_bytes(&output_path, &bytes, executable) {
+        return Ok((
+            repository_ctx_download_error(allow_fail, error.into(), eval)?,
+            false,
+        ));
+    }
+    Ok((
+        module_ctx_download_result(true, Some(&got_sha256), Some(&got_integrity), None, eval),
+        true,
+    ))
+}
+
+fn repository_ctx_extract_archive(
+    archive: &Path,
+    output: &Path,
+    strip_prefix: &str,
+) -> buck2_error::Result<()> {
+    fs::create_dir_all(output).map_err(|e| BazelRepositoryError::RepositoryCtxExtractArchive {
+        archive: archive.to_string_lossy().into_owned(),
+        error: e.to_string(),
+    })?;
+    let archive_str = archive.to_string_lossy();
+    let mut command = if archive_str.ends_with(".zip") {
+        let mut command = Command::new("unzip");
+        command.arg("-q").arg(archive).arg("-d").arg(output);
+        command
+    } else {
+        let mut command = Command::new("tar");
+        command.arg("-xf").arg(archive).arg("-C").arg(output);
+        if !strip_prefix.is_empty() {
+            command.arg(format!(
+                "--strip-components={}",
+                strip_prefix
+                    .split('/')
+                    .filter(|part| !part.is_empty())
+                    .count()
+            ));
+        }
+        command
+    };
+    command.env("LC_ALL", "C").env("LANG", "C");
+    let output =
+        command
+            .output()
+            .map_err(|e| BazelRepositoryError::RepositoryCtxExtractArchive {
+                archive: archive.to_string_lossy().into_owned(),
+                error: e.to_string(),
+            })?;
+    if !output.status.success() {
+        return Err(BazelRepositoryError::RepositoryCtxExtractArchive {
+            archive: archive.to_string_lossy().into_owned(),
+            error: String::from_utf8_lossy(&output.stderr).into_owned(),
+        }
+        .into());
+    }
+    Ok(())
+}
+
 #[starlark_module]
 fn repository_context_methods(builder: &mut MethodsBuilder) {
     fn file<'v>(
@@ -1684,6 +1855,11 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
         #[starlark(require = named, default = false)] _legacy_utf8: bool,
     ) -> starlark::Result<NoneType> {
         let path = repository_ctx_output_path_from_value(path, repository_ctx_working_dir(this))?;
+        let full_path = Path::new(repository_ctx_working_dir(this))
+            .join(&path)
+            .to_string_lossy()
+            .into_owned();
+        repository_ctx_write_bytes(&full_path, content.as_bytes(), executable)?;
         repository_ctx_push_file(
             this,
             BazelRepositoryGeneratedFile {
@@ -1719,6 +1895,11 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
         for (key, value) in substitutions.entries {
             content = content.replace(key, value);
         }
+        let full_path = Path::new(working_dir)
+            .join(&path)
+            .to_string_lossy()
+            .into_owned();
+        repository_ctx_write_bytes(&full_path, content.as_bytes(), executable)?;
         repository_ctx_push_file(
             this,
             BazelRepositoryGeneratedFile {
@@ -1763,6 +1944,155 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
             })
         })?;
         Ok(String::from_utf8_lossy(&bytes).into_owned())
+    }
+
+    fn report_progress<'v>(
+        this: ValueTypedComplex<'v, StarlarkRepositoryContext<'v>>,
+        #[starlark(require = pos)] message: &str,
+    ) -> starlark::Result<NoneType> {
+        let _unused = (this, message);
+        Ok(NoneType)
+    }
+
+    fn delete<'v>(
+        this: ValueTypedComplex<'v, StarlarkRepositoryContext<'v>>,
+        #[starlark(require = pos)] path: Value<'v>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<bool> {
+        let path = repository_path_from_value_relative_to(
+            path,
+            eval,
+            Some(repository_ctx_working_dir(this)),
+        )?;
+        let write_path = repository_path_for_write(&path)?;
+        if !write_path.exists() {
+            return Ok(false);
+        }
+        let result = if write_path.is_dir() {
+            fs::remove_dir_all(&write_path)
+        } else {
+            fs::remove_file(&write_path)
+        };
+        result.map_err(|e| {
+            buck2_error::Error::from(BazelRepositoryError::RepositoryCtxDeletePath {
+                path: write_path.to_string_lossy().into_owned(),
+                error: e.to_string(),
+            })
+        })?;
+        Ok(true)
+    }
+
+    fn download<'v>(
+        this: ValueTypedComplex<'v, StarlarkRepositoryContext<'v>>,
+        #[starlark(require = named)] url: Value<'v>,
+        #[starlark(require = named)] output: Value<'v>,
+        #[starlark(require = named, default = "")] sha256: &str,
+        #[starlark(require = named, default = false)] executable: bool,
+        #[starlark(require = named, default = false)] allow_fail: bool,
+        #[starlark(require = named, default = "")] _canonical_id: &str,
+        #[starlark(require = named, default = UnpackDictEntries::default())]
+        auth: UnpackDictEntries<Value<'v>, Value<'v>>,
+        #[starlark(require = named, default = UnpackDictEntries::default())]
+        headers: UnpackDictEntries<Value<'v>, Value<'v>>,
+        #[starlark(require = named, default = "")] integrity: &str,
+        #[starlark(require = named, default = true)] block: bool,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<Value<'v>> {
+        if !block {
+            return Err(buck2_error::Error::from(
+                BazelRepositoryError::ModuleCtxDownloadAsyncUnsupported,
+            )
+            .into());
+        }
+        if !auth.entries.is_empty() {
+            return Err(buck2_error::Error::from(
+                BazelRepositoryError::ModuleCtxDownloadUnsupportedField { field: "auth" },
+            )
+            .into());
+        }
+        if !headers.entries.is_empty() {
+            return Err(buck2_error::Error::from(
+                BazelRepositoryError::ModuleCtxDownloadUnsupportedField { field: "headers" },
+            )
+            .into());
+        }
+
+        let urls = module_ctx_urls_from_value(url, eval.heap())?;
+        let output_path = repository_path_from_value_relative_to(
+            output,
+            eval,
+            Some(repository_ctx_working_dir(this)),
+        )?;
+        let (result, _) = repository_ctx_download_to_path(
+            urls,
+            output_path,
+            sha256,
+            executable,
+            allow_fail,
+            integrity,
+            eval,
+        )?;
+        Ok(result)
+    }
+
+    #[allow(non_snake_case)]
+    fn download_and_extract<'v>(
+        this: ValueTypedComplex<'v, StarlarkRepositoryContext<'v>>,
+        #[starlark(require = named)] url: Value<'v>,
+        #[starlark(require = named, default = "")] output: Value<'v>,
+        #[starlark(require = named, default = "")] sha256: &str,
+        #[starlark(require = named, default = false)] allow_fail: bool,
+        #[starlark(require = named, default = "")] _canonical_id: &str,
+        #[starlark(require = named, default = UnpackDictEntries::default())]
+        auth: UnpackDictEntries<Value<'v>, Value<'v>>,
+        #[starlark(require = named, default = UnpackDictEntries::default())]
+        headers: UnpackDictEntries<Value<'v>, Value<'v>>,
+        #[starlark(require = named, default = "")] integrity: &str,
+        #[starlark(require = named, default = true)] block: bool,
+        #[starlark(require = named, default = "")] stripPrefix: &str,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<Value<'v>> {
+        let working_dir = repository_ctx_working_dir(this);
+        let archive_path = Path::new(working_dir).join(".buck2_download_and_extract.archive");
+        let archive_path_string = archive_path.to_string_lossy().into_owned();
+        if !block {
+            return Err(buck2_error::Error::from(
+                BazelRepositoryError::ModuleCtxDownloadAsyncUnsupported,
+            )
+            .into());
+        }
+        if !auth.entries.is_empty() {
+            return Err(buck2_error::Error::from(
+                BazelRepositoryError::ModuleCtxDownloadUnsupportedField { field: "auth" },
+            )
+            .into());
+        }
+        if !headers.entries.is_empty() {
+            return Err(buck2_error::Error::from(
+                BazelRepositoryError::ModuleCtxDownloadUnsupportedField { field: "headers" },
+            )
+            .into());
+        }
+        let urls = module_ctx_urls_from_value(url, eval.heap())?;
+        let (result, success) = repository_ctx_download_to_path(
+            urls,
+            archive_path_string.clone(),
+            sha256,
+            false,
+            allow_fail,
+            integrity,
+            eval,
+        )?;
+        if !success {
+            return Ok(result);
+        }
+        let output_path = repository_path_from_value_relative_to(output, eval, Some(working_dir))?;
+        let output_path = repository_path_for_write(&output_path)?;
+        let archive_path = repository_path_for_write(&archive_path_string)?;
+        match repository_ctx_extract_archive(&archive_path, &output_path, stripPrefix) {
+            Ok(()) => Ok(result),
+            Err(error) => repository_ctx_download_error(allow_fail, error, eval),
+        }
     }
 }
 

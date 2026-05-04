@@ -278,6 +278,7 @@ pub struct BzlmodPythonHubSetup {}
 )]
 pub struct BzlmodRepositoryRuleSetup {
     pub files_json: Arc<str>,
+    pub source_dir: Option<Arc<str>>,
 }
 
 #[derive(

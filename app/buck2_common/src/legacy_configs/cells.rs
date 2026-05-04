@@ -722,6 +722,7 @@ impl BuckConfigBasedCells {
                         .buck_error_context("Error serializing repository_rule file manifest")?;
                     BzlmodGeneratedCellGenerator::RepositoryRule(BzlmodRepositoryRuleSetup {
                         files_json: Arc::from(files_json),
+                        source_dir: None,
                     })
                 }
                 BzlmodGeneratedRepoConfig::ModuleExtensionRepo {
@@ -1065,10 +1066,10 @@ async fn bzlmod_http_client() -> buck2_error::Result<HttpClient> {
     let mut builder = HttpClientBuilder::oss().await?;
     builder
         .with_max_redirects(10)
-        .with_connect_timeout(Some(Duration::from_secs(10)))
-        .with_read_timeout(Some(Duration::from_secs(10)))
-        .with_write_timeout(Some(Duration::from_secs(10)))
-        .with_max_concurrent_requests(Some(32));
+        .with_connect_timeout(Some(Duration::from_secs(60)))
+        .with_read_timeout(Some(Duration::from_secs(60)))
+        .with_write_timeout(Some(Duration::from_secs(60)))
+        .with_max_concurrent_requests(Some(8));
     Ok(builder.build())
 }
 

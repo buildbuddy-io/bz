@@ -250,7 +250,12 @@ impl IoRequest for BzlmodGeneratedIoRequest {
                 write_python_hub_repo(&dest, setup)?;
             }
             BzlmodGeneratedCellGenerator::RepositoryRule(setup) => {
-                write_repository_rule_repo(&dest, &self.setup.canonical_repo_name, setup)?;
+                write_repository_rule_repo(
+                    project_fs,
+                    &dest,
+                    &self.setup.canonical_repo_name,
+                    setup,
+                )?;
             }
             BzlmodGeneratedCellGenerator::ModuleExtensionRepo(setup) => {
                 return Err(module_extension_repo_not_materialized(setup));
@@ -280,10 +285,16 @@ struct BzlmodRepositoryRuleFile {
 }
 
 fn write_repository_rule_repo(
+    project_fs: &ProjectRoot,
     dest: &AbsNormPath,
     canonical_repo_name: &str,
     setup: &BzlmodRepositoryRuleSetup,
 ) -> buck2_error::Result<()> {
+    if let Some(source_dir) = &setup.source_dir {
+        let source_dir = ProjectRelativePath::new(source_dir.as_ref())?;
+        let source = project_fs.resolve(source_dir);
+        copy_dir_contents(&source, dest)?;
+    }
     write_generated_module_file(dest, canonical_repo_name)?;
     let files: Vec<BzlmodRepositoryRuleFile> = serde_json::from_str(&setup.files_json)
         .buck_error_context("Invalid generated repository_rule file manifest")?;
@@ -1327,12 +1338,22 @@ async fn materialize_generated(
                         .iter()
                         .find(|invocation| invocation.name == module_extension.repo_name.as_ref())
                     {
-                        let repository_ctx_working_dir =
-                            format!("{}/.buck2_repository_ctx", path.as_str());
+                        let repository_ctx_path =
+                            bzlmod_generated_sibling_path(setup, path, "repository_ctx");
+                        ctx.get_blocking_executor()
+                            .execute_io(
+                                Box::new(
+                                    buck2_execute::execute::clean_output_paths::CleanOutputPaths {
+                                        paths: vec![repository_ctx_path.clone()],
+                                    },
+                                ),
+                                cancellations,
+                            )
+                            .await?;
                         let files = evaluate_bzlmod_repository_rule(
                             ctx,
                             invocation,
-                            &repository_ctx_working_dir,
+                            repository_ctx_path.as_str(),
                             cancellations,
                         )
                         .await?;
@@ -1357,6 +1378,9 @@ async fn materialize_generated(
                                         generator: BzlmodGeneratedCellGenerator::RepositoryRule(
                                             BzlmodRepositoryRuleSetup {
                                                 files_json: Arc::from(files_json),
+                                                source_dir: Some(Arc::from(
+                                                    repository_ctx_path.as_str(),
+                                                )),
                                             },
                                         ),
                                     },
