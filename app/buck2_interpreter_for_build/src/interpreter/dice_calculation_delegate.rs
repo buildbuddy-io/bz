@@ -22,6 +22,7 @@ use buck2_common::package_boundary::HasPackageBoundaryExceptions;
 use buck2_common::package_listing::dice::DicePackageListingResolver;
 use buck2_common::package_listing::listing::PackageListing;
 use buck2_core::build_file_path::BuildFilePath;
+use buck2_core::bzl::ImportPath;
 use buck2_core::cells::build_file_cell::BuildFileCell;
 use buck2_core::cells::cell_path::CellPath;
 use buck2_core::package::PackageLabel;
@@ -61,6 +62,7 @@ use starlark::syntax::AstModule;
 use starlark::values::FrozenHeapName;
 
 use crate::interpreter::buckconfig::ConfigsOnDiceViewForStarlark;
+use crate::interpreter::build_context::BazelRepositoryRuleInvocation;
 use crate::interpreter::cell_info::InterpreterCellInfo;
 use crate::interpreter::check_starlark_stack_size::check_starlark_stack_size;
 use crate::interpreter::cycles::LoadCycleDescriptor;
@@ -367,6 +369,37 @@ impl<'c, 'd: 'c> DiceCalculationDelegate<'c, 'd> {
             loaded_modules,
             evaluation,
         ))
+    }
+
+    pub async fn eval_bzlmod_module_extension(
+        &mut self,
+        extension_path: &ImportPath,
+        extension_module: &LoadedModule,
+        extension_name: &str,
+        extension_usages_json: &str,
+        module_ctx_working_dir: &str,
+        cancellation: &CancellationContext,
+    ) -> buck2_error::Result<Vec<BazelRepositoryRuleInvocation>> {
+        let buckconfig = self.get_legacy_buck_config_for_starlark().await?;
+        let root_buckconfig = self.ctx.get_legacy_root_config_on_dice().await?;
+
+        let configs = &self.configs;
+        let ctx = &mut *self.ctx;
+        let eval_kind = StarlarkEvalKind::Unknown(
+            format!("bzlmod_module_extension/{extension_path}%{extension_name}").into(),
+        );
+        let provider = StarlarkEvaluatorProvider::new(ctx, eval_kind).await?;
+        let mut buckconfigs = ConfigsOnDiceViewForStarlark::new(ctx, buckconfig, root_buckconfig);
+        configs.eval_bzlmod_module_extension(
+            extension_path,
+            extension_module.env(),
+            extension_name,
+            extension_usages_json,
+            module_ctx_working_dir,
+            &mut buckconfigs,
+            provider,
+            cancellation,
+        )
     }
 
     /// Eval parent `PACKAGE` file for given package file.

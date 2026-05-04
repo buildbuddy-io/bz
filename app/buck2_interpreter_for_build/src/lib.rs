@@ -24,7 +24,7 @@ pub(crate) mod bazel_configuration_field;
 pub(crate) mod bazel_native;
 pub(crate) mod bazel_package;
 pub(crate) mod bazel_proto;
-pub(crate) mod bazel_repository;
+pub mod bazel_repository;
 pub(crate) mod bazel_visibility;
 pub mod call_stack;
 pub mod interpreter;

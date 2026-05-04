@@ -43,6 +43,7 @@ use buck2_core::cells::external::BzlmodShellConfigSetup;
 use buck2_core::cells::external::ExternalCellOrigin;
 use buck2_core::cells::external::GitCellSetup;
 use buck2_core::cells::external::GitObjectFormat;
+use buck2_core::cells::external::bzlmod_cell_name;
 use buck2_core::cells::name::CellName;
 use buck2_core::fs::project::ProjectRoot;
 use buck2_core::fs::project_rel_path::ProjectRelativePath;
@@ -276,7 +277,9 @@ impl BuckConfigBasedCells {
             follow_includes,
         )
         .await?;
-        let config = if should_apply_bazel_compat_defaults(cell_path, file_ops).await? {
+        let config = if should_apply_bazel_compat_defaults(cell_path, file_ops).await?
+            || cell_name.as_str() == "bazel_tools"
+        {
             let root_path = CellRootPathBuf::new(ProjectRelativePath::empty().to_owned());
             let module_aliases = get_bazel_module_resolution(&root_path, file_ops).await?;
             config.with_bazel_compat_defaults(
@@ -555,7 +558,9 @@ impl BuckConfigBasedCells {
         )
         .await?;
 
-        if should_apply_bazel_compat_defaults(cell_path, file_ops).await? {
+        if should_apply_bazel_compat_defaults(cell_path, file_ops).await?
+            || cell_name == "bazel_tools"
+        {
             let root_path = CellRootPathBuf::new(ProjectRelativePath::empty().to_owned());
             let module_aliases = get_bazel_module_resolution(&root_path, file_ops).await?;
             Ok(config.with_bazel_compat_defaults(
@@ -1179,6 +1184,7 @@ async fn resolve_bcr_modules_with_client(
         }
         for alias in &module.module_aliases {
             add_bzlmod_cell_alias(&mut cell_aliases_by_cell, &cell_name, alias, &cell_name);
+            add_bzlmod_cell_alias(&mut cell_aliases_by_cell, "bazel_tools", alias, &cell_name);
         }
         for dep in &module.deps {
             add_bzlmod_dep_cell_alias(
@@ -1966,18 +1972,6 @@ fn rules_java_remote_tools_archive(
         )),
         _ => None,
     }
-}
-
-fn bzlmod_cell_name(canonical_repo_name: &str) -> String {
-    let mut cell = String::from("bzlmod_");
-    for ch in canonical_repo_name.chars() {
-        if ch == '_' || ch.is_ascii_alphanumeric() {
-            cell.push(ch);
-        } else {
-            cell.push('_');
-        }
-    }
-    cell
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

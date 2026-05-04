@@ -22,6 +22,18 @@ use crate::cells::name::CellName;
 
 pub const BZLMOD_BAZEL_COMPAT_VERSION: &str = "9.1.0";
 
+pub fn bzlmod_cell_name(canonical_repo_name: &str) -> String {
+    let mut cell = String::from("bzlmod_");
+    for ch in canonical_repo_name.chars() {
+        if ch == '_' || ch.is_ascii_alphanumeric() {
+            cell.push(ch);
+        } else {
+            cell.push('_');
+        }
+    }
+    cell
+}
+
 #[derive(Debug, Clone, Dupe, Allocative, PartialEq, Eq, Pagable)]
 pub enum ExternalCellOrigin {
     Bundled(CellName),

@@ -276,10 +276,10 @@ impl<'a> BuildContext<'a> {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct BazelRepositoryRuleInvocation {
-    pub(crate) rule_id: StarlarkRuleType,
-    pub(crate) name: String,
-    pub(crate) attrs: Vec<(String, String)>,
+pub struct BazelRepositoryRuleInvocation {
+    pub rule_id: StarlarkRuleType,
+    pub name: String,
+    pub attrs: Vec<(String, String)>,
 }
 
 #[derive(Debug, Default)]
@@ -292,7 +292,6 @@ impl BazelRepositoryRuleRecorder {
         self.invocations.borrow_mut().push(invocation);
     }
 
-    #[allow(dead_code)]
     pub(crate) fn take_invocations(&self) -> Vec<BazelRepositoryRuleInvocation> {
         std::mem::take(&mut *self.invocations.borrow_mut())
     }

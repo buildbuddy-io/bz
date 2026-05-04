@@ -65,6 +65,8 @@ use starlark::syntax::AstModule;
 use starlark::values::any_complex::StarlarkAnyComplex;
 
 use crate::interpreter::buckconfig::BuckConfigsViewForStarlark;
+use crate::interpreter::build_context::BazelRepositoryRuleInvocation;
+use crate::interpreter::build_context::BazelRepositoryRuleRecorder;
 use crate::interpreter::build_context::BuildContext;
 use crate::interpreter::build_context::PerFileTypeContext;
 use crate::interpreter::bzl_eval_ctx::BzlEvalCtx;
@@ -601,6 +603,69 @@ impl InterpreterForDir {
             let (token, frozen, _) = finished_eval.freeze_and_finish(env)?;
 
             Ok((token, frozen))
+        })
+    }
+
+    pub(crate) fn eval_bzlmod_module_extension(
+        self: &Arc<Self>,
+        extension_path: &ImportPath,
+        extension_module: &FrozenModule,
+        extension_name: &str,
+        extension_usages_json: &str,
+        module_ctx_working_dir: &str,
+        buckconfigs: &mut dyn BuckConfigsViewForStarlark,
+        eval_provider: StarlarkEvaluatorProvider,
+        cancellation: &CancellationContext,
+    ) -> buck2_error::Result<Vec<BazelRepositoryRuleInvocation>> {
+        BuckStarlarkModule::with_profiling(|env| {
+            let extension_value = extension_module
+                .get_option(extension_name)
+                .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::Input))?
+                .ok_or_else(|| {
+                    buck2_error::Error::from(
+                        crate::bazel_repository::BazelRepositoryError::ModuleExtensionSymbolMissing {
+                            path: extension_path.to_string(),
+                            extension: extension_name.to_owned(),
+                        },
+                    )
+                })?;
+            let extension = crate::bazel_repository::module_extension_from_loaded_module(
+                extension_path,
+                extension_name,
+                extension_value,
+            )?;
+            let recorder = BazelRepositoryRuleRecorder::default();
+            let extra_context = PerFileTypeContext::Bzl(BzlEvalCtx::new(extension_path.clone()));
+            let extra = BuildContext::new_with_bazel_repository_rule_recorder(
+                &self.cell_info,
+                buckconfigs,
+                self.global_state.configuror.host_info(),
+                extra_context,
+                self.ignore_attrs_for_profiling,
+                &recorder,
+            );
+
+            let print = EventDispatcherPrintHandler(get_dispatcher());
+            let globals = self.global_state.globals();
+            let (finished_eval, ()) =
+                eval_provider.with_evaluator(&env, cancellation.into(), |eval, _| {
+                    eval.set_print_handler(&print);
+                    eval.set_soft_error_handler(&Buck2StarlarkSoftErrorHandler);
+                    eval.extra = Some(&extra);
+
+                    let module_ctx =
+                        crate::bazel_repository::alloc_bzlmod_module_extension_context(
+                            &extension,
+                            extension_usages_json,
+                            module_ctx_working_dir,
+                            globals,
+                            eval,
+                        )?;
+                    extension.invoke_implementation(module_ctx, eval)?;
+                    Ok(())
+                })?;
+            let (token, _) = finished_eval.finish()?;
+            Ok((token, recorder.take_invocations()))
         })
     }
 

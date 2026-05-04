@@ -67,6 +67,7 @@ use buck2_fs::error::IoResultExt;
 use buck2_fs::fs_util;
 use buck2_fs::paths::abs_norm_path::AbsNormPath;
 use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
+use buck2_interpreter_for_build::bazel_repository::evaluate_bzlmod_module_extension_repo;
 use cmp_any::PartialEqAny;
 use dice::CancellationContext;
 use dice::DiceComputations;
@@ -112,6 +113,20 @@ enum BzlmodError {
         extension_name: String,
         repo_name: String,
     },
+    #[error(
+        "bzlmod module extension `{extension_bzl_file}%{extension_name}` did not emit repository `{repo_name}`; emitted repositories: {}",
+        emitted.join(", ")
+    )]
+    ModuleExtensionRepoNotEmitted {
+        extension_bzl_file: String,
+        extension_name: String,
+        repo_name: String,
+        emitted: Vec<String>,
+    },
+    #[error(
+        "bzlmod module extension repo `{repo_name}` was emitted by repository rule `{rule_id}`, but repository_rule implementation execution is not wired yet"
+    )]
+    ModuleExtensionRepositoryRuleNotExecuted { repo_name: String, rule_id: String },
 }
 
 struct BzlmodExtractIoRequest {
@@ -1301,65 +1316,99 @@ async fn materialize_generated(
 
     cancellations
         .critical_section(|| async move {
-            if let BzlmodGeneratedCellGenerator::HttpArchive(http_archive) = &setup.generator {
-                let archive = bzlmod_generated_sibling_path(setup, path, "source.archive");
-                let temp = bzlmod_generated_sibling_path(setup, path, "extract-tmp");
-                ctx.get_blocking_executor()
-                    .execute_io(
-                        Box::new(
-                            buck2_execute::execute::clean_output_paths::CleanOutputPaths {
-                                paths: vec![path.to_owned(), archive.clone(), temp.clone()],
-                            },
-                        ),
+            match &setup.generator {
+                BzlmodGeneratedCellGenerator::ModuleExtensionRepo(module_extension) => {
+                    let module_ctx_working_dir = format!("{}/.buck2_module_ctx", path.as_str());
+                    let invocations = evaluate_bzlmod_module_extension_repo(
+                        ctx,
+                        module_extension,
+                        &module_ctx_working_dir,
                         cancellations,
                     )
                     .await?;
-                let io_provider = ctx.global_data().get_io_provider();
-                let project_root = io_provider.project_root();
-                let digest_config = ctx.global_data().get_digest_config();
-                let client = ctx.per_transaction_data().get_http_client();
-                let archive_checksum = Checksum::new(None, Some(&*http_archive.sha256))?;
-                http_download(
-                    &client,
-                    project_root,
-                    digest_config.dupe(),
-                    &archive,
-                    &http_archive.url,
-                    &archive_checksum,
-                    false,
-                )
-                .await?;
-                ctx.get_blocking_executor()
-                    .execute_io(
-                        Box::new(BzlmodGeneratedHttpArchiveIoRequest {
-                            setup: http_archive.dupe(),
-                            archive,
-                            temp,
-                            dest: path.to_owned(),
-                        }),
-                        cancellations,
+                    if let Some(invocation) = invocations
+                        .iter()
+                        .find(|invocation| invocation.name == module_extension.repo_name.as_ref())
+                    {
+                        return Err(BzlmodError::ModuleExtensionRepositoryRuleNotExecuted {
+                            repo_name: module_extension.repo_name.to_string(),
+                            rule_id: invocation.rule_id.to_string(),
+                        }
+                        .into());
+                    }
+                    let emitted = invocations
+                        .into_iter()
+                        .map(|invocation| invocation.name)
+                        .collect();
+                    return Err(BzlmodError::ModuleExtensionRepoNotEmitted {
+                        extension_bzl_file: module_extension.extension_bzl_file.to_string(),
+                        extension_name: module_extension.extension_name.to_string(),
+                        repo_name: module_extension.repo_name.to_string(),
+                        emitted,
+                    }
+                    .into());
+                }
+                BzlmodGeneratedCellGenerator::HttpArchive(http_archive) => {
+                    let archive = bzlmod_generated_sibling_path(setup, path, "source.archive");
+                    let temp = bzlmod_generated_sibling_path(setup, path, "extract-tmp");
+                    ctx.get_blocking_executor()
+                        .execute_io(
+                            Box::new(
+                                buck2_execute::execute::clean_output_paths::CleanOutputPaths {
+                                    paths: vec![path.to_owned(), archive.clone(), temp.clone()],
+                                },
+                            ),
+                            cancellations,
+                        )
+                        .await?;
+                    let io_provider = ctx.global_data().get_io_provider();
+                    let project_root = io_provider.project_root();
+                    let digest_config = ctx.global_data().get_digest_config();
+                    let client = ctx.per_transaction_data().get_http_client();
+                    let archive_checksum = Checksum::new(None, Some(&*http_archive.sha256))?;
+                    http_download(
+                        &client,
+                        project_root,
+                        digest_config.dupe(),
+                        &archive,
+                        &http_archive.url,
+                        &archive_checksum,
+                        false,
                     )
                     .await?;
-            } else {
-                ctx.get_blocking_executor()
-                    .execute_io(
-                        Box::new(
-                            buck2_execute::execute::clean_output_paths::CleanOutputPaths {
-                                paths: vec![path.to_owned()],
-                            },
-                        ),
-                        cancellations,
-                    )
-                    .await?;
-                ctx.get_blocking_executor()
-                    .execute_io(
-                        Box::new(BzlmodGeneratedIoRequest {
-                            setup: setup.dupe(),
-                            dest: path.to_owned(),
-                        }),
-                        cancellations,
-                    )
-                    .await?;
+                    ctx.get_blocking_executor()
+                        .execute_io(
+                            Box::new(BzlmodGeneratedHttpArchiveIoRequest {
+                                setup: http_archive.dupe(),
+                                archive,
+                                temp,
+                                dest: path.to_owned(),
+                            }),
+                            cancellations,
+                        )
+                        .await?;
+                }
+                _ => {
+                    ctx.get_blocking_executor()
+                        .execute_io(
+                            Box::new(
+                                buck2_execute::execute::clean_output_paths::CleanOutputPaths {
+                                    paths: vec![path.to_owned()],
+                                },
+                            ),
+                            cancellations,
+                        )
+                        .await?;
+                    ctx.get_blocking_executor()
+                        .execute_io(
+                            Box::new(BzlmodGeneratedIoRequest {
+                                setup: setup.dupe(),
+                                dest: path.to_owned(),
+                            }),
+                            cancellations,
+                        )
+                        .await?;
+                }
             }
             declare_existing_directory(ctx, path, &*materializer).await
         })

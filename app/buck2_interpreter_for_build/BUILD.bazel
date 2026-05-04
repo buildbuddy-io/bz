@@ -37,6 +37,7 @@ rust_library(
         "//app/buck2_event_observer:buck2_event_observer",
         "//app/buck2_events:buck2_events",
         "//app/buck2_fs:buck2_fs",
+        "//app/buck2_http:buck2_http",
         "//app/buck2_interpreter:buck2_interpreter",
         "//app/buck2_node:buck2_node",
         "//app/buck2_query:buck2_query",
