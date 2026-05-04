@@ -124,7 +124,7 @@ Acceptance:
 
 ## Phase 2: Module Extensions and Generated Repos
 
-Status: module dependencies, generic `use_extension(...)` bindings, extension tags, and `use_repo(...)` imports are discovered. Repo aliases are now applied through per-module bzlmod mappings: the root module sees its root-visible imports, while downloaded module cells see the deps and extension imports declared by their own `MODULE.bazel`. Extension-imported repos are represented as generated bzlmod cells using module/extension/repo canonical names, and there is a generic generated-repository file materializer for future `repository_ctx.file/template` output. Generated repos are still not created by real bzlmod extension evaluation. The previous Go/Kotlin Rust-side generated repo materializers have been removed; the remaining generated-repo paths must be replaced by generic `module_extension(...)` evaluation and repository-rule execution rather than more module-specific generators.
+Status: module dependencies, generic `use_extension(...)` bindings, extension tags, and `use_repo(...)` imports are discovered. Repo aliases are now applied through per-module bzlmod mappings: the root module sees its root-visible imports, while downloaded module cells see the deps and extension imports declared by their own `MODULE.bazel`. Extension-imported repos are represented as generated bzlmod cells using module/extension/repo canonical names, and there is a generic generated-repository file materializer for future `repository_ctx.file/template` output. `repository_rule(...)` calls can now record exported rule id, repo name, and generic keyword values when evaluated under a bzlmod repository-rule recorder. Generated repos are still not created by real bzlmod extension evaluation. The previous Go/Kotlin Rust-side generated repo materializers have been removed; the remaining generated-repo paths must be replaced by generic `module_extension(...)` evaluation and repository-rule execution rather than more module-specific generators.
 
 Implement:
 
@@ -134,7 +134,7 @@ Implement:
 - Preserve per-module repo mappings so aliases imported by `rules_go`, `gazelle`, and other dependencies do not collide in the root alias set.
 - Load and evaluate real `module_extension(...)` definitions.
 - Provide `module_ctx`, `tag_class`, `extension_metadata`, and the module/tag data model needed by rules_go and Gazelle.
-- Execute repository rules emitted by module extensions into generated external cells.
+- Execute repository rules emitted by module extensions into generated external cells using the generic recorded repository-rule invocations.
 - Implement repository context APIs initially needed by rules_go:
   - `ctx.file`
   - `ctx.template`
@@ -150,7 +150,7 @@ Immediate target:
 
 Current validation boundary:
 
-- A Bazel-valid rules_go smoke repo with direct `rules_proto` visibility now resolves root and downloaded-module aliases separately, loads rules_go through its real downloaded module cell, resolves `@io_bazel_rules_nogo` to a generated cell from the real `go_sdk` extension import, and stops at the expected missing `module_extension(...)` evaluation / `repository_rule(...)` execution handoff.
+- A Bazel-valid rules_go smoke repo with direct `rules_proto` visibility now resolves root and downloaded-module aliases separately, loads rules_go through its real downloaded module cell, resolves `@io_bazel_rules_nogo` to a generated cell from the real `go_sdk` extension import, and stops at the expected missing `module_extension(...)` evaluation handoff. Repository-rule calls have a generic recording path once module-extension evaluation supplies the bzlmod recorder.
 - The older smoke fixture's root-level `@rules_proto` load is intentionally not root-visible without a direct `bazel_dep`, matching Bazel 9.1.0 behavior.
 
 Acceptance:

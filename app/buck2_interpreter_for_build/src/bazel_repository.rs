@@ -51,6 +51,7 @@ use starlark::values::typing::StarlarkCallable;
 use starlark_map::small_map::SmallMap;
 
 use crate::attrs::starlark_attribute::StarlarkAttribute;
+use crate::interpreter::build_context::BazelRepositoryRuleInvocation;
 use crate::interpreter::build_context::BuildContext;
 use crate::interpreter::build_context::PerFileTypeContext;
 use crate::rule::NAME_ATTRIBUTE_FIELD;
@@ -68,6 +69,10 @@ enum BazelRepositoryError {
         "repository rules can only be called from within module extension implementation functions"
     )]
     RepositoryRuleCalledOutsideModuleExtension,
+    #[error("repository rule calls require a `name` argument")]
+    RepositoryRuleMissingName,
+    #[error("repository rule `name` argument must be a string, got `{0}`")]
+    RepositoryRuleNameMustBeString(String),
     #[error("attempting to instantiate a non-exported repository rule")]
     RepositoryRuleNotExported,
     #[error("`tag_classes[{0}]` must be a tag_class object, got `{1}`")]
@@ -87,6 +92,50 @@ fn current_bzl_path<'v>(
 
 fn doc_string(doc: NoneOr<&str>) -> Option<String> {
     doc.into_option().map(|doc| doc.trim().to_owned())
+}
+
+fn record_repository_rule_invocation<'v>(
+    rule_id: &StarlarkRuleType,
+    args: &Arguments<'v, '_>,
+    eval: &mut Evaluator<'v, '_, '_>,
+) -> starlark::Result<Value<'v>> {
+    let build_context = BuildContext::from_context(eval)?;
+    let recorder = build_context.bazel_repository_rule_recorder.ok_or_else(|| {
+        buck2_error::Error::from(BazelRepositoryError::RepositoryRuleCalledOutsideModuleExtension)
+    })?;
+
+    args.no_positional_args(eval.heap())?;
+
+    let mut name = None;
+    let mut attrs = Vec::new();
+    for (attr_name, attr_value) in args.names_map()? {
+        let attr_name = attr_name.as_str();
+        if attr_name == NAME_ATTRIBUTE_FIELD {
+            let Some(name_value) = attr_value.unpack_str() else {
+                return Err(buck2_error::Error::from(
+                    BazelRepositoryError::RepositoryRuleNameMustBeString(
+                        attr_value.get_type().to_owned(),
+                    ),
+                )
+                .into());
+            };
+            name = Some(name_value.to_owned());
+        } else {
+            attrs.push((attr_name.to_owned(), attr_value.to_repr()));
+        }
+    }
+    let name = name.ok_or_else(|| {
+        buck2_error::Error::from(BazelRepositoryError::RepositoryRuleMissingName)
+    })?;
+    attrs.sort_by(|(left, _), (right, _)| left.cmp(right));
+
+    recorder.record(BazelRepositoryRuleInvocation {
+        rule_id: rule_id.clone(),
+        name,
+        attrs,
+    });
+
+    Ok(Value::new_none())
 }
 
 #[derive(Debug, Allocative)]
@@ -228,13 +277,16 @@ impl<'v> StarlarkValue<'v> for StarlarkRepositoryRule<'v> {
     fn invoke(
         &self,
         _me: Value<'v>,
-        _args: &Arguments<'v, '_>,
-        _eval: &mut Evaluator<'v, '_, '_>,
+        args: &Arguments<'v, '_>,
+        eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {
-        Err(buck2_error::Error::from(
-            BazelRepositoryError::RepositoryRuleCalledOutsideModuleExtension,
-        )
-        .into())
+        let id = self.id.borrow();
+        let Some(id) = id.as_ref() else {
+            return Err(
+                buck2_error::Error::from(BazelRepositoryError::RepositoryRuleNotExported).into(),
+            );
+        };
+        record_repository_rule_invocation(id, args, eval)
     }
 
     fn documentation(&self) -> DocItem {
@@ -312,18 +364,15 @@ impl<'v> StarlarkValue<'v> for FrozenStarlarkRepositoryRule {
     fn invoke(
         &self,
         _me: Value<'v>,
-        _args: &Arguments<'v, '_>,
-        _eval: &mut Evaluator<'v, '_, '_>,
+        args: &Arguments<'v, '_>,
+        eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {
-        if self.id.is_none() {
+        let Some(id) = &self.id else {
             return Err(
                 buck2_error::Error::from(BazelRepositoryError::RepositoryRuleNotExported).into(),
             );
-        }
-        Err(buck2_error::Error::from(
-            BazelRepositoryError::RepositoryRuleCalledOutsideModuleExtension,
-        )
-        .into())
+        };
+        record_repository_rule_invocation(id, args, eval)
     }
 
     fn documentation(&self) -> DocItem {
