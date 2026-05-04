@@ -21,6 +21,9 @@ use starlark::any::ProvidesStaticType;
 use starlark::coerce::Coerce;
 use starlark::collections::SmallMap;
 use starlark::environment::GlobalsBuilder;
+use starlark::environment::Methods;
+use starlark::environment::MethodsBuilder;
+use starlark::environment::MethodsStatic;
 use starlark::eval::Arguments;
 use starlark::eval::Evaluator;
 use starlark::values::Demand;
@@ -35,8 +38,11 @@ use starlark::values::ValueLifetimeless;
 use starlark::values::ValueLike;
 use starlark::values::ValueOfUnchecked;
 use starlark::values::ValueOfUncheckedGeneric;
+use starlark::values::list::AllocList;
 use starlark::values::none::NoneType;
 use starlark::values::starlark_value;
+use starlark::values::structs::AllocStruct;
+use starlark::values::tuple::UnpackTuple;
 use starlark_map::StarlarkHasher;
 
 use crate as buck2_build_api;
@@ -242,8 +248,189 @@ fn make_cc_native_provider<'v>(
     }
 }
 
+#[derive(Debug, ProvidesStaticType, NoSerialize, Allocative)]
+struct BazelCcInternal;
+
+impl fmt::Display for BazelCcInternal {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("cc_internal")
+    }
+}
+
+starlark::starlark_simple_value!(BazelCcInternal);
+
+#[starlark_value(type = "cc_internal")]
+impl<'v> StarlarkValue<'v> for BazelCcInternal {
+    fn get_methods() -> Option<&'static Methods> {
+        static RES: MethodsStatic = MethodsStatic::new();
+        RES.methods_for_type::<Self::Canonical>(bazel_cc_internal_methods)
+    }
+
+    fn dir_attr(&self) -> Vec<String> {
+        vec![
+            "check_private_api".to_owned(),
+            "create_header_info".to_owned(),
+            "create_header_info_with_deps".to_owned(),
+            "freeze".to_owned(),
+        ]
+    }
+}
+
+fn cc_internal_kw_value<'v>(
+    kwargs: &SmallMap<String, Value<'v>>,
+    name: &str,
+    default: Value<'v>,
+) -> Value<'v> {
+    kwargs.get(name).copied().unwrap_or(default)
+}
+
+fn cc_internal_header_info_attr<'v>(
+    header_info: Value<'v>,
+    name: &str,
+    default: Value<'v>,
+    eval: &mut Evaluator<'v, '_, '_>,
+) -> starlark::Result<Value<'v>> {
+    if header_info.is_none() {
+        return Ok(default);
+    }
+    Ok(header_info.get_attr(name, eval.heap())?.unwrap_or(default))
+}
+
+fn cc_internal_alloc_header_info<'v>(
+    kwargs: &SmallMap<String, Value<'v>>,
+    eval: &mut Evaluator<'v, '_, '_>,
+) -> Value<'v> {
+    let none = Value::new_none();
+    let empty_list = eval.heap().alloc(AllocList::EMPTY);
+    eval.heap().alloc(AllocStruct([
+        (
+            "header_module",
+            cc_internal_kw_value(kwargs, "header_module", none),
+        ),
+        (
+            "pic_header_module",
+            cc_internal_kw_value(kwargs, "pic_header_module", none),
+        ),
+        (
+            "modular_public_headers",
+            cc_internal_kw_value(kwargs, "modular_public_headers", empty_list),
+        ),
+        (
+            "modular_private_headers",
+            cc_internal_kw_value(kwargs, "modular_private_headers", empty_list),
+        ),
+        (
+            "textual_headers",
+            cc_internal_kw_value(kwargs, "textual_headers", empty_list),
+        ),
+        (
+            "separate_module_headers",
+            cc_internal_kw_value(kwargs, "separate_module_headers", empty_list),
+        ),
+        (
+            "separate_module",
+            cc_internal_kw_value(kwargs, "separate_module", none),
+        ),
+        (
+            "separate_pic_module",
+            cc_internal_kw_value(kwargs, "separate_pic_module", none),
+        ),
+        ("deps", cc_internal_kw_value(kwargs, "deps", empty_list)),
+        (
+            "merged_deps",
+            cc_internal_kw_value(kwargs, "merged_deps", empty_list),
+        ),
+    ]))
+}
+
+fn cc_internal_alloc_header_info_with_deps<'v>(
+    kwargs: &SmallMap<String, Value<'v>>,
+    eval: &mut Evaluator<'v, '_, '_>,
+) -> starlark::Result<Value<'v>> {
+    let none = Value::new_none();
+    let empty_list = eval.heap().alloc(AllocList::EMPTY);
+    let header_info = cc_internal_kw_value(kwargs, "header_info", none);
+    Ok(eval.heap().alloc(AllocStruct([
+        (
+            "header_module",
+            cc_internal_header_info_attr(header_info, "header_module", none, eval)?,
+        ),
+        (
+            "pic_header_module",
+            cc_internal_header_info_attr(header_info, "pic_header_module", none, eval)?,
+        ),
+        (
+            "modular_public_headers",
+            cc_internal_header_info_attr(header_info, "modular_public_headers", empty_list, eval)?,
+        ),
+        (
+            "modular_private_headers",
+            cc_internal_header_info_attr(header_info, "modular_private_headers", empty_list, eval)?,
+        ),
+        (
+            "textual_headers",
+            cc_internal_header_info_attr(header_info, "textual_headers", empty_list, eval)?,
+        ),
+        (
+            "separate_module_headers",
+            cc_internal_header_info_attr(header_info, "separate_module_headers", empty_list, eval)?,
+        ),
+        (
+            "separate_module",
+            cc_internal_header_info_attr(header_info, "separate_module", none, eval)?,
+        ),
+        (
+            "separate_pic_module",
+            cc_internal_header_info_attr(header_info, "separate_pic_module", none, eval)?,
+        ),
+        ("deps", cc_internal_kw_value(kwargs, "deps", empty_list)),
+        (
+            "merged_deps",
+            cc_internal_kw_value(kwargs, "merged_deps", empty_list),
+        ),
+    ])))
+}
+
+#[starlark_module]
+fn bazel_cc_internal_methods(builder: &mut MethodsBuilder) {
+    fn create_header_info<'v>(
+        #[starlark(this)] _this: &BazelCcInternal,
+        #[starlark(kwargs)] kwargs: SmallMap<String, Value<'v>>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<Value<'v>> {
+        Ok(cc_internal_alloc_header_info(&kwargs, eval))
+    }
+
+    fn create_header_info_with_deps<'v>(
+        #[starlark(this)] _this: &BazelCcInternal,
+        #[starlark(kwargs)] kwargs: SmallMap<String, Value<'v>>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<Value<'v>> {
+        cc_internal_alloc_header_info_with_deps(&kwargs, eval)
+    }
+
+    fn freeze<'v>(
+        #[starlark(this)] _this: &BazelCcInternal,
+        value: Value<'v>,
+    ) -> starlark::Result<Value<'v>> {
+        Ok(value)
+    }
+
+    fn check_private_api<'v>(
+        #[starlark(this)] _this: &BazelCcInternal,
+        #[starlark(args)] _args: UnpackTuple<Value<'v>>,
+        #[starlark(kwargs)] _kwargs: SmallMap<String, Value<'v>>,
+    ) -> starlark::Result<NoneType> {
+        Ok(NoneType)
+    }
+}
+
 #[starlark_module]
 fn bazel_cc_common_module(builder: &mut GlobalsBuilder) {
+    fn internal_DO_NOT_USE() -> starlark::Result<BazelCcInternal> {
+        Ok(BazelCcInternal)
+    }
+
     fn is_cc_toolchain_resolution_enabled_do_not_use<'v>(
         #[starlark(require = named)] ctx: Value<'v>,
     ) -> starlark::Result<bool> {
@@ -284,6 +471,7 @@ pub(crate) fn register_cc_common(globals: &mut GlobalsBuilder) {
             CC_TOOLCHAIN_INFO,
             CcNativeProviderCallable::new(CC_TOOLCHAIN_INFO),
         );
+        cc_common.set("do_not_use_tools_cpp_compiler_present", NoneType);
         bazel_cc_common_module(cc_common);
     });
 }

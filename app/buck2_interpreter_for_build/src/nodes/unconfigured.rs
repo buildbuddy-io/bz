@@ -101,6 +101,7 @@ fn bazel_output_file_rule() -> buck2_error::Result<Arc<Rule>> {
             ],
             false,
             &RuleIncomingTransition::None,
+            false,
         )?,
         rule_type: RuleType::BazelOutputFile,
         rule_kind: buck2_node::nodes::unconfigured::RuleKind::Normal,

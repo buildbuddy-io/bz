@@ -36,6 +36,7 @@ use crate::bazel_configuration_field::register_bazel_configuration_field;
 use crate::bazel_native::register_bazel_native;
 use crate::bazel_package::register_bazel_package_globals;
 use crate::bazel_proto::register_bazel_proto_common;
+use crate::bazel_python::register_bazel_python_globals;
 use crate::bazel_repository::register_bazel_repository_globals;
 use crate::interpreter::functions::dedupe::register_dedupe;
 use crate::interpreter::functions::host_info::register_host_info;
@@ -92,6 +93,7 @@ pub fn register_load_natives(builder: &mut GlobalsBuilder) {
     register_bazel_configuration_field(builder);
     register_bazel_package_globals(builder);
     register_bazel_proto_common(builder);
+    register_bazel_python_globals(builder);
     register_attrs(builder);
     register_plugins(builder);
     register_providers_label(builder);

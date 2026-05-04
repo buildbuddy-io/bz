@@ -553,6 +553,7 @@ impl<'v> StarlarkRuleCallable<'v> {
             sorted_validated_attrs,
             artifact_promise_mappings.is_some(),
             &cfg,
+            is_bazel_rule,
         )?;
         let ty = Ty::ty_function(attributes.ty_function());
 

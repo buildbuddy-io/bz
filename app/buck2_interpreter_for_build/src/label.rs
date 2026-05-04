@@ -27,6 +27,7 @@ use dupe::Dupe;
 use starlark::environment::GlobalsBuilder;
 use starlark::eval::Evaluator;
 use starlark::starlark_module;
+use starlark::values::Value;
 
 use crate::interpreter::build_context::BuildContext;
 
@@ -35,6 +36,8 @@ use crate::interpreter::build_context::BuildContext;
 enum LabelCreatorError {
     #[error("Expected provider, found something else: `{0}`")]
     ExpectedProvider(String),
+    #[error("Expected string or label, found `{0}`")]
+    ExpectedStringOrLabel(String),
     #[error("Expected target, found something else: `{0}`")]
     ExpectedTarget(String),
 }
@@ -170,9 +173,20 @@ fn bazel_canonical_label_to_buck_label(label: &str) -> Option<String> {
 pub fn register_bazel_label(builder: &mut GlobalsBuilder) {
     #[allow(non_snake_case)]
     fn Label<'v>(
-        s: &str,
+        s: Value<'v>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<StarlarkProvidersLabel> {
+        if let Some(label) = StarlarkProvidersLabel::from_value(s) {
+            return Ok(StarlarkProvidersLabel::new(label.label().dupe()));
+        }
+        let Some(s) = s.unpack_str() else {
+            return Err(
+                buck2_error::Error::from(LabelCreatorError::ExpectedStringOrLabel(
+                    s.get_type().to_owned(),
+                ))
+                .into(),
+            );
+        };
         parse_providers_label(s, eval)
     }
 }

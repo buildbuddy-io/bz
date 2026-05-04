@@ -21,6 +21,7 @@ use crate::attrs::coerced_attr::CoercedAttr;
 use crate::attrs::coerced_attr_full::CoercedAttrFull;
 use crate::attrs::inspect_options::AttrInspectOptions;
 use crate::attrs::spec::internal::INCOMING_TRANSITION_ATTRIBUTE;
+use crate::attrs::spec::internal::METADATA_ATTRIBUTE;
 use crate::attrs::spec::internal::common_internal_attrs;
 use crate::attrs::spec::internal::is_internal_attr;
 use crate::attrs::values::AttrValues;
@@ -86,6 +87,7 @@ impl AttributeSpec {
         attributes: Vec<(String, Attribute)>,
         is_anon: bool,
         cfg: &RuleIncomingTransition,
+        allow_bazel_metadata_attr: bool,
     ) -> buck2_error::Result<Self> {
         let internal_attrs = common_internal_attrs();
 
@@ -110,13 +112,18 @@ impl AttributeSpec {
                 instance.coercer().validate_for_anon_rule()?;
             }
 
-            if is_internal_attr(&name) {
+            let can_override_internal =
+                allow_bazel_metadata_attr && name == METADATA_ATTRIBUTE.name;
+            if is_internal_attr(&name) && !can_override_internal {
                 return Err(AttributeSpecError::InternalAttributeRedefined(name.to_owned()).into());
             }
 
             match instances.entry(name.into_boxed_str()) {
                 small_map::Entry::Vacant(e) => {
                     e.insert(instance);
+                }
+                small_map::Entry::Occupied(mut e) if can_override_internal => {
+                    *e.get_mut() = instance;
                 }
                 small_map::Entry::Occupied(e) => {
                     let name: &str = e.key();
@@ -264,6 +271,7 @@ pub(crate) mod testing {
                 attributes.into_iter().collect(),
                 false,
                 &RuleIncomingTransition::None,
+                false,
             )
             .unwrap()
         }

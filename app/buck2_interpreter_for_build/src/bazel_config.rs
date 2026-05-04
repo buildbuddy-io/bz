@@ -23,6 +23,13 @@ use starlark::values::structs::AllocStruct;
 
 use std::fmt;
 
+#[derive(Debug, buck2_error::Error)]
+#[buck2(tag = Input)]
+enum BazelConfigError {
+    #[error("'repeatable' can only be set for a setting with 'flag = True'")]
+    RepeatableRequiresFlag,
+}
+
 #[derive(Debug, ProvidesStaticType, NoSerialize, Allocative)]
 pub(crate) struct BazelExecTransition {
     exec_group: Option<String>,
@@ -49,12 +56,20 @@ pub(crate) fn bazel_exec_transition_from_value(value: Value<'_>) -> Option<&Baze
 fn build_setting<'v>(
     kind: &'static str,
     flag: bool,
+    allow_multiple: bool,
+    repeatable: bool,
     eval: &mut Evaluator<'v, '_, '_>,
 ) -> Value<'v> {
     let kind = eval.heap().alloc(kind);
     let flag = eval.heap().alloc(flag);
-    eval.heap()
-        .alloc(AllocStruct([("type", kind), ("flag", flag)]))
+    let allow_multiple = eval.heap().alloc(allow_multiple);
+    let repeatable = eval.heap().alloc(repeatable);
+    eval.heap().alloc(AllocStruct([
+        ("type", kind),
+        ("flag", flag),
+        ("allow_multiple", allow_multiple),
+        ("repeatable", repeatable),
+    ]))
 }
 
 #[starlark_module]
@@ -63,28 +78,33 @@ fn bazel_config_module(builder: &mut GlobalsBuilder) {
         #[starlark(require = named, default = false)] flag: bool,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {
-        Ok(build_setting("int", flag, eval))
+        Ok(build_setting("int", flag, false, false, eval))
     }
 
     fn bool<'v>(
         #[starlark(require = named, default = false)] flag: bool,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {
-        Ok(build_setting("bool", flag, eval))
+        Ok(build_setting("bool", flag, false, false, eval))
     }
 
     fn string<'v>(
         #[starlark(require = named, default = false)] flag: bool,
+        #[starlark(require = named, default = false)] allow_multiple: bool,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {
-        Ok(build_setting("string", flag, eval))
+        Ok(build_setting("string", flag, allow_multiple, false, eval))
     }
 
     fn string_list<'v>(
         #[starlark(require = named, default = false)] flag: bool,
+        #[starlark(require = named, default = false)] repeatable: bool,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {
-        Ok(build_setting("string_list", flag, eval))
+        if repeatable && !flag {
+            return Err(buck2_error::Error::from(BazelConfigError::RepeatableRequiresFlag).into());
+        }
+        Ok(build_setting("string_list", flag, false, repeatable, eval))
     }
 
     fn exec(

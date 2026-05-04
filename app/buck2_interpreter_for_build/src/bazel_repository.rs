@@ -2315,13 +2315,15 @@ fn repository_ctx_wait_for_external_inputs(
             materialized = repository_ctx_external_input_ready(&path);
         }
         if !materialized {
-            return Err(buck2_error::Error::from(BazelRepositoryError::RepositoryCtxExecuteFailed {
-                program: program.to_owned(),
-                error: format!(
-                    "external input `{}` was not materialized",
-                    path.to_string_lossy()
-                ),
-            })
+            return Err(buck2_error::Error::from(
+                BazelRepositoryError::RepositoryCtxExecuteFailed {
+                    program: program.to_owned(),
+                    error: format!(
+                        "external input `{}` was not materialized",
+                        path.to_string_lossy()
+                    ),
+                },
+            )
             .into());
         }
     }
@@ -2751,8 +2753,7 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
             })
             .collect::<Vec<_>>();
         repository_ctx_wait_for_external_inputs(
-            std::iter::once(program.clone())
-                .chain(arguments.iter().cloned()),
+            std::iter::once(program.clone()).chain(arguments.iter().cloned()),
             &repository_working_dir_abs,
             &program,
         )?;

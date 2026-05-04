@@ -909,9 +909,7 @@ fn write_bazel_features_globals_repo(
         .with_buck_error_context(|| {
             format!("Error reading bazel_features globals `{}`", globals_path)
         })?;
-    let globals = parse_bazel_features_string_dict(&globals_text, "GLOBALS", &globals_path)?;
-    let legacy_globals =
-        parse_bazel_features_string_dict(&globals_text, "LEGACY_GLOBALS", &globals_path)?;
+    let globals = parse_bazel_features_globals_dict(&globals_text, &globals_path)?;
 
     write_generated_module_file(dest, "bazel_features_globals")?;
     fs_util::write(
@@ -921,21 +919,19 @@ fn write_bazel_features_globals_repo(
     .categorize_internal()?;
 
     let mut globals_bzl = String::from("globals = struct(\n");
-    for (global, version) in globals {
-        let value = if bazel_version_ge(&setup.bazel_version, &version) {
+    for (global, versions) in globals {
+        let value = if bazel_feature_global_is_available(
+            &setup.bazel_version,
+            &versions.min_version,
+            &versions.max_version,
+        ) {
             global.as_str()
         } else {
             "None"
         };
-        globals_bzl.push_str(&format!("    {global} = {value},\n"));
-    }
-    for (global, version) in legacy_globals {
-        let value = if bazel_version_lt(&setup.bazel_version, &version) {
-            format!("getattr(getattr(native, 'legacy_globals', None), {global:?}, {global})")
-        } else {
-            "None".to_owned()
-        };
-        globals_bzl.push_str(&format!("    {global} = {value},\n"));
+        globals_bzl.push_str(&format!(
+            "    {global} = getattr(getattr(native, 'legacy_globals', None), {global:?}, {value}),\n"
+        ));
     }
     globals_bzl.push_str(")\n");
     fs_util::write(
@@ -946,19 +942,22 @@ fn write_bazel_features_globals_repo(
     Ok(())
 }
 
-fn parse_bazel_features_string_dict(
+struct BazelFeatureGlobalVersions {
+    min_version: String,
+    max_version: String,
+}
+
+fn parse_bazel_features_globals_dict(
     text: &str,
-    dict: &'static str,
     path: &ProjectRelativePath,
-) -> buck2_error::Result<BTreeMap<String, String>> {
+) -> buck2_error::Result<BTreeMap<String, BazelFeatureGlobalVersions>> {
     let mut values = BTreeMap::new();
     let mut in_dict = false;
-    let start = format!("{dict} = {{");
 
     for line in text.lines() {
         let line = strip_starlark_line_comment(line).trim();
         if !in_dict {
-            if line == start {
+            if line == "GLOBALS = {" {
                 in_dict = true;
             }
             continue;
@@ -973,15 +972,21 @@ fn parse_bazel_features_string_dict(
             continue;
         };
         let value = value.trim().trim_end_matches(',');
-        let Some(value) = parse_simple_bzl_string(value) else {
+        let Some((min_version, max_version)) = parse_bazel_features_version_pair(value) else {
             continue;
         };
-        values.insert(key, value);
+        values.insert(
+            key,
+            BazelFeatureGlobalVersions {
+                min_version,
+                max_version,
+            },
+        );
     }
 
     Err(BzlmodError::MissingBazelFeaturesGlobalsDict {
         path: path.to_string(),
-        dict,
+        dict: "GLOBALS",
     }
     .into())
 }
@@ -1024,6 +1029,29 @@ fn parse_simple_bzl_string(value: &str) -> Option<String> {
     }
     let value = value.strip_prefix(quote)?.strip_suffix(quote)?;
     Some(value.to_owned())
+}
+
+fn parse_bazel_features_version_pair(value: &str) -> Option<(String, String)> {
+    let value = value
+        .strip_prefix('(')
+        .and_then(|value| value.strip_suffix(')'))
+        .or_else(|| {
+            value
+                .strip_prefix('[')
+                .and_then(|value| value.strip_suffix(']'))
+        })?;
+    let mut parts = value.split(',');
+    let min_version = parse_simple_bzl_string(parts.next()?.trim())?;
+    let max_version = parse_simple_bzl_string(parts.next()?.trim())?;
+    if parts.next().is_some() {
+        return None;
+    }
+    Some((min_version, max_version))
+}
+
+fn bazel_feature_global_is_available(current: &str, min_version: &str, max_version: &str) -> bool {
+    (min_version.is_empty() || bazel_version_ge(current, min_version))
+        && (max_version.is_empty() || bazel_version_lt(current, max_version))
 }
 
 fn bazel_version_ge(current: &str, required: &str) -> bool {

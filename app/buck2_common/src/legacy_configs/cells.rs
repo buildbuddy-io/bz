@@ -12,9 +12,15 @@ use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::collections::VecDeque;
+use std::fs;
+use std::path::Path;
+use std::process::Command;
+use std::process::Stdio;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
+use std::time::SystemTime;
+use std::time::UNIX_EPOCH;
 
 use allocative::Allocative;
 use buck2_core::buck2_env;
@@ -68,6 +74,8 @@ use futures::stream::FuturesUnordered;
 use pagable::Pagable;
 use serde::Deserialize;
 use serde::Serialize;
+use sha2::Digest;
+use sha2::Sha256;
 
 use crate::dice::cells::HasCellResolver;
 use crate::dice::data::HasIoProvider;
@@ -1024,6 +1032,7 @@ struct DiscoveredBcrModule {
     module_aliases: Vec<String>,
     use_repo_aliases: Vec<String>,
     extension_usages: Vec<BzlmodExtensionUsage>,
+    use_repo_rule_invocations: Vec<BzlmodUseRepoRuleInvocation>,
     constants: Vec<(String, String)>,
     registered_toolchains: Vec<String>,
     deps: Vec<BazelDep>,
@@ -1036,6 +1045,7 @@ struct RootBzlmodModule {
     canonical_repo_name: String,
     constants: Vec<(String, String)>,
     extension_usages: Vec<BzlmodExtensionUsage>,
+    use_repo_rule_invocations: Vec<BzlmodUseRepoRuleInvocation>,
 }
 
 #[derive(Clone, Debug)]
@@ -1059,6 +1069,14 @@ struct BzlmodExtensionTag {
     tag_name: String,
     bindings: Vec<(String, String)>,
     kwargs: Vec<(String, String)>,
+}
+
+#[derive(Clone, Debug)]
+struct BzlmodUseRepoRuleInvocation {
+    rule_bzl_file: String,
+    rule_name: String,
+    repo_name: String,
+    attrs: Vec<(String, String)>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -1178,6 +1196,17 @@ struct BcrSourceJson {
     patch_strip: Option<u32>,
 }
 
+#[derive(Clone, Debug)]
+struct BzlmodArchiveOverride {
+    module_name: String,
+    url: String,
+    integrity: String,
+    strip_prefix: Option<String>,
+    archive_type: Option<String>,
+    patches: Vec<String>,
+    patch_strip: Option<u32>,
+}
+
 async fn get_bazel_module_resolution(
     cell_path: &CellRootPath,
     file_ops: &mut dyn ConfigParserFileOps,
@@ -1186,6 +1215,7 @@ async fn get_bazel_module_resolution(
 ) -> buck2_error::Result<BazelModuleCellAliases> {
     let mut aliases = BazelModuleCellAliases::default();
     let mut root_deps = Vec::new();
+    let mut archive_overrides = BTreeMap::new();
     let mut root_module_lines = Vec::new();
     let mut seen = BTreeSet::new();
     let mut stack = vec!["MODULE.bazel".to_owned()];
@@ -1220,9 +1250,7 @@ async fn get_bazel_module_resolution(
             let Some(name) = bzl_string_arg(&call, "name") else {
                 continue;
             };
-            let Some(version) = bzl_string_arg(&call, "version") else {
-                continue;
-            };
+            let version = bzl_string_arg(&call, "version").unwrap_or_default();
             let apparent_name = bzl_repo_name_arg(&call, &name);
             root_deps.push(BazelDep {
                 name,
@@ -1232,11 +1260,8 @@ async fn get_bazel_module_resolution(
         }
 
         for call in collect_bzl_calls(&lines, "archive_override(") {
-            return Err(buck2_error!(
-                buck2_error::ErrorTag::Input,
-                "archive_override is not implemented in Buck2 bzlmod resolution yet: {}",
-                call
-            ));
+            let archive_override = bzlmod_archive_override_from_call(&call)?;
+            archive_overrides.insert(archive_override.module_name.clone(), archive_override);
         }
 
         for call in collect_bzl_calls(&lines, "git_override(") {
@@ -1255,16 +1280,6 @@ async fn get_bazel_module_resolution(
             ));
         }
 
-        for repo_rule in bzl_use_repo_rule_names(&lines) {
-            for call in collect_bzl_calls(&lines, &format!("{repo_rule}(")) {
-                return Err(buck2_error!(
-                    buck2_error::ErrorTag::Input,
-                    "use_repo_rule repositories are not implemented in Buck2 bzlmod resolution yet: {}",
-                    call
-                ));
-            }
-        }
-
         aliases
             .registered_toolchains
             .extend(bzlmod_registered_toolchains_from_lines(&lines, false));
@@ -1278,10 +1293,21 @@ async fn get_bazel_module_resolution(
         }
     }
 
-    let root_module = bzlmod_root_module_from_lines(&root_module_lines);
+    let single_version_overrides = bzlmod_single_version_overrides_from_lines(&root_module_lines);
+    for dep in &mut root_deps {
+        if archive_overrides.contains_key(&dep.name) {
+            dep.version.clear();
+        } else if let Some(version) = single_version_overrides.get(&dep.name) {
+            dep.version = version.clone();
+        }
+    }
+
+    let root_module = bzlmod_root_module_from_lines(&root_module_lines)?;
     let bcr_resolution = resolve_bcr_modules(
         root_deps,
         root_module,
+        archive_overrides,
+        single_version_overrides,
         bzlmod_module_extension_results_complete,
         bzlmod_module_extension_results,
     )
@@ -1313,6 +1339,8 @@ async fn bzlmod_http_client() -> buck2_error::Result<HttpClient> {
 async fn resolve_bcr_modules(
     root_deps: Vec<BazelDep>,
     root_module: RootBzlmodModule,
+    archive_overrides: BTreeMap<String, BzlmodArchiveOverride>,
+    single_version_overrides: BTreeMap<String, String>,
     bzlmod_module_extension_results_complete: bool,
     bzlmod_module_extension_results: &[BzlmodEvaluatedModuleExtension],
 ) -> buck2_error::Result<BcrResolution> {
@@ -1329,6 +1357,8 @@ async fn resolve_bcr_modules(
                 resolve_bcr_modules_with_client(
                     root_deps,
                     root_module,
+                    archive_overrides,
+                    single_version_overrides,
                     &client,
                     bzlmod_module_extension_results_complete,
                     &bzlmod_module_extension_results,
@@ -1349,6 +1379,8 @@ async fn resolve_bcr_modules(
 async fn resolve_bcr_modules_with_client(
     root_deps: Vec<BazelDep>,
     root_module: RootBzlmodModule,
+    archive_overrides: BTreeMap<String, BzlmodArchiveOverride>,
+    single_version_overrides: BTreeMap<String, String>,
     client: &HttpClient,
     bzlmod_module_extension_results_complete: bool,
     bzlmod_module_extension_results: &[BzlmodEvaluatedModuleExtension],
@@ -1359,7 +1391,15 @@ async fn resolve_bcr_modules_with_client(
     let mut pending = FuturesUnordered::<BcrModuleFetch>::new();
 
     for dep in &root_deps {
-        schedule_bcr_module_fetch(registry, client, dep.clone(), &mut scheduled, &mut pending);
+        schedule_bcr_module_fetch(
+            registry,
+            client,
+            dep.clone(),
+            &archive_overrides,
+            &single_version_overrides,
+            &mut scheduled,
+            &mut pending,
+        );
     }
 
     while let Some(module) = pending.next().await {
@@ -1370,6 +1410,8 @@ async fn resolve_bcr_modules_with_client(
                 registry,
                 client,
                 child.clone(),
+                &archive_overrides,
+                &single_version_overrides,
                 &mut scheduled,
                 &mut pending,
             );
@@ -1583,6 +1625,15 @@ fn resolve_generated_bzlmod_repos(
         cell_aliases_by_cell,
         canonical_repo_names_by_cell,
     )?;
+    resolve_bzlmod_use_repo_rule_generated_repos(
+        &root_module.use_repo_rule_invocations,
+        &root_module.canonical_repo_name,
+        "root",
+        true,
+        cell_aliases_by_cell,
+        &mut generated,
+        &mut generated_repo_declaring_cells,
+    )?;
     let mut needs_local_config_platform = false;
     for key in selected_keys {
         let Some(module) = discovered.get(key) else {
@@ -1594,6 +1645,15 @@ fn resolve_generated_bzlmod_repos(
             &module.dep.version,
         )?;
         let parent_cell_name = bzlmod_cell_name(&parent_canonical_repo_name);
+        resolve_bzlmod_use_repo_rule_generated_repos(
+            &module.use_repo_rule_invocations,
+            &parent_canonical_repo_name,
+            &parent_cell_name,
+            false,
+            cell_aliases_by_cell,
+            &mut generated,
+            &mut generated_repo_declaring_cells,
+        )?;
         if module.dep.name == "rules_cc" {
             for alias in &module.use_repo_aliases {
                 let generator = match alias.as_str() {
@@ -1872,6 +1932,10 @@ fn resolve_bzlmod_extension_usage_generated_repos(
         extension_unique_names,
     )?;
     let extension_group_key = resolved_extension.unique_name.clone();
+    let mut existing_generated_repos = extension_generated_repo_groups
+        .get(&extension_group_key)
+        .map(|generated_repos| generated_repos.iter().cloned().collect::<BTreeMap<_, _>>())
+        .unwrap_or_default();
 
     let imports_needing_generic_repos = usage
         .imports
@@ -1951,6 +2015,17 @@ fn resolve_bzlmod_extension_usage_generated_repos(
             ));
         }
 
+        if let Some(generated_cell_name) = existing_generated_repos.get(&import.repo_name) {
+            add_bzlmod_cell_alias(
+                cell_aliases_by_cell,
+                parent_cell_name,
+                &import.alias,
+                generated_cell_name,
+            );
+            generated_repo_names.remove(&import.repo_name);
+            continue;
+        }
+
         let canonical_repo_name =
             bzlmod_extension_repo_canonical_repo_name(&resolved_extension, &import.repo_name);
         let generator_json = serde_json::to_string(&bzlmod_module_extension_repo_config(
@@ -1975,11 +2050,15 @@ fn resolve_bzlmod_extension_usage_generated_repos(
         extension_generated_repo_groups
             .entry(extension_group_key.clone())
             .or_default()
-            .push((import.repo_name.clone(), generated_cell_name));
+            .push((import.repo_name.clone(), generated_cell_name.clone()));
+        existing_generated_repos.insert(import.repo_name.clone(), generated_cell_name);
         generated_repo_names.remove(&import.repo_name);
     }
 
     for repo_name in generated_repo_names {
+        if existing_generated_repos.contains_key(&repo_name) {
+            continue;
+        }
         let canonical_repo_name =
             bzlmod_extension_repo_canonical_repo_name(&resolved_extension, &repo_name);
         let generator_json = serde_json::to_string(&bzlmod_module_extension_repo_config(
@@ -2002,7 +2081,8 @@ fn resolve_bzlmod_extension_usage_generated_repos(
         extension_generated_repo_groups
             .entry(extension_group_key.clone())
             .or_default()
-            .push((repo_name, generated_cell_name));
+            .push((repo_name.clone(), generated_cell_name.clone()));
+        existing_generated_repos.insert(repo_name, generated_cell_name);
     }
 
     Ok(())
@@ -2198,7 +2278,13 @@ fn add_generated_bzlmod_repo_mappings(
     generated_repo_declaring_cells: &[(String, String)],
     extension_generated_repo_groups: &BTreeMap<String, Vec<(String, String)>>,
 ) {
+    let mut mapped_declaring_cells = BTreeSet::new();
     for (generated_cell_name, declaring_cell_name) in generated_repo_declaring_cells {
+        if !mapped_declaring_cells
+            .insert((generated_cell_name.clone(), declaring_cell_name.clone()))
+        {
+            continue;
+        }
         let Some(declaring_aliases) = cell_aliases_by_cell.get(declaring_cell_name).cloned() else {
             continue;
         };
@@ -2209,8 +2295,9 @@ fn add_generated_bzlmod_repo_mappings(
     }
 
     for generated_repos in extension_generated_repo_groups.values() {
-        for (_, generated_cell_name) in generated_repos {
-            for (repo_name, target_cell_name) in generated_repos {
+        let generated_repos = generated_repos.iter().cloned().collect::<BTreeMap<_, _>>();
+        for generated_cell_name in generated_repos.values() {
+            for (repo_name, target_cell_name) in &generated_repos {
                 add_bzlmod_cell_alias(
                     cell_aliases_by_cell,
                     generated_cell_name,
@@ -2220,6 +2307,125 @@ fn add_generated_bzlmod_repo_mappings(
             }
         }
     }
+}
+
+fn resolve_bzlmod_use_repo_rule_generated_repos(
+    invocations: &[BzlmodUseRepoRuleInvocation],
+    parent_canonical_repo_name: &str,
+    parent_cell_name: &str,
+    parent_is_root: bool,
+    cell_aliases_by_cell: &mut BTreeMap<String, BTreeMap<String, String>>,
+    generated: &mut Vec<BazelCompatExternalModule>,
+    generated_repo_declaring_cells: &mut Vec<(String, String)>,
+) -> buck2_error::Result<()> {
+    for invocation in invocations {
+        let (rule_bzl_cell, rule_bzl_path) = bzlmod_resolve_extension_bzl_label(
+            parent_cell_name,
+            &invocation.rule_bzl_file,
+            cell_aliases_by_cell,
+        )?;
+        let canonical_repo_name = bzlmod_use_repo_rule_canonical_repo_name(
+            parent_canonical_repo_name,
+            parent_is_root,
+            &invocation.rule_name,
+            &invocation.repo_name,
+        );
+        let label_deps = bzlmod_repository_rule_invocation_label_deps(
+            parent_cell_name,
+            &invocation.attrs,
+            cell_aliases_by_cell,
+        );
+        let generator_json =
+            serde_json::to_string(&BzlmodGeneratedRepoConfig::RepositoryRuleInvocation {
+                repo_name: invocation.repo_name.clone(),
+                rule_bzl_cell,
+                rule_bzl_path,
+                rule_bzl_build_file_cell: parent_cell_name.to_owned(),
+                rule_name: invocation.rule_name.clone(),
+                attrs: invocation.attrs.clone(),
+                label_deps,
+            })
+            .buck_error_context("Error serializing use_repo_rule repository configuration")?;
+        add_generated_bzlmod_repo(
+            generated,
+            generated_repo_declaring_cells,
+            cell_aliases_by_cell,
+            parent_cell_name,
+            &invocation.repo_name,
+            &canonical_repo_name,
+            generator_json,
+        );
+    }
+    Ok(())
+}
+
+fn bzlmod_use_repo_rule_canonical_repo_name(
+    parent_canonical_repo_name: &str,
+    parent_is_root: bool,
+    rule_name: &str,
+    repo_name: &str,
+) -> String {
+    let extension_unique_name = if parent_is_root {
+        format!("+{rule_name}")
+    } else {
+        format!("{parent_canonical_repo_name}+{rule_name}")
+    };
+    bzlmod_extension_unique_repo_canonical_repo_name(&extension_unique_name, repo_name)
+}
+
+fn bzlmod_repository_rule_invocation_label_deps(
+    current_cell_name: &str,
+    attrs: &[(String, String)],
+    cell_aliases_by_cell: &BTreeMap<String, BTreeMap<String, String>>,
+) -> Vec<String> {
+    let mut label_deps = BTreeSet::new();
+    for (_, expression) in attrs {
+        let Some(label) = bzl_label_expression_value(expression) else {
+            continue;
+        };
+        let Some(cell_name) =
+            bzlmod_label_dep_cell_name(current_cell_name, &label, cell_aliases_by_cell)
+        else {
+            continue;
+        };
+        label_deps.insert(cell_name);
+    }
+    label_deps.into_iter().collect()
+}
+
+fn bzl_label_expression_value(expression: &str) -> Option<String> {
+    let expression = expression.trim();
+    let args = expression
+        .strip_prefix("Label(")
+        .and_then(|value| value.strip_suffix(')'))?;
+    bzl_string_literal_value(args.trim())
+}
+
+fn bzlmod_label_dep_cell_name(
+    current_cell_name: &str,
+    label: &str,
+    cell_aliases_by_cell: &BTreeMap<String, BTreeMap<String, String>>,
+) -> Option<String> {
+    if let Some(rest) = label.strip_prefix("@@") {
+        let (canonical_repo_name, _) = rest.split_once("//")?;
+        return Some(if canonical_repo_name == "bazel_tools" {
+            "bazel_tools".to_owned()
+        } else {
+            bzlmod_cell_name(canonical_repo_name)
+        });
+    }
+    if let Some(rest) = label.strip_prefix('@') {
+        let (alias, _) = rest.split_once("//")?;
+        if alias == "bazel_tools" {
+            return Some("bazel_tools".to_owned());
+        }
+        return bzlmod_cell_alias_target(cell_aliases_by_cell, current_cell_name, alias)
+            .map(str::to_owned);
+    }
+    if label.starts_with("//") || label.starts_with(':') {
+        return Some(current_cell_name.to_owned());
+    }
+    None
 }
 
 fn bzlmod_extension_tag_repo_names(usage: &BzlmodExtensionUsage) -> Vec<String> {
@@ -2677,13 +2883,21 @@ type BcrModuleFetch = BoxFuture<'static, buck2_error::Result<DiscoveredBcrModule
 fn schedule_bcr_module_fetch(
     registry: &'static str,
     client: &HttpClient,
-    dep: BazelDep,
+    mut dep: BazelDep,
+    archive_overrides: &BTreeMap<String, BzlmodArchiveOverride>,
+    single_version_overrides: &BTreeMap<String, String>,
     scheduled: &mut BTreeSet<(String, String)>,
     pending: &mut FuturesUnordered<BcrModuleFetch>,
 ) {
+    if archive_overrides.contains_key(&dep.name) {
+        dep.version.clear();
+    } else if let Some(version) = single_version_overrides.get(&dep.name) {
+        dep.version = version.clone();
+    }
     let key = (dep.name.clone(), dep.version.clone());
     if scheduled.insert(key) {
-        pending.push(fetch_bcr_module(registry, client.dupe(), dep).boxed());
+        let archive_override = archive_overrides.get(&dep.name).cloned();
+        pending.push(fetch_bcr_module(registry, client.dupe(), dep, archive_override).boxed());
     }
 }
 
@@ -2691,22 +2905,48 @@ async fn fetch_bcr_module(
     registry: &'static str,
     client: HttpClient,
     dep: BazelDep,
+    archive_override: Option<BzlmodArchiveOverride>,
 ) -> buck2_error::Result<DiscoveredBcrModule> {
-    let source_url = format!(
-        "{registry}/modules/{}/{}/source.json",
-        dep.name, dep.version
-    );
-    let module_url = format!(
-        "{registry}/modules/{}/{}/MODULE.bazel",
-        dep.name, dep.version
-    );
-    let source_json: BcrSourceJson =
-        serde_json::from_str(&http_get_text(&client, &source_url).await?)
-            .with_buck_error_context(|| format!("Invalid BCR source metadata at `{source_url}`"))?;
-    let module_text = http_get_text(&client, &module_url).await?;
+    let (source_json, module_text) = if let Some(archive_override) = archive_override.as_ref() {
+        let source_json = BcrSourceJson {
+            url: archive_override.url.clone(),
+            integrity: archive_override.integrity.clone(),
+            strip_prefix: archive_override.strip_prefix.clone(),
+            archive_type: archive_override.archive_type.clone(),
+            patches: None,
+            patch_strip: archive_override.patch_strip,
+        };
+        let module_text = fetch_archive_override_module_file(&client, archive_override)
+            .await
+            .with_buck_error_context(|| {
+                format!(
+                    "Error reading MODULE.bazel from archive_override for module `{}`",
+                    dep.name
+                )
+            })?;
+        (source_json, module_text)
+    } else {
+        let source_url = format!(
+            "{registry}/modules/{}/{}/source.json",
+            dep.name, dep.version
+        );
+        let module_url = format!(
+            "{registry}/modules/{}/{}/MODULE.bazel",
+            dep.name, dep.version
+        );
+        let source_json: BcrSourceJson =
+            serde_json::from_str(&http_get_text(&client, &source_url).await?)
+                .with_buck_error_context(|| {
+                    format!("Invalid BCR source metadata at `{source_url}`")
+                })?;
+        let module_text = http_get_text(&client, &module_url).await?;
+        (source_json, module_text)
+    };
     let module_lines = module_text.lines().map(str::to_owned).collect::<Vec<_>>();
     let constants = bzlmod_module_constants_from_lines(&module_lines);
     let extension_usages = bzlmod_extension_usages_from_lines(&module_lines, &constants, true);
+    let use_repo_rule_invocations =
+        bzlmod_use_repo_rule_invocations_from_lines(&module_lines, &constants, true)?;
 
     Ok(DiscoveredBcrModule {
         dep,
@@ -2714,6 +2954,7 @@ async fn fetch_bcr_module(
         module_aliases: bzlmod_module_aliases(&module_lines),
         use_repo_aliases: bzlmod_use_repo_aliases_from_usages(&extension_usages),
         extension_usages,
+        use_repo_rule_invocations,
         constants,
         registered_toolchains: bzlmod_registered_toolchains_from_lines(&module_lines, true),
         deps: bzlmod_deps_from_lines(&module_lines, true),
@@ -2721,6 +2962,13 @@ async fn fetch_bcr_module(
 }
 
 async fn http_get_text(client: &HttpClient, url: &str) -> buck2_error::Result<String> {
+    let bytes = http_get_bytes(client, url).await?;
+    String::from_utf8(bytes)
+        .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::Input))
+        .with_buck_error_context(|| format!("Invalid UTF-8 response from `{url}`"))
+}
+
+async fn http_get_bytes(client: &HttpClient, url: &str) -> buck2_error::Result<Vec<u8>> {
     let response = client
         .get(url)
         .await
@@ -2731,9 +2979,184 @@ async fn http_get_text(client: &HttpClient, url: &str) -> buck2_error::Result<St
         let chunk = chunk.map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::Tier0))?;
         bytes.extend_from_slice(&chunk);
     }
-    String::from_utf8(bytes)
-        .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::Input))
-        .with_buck_error_context(|| format!("Invalid UTF-8 response from `{url}`"))
+    Ok(bytes)
+}
+
+async fn fetch_archive_override_module_file(
+    client: &HttpClient,
+    archive_override: &BzlmodArchiveOverride,
+) -> buck2_error::Result<String> {
+    let bytes = http_get_bytes(client, &archive_override.url).await?;
+    verify_bzlmod_archive_integrity(&archive_override.url, &archive_override.integrity, &bytes)?;
+
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::Tier0))?
+        .as_nanos();
+    let temp = std::env::temp_dir().join(format!(
+        "buck2-bzlmod-archive-{}-{unique}",
+        sanitize_bzlmod_temp_name(&archive_override.module_name)
+    ));
+    let archive = temp.join("source.archive");
+    let extract_dir = temp.join("extract");
+    fs::create_dir_all(&extract_dir)
+        .with_buck_error_context(|| format!("Error creating `{}`", extract_dir.display()))?;
+    fs::write(&archive, bytes)
+        .with_buck_error_context(|| format!("Error writing `{}`", archive.display()))?;
+    extract_bzlmod_archive_override(archive_override, &archive, &extract_dir)?;
+
+    if !archive_override.patches.is_empty() {
+        // Local patch labels are applied during final external-cell materialization. For module
+        // discovery, the unpatched MODULE.bazel is sufficient for the current override set.
+    }
+
+    let module_file = archive_override
+        .strip_prefix
+        .as_ref()
+        .map(|strip_prefix| extract_dir.join(strip_prefix).join("MODULE.bazel"))
+        .unwrap_or_else(|| extract_dir.join("MODULE.bazel"));
+    let module_text = fs::read_to_string(&module_file)
+        .with_buck_error_context(|| format!("Error reading `{}`", module_file.display()))?;
+    let _ = fs::remove_dir_all(&temp);
+    Ok(module_text)
+}
+
+fn extract_bzlmod_archive_override(
+    archive_override: &BzlmodArchiveOverride,
+    archive: &Path,
+    extract_dir: &Path,
+) -> buck2_error::Result<()> {
+    let archive_type = archive_override
+        .archive_type
+        .as_deref()
+        .or_else(|| archive.extension().and_then(|ext| ext.to_str()))
+        .unwrap_or("");
+    let mut command = if archive_type == "zip" || archive_override.url.ends_with(".zip") {
+        let mut command = Command::new("unzip");
+        command.arg("-q").arg(archive).arg("-d").arg(extract_dir);
+        command
+    } else if matches!(
+        archive_type,
+        "tar" | "gz" | "tgz" | "tar.gz" | "tar.xz" | "tar.bz2"
+    ) || archive_override.url.ends_with(".tar.gz")
+        || archive_override.url.ends_with(".tgz")
+        || archive_override.url.ends_with(".tar.xz")
+        || archive_override.url.ends_with(".tar.bz2")
+        || archive_override.url.ends_with(".tar")
+    {
+        let mut command = Command::new("tar");
+        command.arg("-xf").arg(archive).arg("-C").arg(extract_dir);
+        command
+    } else {
+        return Err(buck2_error!(
+            buck2_error::ErrorTag::Input,
+            "unsupported archive_override archive type for `{}`",
+            archive_override.url
+        ));
+    };
+
+    let output = command
+        .stderr(Stdio::piped())
+        .stdout(Stdio::null())
+        .output()
+        .buck_error_context("Could not run archive_override extractor")?;
+    if !output.status.success() {
+        return Err(buck2_error!(
+            buck2_error::ErrorTag::Input,
+            "archive_override extraction failed for `{}` with exit code {:?}: {}",
+            archive_override.url,
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    Ok(())
+}
+
+fn verify_bzlmod_archive_integrity(
+    url: &str,
+    integrity: &str,
+    bytes: &[u8],
+) -> buck2_error::Result<()> {
+    let Some(expected) = bzlmod_integrity_sha256_bytes(integrity)? else {
+        return Ok(());
+    };
+    let got = Sha256::digest(bytes);
+    if got.as_slice() != expected.as_slice() {
+        return Err(buck2_error!(
+            buck2_error::ErrorTag::Input,
+            "archive_override integrity mismatch for `{}`: expected {}, got {}",
+            url,
+            hex::encode(expected),
+            hex::encode(got)
+        ));
+    }
+    Ok(())
+}
+
+fn bzlmod_integrity_sha256_bytes(integrity: &str) -> buck2_error::Result<Option<Vec<u8>>> {
+    if integrity.is_empty() {
+        return Ok(None);
+    }
+    let Some(encoded) = integrity.strip_prefix("sha256-") else {
+        return Err(buck2_error!(
+            buck2_error::ErrorTag::Input,
+            "unsupported bzlmod archive integrity `{}`",
+            integrity
+        ));
+    };
+    let bytes = bzlmod_base64_decode(encoded)?;
+    if bytes.len() != 32 {
+        return Err(buck2_error!(
+            buck2_error::ErrorTag::Input,
+            "invalid bzlmod sha256 integrity `{}`",
+            integrity
+        ));
+    }
+    Ok(Some(bytes))
+}
+
+fn bzlmod_base64_decode(encoded: &str) -> buck2_error::Result<Vec<u8>> {
+    let mut out = Vec::new();
+    let mut buffer = 0u32;
+    let mut bits = 0u8;
+    for ch in encoded.chars() {
+        if ch == '=' {
+            break;
+        }
+        let value = match ch {
+            'A'..='Z' => ch as u32 - 'A' as u32,
+            'a'..='z' => ch as u32 - 'a' as u32 + 26,
+            '0'..='9' => ch as u32 - '0' as u32 + 52,
+            '+' => 62,
+            '/' => 63,
+            _ => {
+                return Err(buck2_error!(
+                    buck2_error::ErrorTag::Input,
+                    "invalid base64 character `{}` in bzlmod integrity",
+                    ch
+                ));
+            }
+        };
+        buffer = (buffer << 6) | value;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push(((buffer >> bits) & 0xff) as u8);
+        }
+    }
+    Ok(out)
+}
+
+fn sanitize_bzlmod_temp_name(name: &str) -> String {
+    name.chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '_' || ch == '-' {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect()
 }
 
 fn bzlmod_deps_from_lines(lines: &[String], ignore_dev_deps: bool) -> Vec<BazelDep> {
@@ -2745,9 +3168,7 @@ fn bzlmod_deps_from_lines(lines: &[String], ignore_dev_deps: bool) -> Vec<BazelD
         let Some(name) = bzl_string_arg(&call, "name") else {
             continue;
         };
-        let Some(version) = bzl_string_arg(&call, "version") else {
-            continue;
-        };
+        let version = bzl_string_arg(&call, "version").unwrap_or_default();
         let apparent_name = bzl_repo_name_arg(&call, &name);
         deps.push(BazelDep {
             name,
@@ -2773,7 +3194,74 @@ fn bzlmod_module_aliases(lines: &[String]) -> Vec<String> {
     aliases
 }
 
-fn bzlmod_root_module_from_lines(lines: &[String]) -> RootBzlmodModule {
+fn bzlmod_archive_override_from_call(call: &str) -> buck2_error::Result<BzlmodArchiveOverride> {
+    let module_name = bzl_string_arg(call, "module_name").ok_or_else(|| {
+        buck2_error!(
+            buck2_error::ErrorTag::Input,
+            "archive_override must have a literal string `module_name`: {}",
+            call
+        )
+    })?;
+    let urls = bzl_call_named_arg_value(call, "urls")
+        .as_deref()
+        .and_then(|value| bzl_string_sequence_expression_raw_values(value, &[]))
+        .unwrap_or_default();
+    let url = if let Some(url) = urls.first() {
+        url.clone()
+    } else if let Some(url) = bzl_string_arg(call, "url") {
+        url
+    } else {
+        return Err(buck2_error!(
+            buck2_error::ErrorTag::Input,
+            "archive_override for module `{}` must have a literal `url` or non-empty `urls`",
+            module_name
+        ));
+    };
+    let integrity = bzl_string_arg(call, "integrity").unwrap_or_default();
+    let strip_prefix = bzl_string_arg(call, "strip_prefix");
+    let archive_type =
+        bzl_string_arg(call, "type").or_else(|| bzl_string_arg(call, "archive_type"));
+    let patches = bzl_call_named_arg_value(call, "patches")
+        .as_deref()
+        .and_then(|value| bzl_string_sequence_expression_raw_values(value, &[]))
+        .unwrap_or_default();
+    let patch_strip = bzl_call_named_arg_value(call, "patch_strip")
+        .as_deref()
+        .and_then(bzl_integer_expression_value)
+        .map(|value| {
+            u32::try_from(value).map_err(|_| {
+                buck2_error!(
+                    buck2_error::ErrorTag::Input,
+                    "archive_override for module `{}` has negative patch_strip `{}`",
+                    module_name,
+                    value
+                )
+            })
+        })
+        .transpose()?;
+    Ok(BzlmodArchiveOverride {
+        module_name,
+        url,
+        integrity,
+        strip_prefix,
+        archive_type,
+        patches,
+        patch_strip,
+    })
+}
+
+fn bzlmod_single_version_overrides_from_lines(lines: &[String]) -> BTreeMap<String, String> {
+    collect_bzl_calls(lines, "single_version_override(")
+        .into_iter()
+        .filter_map(|call| {
+            let module_name = bzl_string_arg(&call, "module_name")?;
+            let version = bzl_string_arg(&call, "version")?;
+            Some((module_name, version))
+        })
+        .collect()
+}
+
+fn bzlmod_root_module_from_lines(lines: &[String]) -> buck2_error::Result<RootBzlmodModule> {
     let mut name = "root".to_owned();
     let mut version = String::new();
     let mut canonical_repo_name = "root".to_owned();
@@ -2794,13 +3282,16 @@ fn bzlmod_root_module_from_lines(lines: &[String]) -> RootBzlmodModule {
     }
     let constants = bzlmod_module_constants_from_lines(lines);
     let extension_usages = bzlmod_extension_usages_from_lines(lines, &constants, false);
-    RootBzlmodModule {
+    let use_repo_rule_invocations =
+        bzlmod_use_repo_rule_invocations_from_lines(lines, &constants, false)?;
+    Ok(RootBzlmodModule {
         name,
         version,
         canonical_repo_name,
         constants,
         extension_usages,
-    }
+        use_repo_rule_invocations,
+    })
 }
 
 fn bzlmod_use_repo_aliases_from_usages(usages: &[BzlmodExtensionUsage]) -> Vec<String> {
@@ -2879,6 +3370,107 @@ fn bzlmod_extension_usages_from_lines(
         ))
     });
     usages
+}
+
+fn bzlmod_use_repo_rule_invocations_from_lines(
+    lines: &[String],
+    constants: &[(String, String)],
+    ignore_dev_dependency: bool,
+) -> buck2_error::Result<Vec<BzlmodUseRepoRuleInvocation>> {
+    let repo_rule_bindings = bzl_top_level_assignments(lines)
+        .into_iter()
+        .filter_map(|(name, value)| {
+            let name = name.trim();
+            if !is_bzl_identifier(name) || !value.trim_start().starts_with("use_repo_rule(") {
+                return None;
+            }
+            let args = bzl_call_args(&value);
+            let rule_bzl_file = args.first().and_then(|arg| bzl_string_value(arg.trim()))?;
+            let rule_name = args.get(1).and_then(|arg| bzl_string_value(arg.trim()))?;
+            Some((name.to_owned(), rule_bzl_file, rule_name))
+        })
+        .collect::<Vec<_>>();
+
+    let mut invocations = Vec::new();
+    for (proxy_name, rule_bzl_file, rule_name) in repo_rule_bindings {
+        for call in collect_bzl_calls(lines, &format!("{proxy_name}(")) {
+            if ignore_dev_dependency && bzl_bool_arg(&call, "dev_dependency") {
+                continue;
+            }
+            let repo_name = bzl_string_arg(&call, "name").ok_or_else(|| {
+                buck2_error!(
+                    buck2_error::ErrorTag::Input,
+                    "use_repo_rule invocation must have a literal string `name`: {}",
+                    call
+                )
+            })?;
+            let mut attrs = Vec::new();
+            for arg in bzl_call_args(&call) {
+                let Some((name, value)) = bzl_top_level_assignment(&arg) else {
+                    continue;
+                };
+                let name = name.trim();
+                if !is_bzl_identifier(name)
+                    || name == "name"
+                    || name == "dev_dependency"
+                    || name == "visibility"
+                {
+                    continue;
+                }
+                attrs.push((
+                    name.to_owned(),
+                    bzlmod_repository_rule_attr_expression(value.trim(), constants)?,
+                ));
+            }
+            attrs.sort_by(|left, right| left.0.cmp(&right.0));
+            invocations.push(BzlmodUseRepoRuleInvocation {
+                rule_bzl_file: rule_bzl_file.clone(),
+                rule_name: rule_name.clone(),
+                repo_name,
+                attrs,
+            });
+        }
+    }
+    invocations.sort_by(|left, right| {
+        (
+            &left.rule_bzl_file,
+            &left.rule_name,
+            &left.repo_name,
+            &left.attrs,
+        )
+            .cmp(&(
+                &right.rule_bzl_file,
+                &right.rule_name,
+                &right.repo_name,
+                &right.attrs,
+            ))
+    });
+    invocations.dedup_by(|left, right| {
+        left.rule_bzl_file == right.rule_bzl_file
+            && left.rule_name == right.rule_name
+            && left.repo_name == right.repo_name
+            && left.attrs == right.attrs
+    });
+    Ok(invocations)
+}
+
+fn bzlmod_repository_rule_attr_expression(
+    value: &str,
+    constants: &[(String, String)],
+) -> buck2_error::Result<String> {
+    if let Some(string) = bzl_string_expression_value(value, constants)
+        && bzlmod_string_looks_like_label(&string)
+    {
+        let label = serde_json::to_string(&string).buck_error_context(
+            "Error serializing use_repo_rule label-valued repository-rule attribute",
+        )?;
+        return Ok(format!("Label({label})"));
+    }
+    Ok(value.to_owned())
+}
+
+fn bzlmod_string_looks_like_label(value: &str) -> bool {
+    value.starts_with('@') || value.starts_with("//") || value.starts_with(':')
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
@@ -2969,16 +3561,14 @@ fn collect_bzl_list_comprehension_calls(
             index += 1;
         }
 
-        let Some((binding_name, binding_values)) =
-            bzl_list_comprehension_binding_values(&block, constants)
-        else {
+        let Some(binding_groups) = bzl_list_comprehension_binding_groups(&block, constants) else {
             continue;
         };
         for call in collect_bzl_calls(&block, function) {
-            for binding_value in &binding_values {
+            for bindings in &binding_groups {
                 calls.push(BzlmodCollectedTagCall {
                     call: call.clone(),
-                    bindings: vec![(binding_name.clone(), binding_value.clone())],
+                    bindings: bindings.clone(),
                 });
             }
         }
@@ -2988,26 +3578,163 @@ fn collect_bzl_list_comprehension_calls(
     calls
 }
 
-fn bzl_list_comprehension_binding_values(
+struct BzlmodListComprehensionForClause {
+    names: Vec<String>,
+    expression: String,
+}
+
+fn bzl_list_comprehension_binding_groups(
     block: &[String],
     constants: &[(String, String)],
-) -> Option<(String, Vec<String>)> {
-    for line in block.iter().rev() {
-        let Some(rest) = line.trim().strip_prefix("for ") else {
+) -> Option<Vec<Vec<(String, String)>>> {
+    let clauses = bzl_list_comprehension_for_clauses(block)?;
+    let mut groups = vec![Vec::new()];
+    for clause in clauses {
+        let options =
+            bzl_list_comprehension_clause_bindings(&clause.names, &clause.expression, constants)?;
+        let mut next_groups = Vec::new();
+        for group in &groups {
+            for option in &options {
+                let mut next_group = group.clone();
+                next_group.extend(option.iter().cloned());
+                next_groups.push(next_group);
+            }
+        }
+        groups = next_groups;
+    }
+    Some(groups)
+}
+
+fn bzl_list_comprehension_for_clauses(
+    block: &[String],
+) -> Option<Vec<BzlmodListComprehensionForClause>> {
+    let mut clauses = Vec::new();
+    let mut depth = 0i32;
+    let mut index = 0usize;
+    while index < block.len() {
+        let line = strip_bzl_comment(&block[index]);
+        let trimmed = line.trim();
+        if depth != 1 {
+            depth += delimiter_delta(&line);
+            index += 1;
+            continue;
+        }
+
+        let Some(rest) = trimmed.strip_prefix("for ") else {
+            depth += delimiter_delta(&line);
+            index += 1;
             continue;
         };
         let (name, expression) = rest.split_once(" in ")?;
-        let name = name.trim();
-        if !is_bzl_identifier(name) {
-            return None;
+        let names = bzl_list_comprehension_binding_names(name)?;
+        let mut expression_lines = vec![expression.trim().to_owned()];
+        let mut expression_depth = delimiter_delta(expression);
+        index += 1;
+        while expression_depth > 0 && index < block.len() {
+            let line = strip_bzl_comment(&block[index]);
+            expression_depth += delimiter_delta(&line);
+            expression_lines.push(line.trim().to_owned());
+            index += 1;
         }
-        let expression = expression
-            .trim()
-            .trim_end_matches(']')
-            .trim_end_matches(',')
-            .trim();
+        let expression = expression_lines.join("\n");
+        let expression = expression.trim().trim_end_matches(',').trim().to_owned();
+        clauses.push(BzlmodListComprehensionForClause { names, expression });
+    }
+    (!clauses.is_empty()).then_some(clauses)
+}
+
+fn bzl_list_comprehension_binding_names(binding: &str) -> Option<Vec<String>> {
+    let binding = binding.trim();
+    let binding = binding
+        .strip_prefix('(')
+        .and_then(|binding| binding.strip_suffix(')'))
+        .unwrap_or(binding);
+    let names = bzl_split_top_level(binding, ',')
+        .into_iter()
+        .map(|name| name.trim().to_owned())
+        .collect::<Vec<_>>();
+    if names.is_empty() || names.iter().any(|name| !is_bzl_identifier(name)) {
+        return None;
+    }
+    Some(names)
+}
+
+fn bzl_list_comprehension_clause_bindings(
+    names: &[String],
+    expression: &str,
+    constants: &[(String, String)],
+) -> Option<Vec<Vec<(String, String)>>> {
+    if names.len() == 1 {
         let values = bzl_string_sequence_expression_values(expression, constants)?;
-        return Some((name.to_owned(), values));
+        return Some(
+            values
+                .into_iter()
+                .map(|value| vec![(names[0].clone(), value)])
+                .collect(),
+        );
+    }
+
+    let values = bzl_dict_items_expression_values(expression, constants)?;
+    values
+        .into_iter()
+        .map(|value| {
+            if value.len() != names.len() {
+                return None;
+            }
+            Some(names.iter().cloned().zip(value).collect::<Vec<_>>())
+        })
+        .collect()
+}
+
+fn bzl_dict_items_expression_values(
+    expression: &str,
+    constants: &[(String, String)],
+) -> Option<Vec<Vec<String>>> {
+    let receiver = expression.trim().strip_suffix(".items()")?.trim();
+    let dict = if is_bzl_identifier(receiver) {
+        constants
+            .iter()
+            .find_map(|(name, value)| (name == receiver).then_some(value.as_str()))?
+    } else {
+        receiver
+    };
+    bzl_string_dict_literal_items(dict)?
+        .into_iter()
+        .map(|(key, value)| {
+            Some(vec![
+                serde_json::to_string(&key).ok()?,
+                bzl_supported_module_literal_expression(value.trim())?,
+            ])
+        })
+        .collect()
+}
+
+fn bzl_string_dict_literal_items(value: &str) -> Option<Vec<(String, String)>> {
+    let inner = value
+        .trim()
+        .strip_prefix('{')
+        .and_then(|value| value.strip_suffix('}'))?;
+    bzl_split_top_level(inner, ',')
+        .into_iter()
+        .filter(|item| !item.trim().is_empty())
+        .map(|item| {
+            let parts = bzl_split_top_level(&item, ':');
+            if parts.len() != 2 {
+                return None;
+            }
+            let key = bzl_string_literal_value(parts[0].trim())?;
+            Some((key, parts[1].trim().to_owned()))
+        })
+        .collect()
+}
+
+fn bzl_supported_module_literal_expression(value: &str) -> Option<String> {
+    let value = value.trim();
+    if bzl_string_literal_value(value).is_some()
+        || bzl_string_sequence_literal_raw_values(value).is_some()
+        || bzl_module_constant_expression_is_supported(value)
+    {
+        return Some(value.to_owned());
     }
     None
 }
@@ -3623,23 +4350,6 @@ fn bzl_use_repo_imports(call: &str, constants: &[(String, String)]) -> Vec<Bzlmo
     imports
 }
 
-fn bzl_use_repo_rule_names(lines: &[String]) -> Vec<String> {
-    lines
-        .iter()
-        .filter_map(|line| {
-            let line = strip_bzl_comment(line);
-            let (name, value) = line.split_once('=')?;
-            if value.trim_start().starts_with("use_repo_rule(") {
-                let name = name.trim();
-                if is_bzl_identifier(name) {
-                    return Some(name.to_owned());
-                }
-            }
-            None
-        })
-        .collect()
-}
-
 fn bzl_call_args(call: &str) -> Vec<String> {
     let Some((_, args)) = call.split_once('(') else {
         return Vec::new();
@@ -3955,6 +4665,18 @@ fn bzl_string_literal_value(value: &str) -> Option<String> {
 
 fn bzl_arg_is_none(call: &str, arg: &str) -> bool {
     bzl_arg_value(call, arg).is_some_and(|value| value.starts_with("None"))
+}
+
+fn bzl_call_named_arg_value(call: &str, arg: &str) -> Option<String> {
+    for call_arg in bzl_call_args(call) {
+        let Some((name, value)) = bzl_top_level_assignment(&call_arg) else {
+            continue;
+        };
+        if name.trim() == arg {
+            return Some(value.trim().to_owned());
+        }
+    }
+    None
 }
 
 fn bzl_arg_value<'a>(call: &'a str, arg: &str) -> Option<&'a str> {

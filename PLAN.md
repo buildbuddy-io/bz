@@ -113,17 +113,29 @@ Completed:
 - Bazel common rule attrs now include `applicable_licenses`, and Bazel `testonly = 0/1` values are accepted for common attrs reached by downloaded rules.
 - `platform_common.ConstraintValueInfo` and `ctx.target_platform_has_constraint(...)` are available with native provider identity and target-platform constraint lookup.
 - Bazelisk now builds `//:bazelisk` end to end with downloaded bzlmod modules, generated Gazelle/rules_go repos, the downloaded Go SDK, and Buck2 actions.
+- BuildBuddy bzlmod resolution now consumes root `use_repo_rule(...)`, `archive_override(...)`, and `single_version_override(...)` data without reintroducing module-specific generated-repo materializers.
+- Module-extension generated repos are grouped and reused by extension identity, avoiding repeated generated repo mapping work across large graphs.
+- Bazel tag calls inside top-level `MODULE.bazel` list comprehensions now carry all comprehension bindings, including tuple bindings from `dict.items()`, into the Starlark attr evaluator.
+- Bazel `py_internal` is available for downloaded rules_python load/extension code, including `regex_match`, OS naming, and bzlmod/runfiles probes.
+- Bazel `config.string_list(repeatable = ...)` and `config.string(allow_multiple = ...)` load like Bazel's build-setting descriptors.
+- Bazel `Label(...)` is idempotent for existing label values, matching rules_python patterns such as `Label(cv)`.
+- The current `bazel_features` globals repo shape is materialized without assuming the old `LEGACY_GLOBALS` dict.
+- `cc_common.internal_DO_NOT_USE()` now exposes the Bazel `cc_internal` header-info APIs reached by rules_cc/rules_java while preserving Buck's native C++ provider callables.
+- `apple_common.apple_toolchain()` exposes the Bazel toolchain path helpers reached by rules_cc ObjC support.
+- Bazel rules may define a user `metadata` attr without colliding with Buck's internal metadata attr.
 
 Latest smoke:
 
 ```sh
 /Users/siggi/Code/buck2/bazel-bin/app/buck2/buck2_bin \
-  build --isolation-dir bazelisk-target-platform-constraint-1 //:bazelisk
+  build --isolation-dir buildbuddy-bazel-metadata-1 //server/cmd/buildbuddy:buildbuddy
 ```
 
 After the two-phase bzlmod cutover, the root smoke no longer stops at the pre-analysis cell-graph boundary for dynamically emitted repos such as `rules_go__download_0_darwin_amd64`. The simple rules_go smoke loads rules_go from its downloaded bzlmod module, invokes real module extensions and repository rules, materializes the Go SDK repository, analyzes the simple Go package, and runs the real `rules_go` local actions needed for `//:hello`.
 
 Bazelisk has passed the second validation rung. The next active validation target is BuildBuddy's server target; keep Bazelisk as a regression check while working the first concrete BuildBuddy failure.
+
+BuildBuddy now gets through the earlier rules_python `pip`, rules_java/rules_cc, Apple toolchain, and rules_webtesting `metadata` boundaries. The current concrete BuildBuddy boundary is in the root `@aspect_rules_js//npm:extensions.bzl` `npm` extension: `module_ctx.watch(...)` is missing from the bzlmod module extension context.
 
 ## Constraints
 
@@ -175,6 +187,7 @@ Implement:
 Immediate target:
 
 - Use the successful Bazelisk build as a regression check while expanding the same generic bzlmod/module-extension machinery to BuildBuddy's larger module graph.
+- Add `module_ctx.watch(...)` semantics for module-extension implementations that declare watched lockfiles or other watched inputs, starting with `aspect_rules_js`'s npm extension.
 - Retire any remaining module-specific generated-repo materializers as their extensions become executable.
 
 Current validation boundary:
