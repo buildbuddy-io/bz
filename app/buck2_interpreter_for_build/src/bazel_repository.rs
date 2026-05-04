@@ -81,6 +81,10 @@ enum BazelRepositoryError {
     RepositoryRuleNameMustBeString(String),
     #[error("attempting to instantiate a non-exported repository rule")]
     RepositoryRuleNotExported,
+    #[error("attempting to instantiate a non-exported module extension")]
+    ModuleExtensionNotExported,
+    #[error("expected module extension `{0}` to return None or extension_metadata, got `{1}`")]
+    InvalidModuleExtensionReturn(String, String),
     #[error("`tag_classes[{0}]` must be a tag_class object, got `{1}`")]
     InvalidTagClass(String, String),
 }
@@ -146,6 +150,20 @@ fn record_repository_rule_invocation<'v>(
 
 fn empty_dict_value<'v>(heap: Heap<'v>) -> Value<'v> {
     heap.alloc(AllocDict(Vec::<(Value<'v>, Value<'v>)>::new()))
+}
+
+fn validate_module_extension_return<'v>(
+    extension_id: &StarlarkRuleType,
+    value: Value<'v>,
+) -> starlark::Result<Value<'v>> {
+    if value.is_none() || value.downcast_ref::<StarlarkModuleExtensionMetadata>().is_some() {
+        return Ok(value);
+    }
+    Err(buck2_error::Error::from(BazelRepositoryError::InvalidModuleExtensionReturn(
+        extension_id.to_string(),
+        value.get_type().to_owned(),
+    ))
+    .into())
 }
 
 #[derive(Debug, Allocative)]
@@ -512,6 +530,24 @@ impl<'v> StarlarkModuleExtension<'v> {
             arch_dependent,
         })
     }
+
+    #[allow(dead_code)]
+    pub(crate) fn invoke_implementation(
+        &self,
+        module_ctx: Value<'v>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<Value<'v>> {
+        let id = self.id.borrow();
+        let Some(id) = id.as_ref() else {
+            return Err(
+                buck2_error::Error::from(BazelRepositoryError::ModuleExtensionNotExported).into(),
+            );
+        };
+        let positional = [module_ctx];
+        let args = Arguments::new_positional(&positional);
+        let result = self.implementation.0.invoke(&args, eval)?;
+        validate_module_extension_return(id, result)
+    }
 }
 
 impl<'v> Display for StarlarkModuleExtension<'v> {
@@ -589,6 +625,25 @@ impl Display for FrozenStarlarkModuleExtension {
             Some(id) => write!(f, "<module_extension {}>", id.name),
             None => write!(f, "<anonymous module_extension>"),
         }
+    }
+}
+
+impl FrozenStarlarkModuleExtension {
+    #[allow(dead_code)]
+    pub(crate) fn invoke_implementation<'v>(
+        &self,
+        module_ctx: Value<'v>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<Value<'v>> {
+        let Some(id) = &self.id else {
+            return Err(
+                buck2_error::Error::from(BazelRepositoryError::ModuleExtensionNotExported).into(),
+            );
+        };
+        let positional = [module_ctx];
+        let args = Arguments::new_positional(&positional);
+        let result = self.implementation.to_value().invoke(&args, eval)?;
+        validate_module_extension_return(id, result)
     }
 }
 
