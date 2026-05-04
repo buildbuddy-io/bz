@@ -20,10 +20,17 @@ use buck2_core::execution_types::executor_config::PathSeparatorKind;
 use buck2_core::fs::project::ProjectRoot;
 use buck2_core::fs::project_rel_path::ProjectRelativePath;
 use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
+use buck2_directory::directory::directory::Directory;
+use buck2_directory::directory::directory_iterator::DirectoryIterator;
+use buck2_directory::directory::entry::DirectoryEntry;
 use buck2_error::BuckErrorContext;
 use buck2_execute::artifact::artifact_dyn::ArtifactDyn;
 use buck2_execute::artifact::fs::ExecutorFs;
+use buck2_execute::artifact_value::ArtifactValue;
+use buck2_execute::directory::ActionDirectoryEntry;
+use buck2_execute::directory::ActionDirectoryMember;
 use buck2_fs::paths::RelativePathBuf;
+use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
 use buck2_hash::BuckHashMap;
 use buck2_hash::BuckIndexSet;
 use buck2_interpreter::types::cell_root::CellRoot;
@@ -134,6 +141,10 @@ pub trait WriteToFileMacroVisitor {
 /// hash.
 pub trait ArtifactPathMapper {
     fn get(&self, artifact: &Artifact) -> Option<&ContentBasedPathHash>;
+
+    fn artifact_value(&self, _artifact: &Artifact) -> Option<&ArtifactValue> {
+        None
+    }
 }
 
 impl ArtifactPathMapper for BuckHashMap<&Artifact, ContentBasedPathHash> {
@@ -144,16 +155,30 @@ impl ArtifactPathMapper for BuckHashMap<&Artifact, ContentBasedPathHash> {
 
 pub struct ArtifactPathMapperImpl<'a> {
     pub map: BuckHashMap<&'a Artifact, ContentBasedPathHash>,
+    pub values: BuckHashMap<&'a Artifact, &'a ArtifactValue>,
 }
 
 impl<'a> From<&'a Vec<(ArtifactGroup, ArtifactGroupValues)>> for ArtifactPathMapperImpl<'a> {
     fn from(ensured_inputs: &'a Vec<(ArtifactGroup, ArtifactGroupValues)>) -> Self {
+        Self::from_values(ensured_inputs.iter().map(|(_, v)| v))
+    }
+}
+
+impl<'a> ArtifactPathMapperImpl<'a> {
+    pub fn from_values(values: impl IntoIterator<Item = &'a ArtifactGroupValues>) -> Self {
+        let values = values
+            .into_iter()
+            .flat_map(|v| v.iter())
+            .collect::<Vec<_>>();
+        let mut map = BuckHashMap::default();
+        let mut artifact_values = BuckHashMap::default();
+        for (artifact, value) in values {
+            map.insert(artifact, value.content_based_path_hash());
+            artifact_values.insert(artifact, value);
+        }
         Self {
-            map: ensured_inputs
-                .iter()
-                .flat_map(|(_, v)| v.iter())
-                .map(|(a, v)| (a, v.content_based_path_hash()))
-                .collect(),
+            map,
+            values: artifact_values,
         }
     }
 }
@@ -161,6 +186,10 @@ impl<'a> From<&'a Vec<(ArtifactGroup, ArtifactGroupValues)>> for ArtifactPathMap
 impl ArtifactPathMapper for ArtifactPathMapperImpl<'_> {
     fn get(&self, artifact: &Artifact) -> Option<&ContentBasedPathHash> {
         self.map.get(artifact)
+    }
+
+    fn artifact_value(&self, artifact: &Artifact) -> Option<&ArtifactValue> {
+        self.values.get(artifact).copied()
     }
 }
 
@@ -177,6 +206,15 @@ pub trait CommandLineArgLike<'v> {
         context: &mut dyn CommandLineContext,
         artifact_path_mapping: &dyn ArtifactPathMapper,
     ) -> buck2_error::Result<()>;
+
+    fn add_to_command_line_expanding_directories(
+        &self,
+        cli: &mut dyn CommandLineBuilder,
+        context: &mut dyn CommandLineContext,
+        artifact_path_mapping: &dyn ArtifactPathMapper,
+    ) -> buck2_error::Result<()> {
+        self.add_to_command_line(cli, context, artifact_path_mapping)
+    }
 
     fn visit_artifacts(
         &self,
@@ -425,6 +463,22 @@ impl CommandLineLocation<'_> {
             res.into_owned()
         }
     }
+
+    pub fn join_forward_relative(&self, child: &ForwardRelativePath) -> CommandLineLocation<'_> {
+        let mut path = self.path.clone();
+        if !child.is_empty() {
+            path = if path.as_str().is_empty() {
+                child.to_owned().into()
+            } else {
+                RelativePathBuf::from(format!("{}/{}", path.as_str(), child.as_str()))
+            };
+        }
+        CommandLineLocation {
+            root: self.root,
+            path,
+            path_separator: self.path_separator,
+        }
+    }
 }
 
 impl<'a> CommandLineLocation<'a> {
@@ -502,6 +556,33 @@ pub trait CommandLineBuilder {
     fn push_location(&mut self, location: CommandLineLocation<'_>) {
         self.push_arg(location.into_string());
     }
+}
+
+pub fn add_artifact_to_command_line_expanding_directories(
+    artifact: &Artifact,
+    cli: &mut dyn CommandLineBuilder,
+    ctx: &mut dyn CommandLineContext,
+    artifact_path_mapping: &dyn ArtifactPathMapper,
+) -> buck2_error::Result<()> {
+    if let Some(value) = artifact_path_mapping.artifact_value(artifact) {
+        if let ActionDirectoryEntry::Dir(directory) = value.entry() {
+            let base = ctx.resolve_artifact(artifact, artifact_path_mapping)?;
+            for (child, entry) in directory.ordered_walk().with_paths() {
+                if let DirectoryEntry::Leaf(
+                    ActionDirectoryMember::File(_)
+                    | ActionDirectoryMember::Symlink(_)
+                    | ActionDirectoryMember::ExternalSymlink(_),
+                ) = entry
+                {
+                    cli.push_location(base.join_forward_relative(child.as_ref()));
+                }
+            }
+            return Ok(());
+        }
+    }
+
+    cli.push_location(ctx.resolve_artifact(artifact, artifact_path_mapping)?);
+    Ok(())
 }
 
 impl CommandLineBuilder for Vec<String> {

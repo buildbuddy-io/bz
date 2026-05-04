@@ -50,6 +50,7 @@ use crate::interpreter::rule_defs::cmd_args::CommandLineArtifactVisitor;
 use crate::interpreter::rule_defs::cmd_args::CommandLineBuilder;
 use crate::interpreter::rule_defs::cmd_args::CommandLineContext;
 use crate::interpreter::rule_defs::cmd_args::WriteToFileMacroVisitor;
+use crate::interpreter::rule_defs::cmd_args::add_artifact_to_command_line_expanding_directories;
 use crate::interpreter::rule_defs::cmd_args::command_line_arg_like_type::command_line_arg_like_impl;
 
 /// A wrapper for an `Artifact` that is guaranteed to be bound, such as outputs
@@ -259,6 +260,20 @@ impl<'v> CommandLineArgLike<'v> for StarlarkArtifact {
     ) -> buck2_error::Result<()> {
         cli.push_location(ctx.resolve_artifact(&self.artifact, artifact_path_mapping)?);
         Ok(())
+    }
+
+    fn add_to_command_line_expanding_directories(
+        &self,
+        cli: &mut dyn CommandLineBuilder,
+        ctx: &mut dyn CommandLineContext,
+        artifact_path_mapping: &dyn ArtifactPathMapper,
+    ) -> buck2_error::Result<()> {
+        add_artifact_to_command_line_expanding_directories(
+            &self.artifact,
+            cli,
+            ctx,
+            artifact_path_mapping,
+        )
     }
 
     fn visit_artifacts(

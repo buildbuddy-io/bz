@@ -103,16 +103,21 @@ Completed:
 - Bazel command-line `Args` supports the `add`, `add_all`, `add_joined`, direct depset values, hidden depset/input expansion, map_each, uniquify, and param-file API surface reached by rules_go; real param-file action lowering is still pending.
 - Bazel user provider instances now report Starlark type `struct`, matching Bazel `StarlarkInfo` behavior used by real rules_go provider helpers, while the abstract `Provider` type remains available for provider APIs and type checking.
 - Bazel `ctx.info_file` and `ctx.version_file` now expose stable/volatile workspace-status artifacts backed by a generic Buck write action.
+- Bazel `File.path`/`dirname` for generated bzlmod external source artifacts now resolve to Buck-owned external-cell materialization paths, so downloaded tools such as the Go SDK are invoked from their real execution-root locations.
+- Bazel `Args.add_all`/`add_joined` with directory expansion now expands input tree artifacts to their leaf entries during Buck action command-line rendering, matching Bazel's default `expand_directories = True` behavior.
+- Bazel compatibility cells now use Bazel-native `filegroup` semantics, returning only the declared source files in `DefaultInfo.files` instead of creating Buck synthetic directory outputs for empty filegroups.
+- Bazel `File.path`/`dirname` for declared output artifacts now resolves through the active Buck output root/configuration path, so real rules can pass output directories to actions.
+- The simple downloaded `rules_go` bzlmod smoke repo now builds `//:hello` with Buck2 actions.
 
 Latest smoke:
 
 ```sh
 BUCK2_TEST_SKIP_DEFAULT_EXTERNAL_CONFIG=true \
 BUCK2_HARD_ERROR=false \
-bazel-bin/app/buck2/buck2_bin --isolation-dir real-rules-go-... build //:hello
+bazel-bin/app/buck2/buck2_bin --isolation-dir real-rules-go-output-path-2 build //:hello
 ```
 
-After the two-phase bzlmod cutover, the root smoke no longer stops at the pre-analysis cell-graph boundary for dynamically emitted repos such as `rules_go__download_0_darwin_amd64`. The current smoke loads rules_go from its downloaded bzlmod module, invokes real module extensions and repository rules, materializes the Go SDK repository, and reaches rules_go analysis/action construction for Go packages. This pass fixed generic Bazel API gaps found by real rules_go analysis: `DefaultInfo.files_to_run/default_runfiles/data_runfiles/files`, runfiles merging, `actions.symlink`, named `actions.run`, build configuration fields, artifact `root.path`, positional Bazel `rule(_impl, ...)` classification, `ctx.features`/`ctx.disabled_features`, `Args.add_all(depset(...))`, provider-instance `type(...) == "struct"`, and `ctx.info_file`/`ctx.version_file`. The latest smoke now starts real `rules_go` local actions instead of parking after analysis: action outputs embedded in Bazel action command lines are rendered as outputs and filtered out of input visitation, removing the self-dependency hang. The next boundary is generic external-source path parity for generated bzlmod repos: `sdk.go.path` currently expands to a repo-name path such as `bzlmod_rules_go_0_57_0_go_sdk_go_default_sdk/bin/go`, while the generated repository contents live under Buck-owned external-cell paths.
+After the two-phase bzlmod cutover, the root smoke no longer stops at the pre-analysis cell-graph boundary for dynamically emitted repos such as `rules_go__download_0_darwin_amd64`. The current smoke loads rules_go from its downloaded bzlmod module, invokes real module extensions and repository rules, materializes the Go SDK repository, analyzes the simple Go package, and runs the real `rules_go` local actions needed for `//:hello`. This pass fixed the last rules_go smoke boundaries found so far: external source `File.path` parity for generated repos, directory artifact expansion in `Args.add_all`/`add_joined`, empty Bazel `filegroup` semantics for rules_go's PGO label, and declared output artifact `File.path`/`dirname` parity for actions that receive output directories. The next validation target is Bazelisk.
 
 ## Constraints
 
@@ -293,9 +298,10 @@ Acceptance:
 
 ## Phase 5: Actions, Toolchains, and Go Execution
 
+Status: the simple downloaded `rules_go` bzlmod fixture builds `//:hello` with Buck2 actions and no rules_go compatibility prelude.
+
 Implement remaining:
 
-- Make Bazel `File.path`/`dirname` for generated bzlmod external source artifacts resolve to the same execution-root paths Buck materializes for action inputs/tools.
 - Complete `ctx.actions.write` Bazel keyword compatibility as failures require.
 - Complete `ctx.actions.run` metadata/tool/input-manifest/unused-inputs behavior beyond the named executable/arguments/inputs/outputs/env shape reached so far.
 - Complete `ctx.actions.run_shell` parity beyond the direct command/arguments shape reached so far.

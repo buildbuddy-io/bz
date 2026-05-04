@@ -66,6 +66,24 @@ pub enum ExternalCellOrigin {
     BzlmodGenerated(BzlmodGeneratedCellSetup),
 }
 
+static EXTERNAL_CELL_ORIGINS: Lazy<Mutex<BTreeMap<String, ExternalCellOrigin>>> =
+    Lazy::new(|| Mutex::new(BTreeMap::new()));
+
+pub fn register_external_cell_origin(cell_name: CellName, origin: ExternalCellOrigin) {
+    EXTERNAL_CELL_ORIGINS
+        .lock()
+        .expect("external cell origin map poisoned")
+        .insert(cell_name.as_str().to_owned(), origin);
+}
+
+pub fn external_cell_origin_for_cell(cell_name: &str) -> Option<ExternalCellOrigin> {
+    EXTERNAL_CELL_ORIGINS
+        .lock()
+        .expect("external cell origin map poisoned")
+        .get(cell_name)
+        .cloned()
+}
+
 #[derive(
     Debug,
     derive_more::Display,

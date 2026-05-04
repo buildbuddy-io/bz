@@ -45,6 +45,7 @@ use buck2_core::cells::external::ExternalCellOrigin;
 use buck2_core::cells::external::GitCellSetup;
 use buck2_core::cells::external::GitObjectFormat;
 use buck2_core::cells::external::bzlmod_cell_name;
+use buck2_core::cells::external::register_external_cell_origin;
 use buck2_core::cells::name::CellName;
 use buck2_core::fs::project::ProjectRoot;
 use buck2_core::fs::project_rel_path::ProjectRelativePath;
@@ -553,6 +554,7 @@ impl BuckConfigBasedCells {
                 let alias = NonEmptyCellAlias::new(alias.to_owned())?;
                 let name = aggregator.resolve_root_alias(alias)?;
                 let origin = Self::parse_external_cell_origin(name, origin.as_str(), &root_config)?;
+                register_external_cell_origin(name, origin.dupe());
                 if let ExternalCellOrigin::Bundled(name) = origin {
                     // This code is executed both in the client and in the daemon. When in the
                     // client and using a client-only build, this late binding might not be bound,

@@ -240,21 +240,30 @@ impl<'v, F: Fields<'v>> CommandLineArgLike<'v> for FieldsRef<'v, F> {
                 }
                 Ok(())
             }
-            Some(options) => options.to_command_line_options().wrap_builder(
-                cli,
-                context,
-                |cli, context| {
-                    for item in self.0.items() {
-                        item.as_command_line_arg().add_to_command_line(
-                            cli,
-                            context,
-                            artifact_path_mapping,
-                        )?;
-                    }
-                    Ok(())
-                },
-                artifact_path_mapping,
-            ),
+            Some(options) => {
+                let options = options.to_command_line_options();
+                let expand_directories = options.expand_directories;
+                options.wrap_builder(
+                    cli,
+                    context,
+                    |cli, context| {
+                        for item in self.0.items() {
+                            let item = item.as_command_line_arg();
+                            if expand_directories {
+                                item.add_to_command_line_expanding_directories(
+                                    cli,
+                                    context,
+                                    artifact_path_mapping,
+                                )?;
+                            } else {
+                                item.add_to_command_line(cli, context, artifact_path_mapping)?;
+                            }
+                        }
+                        Ok(())
+                    },
+                    artifact_path_mapping,
+                )
+            }
         }
     }
 
@@ -914,13 +923,15 @@ fn bazel_args_nested<'v>(
     format_each: Option<StringValue<'v>>,
     before_each: Option<StringValue<'v>>,
     join_with: Option<StringValue<'v>>,
+    expand_directories: bool,
 ) -> buck2_error::Result<StarlarkCmdArgs<'v>> {
     let mut nested = StarlarkCommandLineData::default();
-    if format_each.is_some() || before_each.is_some() || join_with.is_some() {
+    if format_each.is_some() || before_each.is_some() || join_with.is_some() || expand_directories {
         let opts = nested.options_mut();
         opts.format = format_each;
         opts.prepend = before_each;
         opts.delimiter = join_with;
+        opts.expand_directories = expand_directories;
     }
     nested.add_from_iterator(values.into_iter())?;
     Ok(StarlarkCmdArgs(RefCell::new(nested)))
@@ -1007,7 +1018,7 @@ fn cmd_args_methods(builder: &mut MethodsBuilder) {
         #[starlark(require = named, default = false)] allow_closure: bool,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<StarlarkCommandLineMut<'v>> {
-        let _unused = (expand_directories, allow_closure);
+        let _unused = allow_closure;
         let (arg_name, values) = match values {
             Some(values) => {
                 let Some(arg_name) = arg_name_or_values.unpack_str() else {
@@ -1040,6 +1051,7 @@ fn cmd_args_methods(builder: &mut MethodsBuilder) {
                 bazel_args_format_string(format_each, eval.heap(), "format_each")?,
                 before_each.into_option(),
                 None,
+                expand_directories,
             )?;
             this.borrow
                 .add_value(eval.heap().alloc_typed(nested).to_value())?;
@@ -1067,7 +1079,7 @@ fn cmd_args_methods(builder: &mut MethodsBuilder) {
         #[starlark(require = named, default = false)] allow_closure: bool,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<StarlarkCommandLineMut<'v>> {
-        let _unused = (expand_directories, allow_closure);
+        let _unused = allow_closure;
         let (arg_name, values) = match values {
             Some(values) => {
                 let Some(arg_name) = arg_name_or_values.unpack_str() else {
@@ -1104,13 +1116,19 @@ fn cmd_args_methods(builder: &mut MethodsBuilder) {
             bazel_args_format_string(format_each, eval.heap(), "format_each")?,
             None,
             Some(join_with),
+            expand_directories,
         )?;
         let joined = eval.heap().alloc_typed(joined);
         if let Some(format_joined) =
             bazel_args_format_string(format_joined, eval.heap(), "format_joined")?
         {
-            let outer =
-                bazel_args_nested(vec![joined.to_value()], Some(format_joined), None, None)?;
+            let outer = bazel_args_nested(
+                vec![joined.to_value()],
+                Some(format_joined),
+                None,
+                None,
+                false,
+            )?;
             this.borrow
                 .add_value(eval.heap().alloc_typed(outer).to_value())?;
         } else {

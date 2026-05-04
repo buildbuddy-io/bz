@@ -57,6 +57,7 @@ use crate::interpreter::rule_defs::cmd_args::CommandLineArtifactVisitor;
 use crate::interpreter::rule_defs::cmd_args::CommandLineBuilder;
 use crate::interpreter::rule_defs::cmd_args::CommandLineContext;
 use crate::interpreter::rule_defs::cmd_args::WriteToFileMacroVisitor;
+use crate::interpreter::rule_defs::cmd_args::add_artifact_to_command_line_expanding_directories;
 use crate::interpreter::rule_defs::cmd_args::command_line_arg_like_type::command_line_arg_like_impl;
 
 #[derive(Debug, buck2_error::Error)]
@@ -289,6 +290,23 @@ impl<'v> CommandLineArgLike<'v> for StarlarkPromiseArtifact {
                 cli.push_location(ctx.resolve_artifact(v, artifact_path_mapping)?);
                 Ok(())
             }
+            None => Err(PromiseArtifactError::UnresolvedAddedToCommandLine(self.clone()).into()),
+        }
+    }
+
+    fn add_to_command_line_expanding_directories(
+        &self,
+        cli: &mut dyn CommandLineBuilder,
+        ctx: &mut dyn CommandLineContext,
+        artifact_path_mapping: &dyn ArtifactPathMapper,
+    ) -> buck2_error::Result<()> {
+        match self.artifact.get() {
+            Some(v) => add_artifact_to_command_line_expanding_directories(
+                v,
+                cli,
+                ctx,
+                artifact_path_mapping,
+            ),
             None => Err(PromiseArtifactError::UnresolvedAddedToCommandLine(self.clone()).into()),
         }
     }

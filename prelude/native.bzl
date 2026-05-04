@@ -18,6 +18,7 @@ load("@prelude//android:cpu_filters.bzl", "ALL_CPU_FILTERS", "CPU_FILTER_FOR_DEF
 load("@prelude//apple:apple_macro_layer.bzl", "apple_binary_macro_impl", "apple_bundle_macro_impl", "apple_library_for_distribution_macro_impl", "apple_library_macro_impl", "apple_metal_library_macro_impl", "apple_package_macro_impl", "apple_test_macro_impl", "apple_universal_executable_macro_impl", "apple_xcuitest_macro_impl", "prebuilt_apple_framework_macro_impl")
 load("@prelude//apple:prebuilt_apple_xcframework_macro_impl.bzl", "prebuilt_apple_xcframework_macro_impl")
 load("@prelude//apple/swift:swift_toolchain_macro_layer.bzl", "swift_toolchain_macro_impl")
+load("@prelude//bazel:filegroup.bzl", "bazel_filegroup")
 load("@prelude//cxx:cxx_toolchain.bzl", "cxx_toolchain_inheriting_target_platform")
 load("@prelude//cxx:cxx_toolchain_macro_layer.bzl", "cxx_toolchain_macro_impl")
 load("@prelude//cxx:cxx_toolchain_types.bzl", _cxx = "cxx")
@@ -517,6 +518,18 @@ def _prebuilt_apple_xcframework_macro_stub(**kwargs):
 def _repo_name():
     return None
 
+def _is_bazel_compat_cell():
+    cell = get_cell_name()
+    if cell == "bazel_tools" or cell.startswith("bzlmod_"):
+        return True
+    return _read_config("buildfile", "includes", "") == "prelude//bazel/prelude.bzl"
+
+def _filegroup_macro_stub(**kwargs):
+    if _is_bazel_compat_cell():
+        bazel_filegroup(**kwargs)
+    else:
+        __rules__["filegroup"](**kwargs)
+
 # TODO(cjhopman): These macro wrappers should be handled in prelude/rules.bzl+rule_impl.bzl.
 # Probably good if they were defined to take in the base rule that
 # they are wrapping and return the wrapped one.
@@ -543,6 +556,7 @@ __extra_rules__ = {
     "erlang_application": _erlang_application_macro_stub,
     "erlang_tests": _erlang_tests_macro_stub,
     "export_file": _export_file_macro_stub,
+    "filegroup": _filegroup_macro_stub,
     "kotlin_library": _kotlin_library_macro_stub,
     "kotlin_test": _kotlin_test_macro_stub,
     "prebuilt_apple_framework": _prebuilt_apple_framework_macro_stub,

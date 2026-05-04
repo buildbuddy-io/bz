@@ -39,6 +39,7 @@ use buck2_build_api::interpreter::rule_defs::artifact::starlark_output_artifact:
 use buck2_build_api::interpreter::rule_defs::artifact::starlark_output_artifact::StarlarkOutputArtifact;
 use buck2_build_api::interpreter::rule_defs::artifact_tagging::ArtifactTag;
 use buck2_build_api::interpreter::rule_defs::cmd_args::ArtifactPathMapper;
+use buck2_build_api::interpreter::rule_defs::cmd_args::ArtifactPathMapperImpl;
 use buck2_build_api::interpreter::rule_defs::cmd_args::CommandLineArgLike;
 use buck2_build_api::interpreter::rule_defs::cmd_args::CommandLineArtifactVisitor;
 use buck2_build_api::interpreter::rule_defs::cmd_args::CommandLineBuilder;
@@ -423,6 +424,23 @@ impl ArtifactPathMapper for DepFilesPlaceholderArtifactPathMapper {
     }
 }
 
+struct DepFilesPlaceholderArtifactPathMapperWithValues<'a> {
+    values: &'a dyn ArtifactPathMapper,
+}
+
+impl ArtifactPathMapper for DepFilesPlaceholderArtifactPathMapperWithValues<'_> {
+    fn get(&self, _artifact: &Artifact) -> Option<&ContentBasedPathHash> {
+        Some(&ContentBasedPathHash::DepFilesPlaceholder)
+    }
+
+    fn artifact_value(
+        &self,
+        artifact: &Artifact,
+    ) -> Option<&buck2_execute::artifact_value::ArtifactValue> {
+        self.values.artifact_value(artifact)
+    }
+}
+
 fn artifact_is_run_action_output(
     outputs: &BoxSliceSet<BuildArtifact>,
     artifact: &Artifact,
@@ -465,6 +483,17 @@ impl ArtifactPathMapper for RunActionOutputArtifactPathMapper<'_> {
             Some(&self.output_hash)
         } else {
             self.inner.get(artifact)
+        }
+    }
+
+    fn artifact_value(
+        &self,
+        artifact: &Artifact,
+    ) -> Option<&buck2_execute::artifact_value::ArtifactValue> {
+        if artifact_is_run_action_output(self.outputs, artifact) {
+            None
+        } else {
+            self.inner.artifact_value(artifact)
         }
     }
 }
@@ -656,11 +685,18 @@ impl RunAction {
         // is not hidden.
         let mut skip_hidden_visitor = SkipHiddenCommandLineArtifactVisitor::new();
         self.visit_artifacts(&mut skip_hidden_visitor)?;
+        let input_artifact_group_values = skip_hidden_visitor
+            .inputs
+            .iter()
+            .map(|group| action_execution_ctx.artifact_values(group))
+            .collect::<Vec<_>>();
         let input_artifact_path_mapping =
-            action_execution_ctx.artifact_path_mapping(Some(skip_hidden_visitor.inputs));
+            ArtifactPathMapperImpl::from_values(input_artifact_group_values.iter().copied());
         let artifact_path_mapping =
             RunActionOutputArtifactPathMapper::new(&self.outputs, &input_artifact_path_mapping);
-        let dep_files_artifact_path_mapping = DepFilesPlaceholderArtifactPathMapper {};
+        let dep_files_artifact_path_mapping = DepFilesPlaceholderArtifactPathMapperWithValues {
+            values: &input_artifact_path_mapping,
+        };
         let artifact_path_mapping_for_dep_files =
             RunActionOutputArtifactPathMapper::new(&self.outputs, &dep_files_artifact_path_mapping);
         values

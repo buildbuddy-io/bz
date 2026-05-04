@@ -115,6 +115,7 @@ pub(crate) struct CommandLineOptions<'v> {
     pub(crate) delimiter: Option<StringValue<'v>>,
     pub(crate) format: Option<StringValue<'v>>,
     pub(crate) prepend: Option<StringValue<'v>>,
+    pub(crate) expand_directories: bool,
     pub(crate) quote: Option<QuoteStyle>,
     #[allow(clippy::box_collection)]
     pub(crate) replacements: Option<Box<Vec<(CmdArgsRegex<'v>, StringValue<'v>)>>>,
@@ -202,6 +203,7 @@ pub(crate) struct CommandLineOptionsRef<'v, 'a> {
     pub(crate) delimiter: Option<StringValue<'v>>,
     pub(crate) format: Option<StringValue<'v>>,
     pub(crate) prepend: Option<StringValue<'v>>,
+    pub(crate) expand_directories: bool,
     pub(crate) quote: Option<QuoteStyle>,
     pub(crate) replacements: OptionsReplacementsRef<'v, 'a>,
 }
@@ -217,6 +219,7 @@ impl<'v, 'a> CommandLineOptionsRef<'v, 'a> {
             delimiter: self.delimiter,
             format: self.format,
             prepend: self.prepend,
+            expand_directories: self.expand_directories,
             quote: self.quote.dupe(),
             replacements: if self.replacements.is_empty() {
                 None
@@ -246,6 +249,7 @@ impl<'v> CommandLineOptionsTrait<'v> for CommandLineOptions<'v> {
             delimiter: self.delimiter,
             format: self.format,
             prepend: self.prepend,
+            expand_directories: self.expand_directories,
             quote: self.quote.dupe(),
             replacements: match &self.replacements {
                 None => OptionsReplacementsRef::default(),
@@ -268,6 +272,7 @@ enum FrozenCommandLineOption {
     Delimiter(FrozenStringValue),
     Format(FrozenStringValue),
     Prepend(FrozenStringValue),
+    ExpandDirectories,
     Quote(QuoteStyle),
     #[allow(clippy::box_collection)]
     Replacements(ThinBoxSlice<(FrozenCmdArgsRegex, FrozenStringValue)>),
@@ -340,6 +345,9 @@ impl<'v> CommandLineOptionsTrait<'v> for FrozenCommandLineOptions {
                 FrozenCommandLineOption::Prepend(value) => {
                     options.prepend = Some(value.to_string_value());
                 }
+                FrozenCommandLineOption::ExpandDirectories => {
+                    options.expand_directories = true;
+                }
                 FrozenCommandLineOption::Quote(value) => {
                     options.quote = Some(value.dupe());
                 }
@@ -383,6 +391,7 @@ impl<'v> Freeze for CommandLineOptions<'v> {
             delimiter,
             format,
             prepend,
+            expand_directories,
             quote,
             replacements,
         } = self;
@@ -420,6 +429,9 @@ impl<'v> Freeze for CommandLineOptions<'v> {
         if let Some(prepend) = prepend {
             let prepend = prepend.freeze(freezer)?;
             options.push(FrozenCommandLineOption::Prepend(prepend));
+        }
+        if expand_directories {
+            options.push(FrozenCommandLineOption::ExpandDirectories);
         }
         if let Some(quote) = quote {
             options.push(FrozenCommandLineOption::Quote(quote));
@@ -488,6 +500,13 @@ impl ArtifactPathMapper for RelativeOriginArtifactPathMapper<'_> {
             Some(&self.relative_path_resolution)
         }
     }
+
+    fn artifact_value(
+        &self,
+        artifact: &Artifact,
+    ) -> Option<&buck2_execute::artifact_value::ArtifactValue> {
+        self.artifact_path_mapping.artifact_value(artifact)
+    }
 }
 
 impl<'v> RelativeOrigin<'v> {
@@ -542,6 +561,7 @@ impl<'v, 'x> CommandLineOptionsRef<'v, 'x> {
                 delimiter: None,
                 format: None,
                 prepend: None,
+                expand_directories: _,
                 quote: None,
                 replacements,
                 ignore_artifacts: _, // Doesn't impact the builder
@@ -773,6 +793,7 @@ impl<'v, 'x> CommandLineOptionsRef<'v, 'x> {
             delimiter,
             format,
             prepend,
+            expand_directories,
             quote,
             replacements,
         } = self;
@@ -822,6 +843,12 @@ impl<'v, 'x> CommandLineOptionsRef<'v, 'x> {
         }
         if let Some(value) = prepend {
             iter.push(("prepend", CommandLineOptionsIterItem::StringValue(*value)));
+        }
+        if *expand_directories {
+            iter.push((
+                "expand_directories",
+                CommandLineOptionsIterItem::Str("True"),
+            ));
         }
         if let Some(value) = quote {
             iter.push(("quote", CommandLineOptionsIterItem::QuoteStyle(*value)));

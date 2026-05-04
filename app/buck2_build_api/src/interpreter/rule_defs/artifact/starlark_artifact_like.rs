@@ -14,7 +14,10 @@ use std::hash::Hash;
 use std::hash::Hasher;
 
 use buck2_artifact::artifact::artifact_type::Artifact;
+use buck2_core::cells::external::external_cell_origin_for_cell;
 use buck2_core::deferred::base_deferred_key::BaseDeferredKey;
+use buck2_core::fs::buck_out_path::BuckOutPathResolver;
+use buck2_core::fs::buck_out_path::current_bazel_artifact_buck_out_path;
 use buck2_execute::path::artifact_path::ArtifactPath;
 use buck2_fs::paths::file_name::FileName;
 use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
@@ -78,15 +81,32 @@ pub trait StarlarkArtifactLike<'v>: Display {
 
 pub fn bazel_artifact_path(path: ArtifactPath<'_>) -> String {
     match path.base_path.as_ref() {
-        Either::Left(_) => path.with_full_path(|path| path.to_string()),
+        Either::Left(build) => {
+            let buck_out_path_resolver =
+                BuckOutPathResolver::new(current_bazel_artifact_buck_out_path());
+            buck_out_path_resolver
+                .resolve_gen_configuration_hash_path(build)
+                .expect("Bazel artifact output path should resolve")
+                .join(path.projected_path)
+                .to_string()
+        }
         Either::Right(source) => {
             let package = source.package();
+            let cell = package.cell_name();
+            if let Some(origin) = external_cell_origin_for_cell(cell.as_str()) {
+                let buck_out_path_resolver =
+                    BuckOutPathResolver::new(current_bazel_artifact_buck_out_path());
+                return buck_out_path_resolver
+                    .resolve_external_cell_source(source.to_cell_path().path(), origin)
+                    .join(path.projected_path)
+                    .to_string();
+            }
+
             let source_path = package
                 .cell_relative_path()
                 .as_forward_relative_path()
                 .join(source.path().as_forward_rel_path());
             let source_path = source_path.join_cow(path.projected_path);
-            let cell = package.cell_name();
             if cell.as_str() == "root" {
                 source_path.to_string()
             } else if source_path.is_empty() {

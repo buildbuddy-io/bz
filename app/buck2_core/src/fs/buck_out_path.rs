@@ -11,6 +11,7 @@
 use std::hash::Hash;
 use std::hash::Hasher;
 use std::sync::Arc;
+use std::sync::Mutex;
 
 use allocative::Allocative;
 use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
@@ -19,6 +20,7 @@ use buck2_hash::BuckDefaultHasher;
 use derive_more::Display;
 use dupe::Dupe;
 use itertools::Itertools;
+use once_cell::sync::Lazy;
 use pagable::Pagable;
 
 use crate::category::CategoryRef;
@@ -249,9 +251,26 @@ impl BuckOutTestPath {
     }
 }
 
-#[derive(Clone, Allocative, Pagable)]
+#[derive(Clone, Debug, Allocative, Pagable)]
 pub struct BuckOutPathResolver {
     buck_out_v2: ProjectRelativePathBuf,
+}
+
+static BAZEL_ARTIFACT_BUCK_OUT_PATH: Lazy<Mutex<Option<ProjectRelativePathBuf>>> =
+    Lazy::new(|| Mutex::new(None));
+
+pub fn register_bazel_artifact_buck_out_path(path: ProjectRelativePathBuf) {
+    *BAZEL_ARTIFACT_BUCK_OUT_PATH
+        .lock()
+        .expect("bazel artifact buck-out path poisoned") = Some(path);
+}
+
+pub fn current_bazel_artifact_buck_out_path() -> ProjectRelativePathBuf {
+    BAZEL_ARTIFACT_BUCK_OUT_PATH
+        .lock()
+        .expect("bazel artifact buck-out path poisoned")
+        .clone()
+        .unwrap_or_else(|| ProjectRelativePathBuf::unchecked_new("buck-out/v2".to_owned()))
 }
 
 impl BuckOutPathResolver {
