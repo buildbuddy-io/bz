@@ -38,6 +38,7 @@ use buck2_core::cells::external::BzlmodHostPlatformSetup;
 use buck2_core::cells::external::BzlmodHttpArchiveSetup;
 use buck2_core::cells::external::BzlmodJavaLocalJdkSetup;
 use buck2_core::cells::external::BzlmodLocalConfigPlatformSetup;
+use buck2_core::cells::external::BzlmodModuleExtensionRepoSetup;
 use buck2_core::cells::external::BzlmodPythonHubSetup;
 use buck2_core::cells::external::BzlmodRepositoryRuleSetup;
 use buck2_core::cells::external::BzlmodShellConfigSetup;
@@ -102,6 +103,15 @@ enum BzlmodError {
     InvalidGeneratedRepoPath(String),
     #[error("Could not find `{dict}` in bazel_features globals at `{path}`")]
     MissingBazelFeaturesGlobalsDict { path: String, dict: &'static str },
+    #[error(
+        "bzlmod module extension repo `{repo_name}` from `{parent_canonical_repo_name}` extension `{extension_bzl_file}%{extension_name}` cannot be materialized until module_extension evaluation is wired to repository_rule execution"
+    )]
+    ModuleExtensionRepoNotMaterialized {
+        parent_canonical_repo_name: String,
+        extension_bzl_file: String,
+        extension_name: String,
+        repo_name: String,
+    },
 }
 
 struct BzlmodExtractIoRequest {
@@ -230,9 +240,24 @@ impl IoRequest for BzlmodGeneratedIoRequest {
             BzlmodGeneratedCellGenerator::RepositoryRule(setup) => {
                 write_repository_rule_repo(&dest, &self.setup.canonical_repo_name, setup)?;
             }
+            BzlmodGeneratedCellGenerator::ModuleExtensionRepo(setup) => {
+                return Err(module_extension_repo_not_materialized(setup));
+            }
         }
         Ok(())
     }
+}
+
+fn module_extension_repo_not_materialized(
+    setup: &BzlmodModuleExtensionRepoSetup,
+) -> buck2_error::Error {
+    BzlmodError::ModuleExtensionRepoNotMaterialized {
+        parent_canonical_repo_name: setup.parent_canonical_repo_name.to_string(),
+        extension_bzl_file: setup.extension_bzl_file.to_string(),
+        extension_name: setup.extension_name.to_string(),
+        repo_name: setup.repo_name.to_string(),
+    }
+    .into()
 }
 
 #[derive(Deserialize)]

@@ -124,7 +124,7 @@ Acceptance:
 
 ## Phase 2: Module Extensions and Generated Repos
 
-Status: module dependencies, generic `use_extension(...)` bindings, extension tags, and `use_repo(...)` imports are discovered. Repo aliases are now applied through per-module bzlmod mappings: the root module sees its root-visible imports, while downloaded module cells see the deps and extension imports declared by their own `MODULE.bazel`. There is now a generic generated-repository file materializer for future `repository_ctx.file/template` output. Generated repos are still not created by real bzlmod extension evaluation. The previous Go/Kotlin Rust-side generated repo materializers have been removed; the remaining generated-repo paths must be replaced by generic `module_extension(...)` evaluation and repository-rule execution rather than more module-specific generators.
+Status: module dependencies, generic `use_extension(...)` bindings, extension tags, and `use_repo(...)` imports are discovered. Repo aliases are now applied through per-module bzlmod mappings: the root module sees its root-visible imports, while downloaded module cells see the deps and extension imports declared by their own `MODULE.bazel`. Extension-imported repos are represented as generated bzlmod cells using module/extension/repo canonical names, and there is a generic generated-repository file materializer for future `repository_ctx.file/template` output. Generated repos are still not created by real bzlmod extension evaluation. The previous Go/Kotlin Rust-side generated repo materializers have been removed; the remaining generated-repo paths must be replaced by generic `module_extension(...)` evaluation and repository-rule execution rather than more module-specific generators.
 
 Implement:
 
@@ -150,7 +150,7 @@ Immediate target:
 
 Current validation boundary:
 
-- A Bazel-valid rules_go smoke repo with direct `rules_proto` visibility now resolves root and downloaded-module aliases separately, loads rules_go through its real downloaded module cell, and stops at the expected missing generated repo `@io_bazel_rules_nogo` in the `rules_go` cell.
+- A Bazel-valid rules_go smoke repo with direct `rules_proto` visibility now resolves root and downloaded-module aliases separately, loads rules_go through its real downloaded module cell, resolves `@io_bazel_rules_nogo` to a generated cell from the real `go_sdk` extension import, and stops at the expected missing `module_extension(...)` evaluation / `repository_rule(...)` execution handoff.
 - The older smoke fixture's root-level `@rules_proto` load is intentionally not root-visible without a direct `bazel_dep`, matching Bazel 9.1.0 behavior.
 
 Acceptance:

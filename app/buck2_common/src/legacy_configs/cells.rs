@@ -35,6 +35,7 @@ use buck2_core::cells::external::BzlmodHostPlatformSetup;
 use buck2_core::cells::external::BzlmodHttpArchiveSetup;
 use buck2_core::cells::external::BzlmodJavaLocalJdkSetup;
 use buck2_core::cells::external::BzlmodLocalConfigPlatformSetup;
+use buck2_core::cells::external::BzlmodModuleExtensionRepoSetup;
 use buck2_core::cells::external::BzlmodPatch;
 use buck2_core::cells::external::BzlmodPythonHubSetup;
 use buck2_core::cells::external::BzlmodRepositoryRuleSetup;
@@ -718,6 +719,19 @@ impl BuckConfigBasedCells {
                         files_json: Arc::from(files_json),
                     })
                 }
+                BzlmodGeneratedRepoConfig::ModuleExtensionRepo {
+                    parent_canonical_repo_name,
+                    extension_bzl_file,
+                    extension_name,
+                    repo_name,
+                } => BzlmodGeneratedCellGenerator::ModuleExtensionRepo(
+                    BzlmodModuleExtensionRepoSetup {
+                        parent_canonical_repo_name: Arc::from(parent_canonical_repo_name),
+                        extension_bzl_file: Arc::from(extension_bzl_file),
+                        extension_name: Arc::from(extension_name),
+                        repo_name: Arc::from(repo_name),
+                    },
+                ),
             };
             Ok(ExternalCellOrigin::BzlmodGenerated(
                 BzlmodGeneratedCellSetup {
@@ -874,6 +888,12 @@ enum BzlmodGeneratedRepoConfig {
     PythonHub {},
     RepositoryRule {
         files: Vec<BzlmodRepositoryRuleFileConfig>,
+    },
+    ModuleExtensionRepo {
+        parent_canonical_repo_name: String,
+        extension_bzl_file: String,
+        extension_name: String,
+        repo_name: String,
     },
 }
 
@@ -1418,6 +1438,36 @@ fn resolve_generated_bzlmod_repos(
                 );
             }
         }
+
+        for usage in &module.extension_usages {
+            for import in &usage.imports {
+                if bzlmod_cell_alias_target(cell_aliases_by_cell, &parent_cell_name, &import.alias)
+                    .is_some()
+                {
+                    continue;
+                }
+                let canonical_repo_name =
+                    bzlmod_extension_repo_canonical_repo_name(module, usage, &import.repo_name);
+                let generator_json =
+                    serde_json::to_string(&BzlmodGeneratedRepoConfig::ModuleExtensionRepo {
+                        parent_canonical_repo_name: parent_canonical_repo_name.clone(),
+                        extension_bzl_file: usage.extension_bzl_file.clone(),
+                        extension_name: usage.extension_name.clone(),
+                        repo_name: import.repo_name.clone(),
+                    })
+                    .buck_error_context(
+                        "Error serializing generated module extension repo configuration",
+                    )?;
+                add_generated_bzlmod_repo(
+                    &mut generated,
+                    cell_aliases_by_cell,
+                    &parent_cell_name,
+                    &import.alias,
+                    &canonical_repo_name,
+                    generator_json,
+                );
+            }
+        }
     }
     if needs_local_config_platform {
         let canonical_repo_name = "local_config_platform".to_owned();
@@ -1467,6 +1517,17 @@ fn add_generated_bzlmod_repo(
             generator_json,
         },
     ));
+}
+
+fn bzlmod_extension_repo_canonical_repo_name(
+    module: &DiscoveredBcrModule,
+    usage: &BzlmodExtensionUsage,
+    repo_name: &str,
+) -> String {
+    format!(
+        "{}+{}+{}+{}",
+        module.dep.name, module.dep.version, usage.extension_name, repo_name
+    )
 }
 
 fn qualify_bzlmod_registered_toolchain(pattern: &str, module_cell_name: &str) -> String {
@@ -1522,6 +1583,17 @@ fn add_bzlmod_cell_alias(
         .entry(current_cell_name.to_owned())
         .or_default()
         .insert(alias.to_owned(), target_cell_name.to_owned());
+}
+
+fn bzlmod_cell_alias_target<'a>(
+    aliases_by_cell: &'a BTreeMap<String, BTreeMap<String, String>>,
+    current_cell_name: &str,
+    alias: &str,
+) -> Option<&'a str> {
+    aliases_by_cell
+        .get(current_cell_name)
+        .and_then(|aliases| aliases.get(alias))
+        .map(String::as_str)
 }
 
 fn bzlmod_cell_alias_map_to_vec(aliases: BTreeMap<String, String>) -> Vec<BazelCompatCellAlias> {
