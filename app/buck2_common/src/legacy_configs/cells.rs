@@ -40,6 +40,7 @@ use buck2_core::cells::external::BzlmodGoSdkToolchainsSetup;
 use buck2_core::cells::external::BzlmodHostPlatformSetup;
 use buck2_core::cells::external::BzlmodHttpArchiveSetup;
 use buck2_core::cells::external::BzlmodJavaLocalJdkSetup;
+use buck2_core::cells::external::BzlmodKotlinCompilerSetup;
 use buck2_core::cells::external::BzlmodLocalConfigPlatformSetup;
 use buck2_core::cells::external::BzlmodPatch;
 use buck2_core::cells::external::BzlmodPythonHubSetup;
@@ -731,6 +732,17 @@ impl BuckConfigBasedCells {
                     strip_prefix: strip_prefix.map(Arc::from),
                     archive_type: archive_type.map(Arc::from),
                 }),
+                BzlmodGeneratedRepoConfig::KotlinCompiler {
+                    parent_canonical_repo_name,
+                    repo_name,
+                    git_repo_name,
+                    compiler_version,
+                } => BzlmodGeneratedCellGenerator::KotlinCompiler(BzlmodKotlinCompilerSetup {
+                    parent_canonical_repo_name: Arc::from(parent_canonical_repo_name),
+                    repo_name: Arc::from(repo_name),
+                    git_repo_name: Arc::from(git_repo_name),
+                    compiler_version: Arc::from(compiler_version),
+                }),
                 BzlmodGeneratedRepoConfig::JavaLocalJdk {} => {
                     BzlmodGeneratedCellGenerator::JavaLocalJdk(BzlmodJavaLocalJdkSetup {})
                 }
@@ -916,6 +928,12 @@ enum BzlmodGeneratedRepoConfig {
         sha256: String,
         strip_prefix: Option<String>,
         archive_type: Option<String>,
+    },
+    KotlinCompiler {
+        parent_canonical_repo_name: String,
+        repo_name: String,
+        git_repo_name: String,
+        compiler_version: String,
     },
     JavaLocalJdk {},
     PythonHub {},
@@ -1368,6 +1386,30 @@ fn resolve_generated_bzlmod_repos(
                         generator_json,
                     },
                 ));
+                let git_alias = format!("{alias}_git");
+                let git_canonical_repo_name = format!(
+                    "{}+{}+rules_kotlin_extensions+{}",
+                    module.dep.name, module.dep.version, git_alias
+                );
+                let git_generator_json =
+                    serde_json::to_string(&BzlmodGeneratedRepoConfig::HttpArchive {
+                        repo_name: git_alias.clone(),
+                        url: "https://github.com/JetBrains/kotlin/releases/download/v1.9.23/kotlin-compiler-1.9.23.zip".to_owned(),
+                        sha256: "93137d3aab9afa9b27cb06a824c2324195c6b6f6179d8a8653f440f5bd58be88".to_owned(),
+                        strip_prefix: Some("kotlinc".to_owned()),
+                        archive_type: Some("zip".to_owned()),
+                    })
+                    .buck_error_context(
+                        "Error serializing generated rules_kotlin compiler archive repo configuration",
+                    )?;
+                generated.push(BazelCompatExternalModule::Generated(
+                    BazelCompatGeneratedModule {
+                        cell_name: bzlmod_cell_name(&git_canonical_repo_name),
+                        aliases: vec![git_alias],
+                        canonical_repo_name: git_canonical_repo_name,
+                        generator_json: git_generator_json,
+                    },
+                ));
             }
         }
 
@@ -1421,6 +1463,36 @@ fn resolve_generated_bzlmod_repos(
                 let generator_json = serde_json::to_string(&generator).buck_error_context(
                     "Error serializing generated rules_java toolchains repo configuration",
                 )?;
+                generated.push(BazelCompatExternalModule::Generated(
+                    BazelCompatGeneratedModule {
+                        cell_name: bzlmod_cell_name(&canonical_repo_name),
+                        aliases: vec![alias.clone()],
+                        canonical_repo_name,
+                        generator_json,
+                    },
+                ));
+            }
+        }
+
+        if module.dep.name == "rules_kotlin" {
+            for alias in &module.use_repo_aliases {
+                if alias != "com_github_jetbrains_kotlin" {
+                    continue;
+                }
+                let canonical_repo_name = format!(
+                    "{}+{}+rules_kotlin_extensions+{}",
+                    module.dep.name, module.dep.version, alias
+                );
+                let generator_json =
+                    serde_json::to_string(&BzlmodGeneratedRepoConfig::KotlinCompiler {
+                        parent_canonical_repo_name: parent_canonical_repo_name.clone(),
+                        repo_name: alias.clone(),
+                        git_repo_name: format!("{alias}_git"),
+                        compiler_version: "1.9.23".to_owned(),
+                    })
+                    .buck_error_context(
+                        "Error serializing generated rules_kotlin compiler repo configuration",
+                    )?;
                 generated.push(BazelCompatExternalModule::Generated(
                     BazelCompatGeneratedModule {
                         cell_name: bzlmod_cell_name(&canonical_repo_name),

@@ -518,6 +518,23 @@ impl ProviderCodegen {
                             &dyn buck2_interpreter::types::provider::callable::ProviderCallableLike>(self);
                     }
 
+                    fn equals(&self, other: starlark::values::Value<'v>) -> starlark::Result<bool> {
+                        buck2_build_api::interpreter::rule_defs::provider::callable::provider_callable_equals(
+                            self,
+                            other,
+                        )
+                    }
+
+                    fn write_hash(
+                        &self,
+                        hasher: &mut starlark::collections::StarlarkHasher,
+                    ) -> starlark::Result<()> {
+                        buck2_build_api::interpreter::rule_defs::provider::callable::provider_callable_write_hash(
+                            self,
+                            hasher,
+                        )
+                    }
+
                     fn eval_type(&self) -> Option<starlark::typing::Ty> {
                         Some(BUILTIN_PROVIDER_TY.instance())
                     }

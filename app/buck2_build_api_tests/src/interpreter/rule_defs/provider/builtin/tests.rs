@@ -40,6 +40,28 @@ fn test_equals() -> buck2_error::Result<()> {
 }
 
 #[test]
+fn test_builtin_provider_callables_are_hashable() -> buck2_error::Result<()> {
+    let mut tester = Tester::new()?;
+
+    tester.additional_globals(register_builtin_providers);
+
+    tester.run_starlark_bzl_test(indoc!(
+        r#"
+            providers = {
+                DefaultInfo: "default",
+                ToolchainInfo: "toolchain",
+            }
+
+            def test():
+                assert_eq("default", providers[DefaultInfo])
+                assert_eq("toolchain", providers[ToolchainInfo])
+        "#
+    ))?;
+
+    Ok(())
+}
+
+#[test]
 fn test_run_environment_info() -> buck2_error::Result<()> {
     let mut tester = Tester::new()?;
 

@@ -44,6 +44,7 @@ use buck2_core::cells::external::BzlmodGoSdkToolchainsSetup;
 use buck2_core::cells::external::BzlmodHostPlatformSetup;
 use buck2_core::cells::external::BzlmodHttpArchiveSetup;
 use buck2_core::cells::external::BzlmodJavaLocalJdkSetup;
+use buck2_core::cells::external::BzlmodKotlinCompilerSetup;
 use buck2_core::cells::external::BzlmodLocalConfigPlatformSetup;
 use buck2_core::cells::external::BzlmodPythonHubSetup;
 use buck2_core::cells::external::BzlmodShellConfigSetup;
@@ -262,6 +263,9 @@ impl IoRequest for BzlmodGeneratedIoRequest {
             }
             BzlmodGeneratedCellGenerator::HttpArchive(setup) => {
                 write_generated_module_file(&dest, &setup.repo_name)?;
+            }
+            BzlmodGeneratedCellGenerator::KotlinCompiler(setup) => {
+                write_kotlin_compiler_repo(project_fs, &self.dest, &dest, setup)?;
             }
             BzlmodGeneratedCellGenerator::JavaLocalJdk(setup) => {
                 write_java_local_jdk_repo(&dest, setup)?;
@@ -649,6 +653,120 @@ toolchain(
     fs_util::write(dest.join(ForwardRelativePath::new("BUILD.bazel")?), build)
         .categorize_internal()?;
     Ok(())
+}
+
+fn write_kotlin_compiler_repo(
+    project_fs: &ProjectRoot,
+    dest_rel: &ProjectRelativePath,
+    dest: &AbsNormPath,
+    setup: &BzlmodKotlinCompilerSetup,
+) -> buck2_error::Result<()> {
+    write_generated_module_file(dest, &setup.repo_name)?;
+    fs_util::write(
+        dest.join(ForwardRelativePath::new("WORKSPACE")?),
+        format!("workspace(name = \"{}\")\n", setup.repo_name),
+    )
+    .categorize_internal()?;
+
+    let build = read_parent_bzlmod_file(
+        project_fs,
+        dest_rel,
+        &setup.parent_canonical_repo_name,
+        "src/main/starlark/core/repositories/BUILD.kotlin_capabilities.bazel",
+    )?
+    .replace("$git_repo$", &setup.git_repo_name);
+    fs_util::write(dest.join(ForwardRelativePath::new("BUILD.bazel")?), build)
+        .categorize_internal()?;
+
+    let artifacts = read_parent_bzlmod_file(
+        project_fs,
+        dest_rel,
+        &setup.parent_canonical_repo_name,
+        "src/main/starlark/core/repositories/kotlin/artifacts.bzl",
+    )?;
+    fs_util::write(
+        dest.join(ForwardRelativePath::new("artifacts.bzl")?),
+        artifacts,
+    )
+    .categorize_internal()?;
+
+    let capabilities_template = kotlin_capabilities_template(&setup.compiler_version);
+    let capabilities = read_parent_bzlmod_file(
+        project_fs,
+        dest_rel,
+        &setup.parent_canonical_repo_name,
+        capabilities_template,
+    )?;
+    fs_util::write(
+        dest.join(ForwardRelativePath::new("capabilities.bzl")?),
+        capabilities,
+    )
+    .categorize_internal()?;
+
+    Ok(())
+}
+
+fn read_parent_bzlmod_file(
+    project_fs: &ProjectRoot,
+    dest_rel: &ProjectRelativePath,
+    parent_canonical_repo_name: &str,
+    path: &str,
+) -> buck2_error::Result<String> {
+    let Some((external_cells_root, _)) = dest_rel.as_str().split_once("/bzlmod_generated/") else {
+        return Err(BzlmodError::InvalidGeneratedRepoPath(dest_rel.to_string()).into());
+    };
+    let template_path = ProjectRelativePathBuf::unchecked_new(format!(
+        "{external_cells_root}/bzlmod/{parent_canonical_repo_name}/{path}",
+    ));
+    fs_util::read_to_string(project_fs.resolve(&template_path))
+        .categorize_internal()
+        .with_buck_error_context(|| format!("Error reading parent bzlmod file `{template_path}`"))
+}
+
+fn kotlin_capabilities_template(compiler_version: &str) -> &'static str {
+    let version = if compiler_version.starts_with("1.4") {
+        "1.4"
+    } else if compiler_version.starts_with("1.5") {
+        "1.5"
+    } else if compiler_version.starts_with("1.6") {
+        "1.6"
+    } else if compiler_version.starts_with("1.7") {
+        "1.7"
+    } else if compiler_version.starts_with("1.8") {
+        "1.8"
+    } else if compiler_version.starts_with("1.9") {
+        "1.9"
+    } else if compiler_version.starts_with("2.0") {
+        "2.0"
+    } else {
+        "legacy"
+    };
+    match version {
+        "1.4" => {
+            "src/main/starlark/core/repositories/kotlin/capabilities_1.4.bzl.com_github_jetbrains_kotlin.bazel"
+        }
+        "1.5" => {
+            "src/main/starlark/core/repositories/kotlin/capabilities_1.5.bzl.com_github_jetbrains_kotlin.bazel"
+        }
+        "1.6" => {
+            "src/main/starlark/core/repositories/kotlin/capabilities_1.6.bzl.com_github_jetbrains_kotlin.bazel"
+        }
+        "1.7" => {
+            "src/main/starlark/core/repositories/kotlin/capabilities_1.7.bzl.com_github_jetbrains_kotlin.bazel"
+        }
+        "1.8" => {
+            "src/main/starlark/core/repositories/kotlin/capabilities_1.8.bzl.com_github_jetbrains_kotlin.bazel"
+        }
+        "1.9" => {
+            "src/main/starlark/core/repositories/kotlin/capabilities_1.9.bzl.com_github_jetbrains_kotlin.bazel"
+        }
+        "2.0" => {
+            "src/main/starlark/core/repositories/kotlin/capabilities_2.0.bzl.com_github_jetbrains_kotlin.bazel"
+        }
+        _ => {
+            "src/main/starlark/core/repositories/kotlin/capabilities_legacy.bzl.com_github_jetbrains_kotlin.bazel"
+        }
+    }
 }
 
 fn write_python_hub_repo(

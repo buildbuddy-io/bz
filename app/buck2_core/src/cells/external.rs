@@ -119,6 +119,7 @@ pub enum BzlmodGeneratedCellGenerator {
     CcAutoconf(BzlmodCcAutoconfSetup),
     ShellConfig(BzlmodShellConfigSetup),
     HttpArchive(BzlmodHttpArchiveSetup),
+    KotlinCompiler(BzlmodKotlinCompilerSetup),
     JavaLocalJdk(BzlmodJavaLocalJdkSetup),
     PythonHub(BzlmodPythonHubSetup),
     GoDepsModule(BzlmodGoDepsModuleSetup),
@@ -298,6 +299,23 @@ pub struct BzlmodHttpArchiveSetup {
     pub sha256: Arc<str>,
     pub strip_prefix: Option<Arc<str>>,
     pub archive_type: Option<Arc<str>>,
+}
+
+#[derive(
+    Debug,
+    Clone,
+    Dupe,
+    allocative::Allocative,
+    PartialEq,
+    Eq,
+    Hash,
+    Pagable
+)]
+pub struct BzlmodKotlinCompilerSetup {
+    pub parent_canonical_repo_name: Arc<str>,
+    pub repo_name: Arc<str>,
+    pub git_repo_name: Arc<str>,
+    pub compiler_version: Arc<str>,
 }
 
 #[derive(

@@ -18,6 +18,7 @@ use buck2_interpreter::coerce::COERCE_PROVIDERS_LABEL_FOR_BZL;
 use buck2_interpreter::types::provider::callable::ValueAsProviderCallableLike;
 use buck2_interpreter::types::transition::transition_id_from_value;
 use buck2_node::attrs::attr::Attribute;
+use buck2_node::attrs::attr::AttributeAllowedValues;
 use buck2_node::attrs::attr_type::AttrType;
 use buck2_node::attrs::attr_type::any::AnyAttrType;
 use buck2_node::attrs::coercion_context::AttrCoercionContext;
@@ -120,6 +121,18 @@ fn bazel_doc(doc: NoneOr<&str>) -> &str {
     doc.into_option().unwrap_or("")
 }
 
+fn bazel_allowed_values<'v>(
+    eval: &mut Evaluator<'v, '_, '_>,
+    values: Vec<Value<'v>>,
+    coercer: &AttrType,
+) -> buck2_error::Result<Option<AttributeAllowedValues>> {
+    let ctx = attr_coercion_context_for_bzl(eval)?;
+    let values = values
+        .into_try_map(|value| coercer.coerce(AttrIsConfigurable::No, &ctx, value))
+        .buck_error_context("Error coercing Bazel allowed attribute values")?;
+    Ok(AttributeAllowedValues::new(values))
+}
+
 fn bazel_attr<'v>(
     eval: &mut Evaluator<'v, '_, '_>,
     default: Option<Value<'v>>,
@@ -128,6 +141,28 @@ fn bazel_attr<'v>(
     doc: &str,
     coercer: AttrType,
     configurable: Option<bool>,
+) -> buck2_error::Result<StarlarkAttribute> {
+    bazel_attr_with_allowed_values(
+        eval,
+        default,
+        fallback,
+        mandatory,
+        doc,
+        coercer,
+        configurable,
+        None,
+    )
+}
+
+fn bazel_attr_with_allowed_values<'v>(
+    eval: &mut Evaluator<'v, '_, '_>,
+    default: Option<Value<'v>>,
+    fallback: Value<'v>,
+    mandatory: bool,
+    doc: &str,
+    coercer: AttrType,
+    configurable: Option<bool>,
+    allowed_values: Option<AttributeAllowedValues>,
 ) -> buck2_error::Result<StarlarkAttribute> {
     let default = if mandatory {
         None
@@ -146,8 +181,11 @@ fn bazel_attr<'v>(
                 .buck_error_context("Error coercing Bazel attribute default")?,
         )),
     };
-    Ok(StarlarkAttribute::new(Attribute::new(
-        default, doc, coercer,
+    Ok(StarlarkAttribute::new(Attribute::new_with_allowed_values(
+        default,
+        doc,
+        coercer,
+        allowed_values,
     )?))
 }
 
@@ -741,16 +779,13 @@ fn bazel_attr_module(registry: &mut GlobalsBuilder) {
         #[starlark(require = named, default = NoneOr::None)] doc: NoneOr<&str>,
         #[starlark(require = named)] configurable: Option<bool>,
         #[starlark(require = named, default = UnpackListOrTuple::default())]
-        values: UnpackListOrTuple<String>,
+        values: UnpackListOrTuple<Value<'v>>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<StarlarkAttribute> {
-        let coercer = if values.items.is_empty() {
-            AttrType::string()
-        } else {
-            AttrType::enumeration(values.items)?
-        };
+        let coercer = AttrType::string();
+        let allowed_values = bazel_allowed_values(eval, values.items, &coercer)?;
         let fallback = eval.heap().alloc("");
-        Ok(bazel_attr(
+        Ok(bazel_attr_with_allowed_values(
             eval,
             default,
             fallback,
@@ -758,6 +793,7 @@ fn bazel_attr_module(registry: &mut GlobalsBuilder) {
             bazel_doc(doc),
             coercer,
             configurable,
+            allowed_values,
         )?)
     }
 
@@ -770,16 +806,18 @@ fn bazel_attr_module(registry: &mut GlobalsBuilder) {
         values: UnpackListOrTuple<Value<'v>>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<StarlarkAttribute> {
-        let _unused = values;
+        let coercer = AttrType::int();
+        let allowed_values = bazel_allowed_values(eval, values.items, &coercer)?;
         let fallback = eval.heap().alloc(0);
-        Ok(bazel_attr(
+        Ok(bazel_attr_with_allowed_values(
             eval,
             default,
             fallback,
             mandatory,
             bazel_doc(doc),
-            AttrType::int(),
+            coercer,
             configurable,
+            allowed_values,
         )?)
     }
 

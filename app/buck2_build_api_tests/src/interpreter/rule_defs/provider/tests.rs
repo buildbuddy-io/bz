@@ -22,6 +22,31 @@ fn provider_tester() -> Tester {
 }
 
 #[test]
+fn provider_callables_are_hashable() -> buck2_error::Result<()> {
+    let mut tester = provider_tester();
+
+    tester.run_starlark_test(indoc!(
+        r#"
+    FooInfo = provider(fields=["foo"])
+    BarInfo = provider(fields=["bar"])
+    BazInfo = provider(fields=["baz"])
+    providers = {
+        FooInfo: "foo",
+        BarInfo: "bar",
+    }
+
+    def test():
+        assert_eq("foo", providers[FooInfo])
+        assert_eq("bar", providers[BarInfo])
+        assert_eq(True, FooInfo in providers)
+        assert_eq(False, BazInfo in providers)
+    "#
+    ))?;
+
+    Ok(())
+}
+
+#[test]
 fn creates_providers() -> buck2_error::Result<()> {
     // TODO(nmj): Starlark doesn't let you call 'new_invoker()' on is_mutable types.
     //                 Once that's fixed, make sure we can call 'FooInfo' before the module is

@@ -66,13 +66,19 @@ impl AttributeCoerceExt for Attribute {
         }
 
         match self.default() {
-            default if !value.is_none() => self
-                .coercer()
-                .coerce_with_default(configurable, coercer_ctx, value, default.map(|x| &**x))
-                .map(CoercedValue::Custom)
-                .with_buck_error_context(|| {
-                    format!("Error coercing attribute `{param_name}` of type `{self}`")
-                }),
+            default if !value.is_none() => {
+                let coerced = self
+                    .coercer()
+                    .coerce_with_default(configurable, coercer_ctx, value, default.map(|x| &**x))
+                    .with_buck_error_context(|| {
+                        format!("Error coercing attribute `{param_name}` of type `{self}`")
+                    })?;
+                self.validate_allowed_values(&coerced)
+                    .with_buck_error_context(|| {
+                        format!("Error validating attribute `{param_name}` of type `{self}`")
+                    })?;
+                Ok(CoercedValue::Custom(coerced))
+            }
             Some(_) => Ok(CoercedValue::Default),
             None => Err(AttrCoerceError::MissingMandatoryParameter(param_name.to_owned()).into()),
         }

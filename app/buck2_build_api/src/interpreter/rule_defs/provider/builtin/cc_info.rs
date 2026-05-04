@@ -37,9 +37,12 @@ use starlark::values::ValueOfUnchecked;
 use starlark::values::ValueOfUncheckedGeneric;
 use starlark::values::none::NoneType;
 use starlark::values::starlark_value;
+use starlark_map::StarlarkHasher;
 
 use crate as buck2_build_api;
 use crate::interpreter::rule_defs::provider::ProviderLike;
+use crate::interpreter::rule_defs::provider::callable::provider_callable_equals;
+use crate::interpreter::rule_defs::provider::callable::provider_callable_write_hash;
 
 const DEBUG_PACKAGE_INFO: &str = "DebugPackageInfo";
 const CC_TOOLCHAIN_CONFIG_INFO: &str = "CcToolchainConfigInfo";
@@ -194,6 +197,14 @@ impl<'v> StarlarkValue<'v> for CcNativeProviderCallable {
 
     fn provide(&'v self, demand: &mut Demand<'_, 'v>) {
         demand.provide_value::<&dyn ProviderCallableLike>(self);
+    }
+
+    fn equals(&self, other: Value<'v>) -> starlark::Result<bool> {
+        provider_callable_equals(self, other)
+    }
+
+    fn write_hash(&self, hasher: &mut StarlarkHasher) -> starlark::Result<()> {
+        provider_callable_write_hash(self, hasher)
     }
 }
 

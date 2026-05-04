@@ -12,6 +12,7 @@ use std::fmt;
 use std::fmt::Display;
 use std::fmt::Formatter;
 use std::hash::BuildHasher;
+use std::hash::Hash;
 use std::hash::Hasher;
 use std::sync::Arc;
 use std::sync::OnceLock;
@@ -28,6 +29,7 @@ use either::Either;
 use indexmap::IndexMap;
 use itertools::Itertools;
 use starlark::any::ProvidesStaticType;
+use starlark::collections::StarlarkHasher;
 use starlark::docs::DocItem;
 use starlark::docs::DocMember;
 use starlark::docs::DocProperty;
@@ -71,7 +73,6 @@ use starlark::values::typing::TypeCompiled;
 use starlark::values::typing::TypeInstanceId;
 use starlark::values::typing::TypeMatcher;
 use starlark::values::typing::TypeMatcherFactory;
-use starlark_map::StarlarkHasher;
 use starlark_map::StarlarkHasherBuilder;
 use starlark_map::small_map::SmallMap;
 use starlark_map::small_set::SmallSet;
@@ -298,6 +299,24 @@ pub(crate) struct UserProviderCallableData {
 }
 
 register_starlark_any!(UserProviderCallableData);
+
+pub fn provider_callable_equals<'v>(
+    callable: &dyn ProviderCallableLike,
+    other: Value<'v>,
+) -> starlark::Result<bool> {
+    let Some(other) = other.request_value::<&dyn ProviderCallableLike>() else {
+        return Ok(false);
+    };
+    Ok(callable.id()? == other.id()?)
+}
+
+pub fn provider_callable_write_hash(
+    callable: &dyn ProviderCallableLike,
+    hasher: &mut StarlarkHasher,
+) -> starlark::Result<()> {
+    callable.id()?.hash(hasher);
+    Ok(())
+}
 
 /// Initialized after the name is assigned to the provider.
 #[derive(Debug, Trace, Allocative, Clone)]
@@ -574,6 +593,14 @@ impl<'v> StarlarkValue<'v> for UserProviderCallableWithInit<'v> {
     fn provide(&'v self, demand: &mut Demand<'_, 'v>) {
         demand.provide_value::<&dyn ProviderCallableLike>(self);
     }
+
+    fn equals(&self, other: Value<'v>) -> starlark::Result<bool> {
+        provider_callable_equals(self, other)
+    }
+
+    fn write_hash(&self, hasher: &mut StarlarkHasher) -> starlark::Result<()> {
+        provider_callable_write_hash(self, hasher)
+    }
 }
 
 impl<'v> ProviderCallableLike for UserProviderCallableWithInit<'v> {
@@ -674,6 +701,14 @@ impl<'v> StarlarkValue<'v> for UserProviderCallable {
         demand.provide_value::<&dyn ProviderCallableLike>(self);
     }
 
+    fn equals(&self, other: Value<'v>) -> starlark::Result<bool> {
+        provider_callable_equals(self, other)
+    }
+
+    fn write_hash(&self, hasher: &mut StarlarkHasher) -> starlark::Result<()> {
+        provider_callable_write_hash(self, hasher)
+    }
+
     fn eval_type(&self) -> Option<Ty> {
         self.callable.get().map(|named| named.ty_provider.dupe())
     }
@@ -764,6 +799,14 @@ impl<'v> StarlarkValue<'v> for FrozenUserProviderCallable {
 
     fn provide(&'v self, demand: &mut Demand<'_, 'v>) {
         demand.provide_value::<&dyn ProviderCallableLike>(self);
+    }
+
+    fn equals(&self, other: Value<'v>) -> starlark::Result<bool> {
+        provider_callable_equals(self, other)
+    }
+
+    fn write_hash(&self, hasher: &mut StarlarkHasher) -> starlark::Result<()> {
+        provider_callable_write_hash(self, hasher)
     }
 
     fn documentation(&self) -> DocItem {
