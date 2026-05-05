@@ -1390,6 +1390,7 @@ async fn materialize_generated(
                         ctx,
                         module_extension,
                         &module_ctx_working_dir,
+                        Some(&setup.canonical_repo_name),
                         cancellations,
                     )
                     .await?;

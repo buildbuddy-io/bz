@@ -822,6 +822,7 @@ impl DiceCommandUpdater<'_, '_> {
                     extension_usages_json: request.extension_usages_json.dupe(),
                 },
                 &working_dir,
+                None,
                 &cancellations,
             )
             .await?;

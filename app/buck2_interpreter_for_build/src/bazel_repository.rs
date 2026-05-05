@@ -32,11 +32,8 @@ use buck2_core::cells::CellAliasResolver;
 use buck2_core::cells::alias::NonEmptyCellAlias;
 use buck2_core::cells::build_file_cell::BuildFileCell;
 use buck2_core::cells::cell_path::CellPath;
-use buck2_core::cells::external::BzlmodGeneratedCellGenerator;
 use buck2_core::cells::external::BzlmodModuleExtensionRepoSetup;
 use buck2_core::cells::external::BzlmodRepositoryRuleInvocationSetup;
-use buck2_core::cells::external::ExternalCellOrigin;
-use buck2_core::cells::external::bzlmod_cell_aliases_for_cell;
 use buck2_core::cells::external::bzlmod_cell_name;
 use buck2_core::cells::name::CellName;
 use buck2_core::cells::paths::CellRelativePathBuf;
@@ -721,9 +718,9 @@ pub async fn evaluate_bzlmod_module_extension_repo(
     ctx: &mut DiceComputations<'_>,
     setup: &BzlmodModuleExtensionRepoSetup,
     module_ctx_working_dir: &str,
+    current_canonical_repo_name: Option<&str>,
     cancellation: &CancellationContext,
 ) -> buck2_error::Result<BazelModuleExtensionEvaluationResult> {
-    materialize_bzlmod_module_extension_input_modules(ctx, &setup.extension_usages_json).await?;
     let parent_cell = if setup.parent_is_root {
         ctx.get_cell_resolver().await?.root_cell()
     } else {
@@ -736,8 +733,13 @@ pub async fn evaluate_bzlmod_module_extension_repo(
         &setup.extension_bzl_file,
     )?;
     let extension_path = ImportPath::new_same_cell(extension_cell_path)?;
-    materialize_bzlmod_module_extension_generated_aliases(ctx, setup, extension_path.path().cell())
-        .await?;
+    materialize_bzlmod_module_extension_source_label_deps(
+        ctx,
+        &extension_path,
+        setup,
+        current_canonical_repo_name,
+    )
+    .await?;
     let extension_module = ctx
         .get_loaded_module(StarlarkModulePath::LoadFile(&extension_path))
         .await?;
@@ -756,84 +758,101 @@ pub async fn evaluate_bzlmod_module_extension_repo(
         .await
 }
 
-async fn materialize_bzlmod_module_extension_input_modules(
+async fn materialize_bzlmod_module_extension_source_label_deps(
     ctx: &mut DiceComputations<'_>,
-    extension_usages_json: &str,
+    extension_path: &ImportPath,
+    setup: &BzlmodModuleExtensionRepoSetup,
+    current_canonical_repo_name: Option<&str>,
 ) -> buck2_error::Result<()> {
-    let config: BzlmodModuleExtensionEvaluationConfig = serde_json::from_str(extension_usages_json)
-        .map_err(|e| {
+    let source = DiceFileComputations::read_file(ctx, extension_path.path().as_ref())
+        .await
+        .with_package_context_information(extension_path.path().path().to_string())?;
+    let extension_cell_alias_resolver = ctx
+        .get_cell_alias_resolver(extension_path.path().cell())
+        .await?;
+    let mut label_deps = BTreeSet::new();
+    collect_bzlmod_module_extension_string_label_deps(
+        &source,
+        &mut label_deps,
+        &extension_cell_alias_resolver,
+    );
+
+    let config: BzlmodModuleExtensionEvaluationConfig =
+        serde_json::from_str(&setup.extension_usages_json).map_err(|e| {
             buck2_error::Error::from(BazelRepositoryError::InvalidModuleExtensionUsageData)
                 .context(format!("JSON parse error: {e}"))
         })?;
-    let mut seen = std::collections::BTreeSet::new();
     for module in config.modules {
-        if module.is_root {
-            continue;
+        let module_cell = bzlmod_module_cell_name_from_config(ctx, &module).await?;
+        let module_alias_resolver = ctx.get_cell_alias_resolver(module_cell).await?;
+        for (_name, expression) in &module.constants {
+            collect_repository_rule_string_label_deps_from_expression(
+                expression,
+                &mut label_deps,
+                &module_alias_resolver,
+            );
         }
-        if !seen.insert(module.canonical_repo_name.clone()) {
-            continue;
-        }
-        let cell_name = CellName::unchecked_new(&bzlmod_cell_name(&module.canonical_repo_name))?;
-        let should_materialize = {
-            let cell_resolver = ctx.get_cell_resolver().await?;
-            match cell_resolver.get(cell_name) {
-                Ok(cell) => cell.external().is_some(),
-                Err(_) => false,
+        for tag in &module.tags {
+            for (_name, expression) in &tag.bindings {
+                collect_repository_rule_string_label_deps_from_expression(
+                    expression,
+                    &mut label_deps,
+                    &module_alias_resolver,
+                );
             }
-        };
-        if !should_materialize {
-            continue;
+            for (_name, expression) in &tag.kwargs {
+                collect_repository_rule_string_label_deps_from_expression(
+                    expression,
+                    &mut label_deps,
+                    &module_alias_resolver,
+                );
+            }
         }
-        let module_file = CellPath::new(
-            cell_name,
-            CellRelativePathBuf::unchecked_new("MODULE.bazel".to_owned()),
-        );
-        DiceFileComputations::read_path_metadata_if_exists(ctx, module_file.as_ref()).await?;
     }
-    Ok(())
+    if let Some(current_canonical_repo_name) = current_canonical_repo_name {
+        // A concrete generated repo can be mentioned by its own extension source. It
+        // cannot be materialized before the extension has emitted its repository_rule.
+        label_deps.remove(&bzlmod_cell_name(current_canonical_repo_name));
+    }
+    let label_deps = label_deps.into_iter().collect::<Vec<_>>();
+    materialize_repository_rule_label_deps(ctx, &label_deps).await
 }
 
-async fn materialize_bzlmod_module_extension_generated_aliases(
+async fn bzlmod_module_cell_name_from_config(
     ctx: &mut DiceComputations<'_>,
-    current_setup: &BzlmodModuleExtensionRepoSetup,
-    extension_cell_name: CellName,
-) -> buck2_error::Result<()> {
-    if !current_setup.repo_name.is_empty() {
-        return Ok(());
+    module_config: &BzlmodModuleExtensionModuleConfig,
+) -> buck2_error::Result<CellName> {
+    if module_config.is_root {
+        return Ok(ctx.get_cell_resolver().await?.root_cell());
     }
-    let cell_names = {
-        let cell_resolver = ctx.get_cell_resolver().await?;
-        let mut seen = BTreeSet::new();
-        let mut cell_names = Vec::new();
-        for (_alias, cell_name) in bzlmod_cell_aliases_for_cell(extension_cell_name.as_str()) {
-            let cell_name = CellName::unchecked_new(&cell_name)?;
-            if !seen.insert(cell_name) {
-                continue;
-            }
-            let Ok(cell) = cell_resolver.get(cell_name) else {
-                continue;
-            };
-            if let Some(ExternalCellOrigin::BzlmodGenerated(generated)) = cell.external() {
-                match &generated.generator {
-                    BzlmodGeneratedCellGenerator::ModuleExtensionRepo(_) => {
-                        continue;
-                    }
-                    _ => {
-                        cell_names.push(cell_name);
-                    }
+    if module_config.canonical_repo_name == "bazel_tools" {
+        return CellName::unchecked_new("bazel_tools");
+    }
+    CellName::unchecked_new(&bzlmod_cell_name(&module_config.canonical_repo_name))
+}
+
+fn collect_bzlmod_module_extension_string_label_deps(
+    source: &str,
+    label_deps: &mut BTreeSet<String>,
+    cell_alias_resolver: &CellAliasResolver,
+) {
+    for label in repository_rule_label_literals(source) {
+        match label {
+            RepositoryRuleLabelLiteral::Apparent(repo_name) => {
+                if let Ok(cell_name) = cell_alias_resolver.resolve(&repo_name) {
+                    label_deps.insert(cell_name.as_str().to_owned());
                 }
             }
+            RepositoryRuleLabelLiteral::Canonical(canonical_repo_name) => {
+                label_deps.insert(bzlmod_cell_name(&canonical_repo_name));
+            }
         }
-        cell_names
-    };
-    for cell_name in cell_names {
-        let module_file = CellPath::new(
-            cell_name,
-            CellRelativePathBuf::unchecked_new("MODULE.bazel".to_owned()),
-        );
-        DiceFileComputations::read_path_metadata_if_exists(ctx, module_file.as_ref()).await?;
     }
-    Ok(())
+    collect_repository_rule_string_label_deps_from_expression(
+        source,
+        label_deps,
+        cell_alias_resolver,
+    );
 }
 
 pub async fn evaluate_bzlmod_repository_rule(

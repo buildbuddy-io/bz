@@ -142,7 +142,7 @@ Latest smoke:
 
 ```sh
 /Users/siggi/Code/buck2/bazel-bin/app/buck2/buck2_bin \
-  build --isolation-dir buildbuddy-download-retry-1 //server/cmd/buildbuddy:buildbuddy
+  build --isolation-dir buildbuddy-source-label-deps-2 //server/cmd/buildbuddy:buildbuddy
 ```
 
 After the two-phase bzlmod cutover, the root smoke no longer stops at the pre-analysis cell-graph boundary for dynamically emitted repos such as `rules_go__download_0_darwin_amd64`. The simple rules_go smoke loads rules_go from its downloaded bzlmod module, invokes real module extensions and repository rules, materializes the Go SDK repository, analyzes the simple Go package, and runs the real `rules_go` local actions needed for `//:hello`.
@@ -150,6 +150,8 @@ After the two-phase bzlmod cutover, the root smoke no longer stops at the pre-an
 Bazelisk has passed the second validation rung. The next active validation target is BuildBuddy's server target; keep Bazelisk as a regression check while working the first concrete BuildBuddy failure.
 
 BuildBuddy now gets through the earlier rules_python `pip`, rules_java/rules_cc, Apple toolchain, rules_webtesting `metadata`, aspect_rules_js `module_ctx.watch`, rules_go generated-alias ordering, rules_nodejs empty download-auth, rules_jvm_external `use_repo_rule` constant/template, repository_ctx `.repository_ctx` path reuse, dynamic generated-repo executable input materialization, `repository_ctx.patch`, and SHA-384 SRI integrity boundaries. The `buildbuddy-download-retry-1` smoke no longer failed on unsupported `sha384-...` integrity and did not repeat the transient GitHub 502 before it returned to the known DICE synchronization park after large generated-repo expansion. The follow-up `buildbuddy-bcr-cache-1` smoke moved past repeated BCR network resolution and into generated repository materialization for rules_python, rules_go, Gazelle, googleapis, rules_oci, aspect_rules_js, Node, and Go SDK repos. The `buildbuddy-bcr-cache-hardlink-1` smoke confirmed hardlinked generated repo files with link count 2 and reached at least 233 generated repos before being stopped; the active nodes were still generated external-cell file delegates for rules_nodejs and Gazelle repos during pre-analysis sync.
+
+The `buildbuddy-source-label-deps-2` smoke replaced broad module-extension pre-materialization with source/tag-label-driven pre-materialization. It reached only 22 generated repo directories during sync, with the 320M `rules_go++go_sdk+main___download_0` archive dominating disk usage instead of hundreds of unrelated generated repos. The remaining active boundary moved to final synchronization work in cell-graph/module parsing after the extension pass, not eager generated external-cell realization.
 
 ## Constraints
 
@@ -204,7 +206,7 @@ Immediate target:
 
 - Use the successful Bazelisk build as a regression check while expanding the same generic bzlmod/module-extension machinery to BuildBuddy's larger module graph.
 - Resume from the `buildbuddy-bcr-cache-hardlink-1` boundary: BCR discovery is no longer the hot path during cell graph rebuilds, hardlink-first materialization avoids duplicated `.repository_ctx` file contents, and the remaining sync cost is broad generated external-cell realization.
-- Replace broad module-extension pre-materialization with source-driven or load-driven materialization. The current `evaluate_bzlmod_module_extension_repo` path forces `MODULE.bazel` metadata for every input module and visible generated alias before loading an extension, which materializes hundreds of repos before target analysis.
+- Continue tightening source-driven or load-driven generated repo materialization. `evaluate_bzlmod_module_extension_repo` no longer forces `MODULE.bazel` metadata for every input module and visible generated alias before loading an extension, which moved the BuildBuddy boundary away from hundreds of eager generated repos.
 - Keep `.bazelignore` support wired through `CellFileIgnores`; BuildBuddy's root ignores `buck-out`, `node_modules`, and website output trees, which matters for recursive package discovery and globs in the large-repo smoke.
 - Preserve Bazel's external `.bazelignore` semantics while making them lazy: Bazel's `PackageLookupFunction` checks the main repo ignore file before package lookup and checks an external repository's ignore file after fetching that repository, so Buck should not fetch unrelated generated repos solely to compute ignores during global cell setup.
 - Retire any remaining module-specific generated-repo materializers as their extensions become executable.
@@ -213,7 +215,7 @@ Current validation boundary:
 
 - The simple rules_go smoke and Bazelisk both resolve root and downloaded-module aliases separately, load rules_go/Gazelle through downloaded bzlmod module cells, evaluate downloaded module extensions before final cell graph injection, rebuild generated bzlmod cells from emitted repo names, materialize generated repos from downloaded repository-rule implementations, and run Buck2 actions.
 - The older smoke fixture's root-level `@rules_proto` load is intentionally not root-visible without a direct `bazel_dep`, matching Bazel 9.1.0 behavior.
-- BuildBuddy reaches post-extension sync after clearing the current concrete missing-API, generated-alias, repository patch, SRI checksum, BCR rediscovery, and duplicated repository-output copy boundaries; the active validation boundary is eager generated external-cell realization before target analysis.
+- BuildBuddy reaches post-extension sync after clearing the current concrete missing-API, generated-alias, repository patch, SRI checksum, BCR rediscovery, duplicated repository-output copy, and broad generated-repo pre-materialization boundaries; the active validation boundary is final cell-graph synchronization/module parsing before target analysis.
 
 Acceptance:
 
