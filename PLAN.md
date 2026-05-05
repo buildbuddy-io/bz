@@ -153,6 +153,8 @@ BuildBuddy now gets through the earlier rules_python `pip`, rules_java/rules_cc,
 
 The `buildbuddy-source-label-deps-2` smoke replaced broad module-extension pre-materialization with source/tag-label-driven pre-materialization. It reached only 22 generated repo directories during sync, with the 320M `rules_go++go_sdk+main___download_0` archive dominating disk usage instead of hundreds of unrelated generated repos. The remaining active boundary moved to final synchronization work in cell-graph/module parsing after the extension pass, not eager generated external-cell realization.
 
+A follow-up rerun showed bzlmod alias registration rebuilding large per-cell maps during the same synchronization phase. Alias registration now stores the already-normalized alias vectors directly; after that change, the diagnostic boundary moved to bundled `prelude` source artifact declaration/hashing during fresh-daemon sync.
+
 ## Constraints
 
 - `.buckconfig` continues to win over Bazel compatibility defaults.
@@ -215,7 +217,7 @@ Current validation boundary:
 
 - The simple rules_go smoke and Bazelisk both resolve root and downloaded-module aliases separately, load rules_go/Gazelle through downloaded bzlmod module cells, evaluate downloaded module extensions before final cell graph injection, rebuild generated bzlmod cells from emitted repo names, materialize generated repos from downloaded repository-rule implementations, and run Buck2 actions.
 - The older smoke fixture's root-level `@rules_proto` load is intentionally not root-visible without a direct `bazel_dep`, matching Bazel 9.1.0 behavior.
-- BuildBuddy reaches post-extension sync after clearing the current concrete missing-API, generated-alias, repository patch, SRI checksum, BCR rediscovery, duplicated repository-output copy, and broad generated-repo pre-materialization boundaries; the active validation boundary is final cell-graph synchronization/module parsing before target analysis.
+- BuildBuddy reaches post-extension sync after clearing the current concrete missing-API, generated-alias, repository patch, SRI checksum, BCR rediscovery, duplicated repository-output copy, broad generated-repo pre-materialization, and alias-registration map rebuild boundaries; the active validation boundary is bundled prelude source artifact declaration/hashing during fresh-daemon sync.
 
 Acceptance:
 
