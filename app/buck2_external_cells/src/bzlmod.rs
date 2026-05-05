@@ -47,6 +47,7 @@ use buck2_core::cells::external::BzlmodRepositoryRuleInvocationSetup;
 use buck2_core::cells::external::BzlmodRepositoryRuleSetup;
 use buck2_core::cells::external::BzlmodShellConfigSetup;
 use buck2_core::cells::external::ExternalCellOrigin;
+use buck2_core::cells::external::bzlmod_cell_name;
 use buck2_core::cells::name::CellName;
 use buck2_core::cells::paths::CellRelativePath;
 use buck2_core::fs::buck_out_path::BuckOutPathResolver;
@@ -71,9 +72,11 @@ use buck2_fs::error::IoResultExt;
 use buck2_fs::fs_util;
 use buck2_fs::paths::abs_norm_path::AbsNormPath;
 use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
+use buck2_interpreter_for_build::bazel_repository::bzlmod_repository_rule_invocation_from_setup;
 use buck2_interpreter_for_build::bazel_repository::evaluate_bzlmod_module_extension_repo;
 use buck2_interpreter_for_build::bazel_repository::evaluate_bzlmod_repository_rule;
-use buck2_interpreter_for_build::bazel_repository::evaluate_bzlmod_repository_rule_invocation;
+use buck2_interpreter_for_build::bazel_repository::repository_rule_uses_unresolved_dynamic_label;
+use buck2_interpreter_for_build::interpreter::build_context::BazelRepositoryRuleInvocation;
 use cmp_any::PartialEqAny;
 use dice::CancellationContext;
 use dice::DiceComputations;
@@ -1230,15 +1233,126 @@ fn bzlmod_generated_sibling_path(
     dest: &ProjectRelativePath,
     suffix: &str,
 ) -> ProjectRelativePathBuf {
+    bzlmod_generated_sibling_path_for_canonical(&setup.canonical_repo_name, dest, suffix)
+}
+
+fn bzlmod_generated_sibling_path_for_canonical(
+    canonical_repo_name: &str,
+    dest: &ProjectRelativePath,
+    suffix: &str,
+) -> ProjectRelativePathBuf {
     let parent = dest
         .as_str()
         .rsplit_once('/')
         .map(|(parent, _)| parent)
         .unwrap_or("");
-    ProjectRelativePathBuf::unchecked_new(format!(
-        "{}/{}.{}",
-        parent, setup.canonical_repo_name, suffix
-    ))
+    ProjectRelativePathBuf::unchecked_new(format!("{}/{}.{}", parent, canonical_repo_name, suffix))
+}
+
+fn bzlmod_generated_peer_path(
+    dest: &ProjectRelativePath,
+    canonical_repo_name: &str,
+) -> ProjectRelativePathBuf {
+    let parent = dest
+        .as_str()
+        .rsplit_once('/')
+        .map(|(parent, _)| parent)
+        .unwrap_or("");
+    ProjectRelativePathBuf::unchecked_new(format!("{parent}/{canonical_repo_name}"))
+}
+
+fn bzlmod_module_extension_sibling_label_deps(
+    setup: &BzlmodGeneratedCellSetup,
+    module_extension: &BzlmodModuleExtensionRepoSetup,
+    emitted_repo_names: impl IntoIterator<Item = String>,
+) -> Vec<String> {
+    let current_repo_suffix = format!("+{}", module_extension.repo_name);
+    let Some(extension_unique_name) = setup
+        .canonical_repo_name
+        .strip_suffix(current_repo_suffix.as_str())
+    else {
+        return Vec::new();
+    };
+    emitted_repo_names
+        .into_iter()
+        .filter(|repo_name| repo_name != module_extension.repo_name.as_ref())
+        .map(|repo_name| bzlmod_cell_name(&format!("{extension_unique_name}+{repo_name}")))
+        .collect()
+}
+
+fn bzlmod_module_extension_sibling_canonical_repo_name(
+    setup: &BzlmodGeneratedCellSetup,
+    module_extension: &BzlmodModuleExtensionRepoSetup,
+    repo_name: &str,
+) -> Option<String> {
+    let current_repo_suffix = format!("+{}", module_extension.repo_name);
+    let extension_unique_name = setup
+        .canonical_repo_name
+        .strip_suffix(current_repo_suffix.as_str())?;
+    Some(format!("{extension_unique_name}+{repo_name}"))
+}
+
+async fn evaluate_and_materialize_bzlmod_repository_rule(
+    ctx: &mut DiceComputations<'_>,
+    canonical_repo_name: &str,
+    path: &ProjectRelativePath,
+    invocation: &BazelRepositoryRuleInvocation,
+    materializer: &dyn Materializer,
+    cancellations: &CancellationContext,
+) -> buck2_error::Result<()> {
+    if materializer.has_artifact_at(path.to_owned()).await? {
+        return Ok(());
+    }
+
+    let repository_ctx_path =
+        bzlmod_generated_sibling_path_for_canonical(canonical_repo_name, path, "repository_ctx");
+    ctx.get_blocking_executor()
+        .execute_io(
+            Box::new(
+                buck2_execute::execute::clean_output_paths::CleanOutputPaths {
+                    paths: vec![repository_ctx_path.clone()],
+                },
+            ),
+            cancellations,
+        )
+        .await?;
+    let files = evaluate_bzlmod_repository_rule(
+        ctx,
+        invocation,
+        repository_ctx_path.as_str(),
+        cancellations,
+    )
+    .await?;
+    let files_json = serde_json::to_string(&files)
+        .buck_error_context("Error serializing evaluated repository_rule file manifest")?;
+    ctx.get_blocking_executor()
+        .execute_io(
+            Box::new(
+                buck2_execute::execute::clean_output_paths::CleanOutputPaths {
+                    paths: vec![path.to_owned()],
+                },
+            ),
+            cancellations,
+        )
+        .await?;
+    ctx.get_blocking_executor()
+        .execute_io(
+            Box::new(BzlmodGeneratedIoRequest {
+                setup: BzlmodGeneratedCellSetup {
+                    canonical_repo_name: Arc::from(canonical_repo_name),
+                    generator: BzlmodGeneratedCellGenerator::RepositoryRule(
+                        BzlmodRepositoryRuleSetup {
+                            files_json: Arc::from(files_json),
+                            source_dir: Some(Arc::from(repository_ctx_path.as_str())),
+                        },
+                    ),
+                },
+                dest: path.to_owned(),
+            }),
+            cancellations,
+        )
+        .await?;
+    declare_existing_directory(ctx, path, materializer).await
 }
 
 async fn download_impl(
@@ -1401,57 +1515,58 @@ async fn materialize_generated(
                     {
                         let mut invocation = invocation.clone();
                         invocation.name = setup.canonical_repo_name.to_string();
-                        let repository_ctx_path =
-                            bzlmod_generated_sibling_path(setup, path, "repository_ctx");
-                        ctx.get_blocking_executor()
-                            .execute_io(
-                                Box::new(
-                                    buck2_execute::execute::clean_output_paths::CleanOutputPaths {
-                                        paths: vec![repository_ctx_path.clone()],
-                                    },
+                        if repository_rule_uses_unresolved_dynamic_label(ctx, &invocation).await? {
+                            invocation.label_deps.extend(
+                                bzlmod_module_extension_sibling_label_deps(
+                                    setup,
+                                    module_extension,
+                                    evaluation
+                                        .repository_rule_invocations
+                                        .iter()
+                                        .map(|invocation| invocation.name.clone()),
                                 ),
-                                cancellations,
-                            )
-                            .await?;
-                        let files = evaluate_bzlmod_repository_rule(
+                            );
+                            let sibling_invocations = evaluation
+                                .repository_rule_invocations
+                                .iter()
+                                .filter(|sibling| {
+                                    sibling.name != module_extension.repo_name.as_ref()
+                                })
+                                .cloned()
+                                .collect::<Vec<_>>();
+                            for mut sibling_invocation in sibling_invocations {
+                                let Some(sibling_canonical_repo_name) =
+                                    bzlmod_module_extension_sibling_canonical_repo_name(
+                                        setup,
+                                        module_extension,
+                                        &sibling_invocation.name,
+                                    )
+                                else {
+                                    continue;
+                                };
+                                sibling_invocation.name = sibling_canonical_repo_name.clone();
+                                let sibling_path =
+                                    bzlmod_generated_peer_path(path, &sibling_canonical_repo_name);
+                                evaluate_and_materialize_bzlmod_repository_rule(
+                                    ctx,
+                                    &sibling_canonical_repo_name,
+                                    sibling_path.as_ref(),
+                                    &sibling_invocation,
+                                    &*materializer,
+                                    cancellations,
+                                )
+                                .await?;
+                            }
+                        }
+                        evaluate_and_materialize_bzlmod_repository_rule(
                             ctx,
+                            &setup.canonical_repo_name,
+                            path,
                             &invocation,
-                            repository_ctx_path.as_str(),
+                            &*materializer,
                             cancellations,
                         )
                         .await?;
-                        let files_json = serde_json::to_string(&files).buck_error_context(
-                            "Error serializing evaluated repository_rule file manifest",
-                        )?;
-                        ctx.get_blocking_executor()
-                            .execute_io(
-                                Box::new(
-                                    buck2_execute::execute::clean_output_paths::CleanOutputPaths {
-                                        paths: vec![path.to_owned()],
-                                    },
-                                ),
-                                cancellations,
-                            )
-                            .await?;
-                        ctx.get_blocking_executor()
-                            .execute_io(
-                                Box::new(BzlmodGeneratedIoRequest {
-                                    setup: BzlmodGeneratedCellSetup {
-                                        canonical_repo_name: setup.canonical_repo_name.dupe(),
-                                        generator: BzlmodGeneratedCellGenerator::RepositoryRule(
-                                            BzlmodRepositoryRuleSetup {
-                                                files_json: Arc::from(files_json),
-                                                source_dir: Some(Arc::from(
-                                                    repository_ctx_path.as_str(),
-                                                )),
-                                            },
-                                        ),
-                                    },
-                                    dest: path.to_owned(),
-                                }),
-                                cancellations,
-                            )
-                            .await?;
                         return Ok(());
                     }
                     let emitted = evaluation
@@ -1467,59 +1582,28 @@ async fn materialize_generated(
                     }
                     .into());
                 }
-                BzlmodGeneratedCellGenerator::RepositoryRuleInvocation(invocation) => {
-                    let repository_ctx_path =
-                        bzlmod_generated_sibling_path(setup, path, "repository_ctx");
-                    ctx.get_blocking_executor()
-                        .execute_io(
-                            Box::new(
-                                buck2_execute::execute::clean_output_paths::CleanOutputPaths {
-                                    paths: vec![repository_ctx_path.clone()],
-                                },
-                            ),
-                            cancellations,
-                        )
-                        .await?;
-                    let files = evaluate_bzlmod_repository_rule_invocation(
-                        ctx,
-                        invocation,
+                BzlmodGeneratedCellGenerator::RepositoryRuleInvocation(invocation_setup) => {
+                    let mut invocation = bzlmod_repository_rule_invocation_from_setup(
+                        invocation_setup,
                         &setup.canonical_repo_name,
-                        repository_ctx_path.as_str(),
+                    )?;
+                    if repository_rule_uses_unresolved_dynamic_label(ctx, &invocation).await? {
+                        invocation.label_deps.extend(
+                            invocation_setup
+                                .same_extension_label_deps
+                                .iter()
+                                .map(|cell_name| cell_name.to_string()),
+                        );
+                    }
+                    evaluate_and_materialize_bzlmod_repository_rule(
+                        ctx,
+                        &setup.canonical_repo_name,
+                        path,
+                        &invocation,
+                        &*materializer,
                         cancellations,
                     )
                     .await?;
-                    let files_json = serde_json::to_string(&files).buck_error_context(
-                        "Error serializing evaluated repository_rule file manifest",
-                    )?;
-                    ctx.get_blocking_executor()
-                        .execute_io(
-                            Box::new(
-                                buck2_execute::execute::clean_output_paths::CleanOutputPaths {
-                                    paths: vec![path.to_owned()],
-                                },
-                            ),
-                            cancellations,
-                        )
-                        .await?;
-                    ctx.get_blocking_executor()
-                        .execute_io(
-                            Box::new(BzlmodGeneratedIoRequest {
-                                setup: BzlmodGeneratedCellSetup {
-                                    canonical_repo_name: setup.canonical_repo_name.dupe(),
-                                    generator: BzlmodGeneratedCellGenerator::RepositoryRule(
-                                        BzlmodRepositoryRuleSetup {
-                                            files_json: Arc::from(files_json),
-                                            source_dir: Some(Arc::from(
-                                                repository_ctx_path.as_str(),
-                                            )),
-                                        },
-                                    ),
-                                },
-                                dest: path.to_owned(),
-                            }),
-                            cancellations,
-                        )
-                        .await?;
                     return Ok(());
                 }
                 BzlmodGeneratedCellGenerator::HttpArchive(http_archive) => {

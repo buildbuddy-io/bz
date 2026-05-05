@@ -38,6 +38,7 @@ use buck2_core::cells::external::bzlmod_cell_name;
 use buck2_core::cells::name::CellName;
 use buck2_core::cells::paths::CellRelativePathBuf;
 use buck2_core::target::label::interner::ConcurrentTargetLabelInterner;
+use buck2_interpreter::file_loader::LoadedModule;
 use buck2_interpreter::load_module::InterpreterCalculation;
 use buck2_interpreter::parse_import::RelativeImports;
 use buck2_interpreter::parse_import::parse_import;
@@ -398,6 +399,7 @@ fn collect_repository_rule_string_label_dep(
     cell_alias_resolver: &CellAliasResolver,
 ) {
     let Some((canonical, repo_name)) = repository_rule_string_repo_name(value) else {
+        collect_repository_rule_string_label_template_deps(value, label_deps, cell_alias_resolver);
         return;
     };
     if canonical || repo_name.contains('+') {
@@ -406,6 +408,36 @@ fn collect_repository_rule_string_label_dep(
     }
     if let Ok(cell_name) = cell_alias_resolver.resolve(repo_name) {
         label_deps.insert(cell_name.as_str().to_owned());
+    }
+}
+
+fn collect_repository_rule_string_label_template_deps(
+    value: &str,
+    label_deps: &mut BTreeSet<String>,
+    cell_alias_resolver: &CellAliasResolver,
+) {
+    let Some((canonical, repo_template)) = repository_rule_string_repo_name_template(value) else {
+        return;
+    };
+    if canonical {
+        return;
+    }
+    collect_repository_rule_repo_template_label_deps(
+        repo_template,
+        label_deps,
+        cell_alias_resolver,
+    );
+}
+
+fn collect_repository_rule_repo_template_label_deps(
+    repo_template: &str,
+    label_deps: &mut BTreeSet<String>,
+    cell_alias_resolver: &CellAliasResolver,
+) {
+    for (alias, cell_name) in cell_alias_resolver.mappings() {
+        if repository_rule_repo_template_matches(repo_template, alias.as_str()) {
+            label_deps.insert(cell_name.as_str().to_owned());
+        }
     }
 }
 
@@ -473,6 +505,132 @@ fn repository_rule_string_repo_name(value: &str) -> Option<(bool, &str)> {
         return None;
     }
     Some((canonical, repo_name))
+}
+
+fn repository_rule_string_repo_name_template(value: &str) -> Option<(bool, &str)> {
+    if value.chars().any(char::is_whitespace) {
+        return None;
+    }
+    let (canonical, rest) = if let Some(rest) = value.strip_prefix("@@") {
+        (true, rest)
+    } else if let Some(rest) = value.strip_prefix('@') {
+        (false, rest)
+    } else {
+        return None;
+    };
+    let repo_name = rest.split_once("//")?.0;
+    if repo_name.is_empty() || !repo_name.contains('{') || !repo_name.contains('}') {
+        return None;
+    }
+    if !repo_name
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | '.' | '+' | '{' | '}'))
+    {
+        return None;
+    }
+    Some((canonical, repo_name))
+}
+
+#[derive(Debug)]
+struct RepositoryRuleRepoTemplate {
+    segments: Vec<String>,
+    starts_with_wildcard: bool,
+    ends_with_wildcard: bool,
+}
+
+fn repository_rule_repo_template(value: &str) -> Option<RepositoryRuleRepoTemplate> {
+    let mut segments = Vec::new();
+    let mut segment = String::new();
+    let mut chars = value.chars().peekable();
+    let mut starts_with_wildcard = false;
+    let mut ends_with_wildcard = false;
+    let mut saw_wildcard = false;
+    let mut saw_literal = false;
+
+    while let Some(ch) = chars.next() {
+        match ch {
+            '{' => {
+                if matches!(chars.peek(), Some('{')) {
+                    chars.next();
+                    segment.push('{');
+                    saw_literal = true;
+                    ends_with_wildcard = false;
+                    continue;
+                }
+                if segments.is_empty() && segment.is_empty() {
+                    starts_with_wildcard = true;
+                }
+                segments.push(std::mem::take(&mut segment));
+                saw_wildcard = true;
+                ends_with_wildcard = true;
+                let mut closed = false;
+                for placeholder_ch in chars.by_ref() {
+                    if placeholder_ch == '}' {
+                        closed = true;
+                        break;
+                    }
+                }
+                if !closed {
+                    return None;
+                }
+            }
+            '}' => {
+                if matches!(chars.peek(), Some('}')) {
+                    chars.next();
+                    segment.push('}');
+                    saw_literal = true;
+                    ends_with_wildcard = false;
+                } else {
+                    return None;
+                }
+            }
+            _ => {
+                segment.push(ch);
+                saw_literal = true;
+                ends_with_wildcard = false;
+            }
+        }
+    }
+    segments.push(segment);
+
+    if !saw_wildcard || !saw_literal {
+        return None;
+    }
+
+    Some(RepositoryRuleRepoTemplate {
+        segments,
+        starts_with_wildcard,
+        ends_with_wildcard,
+    })
+}
+
+fn repository_rule_repo_template_matches(template: &str, repo_name: &str) -> bool {
+    let Some(template) = repository_rule_repo_template(template) else {
+        return false;
+    };
+    let mut offset = 0usize;
+    let mut first_literal = true;
+
+    for segment in template
+        .segments
+        .iter()
+        .filter(|segment| !segment.is_empty())
+    {
+        if first_literal && !template.starts_with_wildcard {
+            let Some(rest) = repo_name[offset..].strip_prefix(segment) else {
+                return false;
+            };
+            offset = repo_name.len() - rest.len();
+        } else {
+            let Some(found) = repo_name[offset..].find(segment) else {
+                return false;
+            };
+            offset += found + segment.len();
+        }
+        first_literal = false;
+    }
+
+    template.ends_with_wildcard || offset == repo_name.len()
 }
 
 fn repository_rule_dynamic_label_attr_names(source: &str) -> BTreeSet<String> {
@@ -594,6 +752,7 @@ fn host_environ<'v>(heap: Heap<'v>) -> Value<'v> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use buck2_hash::StdBuckHashMap;
 
     #[test]
     fn test_repository_rule_string_repo_name() {
@@ -610,6 +769,58 @@ mod tests {
             repository_rule_string_repo_name("https://example.com/@repo"),
             None
         );
+        assert_eq!(
+            repository_rule_string_repo_name_template("@yq_{}//:yq{}"),
+            Some((false, "yq_{}"))
+        );
+        assert!(repository_rule_repo_template_matches(
+            "yq_{}",
+            "yq_darwin_arm64"
+        ));
+        assert!(!repository_rule_repo_template_matches(
+            "yq_{}",
+            "nodejs_darwin_arm64"
+        ));
+        assert!(!repository_rule_repo_template_matches("{}", "anything"));
+    }
+
+    #[test]
+    fn test_repository_rule_string_label_template_deps() {
+        let mut aliases = StdBuckHashMap::default();
+        aliases.insert(
+            NonEmptyCellAlias::new("yq_darwin_arm64".to_owned()).unwrap(),
+            CellName::testing_new("bzlmod_yq_darwin_arm64"),
+        );
+        aliases.insert(
+            NonEmptyCellAlias::new("yq_linux_amd64".to_owned()).unwrap(),
+            CellName::testing_new("bzlmod_yq_linux_amd64"),
+        );
+        aliases.insert(
+            NonEmptyCellAlias::new("nodejs_darwin_arm64".to_owned()).unwrap(),
+            CellName::testing_new("bzlmod_nodejs_darwin_arm64"),
+        );
+        let resolver = CellAliasResolver::new(CellName::testing_new("current"), aliases).unwrap();
+        let mut label_deps = BTreeSet::new();
+
+        collect_bzlmod_module_extension_string_label_deps(
+            r#"host_yq = Label("@yq_{}//:yq{}".format(platform, extension))"#,
+            &mut label_deps,
+            &resolver,
+        );
+
+        assert!(label_deps.contains("bzlmod_yq_darwin_arm64"));
+        assert!(label_deps.contains("bzlmod_yq_linux_amd64"));
+        assert!(!label_deps.contains("bzlmod_nodejs_darwin_arm64"));
+    }
+
+    #[test]
+    fn test_repository_rule_source_uses_unresolved_dynamic_label() {
+        assert!(repository_rule_source_uses_unresolved_dynamic_label(
+            r#"Label("{repo}//:BUILD.bazel".format(repo = repo))"#
+        ));
+        assert!(!repository_rule_source_uses_unresolved_dynamic_label(
+            r#"Label("@yq_{}//:yq{}".format(platform, extension))"#
+        ));
     }
 
     #[test]
@@ -743,6 +954,12 @@ pub async fn evaluate_bzlmod_module_extension_repo(
     let extension_module = ctx
         .get_loaded_module(StarlarkModulePath::LoadFile(&extension_path))
         .await?;
+    materialize_bzlmod_module_extension_loaded_module_label_deps(
+        ctx,
+        &extension_module,
+        current_canonical_repo_name,
+    )
+    .await?;
     let mut interpreter = ctx
         .get_interpreter_calculator(OwnedStarlarkPath::LoadFile(extension_path.clone()))
         .await?;
@@ -818,6 +1035,50 @@ async fn materialize_bzlmod_module_extension_source_label_deps(
     materialize_repository_rule_label_deps(ctx, &label_deps).await
 }
 
+async fn materialize_bzlmod_module_extension_loaded_module_label_deps(
+    ctx: &mut DiceComputations<'_>,
+    extension_module: &LoadedModule,
+    current_canonical_repo_name: Option<&str>,
+) -> buck2_error::Result<()> {
+    let mut loaded_paths = Vec::new();
+    collect_loaded_module_load_paths(extension_module, &mut BTreeSet::new(), &mut loaded_paths);
+
+    let mut label_deps = BTreeSet::new();
+    for path in loaded_paths {
+        let source = DiceFileComputations::read_file(ctx, path.path().as_ref())
+            .await
+            .with_package_context_information(path.path().path().to_string())?;
+        let cell_alias_resolver = ctx.get_cell_alias_resolver(path.path().cell()).await?;
+        collect_bzlmod_module_extension_string_label_deps(
+            &source,
+            &mut label_deps,
+            &cell_alias_resolver,
+        );
+    }
+    if let Some(current_canonical_repo_name) = current_canonical_repo_name {
+        label_deps.remove(&bzlmod_cell_name(current_canonical_repo_name));
+    }
+    let label_deps = label_deps.into_iter().collect::<Vec<_>>();
+    materialize_repository_rule_label_deps(ctx, &label_deps).await
+}
+
+fn collect_loaded_module_load_paths(
+    module: &LoadedModule,
+    seen: &mut BTreeSet<String>,
+    paths: &mut Vec<ImportPath>,
+) {
+    for loaded in module.loaded_modules().map.values() {
+        let key = loaded.path().to_string();
+        if !seen.insert(key) {
+            continue;
+        }
+        if let StarlarkModulePath::LoadFile(path) = loaded.path() {
+            paths.push(path.clone());
+        }
+        collect_loaded_module_load_paths(loaded, seen, paths);
+    }
+}
+
 async fn bzlmod_module_cell_name_from_config(
     ctx: &mut DiceComputations<'_>,
     module_config: &BzlmodModuleExtensionModuleConfig,
@@ -843,16 +1104,18 @@ fn collect_bzlmod_module_extension_string_label_deps(
                     label_deps.insert(cell_name.as_str().to_owned());
                 }
             }
+            RepositoryRuleLabelLiteral::ApparentTemplate(repo_template) => {
+                collect_repository_rule_repo_template_label_deps(
+                    &repo_template,
+                    label_deps,
+                    cell_alias_resolver,
+                );
+            }
             RepositoryRuleLabelLiteral::Canonical(canonical_repo_name) => {
                 label_deps.insert(bzlmod_cell_name(&canonical_repo_name));
             }
         }
     }
-    collect_repository_rule_string_label_deps_from_expression(
-        source,
-        label_deps,
-        cell_alias_resolver,
-    );
 }
 
 pub async fn evaluate_bzlmod_repository_rule(
@@ -875,6 +1138,7 @@ pub async fn evaluate_bzlmod_repository_rule(
     let rule_module = ctx
         .get_loaded_module(StarlarkModulePath::LoadFile(rule_path))
         .await?;
+    materialize_repository_rule_loaded_module_label_deps(ctx, &rule_module, invocation).await?;
     let mut interpreter = ctx
         .get_interpreter_calculator(OwnedStarlarkPath::LoadFile(rule_path.clone()))
         .await?;
@@ -889,8 +1153,45 @@ pub async fn evaluate_bzlmod_repository_rule(
         .await
 }
 
+pub async fn repository_rule_uses_unresolved_dynamic_label(
+    ctx: &mut DiceComputations<'_>,
+    invocation: &BazelRepositoryRuleInvocation,
+) -> buck2_error::Result<bool> {
+    let rule_path = match &invocation.rule_id.path {
+        BzlOrBxlPath::Bzl(path) => path,
+        BzlOrBxlPath::Bxl(_) => return Ok(false),
+    };
+    let source = DiceFileComputations::read_file(ctx, rule_path.path().as_ref())
+        .await
+        .with_package_context_information(rule_path.path().path().to_string())?;
+    if repository_rule_source_uses_unresolved_dynamic_label(&source) {
+        return Ok(true);
+    }
+
+    let rule_module = ctx
+        .get_loaded_module(StarlarkModulePath::LoadFile(rule_path))
+        .await?;
+    let mut loaded_paths = Vec::new();
+    collect_loaded_module_load_paths(&rule_module, &mut BTreeSet::new(), &mut loaded_paths);
+    for path in loaded_paths {
+        let source = DiceFileComputations::read_file(ctx, path.path().as_ref())
+            .await
+            .with_package_context_information(path.path().path().to_string())?;
+        if repository_rule_source_uses_unresolved_dynamic_label(&source) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn repository_rule_source_uses_unresolved_dynamic_label(source: &str) -> bool {
+    let compact = repository_rule_source_without_ascii_whitespace(source);
+    compact.contains("Label(\"{") || compact.contains("Label('{")
+}
+
 enum RepositoryRuleLabelLiteral {
     Apparent(String),
+    ApparentTemplate(String),
     Canonical(String),
 }
 
@@ -902,9 +1203,49 @@ async fn materialize_repository_rule_source_label_deps(
     let source = DiceFileComputations::read_file(ctx, rule_path.path().as_ref())
         .await
         .with_package_context_information(rule_path.path().path().to_string())?;
-
     let cell_alias_resolver = ctx.get_cell_alias_resolver(rule_path.path().cell()).await?;
     let mut label_deps = BTreeSet::new();
+    collect_repository_rule_source_label_deps(
+        &source,
+        &invocation.attrs,
+        &mut label_deps,
+        &cell_alias_resolver,
+    );
+    let label_deps = label_deps.into_iter().collect::<Vec<_>>();
+    materialize_repository_rule_label_deps(ctx, &label_deps).await
+}
+
+async fn materialize_repository_rule_loaded_module_label_deps(
+    ctx: &mut DiceComputations<'_>,
+    rule_module: &LoadedModule,
+    invocation: &BazelRepositoryRuleInvocation,
+) -> buck2_error::Result<()> {
+    let mut loaded_paths = Vec::new();
+    collect_loaded_module_load_paths(rule_module, &mut BTreeSet::new(), &mut loaded_paths);
+
+    let mut label_deps = BTreeSet::new();
+    for path in loaded_paths {
+        let source = DiceFileComputations::read_file(ctx, path.path().as_ref())
+            .await
+            .with_package_context_information(path.path().path().to_string())?;
+        let cell_alias_resolver = ctx.get_cell_alias_resolver(path.path().cell()).await?;
+        collect_repository_rule_source_label_deps(
+            &source,
+            &invocation.attrs,
+            &mut label_deps,
+            &cell_alias_resolver,
+        );
+    }
+    let label_deps = label_deps.into_iter().collect::<Vec<_>>();
+    materialize_repository_rule_label_deps(ctx, &label_deps).await
+}
+
+fn collect_repository_rule_source_label_deps(
+    source: &str,
+    attrs: &[(String, String)],
+    label_deps: &mut BTreeSet<String>,
+    cell_alias_resolver: &CellAliasResolver,
+) {
     for label in repository_rule_label_literals(&source) {
         let cell_name = match label {
             RepositoryRuleLabelLiteral::Apparent(repo_name) => {
@@ -913,14 +1254,21 @@ async fn materialize_repository_rule_source_label_deps(
                     Err(_) => continue,
                 }
             }
+            RepositoryRuleLabelLiteral::ApparentTemplate(repo_template) => {
+                collect_repository_rule_repo_template_label_deps(
+                    &repo_template,
+                    label_deps,
+                    cell_alias_resolver,
+                );
+                continue;
+            }
             RepositoryRuleLabelLiteral::Canonical(canonical_repo_name) => {
                 bzlmod_cell_name(&canonical_repo_name)
             }
         };
         label_deps.insert(cell_name);
     }
-    let attrs = invocation
-        .attrs
+    let attrs = attrs
         .iter()
         .map(|(name, expression)| (name.as_str(), expression.as_str()))
         .collect::<BTreeMap<_, _>>();
@@ -932,12 +1280,10 @@ async fn materialize_repository_rule_source_label_deps(
         };
         collect_repository_rule_string_label_deps_from_expression(
             expression,
-            &mut label_deps,
-            &cell_alias_resolver,
+            label_deps,
+            cell_alias_resolver,
         );
     }
-    let label_deps = label_deps.into_iter().collect::<Vec<_>>();
-    materialize_repository_rule_label_deps(ctx, &label_deps).await
 }
 
 fn repository_rule_label_literals(source: &str) -> Vec<RepositoryRuleLabelLiteral> {
@@ -973,11 +1319,17 @@ fn repository_rule_label_literals(source: &str) -> Vec<RepositoryRuleLabelLitera
             offset = index;
             continue;
         }
-        let repo_name = source[repo_start..index].to_owned();
+        let repo_name = &source[repo_start..index];
         labels.push(if canonical {
-            RepositoryRuleLabelLiteral::Canonical(repo_name)
+            if repository_rule_repo_template(repo_name).is_some() {
+                offset = index + 2;
+                continue;
+            }
+            RepositoryRuleLabelLiteral::Canonical(repo_name.to_owned())
+        } else if repository_rule_repo_template(repo_name).is_some() {
+            RepositoryRuleLabelLiteral::ApparentTemplate(repo_name.to_owned())
         } else {
-            RepositoryRuleLabelLiteral::Apparent(repo_name)
+            RepositoryRuleLabelLiteral::Apparent(repo_name.to_owned())
         });
         offset = index + 2;
     }
@@ -1020,6 +1372,15 @@ pub async fn evaluate_bzlmod_repository_rule_invocation(
     repository_ctx_working_dir: &str,
     cancellation: &CancellationContext,
 ) -> buck2_error::Result<Vec<BazelRepositoryGeneratedFile>> {
+    let invocation = bzlmod_repository_rule_invocation_from_setup(setup, canonical_repo_name)?;
+    evaluate_bzlmod_repository_rule(ctx, &invocation, repository_ctx_working_dir, cancellation)
+        .await
+}
+
+pub fn bzlmod_repository_rule_invocation_from_setup(
+    setup: &BzlmodRepositoryRuleInvocationSetup,
+    canonical_repo_name: &str,
+) -> buck2_error::Result<BazelRepositoryRuleInvocation> {
     let rule_cell = CellName::unchecked_new(&setup.rule_bzl_cell)?;
     let rule_path = CellPath::new(
         rule_cell,
@@ -1028,7 +1389,7 @@ pub async fn evaluate_bzlmod_repository_rule_invocation(
     let build_file_cell =
         BuildFileCell::new(CellName::unchecked_new(&setup.rule_bzl_build_file_cell)?);
     let rule_path = ImportPath::new_with_build_file_cells(rule_path, build_file_cell)?;
-    let invocation = BazelRepositoryRuleInvocation {
+    Ok(BazelRepositoryRuleInvocation {
         rule_id: StarlarkRuleType {
             path: BzlOrBxlPath::Bzl(rule_path),
             name: setup.rule_name.to_string(),
@@ -1045,9 +1406,7 @@ pub async fn evaluate_bzlmod_repository_rule_invocation(
             .iter()
             .map(|cell_name| cell_name.to_string())
             .collect(),
-    };
-    evaluate_bzlmod_repository_rule(ctx, &invocation, repository_ctx_working_dir, cancellation)
-        .await
+    })
 }
 
 pub(crate) fn module_extension_from_loaded_module(
@@ -2669,7 +3028,7 @@ fn repository_ctx_command_external_input_path(
     Some(path)
 }
 
-fn repository_ctx_wait_for_external_inputs(
+fn repository_ctx_validate_external_inputs_ready(
     values: impl IntoIterator<Item = String>,
     repository_working_dir: &Path,
     program: &str,
@@ -2683,15 +3042,7 @@ fn repository_ctx_wait_for_external_inputs(
         if !seen.insert(path.clone()) {
             continue;
         }
-        let mut materialized = repository_ctx_external_input_ready(&path);
-        for _ in 0..1200 {
-            if materialized {
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(100));
-            materialized = repository_ctx_external_input_ready(&path);
-        }
-        if !materialized {
+        if !repository_ctx_external_input_ready(&path) {
             return Err(buck2_error::Error::from(
                 BazelRepositoryError::RepositoryCtxExecuteFailed {
                     program: program.to_owned(),
@@ -2720,10 +3071,12 @@ fn repository_ctx_external_input_ready(path: &Path) -> bool {
 fn repository_ctx_generated_repository_root(path: &Path) -> Option<PathBuf> {
     let path = path.to_string_lossy();
     let (prefix, suffix) = path.split_once("/bzlmod_generated/")?;
-    let repo_end = suffix.find(".repository_ctx")? + ".repository_ctx".len();
+    let (repo_name, _) = suffix.split_once('/').unwrap_or((suffix, ""));
+    if repo_name.ends_with(".repository_ctx") {
+        return None;
+    }
     Some(PathBuf::from(format!(
-        "{prefix}/bzlmod_generated/{}",
-        &suffix[..repo_end]
+        "{prefix}/bzlmod_generated/{repo_name}"
     )))
 }
 
@@ -2991,6 +3344,32 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
         Ok(String::from_utf8_lossy(&bytes).into_owned())
     }
 
+    fn watch<'v>(
+        this: ValueTypedComplex<'v, StarlarkRepositoryContext<'v>>,
+        #[starlark(require = pos)] path: Value<'v>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<NoneType> {
+        let _path = repository_path_from_value_relative_to(
+            path,
+            eval,
+            Some(repository_ctx_working_dir(this)),
+        )?;
+        Ok(NoneType)
+    }
+
+    fn watch_tree<'v>(
+        this: ValueTypedComplex<'v, StarlarkRepositoryContext<'v>>,
+        #[starlark(require = pos)] path: Value<'v>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<NoneType> {
+        let _path = repository_path_from_value_relative_to(
+            path,
+            eval,
+            Some(repository_ctx_working_dir(this)),
+        )?;
+        Ok(NoneType)
+    }
+
     fn repo_metadata<'v>(
         this: ValueTypedComplex<'v, StarlarkRepositoryContext<'v>>,
         #[starlark(require = named, default = false)] reproducible: bool,
@@ -3210,7 +3589,7 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
                 )
             })
             .collect::<Vec<_>>();
-        repository_ctx_wait_for_external_inputs(
+        repository_ctx_validate_external_inputs_ready(
             std::iter::once(program.clone()).chain(arguments.iter().cloned()),
             &repository_working_dir_abs,
             &program,
@@ -4356,7 +4735,7 @@ fn module_extension_context_methods(builder: &mut MethodsBuilder) {
                 )
             })
             .collect::<Vec<_>>();
-        repository_ctx_wait_for_external_inputs(
+        repository_ctx_validate_external_inputs_ready(
             std::iter::once(program.clone()).chain(arguments.iter().cloned()),
             &repository_working_dir_abs,
             &program,

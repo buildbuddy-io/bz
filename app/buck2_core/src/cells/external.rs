@@ -365,6 +365,7 @@ pub struct BzlmodRepositoryRuleInvocationSetup {
     pub rule_name: Arc<str>,
     pub attrs: Arc<Vec<(Arc<str>, Arc<str>)>>,
     pub label_deps: Arc<Vec<Arc<str>>>,
+    pub same_extension_label_deps: Arc<Vec<Arc<str>>>,
 }
 
 #[derive(

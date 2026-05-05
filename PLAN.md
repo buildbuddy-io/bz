@@ -137,12 +137,17 @@ Completed:
 - Bzlmod download APIs now retry retryable HTTP failures using Bazel-style status handling for 5xx, 403, 408, 429, timeouts, and send failures before moving to the next mirror URL.
 - BCR module graph discovery is cached in-process by root deps and override set, so large-repo cell graph rebuilds after module-extension evaluation do not repeatedly refetch the same registry graph. Generated repo mappings are still recomputed from the current extension results.
 - Recursive bzlmod external-cell materialization now hardlinks regular files when possible and falls back to copying, avoiding duplicate byte copies for large generated repositories while keeping symlink and directory semantics unchanged.
+- Bundled external cells now declare source artifacts lazily per file read/metadata lookup; the full bundled cell is still materializable on explicit `materialize_all(...)`, but fresh Bazel-compatible sync no longer declares the entire prelude up front.
+- `repository_ctx.execute(...)` and `module_ctx.execute(...)` now fail immediately when an external command input has not been materialized instead of polling for two minutes; exact `.repository_ctx` paths are treated as ready scratch roots rather than as generated-repo roots.
+- Module-extension and repository-rule label pre-materialization now scans transitive loaded `.bzl` modules, recognizes templated apparent `Label("@repo_{}//...".format(...))` labels, and avoids broad source string scanning that can materialize unrelated generated repos.
+- Finalized module-extension repository-rule invocations now carry same-extension generated repo deps derived from their recorded attrs, and dynamically unresolved repository rules use those deps to materialize sibling repos through the final cell graph.
+- `repository_ctx.watch(...)` and `repository_ctx.watch_tree(...)` are available for downloaded repository rules using the same path coercion as other repository context APIs.
 
 Latest smoke:
 
 ```sh
 /Users/siggi/Code/buck2/bazel-bin/app/buck2/buck2_bin \
-  build --isolation-dir buildbuddy-source-label-deps-2 //server/cmd/buildbuddy:buildbuddy
+  build --isolation-dir buildbuddy-repo-watch-1 //server/cmd/buildbuddy:buildbuddy
 ```
 
 After the two-phase bzlmod cutover, the root smoke no longer stops at the pre-analysis cell-graph boundary for dynamically emitted repos such as `rules_go__download_0_darwin_amd64`. The simple rules_go smoke loads rules_go from its downloaded bzlmod module, invokes real module extensions and repository rules, materializes the Go SDK repository, analyzes the simple Go package, and runs the real `rules_go` local actions needed for `//:hello`.
@@ -154,6 +159,8 @@ BuildBuddy now gets through the earlier rules_python `pip`, rules_java/rules_cc,
 The `buildbuddy-source-label-deps-2` smoke replaced broad module-extension pre-materialization with source/tag-label-driven pre-materialization. It reached only 22 generated repo directories during sync, with the 320M `rules_go++go_sdk+main___download_0` archive dominating disk usage instead of hundreds of unrelated generated repos. The remaining active boundary moved to final synchronization work in cell-graph/module parsing after the extension pass, not eager generated external-cell realization.
 
 A follow-up rerun showed bzlmod alias registration rebuilding large per-cell maps during the same synchronization phase. Alias registration now stores the already-normalized alias vectors directly; after that change, the diagnostic boundary moved to bundled `prelude` source artifact declaration/hashing during fresh-daemon sync.
+
+The `buildbuddy-repo-watch-1` smoke cleared the aspect_rules_js `yq` external executable boundary by pre-materializing labels found in transitively loaded helper modules. It also cleared the rules_python host-runtime boundary: `rules_python++python+python_3_10_host` now materializes same-extension implementation repos such as `rules_python++python+python_3_10_aarch64-apple-darwin` from finalized repository-rule invocations before the host repo calls `readdir()`. The follow-up `repository_ctx.watch(...)` failure in `python_repository` is fixed. That smoke was stopped after returning to a long synchronization wait with 47 generated repo directories and no concrete missing API or missing generated repo error.
 
 ## Constraints
 
@@ -207,8 +214,8 @@ Implement:
 Immediate target:
 
 - Use the successful Bazelisk build as a regression check while expanding the same generic bzlmod/module-extension machinery to BuildBuddy's larger module graph.
-- Resume from the `buildbuddy-bcr-cache-hardlink-1` boundary: BCR discovery is no longer the hot path during cell graph rebuilds, hardlink-first materialization avoids duplicated `.repository_ctx` file contents, and the remaining sync cost is broad generated external-cell realization.
-- Continue tightening source-driven or load-driven generated repo materialization. `evaluate_bzlmod_module_extension_repo` no longer forces `MODULE.bazel` metadata for every input module and visible generated alias before loading an extension, which moved the BuildBuddy boundary away from hundreds of eager generated repos.
+- Resume from the `buildbuddy-repo-watch-1` boundary: BCR discovery is no longer the hot path during cell graph rebuilds, hardlink-first materialization avoids duplicated `.repository_ctx` file contents, bundled prelude files are lazy, rules_python's host repo can materialize its same-extension implementation repos, and the remaining sync cost is no longer tied to a concrete missing repository API.
+- Continue tightening source-driven or load-driven generated repo materialization. `evaluate_bzlmod_module_extension_repo` no longer forces `MODULE.bazel` metadata for every input module and visible generated alias before loading an extension, and finalized repository-rule invocations now use recorded attrs to pull same-extension dynamic deps instead of forcing whole extension groups.
 - Keep `.bazelignore` support wired through `CellFileIgnores`; BuildBuddy's root ignores `buck-out`, `node_modules`, and website output trees, which matters for recursive package discovery and globs in the large-repo smoke.
 - Preserve Bazel's external `.bazelignore` semantics while making them lazy: Bazel's `PackageLookupFunction` checks the main repo ignore file before package lookup and checks an external repository's ignore file after fetching that repository, so Buck should not fetch unrelated generated repos solely to compute ignores during global cell setup.
 - Retire any remaining module-specific generated-repo materializers as their extensions become executable.
@@ -217,7 +224,7 @@ Current validation boundary:
 
 - The simple rules_go smoke and Bazelisk both resolve root and downloaded-module aliases separately, load rules_go/Gazelle through downloaded bzlmod module cells, evaluate downloaded module extensions before final cell graph injection, rebuild generated bzlmod cells from emitted repo names, materialize generated repos from downloaded repository-rule implementations, and run Buck2 actions.
 - The older smoke fixture's root-level `@rules_proto` load is intentionally not root-visible without a direct `bazel_dep`, matching Bazel 9.1.0 behavior.
-- BuildBuddy reaches post-extension sync after clearing the current concrete missing-API, generated-alias, repository patch, SRI checksum, BCR rediscovery, duplicated repository-output copy, broad generated-repo pre-materialization, and alias-registration map rebuild boundaries; the active validation boundary is bundled prelude source artifact declaration/hashing during fresh-daemon sync.
+- BuildBuddy reaches post-extension sync after clearing the current concrete missing-API, generated-alias, repository patch, SRI checksum, BCR rediscovery, duplicated repository-output copy, broad generated-repo pre-materialization, alias-registration map rebuild, bundled prelude declaration, aspect_rules_js templated label, rules_python same-extension host runtime, and repository_ctx watch boundaries. The active validation boundary is the remaining long synchronization phase after those concrete failures are cleared.
 
 Acceptance:
 
