@@ -60,8 +60,11 @@ use dupe::Dupe;
 use itertools::Itertools;
 use serde::Deserialize;
 use serde::Serialize;
+use sha1::Sha1;
 use sha2::Digest;
 use sha2::Sha256;
+use sha2::Sha384;
+use sha2::Sha512;
 use starlark::any::ProvidesStaticType;
 use starlark::docs::DocFunction;
 use starlark::docs::DocItem;
@@ -160,6 +163,8 @@ pub(crate) enum BazelRepositoryError {
     RepositoryCtxWriteFile { path: String, error: String },
     #[error("repository_ctx could not delete `{path}`: {error}")]
     RepositoryCtxDeletePath { path: String, error: String },
+    #[error("repository_ctx.patch could not apply `{patch}`: {error}")]
+    RepositoryCtxPatch { patch: String, error: String },
     #[error("repository_ctx could not symlink `{link}` to `{target}`: {error}")]
     RepositoryCtxSymlink {
         target: String,
@@ -218,6 +223,8 @@ pub(crate) enum BazelRepositoryError {
     ModuleCtxDownloadUnsupportedField { field: &'static str },
     #[error("module_ctx.download failed for {urls:?}: {error}")]
     ModuleCtxDownloadFailed { urls: Vec<String>, error: String },
+    #[error("module_ctx.download expected either `sha256` or `integrity`, but not both")]
+    ModuleCtxDownloadConflictingChecksums,
     #[error("module_ctx.download unsupported integrity `{0}`")]
     ModuleCtxDownloadUnsupportedIntegrity(String),
     #[error("module_ctx.download checksum mismatch for `{path}`: expected {expected}, got {got}")]
@@ -364,8 +371,7 @@ fn collect_repository_rule_label_deps(
         label_deps.insert(label.label().target().pkg().cell_name().as_str().to_owned());
         return Ok(());
     }
-    if let Some(string) = value.unpack_str() {
-        collect_repository_rule_string_label_dep(string, label_deps, cell_alias_resolver);
+    if value.unpack_str().is_some() {
         return Ok(());
     }
     if let Some(dict) = DictRef::from_value(value) {
@@ -406,6 +412,46 @@ fn collect_repository_rule_string_label_dep(
     }
 }
 
+fn collect_repository_rule_string_label_deps_from_expression(
+    expression: &str,
+    label_deps: &mut BTreeSet<String>,
+    cell_alias_resolver: &CellAliasResolver,
+) {
+    for value in repository_rule_string_literals(expression) {
+        collect_repository_rule_string_label_dep(&value, label_deps, cell_alias_resolver);
+    }
+}
+
+fn repository_rule_string_literals(expression: &str) -> Vec<String> {
+    let bytes = expression.as_bytes();
+    let mut values = Vec::new();
+    let mut index = 0usize;
+    while index < bytes.len() {
+        let quote = bytes[index];
+        if quote != b'"' && quote != b'\'' {
+            index += 1;
+            continue;
+        }
+        index += 1;
+        let mut value = String::new();
+        while index < bytes.len() {
+            let byte = bytes[index];
+            index += 1;
+            if byte == quote {
+                values.push(value);
+                break;
+            }
+            if byte == b'\\' && index < bytes.len() {
+                value.push(bytes[index] as char);
+                index += 1;
+            } else {
+                value.push(byte as char);
+            }
+        }
+    }
+    values
+}
+
 fn repository_rule_string_repo_name(value: &str) -> Option<(bool, &str)> {
     if value.chars().any(char::is_whitespace) {
         return None;
@@ -430,6 +476,101 @@ fn repository_rule_string_repo_name(value: &str) -> Option<(bool, &str)> {
         return None;
     }
     Some((canonical, repo_name))
+}
+
+fn repository_rule_dynamic_label_attr_names(source: &str) -> BTreeSet<String> {
+    let mut names = BTreeSet::new();
+    collect_repository_rule_attr_names_after(source, "Label(ctx.attr.", &mut names);
+    collect_repository_rule_attr_names_after(source, "ctx.path(ctx.attr.", &mut names);
+    names
+}
+
+fn repository_rule_dynamic_repo_name_attr_names(source: &str) -> BTreeSet<String> {
+    let mut names = BTreeSet::new();
+    let compact = repository_rule_source_without_ascii_whitespace(source);
+    collect_repository_rule_attr_names_after(&compact, "Label(\"@\"+ctx.attr.", &mut names);
+    collect_repository_rule_attr_names_after(&compact, "Label('@'+ctx.attr.", &mut names);
+    collect_repository_rule_attr_names_after(&compact, "Label(\"@@\"+ctx.attr.", &mut names);
+    collect_repository_rule_attr_names_after(&compact, "Label('@@'+ctx.attr.", &mut names);
+
+    for (local, attr) in repository_rule_ctx_attr_aliases(source) {
+        if repository_rule_compact_source_contains_repo_name_label(&compact, &local) {
+            names.insert(attr);
+        }
+    }
+    names
+}
+
+fn repository_rule_compact_source_contains_repo_name_label(source: &str, name: &str) -> bool {
+    source.contains(&format!("Label(\"@\"+{name}"))
+        || source.contains(&format!("Label('@'+{name}"))
+        || source.contains(&format!("Label(\"@@\"+{name}"))
+        || source.contains(&format!("Label('@@'+{name}"))
+}
+
+fn repository_rule_ctx_attr_aliases(source: &str) -> BTreeMap<String, String> {
+    let mut aliases = BTreeMap::new();
+    for line in source.lines() {
+        let line = line.trim();
+        let Some((left, right)) = line.split_once('=') else {
+            continue;
+        };
+        let left = left.trim();
+        if !repository_rule_identifier(left) {
+            continue;
+        }
+        let right = right.trim();
+        let Some(rest) = right.strip_prefix("ctx.attr.") else {
+            continue;
+        };
+        let attr = rest
+            .chars()
+            .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_')
+            .collect::<String>();
+        if attr.is_empty() {
+            continue;
+        }
+        aliases.insert(left.to_owned(), attr);
+    }
+    aliases
+}
+
+fn repository_rule_identifier(value: &str) -> bool {
+    let mut chars = value.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    if !first.is_ascii_alphabetic() && first != '_' {
+        return false;
+    }
+    chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+}
+
+fn repository_rule_source_without_ascii_whitespace(source: &str) -> String {
+    source
+        .chars()
+        .filter(|ch| !ch.is_ascii_whitespace())
+        .collect()
+}
+
+fn collect_repository_rule_attr_names_after(
+    source: &str,
+    pattern: &str,
+    names: &mut BTreeSet<String>,
+) {
+    let mut offset = 0usize;
+    while let Some(found) = source[offset..].find(pattern) {
+        let start = offset + found + pattern.len();
+        let name = source[start..]
+            .chars()
+            .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_')
+            .collect::<String>();
+        let name_len = name.len();
+        if !name.is_empty() {
+            names.insert(name);
+        }
+        offset = start.saturating_add(name_len);
+    }
 }
 
 fn empty_dict_value<'v>(heap: Heap<'v>) -> Value<'v> {
@@ -471,6 +612,56 @@ mod tests {
         assert_eq!(
             repository_rule_string_repo_name("https://example.com/@repo"),
             None
+        );
+    }
+
+    #[test]
+    fn test_repository_rule_dynamic_label_attr_names() {
+        let source = r#"
+def _impl(ctx):
+    root = Label(ctx.attr.root_files[platform])
+    config = ctx.path(ctx.attr.config)
+    go_sdk_name = ctx.attr.go_sdk_name
+    go_sdk_label = Label("@" + go_sdk_name + "//:ROOT")
+    direct = Label("@@" + ctx.attr.direct_repo + "//:ROOT")
+    ctx.file("go_tools.bzl", "GO_TOOLS = {k: Label(v) for k, v in %r}" % ctx.attr.tool_targets)
+"#;
+        let names = repository_rule_dynamic_label_attr_names(source);
+        assert!(names.contains("root_files"));
+        assert!(names.contains("config"));
+        assert!(!names.contains("tool_targets"));
+        let names = repository_rule_dynamic_repo_name_attr_names(source);
+        assert!(names.contains("go_sdk_name"));
+        assert!(names.contains("direct_repo"));
+        assert!(!names.contains("tool_targets"));
+    }
+
+    #[test]
+    fn test_repository_rule_string_literals() {
+        assert_eq!(
+            repository_rule_string_literals(
+                r#"{"host": "@@rules_go++go_sdk+download_0//:ROOT", "plain": "value"}"#
+            ),
+            vec![
+                "host".to_owned(),
+                "@@rules_go++go_sdk+download_0//:ROOT".to_owned(),
+                "plain".to_owned(),
+                "value".to_owned()
+            ]
+        );
+    }
+
+    #[test]
+    fn test_module_ctx_checksum_from_sha384_integrity() {
+        let integrity = "sha384-ZoEgzfCLmDk7eoKdJSoq/nny1iX3Cq9mMJ3gnPZ2ejhKMxSgHUQIa7MREToxYl6Z";
+        let checksum = module_ctx_checksum_from_integrity(integrity)
+            .unwrap()
+            .unwrap();
+        assert_eq!(checksum.kind, ModuleCtxChecksumKind::Sha384);
+        assert_eq!(checksum.hex.len(), 96);
+        assert_eq!(
+            module_ctx_integrity_from_checksum(&checksum).unwrap(),
+            integrity
         );
     }
 }
@@ -661,7 +852,7 @@ pub async fn evaluate_bzlmod_repository_rule(
         }
     };
     materialize_repository_rule_label_deps(ctx, &invocation.label_deps).await?;
-    materialize_repository_rule_literal_label_deps(ctx, rule_path).await?;
+    materialize_repository_rule_source_label_deps(ctx, rule_path, invocation).await?;
     let rule_module = ctx
         .get_loaded_module(StarlarkModulePath::LoadFile(rule_path))
         .await?;
@@ -684,21 +875,18 @@ enum RepositoryRuleLabelLiteral {
     Canonical(String),
 }
 
-async fn materialize_repository_rule_literal_label_deps(
+async fn materialize_repository_rule_source_label_deps(
     ctx: &mut DiceComputations<'_>,
     rule_path: &ImportPath,
+    invocation: &BazelRepositoryRuleInvocation,
 ) -> buck2_error::Result<()> {
     let source = DiceFileComputations::read_file(ctx, rule_path.path().as_ref())
         .await
         .with_package_context_information(rule_path.path().path().to_string())?;
-    let label_literals = repository_rule_label_literals(&source);
-    if label_literals.is_empty() {
-        return Ok(());
-    }
 
     let cell_alias_resolver = ctx.get_cell_alias_resolver(rule_path.path().cell()).await?;
-    let mut label_deps = Vec::new();
-    for label in label_literals {
+    let mut label_deps = BTreeSet::new();
+    for label in repository_rule_label_literals(&source) {
         let cell_name = match label {
             RepositoryRuleLabelLiteral::Apparent(repo_name) => {
                 match cell_alias_resolver.resolve(&repo_name) {
@@ -710,8 +898,26 @@ async fn materialize_repository_rule_literal_label_deps(
                 bzlmod_cell_name(&canonical_repo_name)
             }
         };
-        label_deps.push(cell_name);
+        label_deps.insert(cell_name);
     }
+    let attrs = invocation
+        .attrs
+        .iter()
+        .map(|(name, expression)| (name.as_str(), expression.as_str()))
+        .collect::<BTreeMap<_, _>>();
+    let mut dynamic_label_attr_names = repository_rule_dynamic_label_attr_names(&source);
+    dynamic_label_attr_names.extend(repository_rule_dynamic_repo_name_attr_names(&source));
+    for attr_name in dynamic_label_attr_names {
+        let Some(expression) = attrs.get(attr_name.as_str()) else {
+            continue;
+        };
+        collect_repository_rule_string_label_deps_from_expression(
+            expression,
+            &mut label_deps,
+            &cell_alias_resolver,
+        );
+    }
+    let label_deps = label_deps.into_iter().collect::<Vec<_>>();
     materialize_repository_rule_label_deps(ctx, &label_deps).await
 }
 
@@ -2557,10 +2763,8 @@ fn repository_ctx_download_to_path<'v>(
     integrity: &str,
     eval: &mut Evaluator<'v, '_, '_>,
 ) -> starlark::Result<(Value<'v>, bool)> {
-    let expected_sha256 = match module_ctx_sha256_from_integrity(integrity) {
-        Ok(Some(integrity_sha256)) => Some(integrity_sha256),
-        Ok(None) if !sha256.is_empty() => Some(sha256.to_ascii_lowercase()),
-        Ok(None) => None,
+    let expected_checksum = match module_ctx_expected_checksum(sha256, integrity) {
+        Ok(expected_checksum) => expected_checksum,
         Err(error) => {
             return Ok((
                 repository_ctx_download_error(allow_fail, error, eval)?,
@@ -2577,33 +2781,24 @@ fn repository_ctx_download_to_path<'v>(
             ));
         }
     };
-    let got_sha256 = module_ctx_sha256_hex(&bytes);
-    if let Some(expected_sha256) = &expected_sha256
-        && *expected_sha256 != got_sha256
+    if let Err(error) =
+        module_ctx_validate_download_checksum(&output_path, &bytes, expected_checksum.as_ref())
     {
         return Ok((
-            repository_ctx_download_error(
-                allow_fail,
-                BazelRepositoryError::ModuleCtxDownloadChecksumMismatch {
-                    path: output_path.clone(),
-                    expected: expected_sha256.clone(),
-                    got: got_sha256,
-                }
-                .into(),
-                eval,
-            )?,
+            repository_ctx_download_error(allow_fail, error, eval)?,
             false,
         ));
     }
-    let got_integrity = match module_ctx_integrity_from_sha256_hex(&got_sha256) {
-        Ok(integrity) => integrity,
-        Err(error) => {
-            return Ok((
-                repository_ctx_download_error(allow_fail, error, eval)?,
-                false,
-            ));
-        }
-    };
+    let (got_sha256, got_integrity) =
+        match module_ctx_download_result_checksums(&bytes, expected_checksum.as_ref()) {
+            Ok(checksums) => checksums,
+            Err(error) => {
+                return Ok((
+                    repository_ctx_download_error(allow_fail, error, eval)?,
+                    false,
+                ));
+            }
+        };
     if let Err(error) = repository_ctx_write_bytes(&output_path, &bytes, executable) {
         return Ok((
             repository_ctx_download_error(allow_fail, error.into(), eval)?,
@@ -2611,7 +2806,13 @@ fn repository_ctx_download_to_path<'v>(
         ));
     }
     Ok((
-        module_ctx_download_result(true, Some(&got_sha256), Some(&got_integrity), None, eval),
+        module_ctx_download_result(
+            true,
+            got_sha256.as_deref(),
+            Some(&got_integrity),
+            None,
+            eval,
+        ),
         true,
     ))
 }
@@ -2829,6 +3030,62 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
             })
         })?;
         Ok(true)
+    }
+
+    fn patch<'v>(
+        this: ValueTypedComplex<'v, StarlarkRepositoryContext<'v>>,
+        #[starlark(require = pos)] patch_file: Value<'v>,
+        #[starlark(default = 0)] strip: i32,
+        #[starlark(require = named, default = "auto")] _watch_patch: &str,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<NoneType> {
+        let working_dir = repository_ctx_working_dir(this);
+        let patch_path =
+            repository_path_from_value_relative_to(patch_file, eval, Some(working_dir))?;
+        let patch_path_abs = repository_path_for_read_abs_relative_to(&patch_path, working_dir);
+        if patch_path_abs.is_dir() {
+            return Err(
+                buck2_error::Error::from(BazelRepositoryError::RepositoryCtxPatch {
+                    patch: patch_path.clone(),
+                    error: "attempting to use a directory as patch file".to_owned(),
+                })
+                .into(),
+            );
+        }
+        let working_dir_abs = repository_path_for_write(working_dir)?;
+        fs::create_dir_all(&working_dir_abs).map_err(|error| {
+            buck2_error::Error::from(BazelRepositoryError::RepositoryCtxPatch {
+                patch: patch_path.clone(),
+                error: error.to_string(),
+            })
+        })?;
+        let output = Command::new("patch")
+            .arg(format!("-p{strip}"))
+            .arg("-i")
+            .arg(&patch_path_abs)
+            .arg("-d")
+            .arg(&working_dir_abs)
+            .output()
+            .map_err(|error| {
+                buck2_error::Error::from(BazelRepositoryError::RepositoryCtxPatch {
+                    patch: patch_path.clone(),
+                    error: error.to_string(),
+                })
+            })?;
+        if !output.status.success() {
+            return Err(
+                buck2_error::Error::from(BazelRepositoryError::RepositoryCtxPatch {
+                    patch: patch_path,
+                    error: format!(
+                        "{}{}",
+                        String::from_utf8_lossy(&output.stdout),
+                        String::from_utf8_lossy(&output.stderr)
+                    ),
+                })
+                .into(),
+            );
+        }
+        Ok(NoneType)
     }
 
     fn symlink<'v>(
@@ -3616,6 +3873,51 @@ fn module_ctx_urls_from_value<'v>(
     Ok(urls)
 }
 
+fn module_ctx_download_error_is_retryable(error: &buck2_http::HttpError) -> bool {
+    match error {
+        buck2_http::HttpError::Status { status, .. } => {
+            let status = status.as_u16();
+            matches!(status, 403 | 408 | 429)
+                || (500..600).contains(&status) && status != 501 && status != 505
+        }
+        buck2_http::HttpError::SendRequest { .. } | buck2_http::HttpError::Timeout { .. } => true,
+        _ => false,
+    }
+}
+
+fn module_ctx_download_retry_delay(attempt: usize) -> Duration {
+    const MIN_RETRY_DELAY_MS: u64 = 100;
+    let shift = attempt.min(6) as u32;
+    Duration::from_millis(MIN_RETRY_DELAY_MS.saturating_mul(1u64 << shift))
+}
+
+async fn module_ctx_download_url_bytes(
+    client: &buck2_http::HttpClient,
+    url: &str,
+) -> Result<Vec<u8>, String> {
+    const MAX_ATTEMPTS: usize = 8;
+
+    for attempt in 0..MAX_ATTEMPTS {
+        match client.get(url).await {
+            Ok(response) => {
+                let body = buck2_http::to_bytes(response.into_body())
+                    .await
+                    .map_err(|error| error.to_string())?;
+                return Ok(body.to_vec());
+            }
+            Err(error) => {
+                let message = error.to_string();
+                if attempt + 1 == MAX_ATTEMPTS || !module_ctx_download_error_is_retryable(&error) {
+                    return Err(message);
+                }
+                tokio::time::sleep(module_ctx_download_retry_delay(attempt)).await;
+            }
+        }
+    }
+
+    unreachable!("module_ctx.download retry loop exits after success or final failure")
+}
+
 async fn module_ctx_download_bytes(urls: &[String]) -> buck2_error::Result<Vec<u8>> {
     let client = buck2_http::HttpClientBuilder::oss()
         .await?
@@ -3623,18 +3925,10 @@ async fn module_ctx_download_bytes(urls: &[String]) -> buck2_error::Result<Vec<u
         .build();
     let mut last_error = None;
     for url in urls {
-        match client.get(url).await {
-            Ok(response) => {
-                let status = response.status();
-                if !status.is_success() {
-                    last_error = Some(format!("HTTP status {status}"));
-                    continue;
-                }
-                let body = buck2_http::to_bytes(response.into_body()).await?;
-                return Ok(body.to_vec());
-            }
+        match module_ctx_download_url_bytes(&client, url).await {
+            Ok(bytes) => return Ok(bytes),
             Err(error) => {
-                last_error = Some(error.to_string());
+                last_error = Some(error);
             }
         }
     }
@@ -3669,31 +3963,140 @@ fn module_ctx_download_bytes_blocking(urls: &[String]) -> buck2_error::Result<Ve
     })?
 }
 
-fn module_ctx_sha256_hex(bytes: &[u8]) -> String {
-    hex::encode(Sha256::digest(bytes))
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ModuleCtxChecksumKind {
+    Sha1,
+    Sha256,
+    Sha384,
+    Sha512,
 }
 
-fn module_ctx_integrity_from_sha256_hex(sha256: &str) -> buck2_error::Result<String> {
-    let bytes = hex::decode(sha256).map_err(|_| {
-        BazelRepositoryError::ModuleCtxDownloadUnsupportedIntegrity(sha256.to_owned())
-    })?;
-    Ok(format!("sha256-{}", BASE64_STANDARD.encode(bytes)))
+impl ModuleCtxChecksumKind {
+    fn integrity_prefix(&self) -> &'static str {
+        match self {
+            Self::Sha1 => "sha1-",
+            Self::Sha256 => "sha256-",
+            Self::Sha384 => "sha384-",
+            Self::Sha512 => "sha512-",
+        }
+    }
+
+    fn byte_len(&self) -> usize {
+        match self {
+            Self::Sha1 => 20,
+            Self::Sha256 => 32,
+            Self::Sha384 => 48,
+            Self::Sha512 => 64,
+        }
+    }
 }
 
-fn module_ctx_sha256_from_integrity(integrity: &str) -> buck2_error::Result<Option<String>> {
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ModuleCtxChecksum {
+    kind: ModuleCtxChecksumKind,
+    hex: String,
+}
+
+fn module_ctx_expected_checksum(
+    sha256: &str,
+    integrity: &str,
+) -> buck2_error::Result<Option<ModuleCtxChecksum>> {
+    if !sha256.is_empty() && !integrity.is_empty() {
+        return Err(BazelRepositoryError::ModuleCtxDownloadConflictingChecksums.into());
+    }
+    if !sha256.is_empty() {
+        return Ok(Some(ModuleCtxChecksum {
+            kind: ModuleCtxChecksumKind::Sha256,
+            hex: sha256.to_ascii_lowercase(),
+        }));
+    }
+    module_ctx_checksum_from_integrity(integrity)
+}
+
+fn module_ctx_checksum_from_integrity(
+    integrity: &str,
+) -> buck2_error::Result<Option<ModuleCtxChecksum>> {
     if integrity.is_empty() {
         return Ok(None);
     }
-    let Some(encoded) = integrity.strip_prefix("sha256-") else {
-        return Err(BazelRepositoryError::ModuleCtxDownloadUnsupportedIntegrity(
-            integrity.to_owned(),
-        )
-        .into());
-    };
-    let bytes = BASE64_STANDARD.decode(encoded).map_err(|_| {
-        BazelRepositoryError::ModuleCtxDownloadUnsupportedIntegrity(integrity.to_owned())
+    for kind in [
+        ModuleCtxChecksumKind::Sha1,
+        ModuleCtxChecksumKind::Sha256,
+        ModuleCtxChecksumKind::Sha384,
+        ModuleCtxChecksumKind::Sha512,
+    ] {
+        if let Some(encoded) = integrity.strip_prefix(kind.integrity_prefix()) {
+            let bytes = BASE64_STANDARD.decode(encoded).map_err(|_| {
+                BazelRepositoryError::ModuleCtxDownloadUnsupportedIntegrity(integrity.to_owned())
+            })?;
+            if bytes.len() != kind.byte_len() {
+                return Err(BazelRepositoryError::ModuleCtxDownloadUnsupportedIntegrity(
+                    integrity.to_owned(),
+                )
+                .into());
+            }
+            return Ok(Some(ModuleCtxChecksum {
+                kind,
+                hex: hex::encode(bytes),
+            }));
+        }
+    }
+    Err(BazelRepositoryError::ModuleCtxDownloadUnsupportedIntegrity(integrity.to_owned()).into())
+}
+
+fn module_ctx_checksum_hex(kind: ModuleCtxChecksumKind, bytes: &[u8]) -> String {
+    match kind {
+        ModuleCtxChecksumKind::Sha1 => hex::encode(Sha1::digest(bytes)),
+        ModuleCtxChecksumKind::Sha256 => hex::encode(Sha256::digest(bytes)),
+        ModuleCtxChecksumKind::Sha384 => hex::encode(Sha384::digest(bytes)),
+        ModuleCtxChecksumKind::Sha512 => hex::encode(Sha512::digest(bytes)),
+    }
+}
+
+fn module_ctx_integrity_from_checksum(checksum: &ModuleCtxChecksum) -> buck2_error::Result<String> {
+    let bytes = hex::decode(&checksum.hex).map_err(|_| {
+        BazelRepositoryError::ModuleCtxDownloadUnsupportedIntegrity(checksum.hex.clone())
     })?;
-    Ok(Some(hex::encode(bytes)))
+    Ok(format!(
+        "{}{}",
+        checksum.kind.integrity_prefix(),
+        BASE64_STANDARD.encode(bytes)
+    ))
+}
+
+fn module_ctx_validate_download_checksum(
+    path: &str,
+    bytes: &[u8],
+    expected_checksum: Option<&ModuleCtxChecksum>,
+) -> buck2_error::Result<()> {
+    let Some(expected_checksum) = expected_checksum else {
+        return Ok(());
+    };
+    let got = module_ctx_checksum_hex(expected_checksum.kind, bytes);
+    if expected_checksum.hex == got {
+        return Ok(());
+    }
+    Err(BazelRepositoryError::ModuleCtxDownloadChecksumMismatch {
+        path: path.to_owned(),
+        expected: expected_checksum.hex.clone(),
+        got,
+    }
+    .into())
+}
+
+fn module_ctx_download_result_checksums(
+    bytes: &[u8],
+    expected_checksum: Option<&ModuleCtxChecksum>,
+) -> buck2_error::Result<(Option<String>, String)> {
+    let checksum = expected_checksum
+        .cloned()
+        .unwrap_or_else(|| ModuleCtxChecksum {
+            kind: ModuleCtxChecksumKind::Sha256,
+            hex: module_ctx_checksum_hex(ModuleCtxChecksumKind::Sha256, bytes),
+        });
+    let sha256 = (checksum.kind == ModuleCtxChecksumKind::Sha256).then(|| checksum.hex.clone());
+    let integrity = module_ctx_integrity_from_checksum(&checksum)?;
+    Ok((sha256, integrity))
 }
 
 fn module_ctx_download_result<'v>(
@@ -4042,10 +4445,8 @@ fn module_extension_context_methods(builder: &mut MethodsBuilder) {
             eval,
             Some(module_ctx_working_dir(this)),
         )?;
-        let expected_sha256 = match module_ctx_sha256_from_integrity(integrity) {
-            Ok(Some(integrity_sha256)) => Some(integrity_sha256),
-            Ok(None) if !sha256.is_empty() => Some(sha256.to_ascii_lowercase()),
-            Ok(None) => None,
+        let expected_checksum = match module_ctx_expected_checksum(sha256, integrity) {
+            Ok(expected_checksum) => expected_checksum,
             Err(error) => {
                 return module_ctx_download_error_with_block(block, allow_fail, error, eval);
             }
@@ -4057,28 +4458,18 @@ fn module_extension_context_methods(builder: &mut MethodsBuilder) {
                 return module_ctx_download_error_with_block(block, allow_fail, error, eval);
             }
         };
-        let got_sha256 = module_ctx_sha256_hex(&bytes);
-        if let Some(expected_sha256) = &expected_sha256
-            && *expected_sha256 != got_sha256
+        if let Err(error) =
+            module_ctx_validate_download_checksum(&output_path, &bytes, expected_checksum.as_ref())
         {
-            return module_ctx_download_error_with_block(
-                block,
-                allow_fail,
-                BazelRepositoryError::ModuleCtxDownloadChecksumMismatch {
-                    path: output_path.clone(),
-                    expected: expected_sha256.clone(),
-                    got: got_sha256,
-                }
-                .into(),
-                eval,
-            );
+            return module_ctx_download_error_with_block(block, allow_fail, error, eval);
         }
-        let got_integrity = match module_ctx_integrity_from_sha256_hex(&got_sha256) {
-            Ok(integrity) => integrity,
-            Err(error) => {
-                return module_ctx_download_error_with_block(block, allow_fail, error, eval);
-            }
-        };
+        let (got_sha256, got_integrity) =
+            match module_ctx_download_result_checksums(&bytes, expected_checksum.as_ref()) {
+                Ok(checksums) => checksums,
+                Err(error) => {
+                    return module_ctx_download_error_with_block(block, allow_fail, error, eval);
+                }
+            };
 
         let write_path = match repository_path_for_write(&output_path) {
             Ok(path) => path,
@@ -4135,8 +4526,13 @@ fn module_extension_context_methods(builder: &mut MethodsBuilder) {
             }
         }
 
-        let result =
-            module_ctx_download_result(true, Some(&got_sha256), Some(&got_integrity), None, eval);
+        let result = module_ctx_download_result(
+            true,
+            got_sha256.as_deref(),
+            Some(&got_integrity),
+            None,
+            eval,
+        );
         Ok(module_ctx_pending_download(block, result, eval))
     }
 
