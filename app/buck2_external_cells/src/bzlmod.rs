@@ -10,6 +10,7 @@
 
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
+use std::fs;
 use std::io::ErrorKind;
 use std::process::Command;
 use std::process::ExitStatus;
@@ -1185,13 +1186,23 @@ fn copy_dir_contents(from: &AbsNormPath, to: &AbsNormPath) -> buck2_error::Resul
             fs_util::create_dir_all(&to_path)?;
             copy_dir_contents(&from_path, &to_path)?;
         } else if file_type.is_file() {
-            fs_util::copy(&from_path, &to_path).categorize_internal()?;
+            link_or_copy_file(&from_path, &to_path)?;
         } else if file_type.is_symlink() {
             let target = fs_util::read_link(&from_path).categorize_internal()?;
             fs_util::symlink(target, &to_path).categorize_internal()?;
         }
     }
     Ok(())
+}
+
+fn link_or_copy_file(from: &AbsNormPath, to: &AbsNormPath) -> buck2_error::Result<()> {
+    match fs::hard_link(from, to) {
+        Ok(()) => Ok(()),
+        Err(_) => {
+            fs_util::copy(from, to).categorize_internal()?;
+            Ok(())
+        }
+    }
 }
 
 fn integrity_to_sha256_hex(integrity: &str) -> buck2_error::Result<String> {

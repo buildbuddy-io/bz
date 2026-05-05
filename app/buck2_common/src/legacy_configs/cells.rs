@@ -18,6 +18,8 @@ use std::process::Command;
 use std::process::Stdio;
 use std::str::FromStr;
 use std::sync::Arc;
+use std::sync::LazyLock;
+use std::sync::Mutex;
 use std::time::Duration;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
@@ -1038,6 +1040,62 @@ struct DiscoveredBcrModule {
     deps: Vec<BazelDep>,
 }
 
+type DiscoveredBcrModules = BTreeMap<(String, String), DiscoveredBcrModule>;
+
+static BCR_DISCOVERY_CACHE: LazyLock<Mutex<BTreeMap<BcrDiscoveryCacheKey, DiscoveredBcrModules>>> =
+    LazyLock::new(|| Mutex::new(BTreeMap::new()));
+
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+struct BcrDiscoveryCacheKey {
+    root_deps: Vec<(String, String)>,
+    archive_overrides: Vec<BcrDiscoveryArchiveOverrideKey>,
+    single_version_overrides: Vec<(String, String)>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+struct BcrDiscoveryArchiveOverrideKey {
+    module_name: String,
+    url: String,
+    integrity: String,
+    strip_prefix: Option<String>,
+    archive_type: Option<String>,
+    patches: Vec<String>,
+    patch_strip: Option<u32>,
+}
+
+fn bcr_discovery_cache_key(
+    root_deps: &[BazelDep],
+    archive_overrides: &BTreeMap<String, BzlmodArchiveOverride>,
+    single_version_overrides: &BTreeMap<String, String>,
+) -> BcrDiscoveryCacheKey {
+    let mut root_deps = root_deps
+        .iter()
+        .map(|dep| (dep.name.clone(), dep.version.clone()))
+        .collect::<Vec<_>>();
+    root_deps.sort();
+    root_deps.dedup();
+
+    BcrDiscoveryCacheKey {
+        root_deps,
+        archive_overrides: archive_overrides
+            .values()
+            .map(|archive_override| BcrDiscoveryArchiveOverrideKey {
+                module_name: archive_override.module_name.clone(),
+                url: archive_override.url.clone(),
+                integrity: archive_override.integrity.clone(),
+                strip_prefix: archive_override.strip_prefix.clone(),
+                archive_type: archive_override.archive_type.clone(),
+                patches: archive_override.patches.clone(),
+                patch_strip: archive_override.patch_strip,
+            })
+            .collect(),
+        single_version_overrides: single_version_overrides
+            .iter()
+            .map(|(name, version)| (name.clone(), version.clone()))
+            .collect(),
+    }
+}
+
 #[derive(Clone, Debug)]
 struct RootBzlmodModule {
     name: String,
@@ -1385,12 +1443,64 @@ async fn resolve_bcr_modules_with_client(
     bzlmod_module_extension_results_complete: bool,
     bzlmod_module_extension_results: &[BzlmodEvaluatedModuleExtension],
 ) -> buck2_error::Result<BcrResolution> {
+    let discovered = discover_bcr_modules_with_cache(
+        &root_deps,
+        &archive_overrides,
+        &single_version_overrides,
+        client,
+    )
+    .await?;
+    resolve_bcr_modules_from_discovered(
+        root_deps,
+        root_module,
+        discovered,
+        bzlmod_module_extension_results_complete,
+        bzlmod_module_extension_results,
+    )
+}
+
+async fn discover_bcr_modules_with_cache(
+    root_deps: &[BazelDep],
+    archive_overrides: &BTreeMap<String, BzlmodArchiveOverride>,
+    single_version_overrides: &BTreeMap<String, String>,
+    client: &HttpClient,
+) -> buck2_error::Result<DiscoveredBcrModules> {
+    let cache_key = bcr_discovery_cache_key(root_deps, archive_overrides, single_version_overrides);
+    if let Some(discovered) = BCR_DISCOVERY_CACHE
+        .lock()
+        .expect("BCR discovery cache lock poisoned")
+        .get(&cache_key)
+        .cloned()
+    {
+        return Ok(discovered);
+    }
+
+    let discovered = discover_bcr_modules_with_client(
+        root_deps,
+        archive_overrides,
+        single_version_overrides,
+        client,
+    )
+    .await?;
+    BCR_DISCOVERY_CACHE
+        .lock()
+        .expect("BCR discovery cache lock poisoned")
+        .insert(cache_key, discovered.clone());
+    Ok(discovered)
+}
+
+async fn discover_bcr_modules_with_client(
+    root_deps: &[BazelDep],
+    archive_overrides: &BTreeMap<String, BzlmodArchiveOverride>,
+    single_version_overrides: &BTreeMap<String, String>,
+    client: &HttpClient,
+) -> buck2_error::Result<DiscoveredBcrModules> {
     let registry = "https://bcr.bazel.build";
-    let mut discovered = BTreeMap::<(String, String), DiscoveredBcrModule>::new();
+    let mut discovered = DiscoveredBcrModules::new();
     let mut scheduled = BTreeSet::<(String, String)>::new();
     let mut pending = FuturesUnordered::<BcrModuleFetch>::new();
 
-    for dep in &root_deps {
+    for dep in root_deps {
         schedule_bcr_module_fetch(
             registry,
             client,
@@ -1419,7 +1529,17 @@ async fn resolve_bcr_modules_with_client(
 
         discovered.insert(key, module);
     }
+    Ok(discovered)
+}
 
+fn resolve_bcr_modules_from_discovered(
+    root_deps: Vec<BazelDep>,
+    root_module: RootBzlmodModule,
+    discovered: DiscoveredBcrModules,
+    bzlmod_module_extension_results_complete: bool,
+    bzlmod_module_extension_results: &[BzlmodEvaluatedModuleExtension],
+) -> buck2_error::Result<BcrResolution> {
+    let registry = "https://bcr.bazel.build";
     let mut selected_versions = BTreeMap::<String, String>::new();
     for (name, version) in discovered.keys() {
         match selected_versions.get(name) {
