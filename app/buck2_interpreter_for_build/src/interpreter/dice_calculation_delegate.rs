@@ -61,7 +61,7 @@ use starlark::environment::Module;
 use starlark::syntax::AstModule;
 use starlark::values::FrozenHeapName;
 
-use crate::bazel_repository::BazelRepositoryGeneratedFile;
+use crate::bazel_repository::BazelRepositoryRuleEvaluation;
 use crate::interpreter::buckconfig::ConfigsOnDiceViewForStarlark;
 use crate::interpreter::build_context::BazelRepositoryRuleInvocation;
 use crate::interpreter::cell_info::InterpreterCellInfo;
@@ -404,14 +404,14 @@ impl<'c, 'd: 'c> DiceCalculationDelegate<'c, 'd> {
         )
     }
 
-    pub async fn eval_bzlmod_repository_rule(
+    pub(crate) async fn eval_bzlmod_repository_rule(
         &mut self,
         rule_path: &ImportPath,
         rule_module: &LoadedModule,
         invocation: &BazelRepositoryRuleInvocation,
         repository_ctx_working_dir: &str,
         cancellation: &CancellationContext,
-    ) -> buck2_error::Result<Vec<BazelRepositoryGeneratedFile>> {
+    ) -> buck2_error::Result<BazelRepositoryRuleEvaluation> {
         let buckconfig = self.get_legacy_buck_config_for_starlark().await?;
         let root_buckconfig = self.ctx.get_legacy_root_config_on_dice().await?;
 

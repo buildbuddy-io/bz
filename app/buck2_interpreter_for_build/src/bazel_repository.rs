@@ -40,8 +40,6 @@ use buck2_core::cells::paths::CellRelativePathBuf;
 use buck2_core::target::label::interner::ConcurrentTargetLabelInterner;
 use buck2_interpreter::file_loader::LoadedModule;
 use buck2_interpreter::load_module::InterpreterCalculation;
-use buck2_interpreter::parse_import::RelativeImports;
-use buck2_interpreter::parse_import::parse_import;
 use buck2_interpreter::paths::module::StarlarkModulePath;
 use buck2_interpreter::paths::path::OwnedStarlarkPath;
 use buck2_interpreter::types::configured_providers_label::StarlarkProvidersLabel;
@@ -925,6 +923,14 @@ pub struct BazelRepositoryGeneratedFile {
     pub executable: bool,
 }
 
+pub(crate) enum BazelRepositoryRuleEvaluation {
+    Success(Vec<BazelRepositoryGeneratedFile>),
+    NeedsPathLabelDeps {
+        label_deps: Vec<String>,
+        error: String,
+    },
+}
+
 pub async fn evaluate_bzlmod_module_extension_repo(
     ctx: &mut DiceComputations<'_>,
     setup: &BzlmodModuleExtensionRepoSetup,
@@ -932,17 +938,10 @@ pub async fn evaluate_bzlmod_module_extension_repo(
     current_canonical_repo_name: Option<&str>,
     cancellation: &CancellationContext,
 ) -> buck2_error::Result<BazelModuleExtensionEvaluationResult> {
-    let parent_cell = if setup.parent_is_root {
-        ctx.get_cell_resolver().await?.root_cell()
-    } else {
-        CellName::unchecked_new(&bzlmod_cell_name(&setup.parent_canonical_repo_name))?
-    };
-    let parent_alias_resolver = ctx.get_cell_alias_resolver(parent_cell).await?;
-    let extension_cell_path = parse_import(
-        &parent_alias_resolver,
-        RelativeImports::Disallow,
-        &setup.extension_bzl_file,
-    )?;
+    let extension_cell_path = CellPath::new(
+        CellName::unchecked_new(&setup.extension_bzl_cell)?,
+        CellRelativePathBuf::try_from(setup.extension_bzl_path.to_string())?,
+    );
     let extension_path = ImportPath::new_same_cell(extension_cell_path)?;
     materialize_bzlmod_module_extension_source_label_deps(
         ctx,
@@ -1139,18 +1138,40 @@ pub async fn evaluate_bzlmod_repository_rule(
         .get_loaded_module(StarlarkModulePath::LoadFile(rule_path))
         .await?;
     materialize_repository_rule_loaded_module_label_deps(ctx, &rule_module, invocation).await?;
-    let mut interpreter = ctx
-        .get_interpreter_calculator(OwnedStarlarkPath::LoadFile(rule_path.clone()))
-        .await?;
-    interpreter
-        .eval_bzlmod_repository_rule(
-            rule_path,
-            &rule_module,
-            invocation,
-            repository_ctx_working_dir,
-            cancellation,
-        )
-        .await
+    let mut materialized_path_label_deps = BTreeSet::new();
+    loop {
+        let mut interpreter = ctx
+            .get_interpreter_calculator(OwnedStarlarkPath::LoadFile(rule_path.clone()))
+            .await?;
+        match interpreter
+            .eval_bzlmod_repository_rule(
+                rule_path,
+                &rule_module,
+                invocation,
+                repository_ctx_working_dir,
+                cancellation,
+            )
+            .await?
+        {
+            BazelRepositoryRuleEvaluation::Success(files) => return Ok(files),
+            BazelRepositoryRuleEvaluation::NeedsPathLabelDeps { label_deps, error } => {
+                let new_label_deps = label_deps
+                    .into_iter()
+                    .filter(|cell_name| materialized_path_label_deps.insert(cell_name.clone()))
+                    .collect::<Vec<_>>();
+                if new_label_deps.is_empty() {
+                    return Err(buck2_error::buck2_error!(
+                        buck2_error::ErrorTag::Input,
+                        "repository_rule `{}` failed after materializing repository_ctx path labels: {}",
+                        invocation.rule_id,
+                        error
+                    ));
+                }
+                materialize_repository_rule_label_deps(ctx, &new_label_deps).await?;
+                repository_ctx_clean_working_dir(repository_ctx_working_dir)?;
+            }
+        }
+    }
 }
 
 pub async fn repository_rule_uses_unresolved_dynamic_label(
@@ -2706,6 +2727,9 @@ pub(crate) struct StarlarkRepositoryContext<'v> {
     #[trace(unsafe_ignore)]
     #[allocative(skip)]
     files: Mutex<Vec<BazelRepositoryGeneratedFile>>,
+    #[trace(unsafe_ignore)]
+    #[allocative(skip)]
+    path_label_deps: Mutex<Vec<String>>,
 }
 
 impl<'v> StarlarkRepositoryContext<'v> {
@@ -2723,11 +2747,21 @@ impl<'v> StarlarkRepositoryContext<'v> {
             working_dir,
             workspace_root,
             files: Mutex::new(Vec::new()),
+            path_label_deps: Mutex::new(Vec::new()),
         }
     }
 
     fn take_files(&self) -> Vec<BazelRepositoryGeneratedFile> {
         std::mem::take(&mut *self.files.lock().expect("repository_ctx files poisoned"))
+    }
+
+    fn take_path_label_deps(&self) -> Vec<String> {
+        std::mem::take(
+            &mut *self
+                .path_label_deps
+                .lock()
+                .expect("repository_ctx path label deps poisoned"),
+        )
     }
 }
 
@@ -2789,6 +2823,11 @@ impl<'v> Freeze for StarlarkRepositoryContext<'v> {
                     .into_inner()
                     .expect("repository_ctx files poisoned"),
             ),
+            path_label_deps: Mutex::new(
+                self.path_label_deps
+                    .into_inner()
+                    .expect("repository_ctx path label deps poisoned"),
+            ),
         })
     }
 }
@@ -2802,6 +2841,8 @@ pub(crate) struct FrozenStarlarkRepositoryContext {
     workspace_root: String,
     #[allocative(skip)]
     files: Mutex<Vec<BazelRepositoryGeneratedFile>>,
+    #[allocative(skip)]
+    path_label_deps: Mutex<Vec<String>>,
 }
 
 impl Display for FrozenStarlarkRepositoryContext {
@@ -2881,6 +2922,21 @@ pub(crate) fn take_repository_ctx_files<'v>(
     Ok(repository_ctx.take_files())
 }
 
+pub(crate) fn take_repository_ctx_path_label_deps<'v>(
+    repository_ctx: Value<'v>,
+) -> starlark::Result<Vec<String>> {
+    let repository_ctx = repository_ctx
+        .downcast_ref::<StarlarkRepositoryContext>()
+        .ok_or_else(|| {
+            buck2_error::buck2_error!(
+                buck2_error::ErrorTag::Input,
+                "expected repository_ctx, got `{}`",
+                repository_ctx.get_type()
+            )
+        })?;
+    Ok(repository_ctx.take_path_label_deps())
+}
+
 fn repository_ctx_working_dir<'v>(
     this: ValueTypedComplex<'v, StarlarkRepositoryContext<'v>>,
 ) -> &'v str {
@@ -2888,6 +2944,67 @@ fn repository_ctx_working_dir<'v>(
         either::Either::Left(ctx) => &ctx.working_dir,
         either::Either::Right(ctx) => &ctx.working_dir,
     }
+}
+
+fn repository_ctx_record_path_label_dep<'v>(
+    this: ValueTypedComplex<'v, StarlarkRepositoryContext<'v>>,
+    value: Value<'v>,
+) {
+    let Some(label) = StarlarkProvidersLabel::from_value(value) else {
+        return;
+    };
+    let cell_name = label.label().target().pkg().cell_name().as_str().to_owned();
+    match this.unpack() {
+        either::Either::Left(ctx) => {
+            let mut deps = ctx
+                .path_label_deps
+                .lock()
+                .expect("repository_ctx path label deps poisoned");
+            if !deps.iter().any(|dep| dep == &cell_name) {
+                deps.push(cell_name);
+            }
+        }
+        either::Either::Right(ctx) => {
+            let mut deps = ctx
+                .path_label_deps
+                .lock()
+                .expect("repository_ctx path label deps poisoned");
+            if !deps.iter().any(|dep| dep == &cell_name) {
+                deps.push(cell_name);
+            }
+        }
+    }
+}
+
+fn repository_ctx_path_from_value_relative_to<'v>(
+    this: ValueTypedComplex<'v, StarlarkRepositoryContext<'v>>,
+    path: Value<'v>,
+    eval: &Evaluator<'v, '_, '_>,
+) -> starlark::Result<String> {
+    repository_ctx_record_path_label_dep(this, path);
+    repository_path_from_value_relative_to(path, eval, Some(repository_ctx_working_dir(this)))
+}
+
+fn repository_ctx_clean_working_dir(working_dir: &str) -> buck2_error::Result<()> {
+    let working_dir = repository_path_for_write(working_dir)?;
+    if working_dir.exists() {
+        fs::remove_dir_all(&working_dir).map_err(|error| {
+            buck2_error::buck2_error!(
+                buck2_error::ErrorTag::Tier0,
+                "repository_ctx could not clean `{}` before retry: {}",
+                working_dir.to_string_lossy(),
+                error
+            )
+        })?;
+    }
+    fs::create_dir_all(&working_dir).map_err(|error| {
+        buck2_error::buck2_error!(
+            buck2_error::ErrorTag::Tier0,
+            "repository_ctx could not create `{}` before retry: {}",
+            working_dir.to_string_lossy(),
+            error
+        )
+    })
 }
 
 fn repository_ctx_push_file<'v>(
@@ -3281,8 +3398,7 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
     ) -> starlark::Result<NoneType> {
         let working_dir = repository_ctx_working_dir(this);
         let path = repository_ctx_output_path_from_value(path, working_dir)?;
-        let template_path =
-            repository_path_from_value_relative_to(template, eval, Some(working_dir))?;
+        let template_path = repository_ctx_path_from_value_relative_to(this, template, eval)?;
         let read_path = repository_path_for_read(&template_path);
         let mut content = fs::read_to_string(&read_path).map_err(|e| {
             buck2_error::Error::from(BazelRepositoryError::RepositoryCtxTemplateReadFile {
@@ -3315,11 +3431,7 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<StarlarkRepositoryPath> {
         Ok(StarlarkRepositoryPath::new(
-            repository_path_from_value_relative_to(
-                path,
-                eval,
-                Some(repository_ctx_working_dir(this)),
-            )?,
+            repository_ctx_path_from_value_relative_to(this, path, eval)?,
         ))
     }
 
@@ -3329,11 +3441,7 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
         #[starlark(require = named, default = "auto")] _watch: &str,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<String> {
-        let path = repository_path_from_value_relative_to(
-            path,
-            eval,
-            Some(repository_ctx_working_dir(this)),
-        )?;
+        let path = repository_ctx_path_from_value_relative_to(this, path, eval)?;
         let read_path = repository_path_for_read(&path);
         let bytes = fs::read(&read_path).map_err(|e| {
             buck2_error::Error::from(BazelRepositoryError::ModuleCtxReadFile {
@@ -3349,11 +3457,7 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
         #[starlark(require = pos)] path: Value<'v>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<NoneType> {
-        let _path = repository_path_from_value_relative_to(
-            path,
-            eval,
-            Some(repository_ctx_working_dir(this)),
-        )?;
+        let _path = repository_ctx_path_from_value_relative_to(this, path, eval)?;
         Ok(NoneType)
     }
 
@@ -3362,11 +3466,7 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
         #[starlark(require = pos)] path: Value<'v>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<NoneType> {
-        let _path = repository_path_from_value_relative_to(
-            path,
-            eval,
-            Some(repository_ctx_working_dir(this)),
-        )?;
+        let _path = repository_ctx_path_from_value_relative_to(this, path, eval)?;
         Ok(NoneType)
     }
 
@@ -3407,11 +3507,7 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
         #[starlark(require = pos)] path: Value<'v>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<bool> {
-        let path = repository_path_from_value_relative_to(
-            path,
-            eval,
-            Some(repository_ctx_working_dir(this)),
-        )?;
+        let path = repository_ctx_path_from_value_relative_to(this, path, eval)?;
         let write_path = repository_path_for_write(&path)?;
         if !write_path.exists() {
             return Ok(false);
@@ -3438,8 +3534,7 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<NoneType> {
         let working_dir = repository_ctx_working_dir(this);
-        let patch_path =
-            repository_path_from_value_relative_to(patch_file, eval, Some(working_dir))?;
+        let patch_path = repository_ctx_path_from_value_relative_to(this, patch_file, eval)?;
         let patch_path_abs = repository_path_for_read_abs_relative_to(&patch_path, working_dir);
         if patch_path_abs.is_dir() {
             return Err(
@@ -3493,8 +3588,8 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<NoneType> {
         let working_dir = repository_ctx_working_dir(this);
-        let target = repository_path_from_value_relative_to(target, eval, Some(working_dir))?;
-        let link = repository_path_from_value_relative_to(link_name, eval, Some(working_dir))?;
+        let target = repository_ctx_path_from_value_relative_to(this, target, eval)?;
+        let link = repository_ctx_path_from_value_relative_to(this, link_name, eval)?;
         let target_path = repository_path_for_read_abs_relative_to(&target, working_dir);
         let link_path = repository_path_for_write(&link)?;
         if let Some(parent) = link_path.parent() {

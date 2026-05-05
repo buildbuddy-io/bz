@@ -695,7 +695,7 @@ impl InterpreterForDir {
         buckconfigs: &mut dyn BuckConfigsViewForStarlark,
         eval_provider: StarlarkEvaluatorProvider,
         cancellation: &CancellationContext,
-    ) -> buck2_error::Result<Vec<crate::bazel_repository::BazelRepositoryGeneratedFile>> {
+    ) -> buck2_error::Result<crate::bazel_repository::BazelRepositoryRuleEvaluation> {
         BuckStarlarkModule::with_profiling(|env| {
             let rule_value = rule_module
                 .get_any_visibility(&invocation.rule_id.name)
@@ -725,7 +725,7 @@ impl InterpreterForDir {
 
             let print = EventDispatcherPrintHandler(get_dispatcher());
             let globals = self.global_state.globals();
-            let (finished_eval, files) =
+            let (finished_eval, evaluation) =
                 eval_provider.with_evaluator(&env, cancellation.into(), |eval, _| {
                     eval.set_print_handler(&print);
                     eval.set_soft_error_handler(&Buck2StarlarkSoftErrorHandler);
@@ -738,15 +738,31 @@ impl InterpreterForDir {
                         globals,
                         eval,
                     )?;
-                    repository_rule
+                    match repository_rule
                         .as_ref()
-                        .invoke_implementation(repository_ctx, eval)?;
-                    Ok(crate::bazel_repository::take_repository_ctx_files(
-                        repository_ctx,
-                    )?)
+                        .invoke_implementation(repository_ctx, eval)
+                    {
+                        Ok(_) => Ok(crate::bazel_repository::BazelRepositoryRuleEvaluation::Success(
+                            crate::bazel_repository::take_repository_ctx_files(repository_ctx)?,
+                        )),
+                        Err(error) => {
+                            let label_deps =
+                                crate::bazel_repository::take_repository_ctx_path_label_deps(
+                                    repository_ctx,
+                                )?;
+                            if label_deps.is_empty() {
+                                Err(error.into())
+                            } else {
+                                Ok(crate::bazel_repository::BazelRepositoryRuleEvaluation::NeedsPathLabelDeps {
+                                    label_deps,
+                                    error: error.to_string(),
+                                })
+                            }
+                        }
+                    }
                 })?;
             let (token, _) = finished_eval.finish()?;
-            Ok((token, files))
+            Ok((token, evaluation))
         })
     }
 

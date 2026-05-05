@@ -365,7 +365,6 @@ pub struct BzlmodRepositoryRuleInvocationSetup {
     pub rule_name: Arc<str>,
     pub attrs: Arc<Vec<(Arc<str>, Arc<str>)>>,
     pub label_deps: Arc<Vec<Arc<str>>>,
-    pub same_extension_label_deps: Arc<Vec<Arc<str>>>,
 }
 
 #[derive(
@@ -382,6 +381,8 @@ pub struct BzlmodModuleExtensionRepoSetup {
     pub parent_canonical_repo_name: Arc<str>,
     pub parent_is_root: bool,
     pub extension_bzl_file: Arc<str>,
+    pub extension_bzl_cell: Arc<str>,
+    pub extension_bzl_path: Arc<str>,
     pub extension_name: Arc<str>,
     pub repo_name: Arc<str>,
     pub extension_usages_json: Arc<str>,

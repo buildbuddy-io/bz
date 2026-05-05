@@ -865,7 +865,6 @@ impl BuckConfigBasedCells {
                     rule_name,
                     attrs,
                     label_deps,
-                    same_extension_label_deps,
                 } => BzlmodGeneratedCellGenerator::RepositoryRuleInvocation(
                     BzlmodRepositoryRuleInvocationSetup {
                         repo_name: Arc::from(repo_name),
@@ -880,18 +879,14 @@ impl BuckConfigBasedCells {
                                 .collect(),
                         ),
                         label_deps: Arc::new(label_deps.into_iter().map(Arc::from).collect()),
-                        same_extension_label_deps: Arc::new(
-                            same_extension_label_deps
-                                .into_iter()
-                                .map(Arc::from)
-                                .collect(),
-                        ),
                     },
                 ),
                 BzlmodGeneratedRepoConfig::ModuleExtensionRepo {
                     parent_canonical_repo_name,
                     parent_is_root,
                     extension_bzl_file,
+                    extension_bzl_cell,
+                    extension_bzl_path,
                     extension_name,
                     repo_name,
                     extension_usages_json,
@@ -900,6 +895,8 @@ impl BuckConfigBasedCells {
                         parent_canonical_repo_name: Arc::from(parent_canonical_repo_name),
                         parent_is_root,
                         extension_bzl_file: Arc::from(extension_bzl_file),
+                        extension_bzl_cell: Arc::from(extension_bzl_cell),
+                        extension_bzl_path: Arc::from(extension_bzl_path),
                         extension_name: Arc::from(extension_name),
                         repo_name: Arc::from(repo_name),
                         extension_usages_json: Arc::from(extension_usages_json),
@@ -1209,14 +1206,14 @@ enum BzlmodGeneratedRepoConfig {
         attrs: Vec<(String, String)>,
         #[serde(default)]
         label_deps: Vec<String>,
-        #[serde(default)]
-        same_extension_label_deps: Vec<String>,
     },
     ModuleExtensionRepo {
         parent_canonical_repo_name: String,
         #[serde(default)]
         parent_is_root: bool,
         extension_bzl_file: String,
+        extension_bzl_cell: String,
+        extension_bzl_path: String,
         extension_name: String,
         repo_name: String,
         extension_usages_json: String,
@@ -2168,6 +2165,7 @@ fn resolve_bzlmod_extension_usage_generated_repos(
         let generator_json = serde_json::to_string(&bzlmod_module_extension_repo_config(
             bzlmod_module_extension_results_complete,
             evaluated_extension,
+            &resolved_extension,
             parent_canonical_repo_name,
             parent_is_root,
             usage,
@@ -2201,6 +2199,7 @@ fn resolve_bzlmod_extension_usage_generated_repos(
         let generator_json = serde_json::to_string(&bzlmod_module_extension_repo_config(
             bzlmod_module_extension_results_complete,
             evaluated_extension,
+            &resolved_extension,
             parent_canonical_repo_name,
             parent_is_root,
             usage,
@@ -2317,6 +2316,7 @@ fn bzlmod_module_extension_evaluation_config_json(
 fn bzlmod_module_extension_repo_config(
     bzlmod_module_extension_results_complete: bool,
     evaluated_extension: Option<&BzlmodEvaluatedModuleExtension>,
+    resolved_extension: &BzlmodResolvedExtension,
     parent_canonical_repo_name: &str,
     parent_is_root: bool,
     usage: &BzlmodExtensionUsage,
@@ -2337,11 +2337,6 @@ fn bzlmod_module_extension_repo_config(
                 rule_name: invocation.rule_name.clone(),
                 attrs: invocation.attrs.clone(),
                 label_deps: invocation.label_deps.clone(),
-                same_extension_label_deps: bzlmod_same_extension_attr_label_deps(
-                    evaluated_extension,
-                    repo_name,
-                    &invocation.attrs,
-                ),
             });
         }
 
@@ -2369,65 +2364,12 @@ fn bzlmod_module_extension_repo_config(
         parent_canonical_repo_name: parent_canonical_repo_name.to_owned(),
         parent_is_root,
         extension_bzl_file: usage.extension_bzl_file.clone(),
+        extension_bzl_cell: resolved_extension.id.bzl_cell_name.clone(),
+        extension_bzl_path: resolved_extension.id.bzl_path.clone(),
         extension_name: usage.extension_name.clone(),
         repo_name: repo_name.to_owned(),
         extension_usages_json: extension_usages_json.to_owned(),
     })
-}
-
-fn bzlmod_same_extension_attr_label_deps(
-    extension: &BzlmodEvaluatedModuleExtension,
-    repo_name: &str,
-    attrs: &[(String, String)],
-) -> Vec<String> {
-    let attr_strings = attrs
-        .iter()
-        .flat_map(|(_, expression)| bzlmod_repository_rule_attr_string_literals(expression))
-        .collect::<BTreeSet<_>>();
-    let mut label_deps = extension
-        .repo_names
-        .iter()
-        .filter(|sibling_repo_name| sibling_repo_name.as_ref() != repo_name)
-        .filter(|sibling_repo_name| attr_strings.contains(sibling_repo_name.as_ref()))
-        .map(|sibling_repo_name| {
-            let canonical_repo_name = bzlmod_extension_unique_repo_canonical_repo_name(
-                &extension.extension_unique_name,
-                sibling_repo_name,
-            );
-            bzlmod_cell_name(&canonical_repo_name)
-        })
-        .collect::<Vec<_>>();
-    label_deps.sort();
-    label_deps.dedup();
-    label_deps
-}
-
-fn bzlmod_repository_rule_attr_string_literals(expression: &str) -> Vec<String> {
-    let mut strings = Vec::new();
-    let mut chars = expression.char_indices().peekable();
-    while let Some((_, ch)) = chars.next() {
-        if ch != '"' && ch != '\'' {
-            continue;
-        }
-
-        let quote = ch;
-        let mut string = String::new();
-        let mut escaped = false;
-        for (_, string_ch) in chars.by_ref() {
-            if escaped {
-                string.push(string_ch);
-                escaped = false;
-            } else if string_ch == '\\' {
-                escaped = true;
-            } else if string_ch == quote {
-                strings.push(string);
-                break;
-            } else {
-                string.push(string_ch);
-            }
-        }
-    }
-    strings
 }
 
 fn add_generated_bzlmod_repo(
@@ -2541,7 +2483,6 @@ fn resolve_bzlmod_use_repo_rule_generated_repos(
                 rule_name: invocation.rule_name.clone(),
                 attrs: invocation.attrs.clone(),
                 label_deps,
-                same_extension_label_deps: Vec::new(),
             })
             .buck_error_context("Error serializing use_repo_rule repository configuration")?;
         add_generated_bzlmod_repo(

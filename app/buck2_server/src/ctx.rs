@@ -817,6 +817,8 @@ impl DiceCommandUpdater<'_, '_> {
                     parent_canonical_repo_name: request.parent_canonical_repo_name.dupe(),
                     parent_is_root: request.parent_is_root,
                     extension_bzl_file: request.extension_bzl_file.dupe(),
+                    extension_bzl_cell: request.extension_bzl_cell.dupe(),
+                    extension_bzl_path: request.extension_bzl_path.dupe(),
                     extension_name: request.extension_name.dupe(),
                     repo_name: Arc::from(""),
                     extension_usages_json: request.extension_usages_json.dupe(),
