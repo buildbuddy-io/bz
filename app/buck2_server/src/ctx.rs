@@ -797,8 +797,10 @@ impl DiceCommandUpdater<'_, '_> {
             }
 
             let working_dir_key = bzlmod_cell_name(&request.extension_unique_name);
-            let working_dir =
-                format!("buck-out/v2/external_cells/bzlmod_module_extensions/{working_dir_key}");
+            let working_dir = format!(
+                "{}/external_cells/bzlmod_module_extensions/{working_dir_key}",
+                self.cmd_ctx.buck_out_dir.as_str()
+            );
             let working_dir_path = ProjectRelativePath::new(&working_dir)?.to_owned();
             ctx.get_blocking_executor()
                 .execute_io(

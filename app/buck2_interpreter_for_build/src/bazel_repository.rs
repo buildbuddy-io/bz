@@ -32,8 +32,11 @@ use buck2_core::cells::CellAliasResolver;
 use buck2_core::cells::alias::NonEmptyCellAlias;
 use buck2_core::cells::build_file_cell::BuildFileCell;
 use buck2_core::cells::cell_path::CellPath;
+use buck2_core::cells::external::BzlmodGeneratedCellGenerator;
 use buck2_core::cells::external::BzlmodModuleExtensionRepoSetup;
 use buck2_core::cells::external::BzlmodRepositoryRuleInvocationSetup;
+use buck2_core::cells::external::ExternalCellOrigin;
+use buck2_core::cells::external::bzlmod_cell_aliases_for_cell;
 use buck2_core::cells::external::bzlmod_cell_name;
 use buck2_core::cells::name::CellName;
 use buck2_core::cells::paths::CellRelativePathBuf;
@@ -287,6 +290,7 @@ fn record_repository_rule_invocation<'v>(
 
     recorder.record(BazelRepositoryRuleInvocation {
         rule_id: rule_id.clone(),
+        original_name: name.clone(),
         name,
         attrs,
         label_deps: label_deps.into_iter().collect(),
@@ -467,6 +471,8 @@ pub async fn evaluate_bzlmod_module_extension_repo(
         &setup.extension_bzl_file,
     )?;
     let extension_path = ImportPath::new_same_cell(extension_cell_path)?;
+    materialize_bzlmod_module_extension_generated_aliases(ctx, setup, extension_path.path().cell())
+        .await?;
     let extension_module = ctx
         .get_loaded_module(StarlarkModulePath::LoadFile(&extension_path))
         .await?;
@@ -513,6 +519,49 @@ async fn materialize_bzlmod_module_extension_input_modules(
         if !should_materialize {
             continue;
         }
+        let module_file = CellPath::new(
+            cell_name,
+            CellRelativePathBuf::unchecked_new("MODULE.bazel".to_owned()),
+        );
+        DiceFileComputations::read_path_metadata_if_exists(ctx, module_file.as_ref()).await?;
+    }
+    Ok(())
+}
+
+async fn materialize_bzlmod_module_extension_generated_aliases(
+    ctx: &mut DiceComputations<'_>,
+    current_setup: &BzlmodModuleExtensionRepoSetup,
+    extension_cell_name: CellName,
+) -> buck2_error::Result<()> {
+    if !current_setup.repo_name.is_empty() {
+        return Ok(());
+    }
+    let cell_names = {
+        let cell_resolver = ctx.get_cell_resolver().await?;
+        let mut seen = BTreeSet::new();
+        let mut cell_names = Vec::new();
+        for (_alias, cell_name) in bzlmod_cell_aliases_for_cell(extension_cell_name.as_str()) {
+            let cell_name = CellName::unchecked_new(&cell_name)?;
+            if !seen.insert(cell_name) {
+                continue;
+            }
+            let Ok(cell) = cell_resolver.get(cell_name) else {
+                continue;
+            };
+            if let Some(ExternalCellOrigin::BzlmodGenerated(generated)) = cell.external() {
+                match &generated.generator {
+                    BzlmodGeneratedCellGenerator::ModuleExtensionRepo(_) => {
+                        continue;
+                    }
+                    _ => {
+                        cell_names.push(cell_name);
+                    }
+                }
+            }
+        }
+        cell_names
+    };
+    for cell_name in cell_names {
         let module_file = CellPath::new(
             cell_name,
             CellRelativePathBuf::unchecked_new("MODULE.bazel".to_owned()),
@@ -686,6 +735,7 @@ pub async fn evaluate_bzlmod_repository_rule_invocation(
             name: setup.rule_name.to_string(),
         },
         name: canonical_repo_name.to_owned(),
+        original_name: setup.repo_name.to_string(),
         attrs: setup
             .attrs
             .iter()
@@ -1030,6 +1080,7 @@ pub(crate) fn alloc_bzlmod_repository_context<'v>(
     let attr = eval.heap().alloc(AllocStruct(attrs));
     Ok(eval.heap().alloc(StarlarkRepositoryContext::new(
         invocation.name.clone(),
+        invocation.original_name.clone(),
         attr,
         working_dir.to_owned(),
         repository_ctx_workspace_root(working_dir),
@@ -1785,10 +1836,7 @@ fn repository_path_from_value_relative_to(
             && !Path::new(path).is_absolute()
             && !path.starts_with("buck-out/")
         {
-            return Ok(Path::new(relative_root)
-                .join(path)
-                .to_string_lossy()
-                .into_owned());
+            return Ok(repository_join_normalized(relative_root, path));
         }
         return Ok(path.to_owned());
     }
@@ -1798,6 +1846,23 @@ fn repository_path_from_value_relative_to(
         ))
         .into(),
     )
+}
+
+fn repository_join_normalized(root: &str, path: &str) -> String {
+    let mut joined = PathBuf::from(root);
+    for component in Path::new(path).components() {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                joined.pop();
+            }
+            std::path::Component::Normal(part) => joined.push(part),
+            std::path::Component::RootDir | std::path::Component::Prefix(_) => {
+                joined.push(component.as_os_str());
+            }
+        }
+    }
+    joined.to_string_lossy().into_owned()
 }
 
 fn repository_path_for_read(path: &str) -> String {
@@ -1976,6 +2041,7 @@ fn repository_path_for_write(path: &str) -> buck2_error::Result<PathBuf> {
 #[derive(Debug, ProvidesStaticType, Trace, NoSerialize, Allocative)]
 pub(crate) struct StarlarkRepositoryContext<'v> {
     name: String,
+    original_name: String,
     attr: Value<'v>,
     working_dir: String,
     workspace_root: String,
@@ -1985,9 +2051,16 @@ pub(crate) struct StarlarkRepositoryContext<'v> {
 }
 
 impl<'v> StarlarkRepositoryContext<'v> {
-    fn new(name: String, attr: Value<'v>, working_dir: String, workspace_root: String) -> Self {
+    fn new(
+        name: String,
+        original_name: String,
+        attr: Value<'v>,
+        working_dir: String,
+        workspace_root: String,
+    ) -> Self {
         Self {
             name,
+            original_name,
             attr,
             working_dir,
             workspace_root,
@@ -2018,6 +2091,7 @@ impl<'v> StarlarkValue<'v> for StarlarkRepositoryContext<'v> {
         vec![
             "attr".to_owned(),
             "name".to_owned(),
+            "original_name".to_owned(),
             "os".to_owned(),
             "workspace_root".to_owned(),
         ]
@@ -2027,6 +2101,7 @@ impl<'v> StarlarkValue<'v> for StarlarkRepositoryContext<'v> {
         match attribute {
             "attr" => Some(self.attr),
             "name" => Some(heap.alloc_str(&self.name).to_value()),
+            "original_name" => Some(heap.alloc_str(&self.original_name).to_value()),
             "os" => Some(heap.alloc(StarlarkRepositoryOs)),
             "workspace_root" => {
                 Some(heap.alloc(StarlarkRepositoryPath::new(self.workspace_root.clone())))
@@ -2047,6 +2122,7 @@ impl<'v> Freeze for StarlarkRepositoryContext<'v> {
     fn freeze(self, freezer: &Freezer) -> FreezeResult<Self::Frozen> {
         Ok(FrozenStarlarkRepositoryContext {
             name: self.name,
+            original_name: self.original_name,
             attr: self.attr.freeze(freezer)?,
             working_dir: self.working_dir,
             workspace_root: self.workspace_root,
@@ -2062,6 +2138,7 @@ impl<'v> Freeze for StarlarkRepositoryContext<'v> {
 #[derive(Debug, ProvidesStaticType, NoSerialize, Allocative)]
 pub(crate) struct FrozenStarlarkRepositoryContext {
     name: String,
+    original_name: String,
     attr: FrozenValue,
     working_dir: String,
     workspace_root: String,
@@ -2085,6 +2162,7 @@ impl<'v> StarlarkValue<'v> for FrozenStarlarkRepositoryContext {
         vec![
             "attr".to_owned(),
             "name".to_owned(),
+            "original_name".to_owned(),
             "os".to_owned(),
             "workspace_root".to_owned(),
         ]
@@ -2094,6 +2172,7 @@ impl<'v> StarlarkValue<'v> for FrozenStarlarkRepositoryContext {
         match attribute {
             "attr" => Some(self.attr.to_value()),
             "name" => Some(heap.alloc_str(&self.name).to_value()),
+            "original_name" => Some(heap.alloc_str(&self.original_name).to_value()),
             "os" => Some(heap.alloc(FrozenStarlarkRepositoryOs)),
             "workspace_root" => {
                 Some(heap.alloc(StarlarkRepositoryPath::new(self.workspace_root.clone())))
@@ -2368,6 +2447,34 @@ fn repository_ctx_download_error<'v>(
     }
 }
 
+fn repository_ctx_download_option_is_empty(value: Value<'_>) -> bool {
+    if value.is_none() {
+        return true;
+    }
+    if let Some(value) = value.unpack_str() {
+        return value.is_empty();
+    }
+    if let Some(dict) = DictRef::from_value(value) {
+        return dict.iter().next().is_none();
+    }
+    if let Some(list) = ListRef::from_value(value) {
+        return list.iter().next().is_none();
+    }
+    if let Some(tuple) = TupleRef::from_value(value) {
+        return tuple.iter().next().is_none();
+    }
+    false
+}
+
+fn repository_ctx_download_options_are_empty(
+    entries: &UnpackDictEntries<Value<'_>, Value<'_>>,
+) -> bool {
+    entries
+        .entries
+        .iter()
+        .all(|(_, value)| repository_ctx_download_option_is_empty(*value))
+}
+
 fn repository_ctx_download_to_path<'v>(
     urls: Vec<String>,
     output_path: String,
@@ -2518,9 +2625,11 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
         this: ValueTypedComplex<'v, StarlarkRepositoryContext<'v>>,
         #[starlark(require = pos)] path: Value<'v>,
         #[starlark(require = pos)] template: Value<'v>,
-        #[starlark(require = named, default = UnpackDictEntries::default())]
-        substitutions: UnpackDictEntries<&'v str, &'v str>,
-        #[starlark(require = named, default = true)] executable: bool,
+        #[starlark(default = UnpackDictEntries::default())] substitutions: UnpackDictEntries<
+            &'v str,
+            &'v str,
+        >,
+        #[starlark(default = true)] executable: bool,
         #[starlark(require = named, default = "auto")] _watch_template: &str,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<NoneType> {
@@ -2827,13 +2936,13 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {
         let _unused = canonical_id;
-        if !auth.entries.is_empty() {
+        if !repository_ctx_download_options_are_empty(&auth) {
             return Err(buck2_error::Error::from(
                 BazelRepositoryError::ModuleCtxDownloadUnsupportedField { field: "auth" },
             )
             .into());
         }
-        if !headers.entries.is_empty() {
+        if !repository_ctx_download_options_are_empty(&headers) {
             return Err(buck2_error::Error::from(
                 BazelRepositoryError::ModuleCtxDownloadUnsupportedField { field: "headers" },
             )
@@ -2896,13 +3005,13 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
         };
         let archive_path = Path::new(working_dir).join(archive_name);
         let archive_path_string = archive_path.to_string_lossy().into_owned();
-        if !auth.entries.is_empty() {
+        if !repository_ctx_download_options_are_empty(&auth) {
             return Err(buck2_error::Error::from(
                 BazelRepositoryError::ModuleCtxDownloadUnsupportedField { field: "auth" },
             )
             .into());
         }
-        if !headers.entries.is_empty() {
+        if !repository_ctx_download_options_are_empty(&headers) {
             return Err(buck2_error::Error::from(
                 BazelRepositoryError::ModuleCtxDownloadUnsupportedField { field: "headers" },
             )
@@ -2982,7 +3091,14 @@ impl<'v> AllocValue<'v> for StarlarkModuleExtensionContext<'v> {
 #[starlark_value(type = "module_ctx")]
 impl<'v> StarlarkValue<'v> for StarlarkModuleExtensionContext<'v> {
     fn dir_attr(&self) -> Vec<String> {
-        vec!["facts".to_owned(), "modules".to_owned(), "os".to_owned()]
+        vec![
+            "facts".to_owned(),
+            "execute".to_owned(),
+            "modules".to_owned(),
+            "os".to_owned(),
+            "report_progress".to_owned(),
+            "watch".to_owned(),
+        ]
     }
 
     fn get_attr(&self, attribute: &str, heap: Heap<'v>) -> Option<Value<'v>> {
@@ -3036,7 +3152,14 @@ impl<'v> StarlarkValue<'v> for FrozenStarlarkModuleExtensionContext {
     type Canonical = StarlarkModuleExtensionContext<'v>;
 
     fn dir_attr(&self) -> Vec<String> {
-        vec!["facts".to_owned(), "modules".to_owned(), "os".to_owned()]
+        vec![
+            "facts".to_owned(),
+            "execute".to_owned(),
+            "modules".to_owned(),
+            "os".to_owned(),
+            "report_progress".to_owned(),
+            "watch".to_owned(),
+        ]
     }
 
     fn get_attr(&self, attribute: &str, heap: Heap<'v>) -> Option<Value<'v>> {
@@ -3685,6 +3808,113 @@ fn module_extension_context_methods(builder: &mut MethodsBuilder) {
         ))
     }
 
+    fn watch<'v>(
+        this: ValueTypedComplex<'v, StarlarkModuleExtensionContext<'v>>,
+        #[starlark(require = pos)] path: Value<'v>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<NoneType> {
+        let _path =
+            repository_path_from_value_relative_to(path, eval, Some(module_ctx_working_dir(this)))?;
+        Ok(NoneType)
+    }
+
+    fn report_progress<'v>(
+        this: ValueTypedComplex<'v, StarlarkModuleExtensionContext<'v>>,
+        #[starlark(require = pos)] message: &str,
+    ) -> starlark::Result<NoneType> {
+        let _unused = (this, message);
+        Ok(NoneType)
+    }
+
+    fn execute<'v>(
+        this: ValueTypedComplex<'v, StarlarkModuleExtensionContext<'v>>,
+        #[starlark(require = pos)] arguments: UnpackListOrTuple<Value<'v>>,
+        #[starlark(require = named, default = UnpackDictEntries::default())]
+        environment: UnpackDictEntries<&'v str, &'v str>,
+        #[starlark(require = named, default = 600)] timeout: i32,
+        #[starlark(require = named, default = true)] quiet: bool,
+        #[starlark(require = named)] working_directory: Option<Value<'v>>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<Value<'v>> {
+        let _unused = (timeout, quiet);
+        let repository_working_dir = module_ctx_working_dir(this).to_owned();
+        let mut arguments = arguments
+            .items
+            .into_iter()
+            .map(|arg| repository_ctx_command_arg(arg, &repository_working_dir))
+            .collect::<Vec<_>>();
+        if arguments.is_empty() {
+            return Err(buck2_error::Error::from(
+                BazelRepositoryError::RepositoryCtxExecuteEmptyArguments,
+            )
+            .into());
+        }
+        let program = arguments.remove(0);
+        let repository_working_dir_abs = repository_path_for_write(&repository_working_dir)?;
+        let environment = environment
+            .entries
+            .into_iter()
+            .map(|(key, value)| {
+                (
+                    key,
+                    repository_ctx_command_env(value, &repository_working_dir),
+                )
+            })
+            .collect::<Vec<_>>();
+        repository_ctx_wait_for_external_inputs(
+            std::iter::once(program.clone()).chain(arguments.iter().cloned()),
+            &repository_working_dir_abs,
+            &program,
+        )?;
+        let mut command = Command::new(&program);
+        command.args(arguments);
+        for (key, value) in environment {
+            command.env(key, value);
+        }
+        let working_directory = match working_directory {
+            Some(working_directory) => repository_path_from_value_relative_to(
+                working_directory,
+                eval,
+                Some(&repository_working_dir),
+            )?,
+            None => repository_working_dir.clone(),
+        };
+        let working_directory = if working_directory == repository_working_dir {
+            repository_working_dir_abs
+        } else {
+            repository_path_for_write(&working_directory)?
+        };
+        fs::create_dir_all(&working_directory).map_err(|error| {
+            buck2_error::Error::from(BazelRepositoryError::RepositoryCtxExecuteFailed {
+                program: program.clone(),
+                error: error.to_string(),
+            })
+        })?;
+        command.current_dir(working_directory);
+        let output = command.output().map_err(|error| {
+            buck2_error::Error::from(BazelRepositoryError::RepositoryCtxExecuteFailed {
+                program: program.clone(),
+                error: error.to_string(),
+            })
+        })?;
+        Ok(eval.heap().alloc(AllocStruct([
+            (
+                "stdout",
+                eval.heap()
+                    .alloc(String::from_utf8_lossy(&output.stdout).into_owned()),
+            ),
+            (
+                "stderr",
+                eval.heap()
+                    .alloc(String::from_utf8_lossy(&output.stderr).into_owned()),
+            ),
+            (
+                "return_code",
+                eval.heap().alloc(output.status.code().unwrap_or(1)),
+            ),
+        ])))
+    }
+
     fn read<'v>(
         this: ValueTypedComplex<'v, StarlarkModuleExtensionContext<'v>>,
         #[starlark(require = pos)] path: Value<'v>,
@@ -3719,13 +3949,13 @@ fn module_extension_context_methods(builder: &mut MethodsBuilder) {
         #[starlark(require = named, default = true)] block: bool,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {
-        if !auth.entries.is_empty() {
+        if !repository_ctx_download_options_are_empty(&auth) {
             return Err(buck2_error::Error::from(
                 BazelRepositoryError::ModuleCtxDownloadUnsupportedField { field: "auth" },
             )
             .into());
         }
-        if !headers.entries.is_empty() {
+        if !repository_ctx_download_options_are_empty(&headers) {
             return Err(buck2_error::Error::from(
                 BazelRepositoryError::ModuleCtxDownloadUnsupportedField { field: "headers" },
             )

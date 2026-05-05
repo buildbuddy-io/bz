@@ -279,6 +279,7 @@ impl<'a> BuildContext<'a> {
 pub struct BazelRepositoryRuleInvocation {
     pub rule_id: StarlarkRuleType,
     pub name: String,
+    pub original_name: String,
     pub attrs: Vec<(String, String)>,
     pub label_deps: Vec<String>,
 }

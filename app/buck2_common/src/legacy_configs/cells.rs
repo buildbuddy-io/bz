@@ -1458,6 +1458,12 @@ async fn resolve_bcr_modules_with_client(
             }
         }
     }
+    let selected_keys_in_dependency_order = bzlmod_selected_keys_dependency_first(
+        &discovered,
+        &root_deps,
+        &selected_versions,
+        &selected_keys,
+    );
     let canonical_repo_names_by_key = bzlmod_canonical_repo_names_by_key(&selected_keys);
 
     let mut root_aliases_by_key = BTreeMap::<(String, String), BTreeSet<String>>::new();
@@ -1568,6 +1574,7 @@ async fn resolve_bcr_modules_with_client(
         &root_module,
         &discovered,
         &selected_keys_for_generated,
+        &selected_keys_in_dependency_order,
         &canonical_repo_names_by_key,
         &mut cell_aliases_by_cell,
         &canonical_repo_names_by_cell,
@@ -1607,6 +1614,7 @@ fn resolve_generated_bzlmod_repos(
     root_module: &RootBzlmodModule,
     discovered: &BTreeMap<(String, String), DiscoveredBcrModule>,
     selected_keys: &BTreeSet<(String, String)>,
+    selected_keys_in_dependency_order: &[(String, String)],
     canonical_repo_names_by_key: &BTreeMap<(String, String), String>,
     cell_aliases_by_cell: &mut BTreeMap<String, BTreeMap<String, String>>,
     canonical_repo_names_by_cell: &BTreeMap<String, String>,
@@ -1635,7 +1643,7 @@ fn resolve_generated_bzlmod_repos(
         &mut generated_repo_declaring_cells,
     )?;
     let mut needs_local_config_platform = false;
-    for key in selected_keys {
+    for key in selected_keys_in_dependency_order {
         let Some(module) = discovered.get(key) else {
             continue;
         };
@@ -3458,15 +3466,59 @@ fn bzlmod_repository_rule_attr_expression(
     value: &str,
     constants: &[(String, String)],
 ) -> buck2_error::Result<String> {
-    if let Some(string) = bzl_string_expression_value(value, constants)
-        && bzlmod_string_looks_like_label(&string)
-    {
-        let label = serde_json::to_string(&string).buck_error_context(
-            "Error serializing use_repo_rule label-valued repository-rule attribute",
-        )?;
-        return Ok(format!("Label({label})"));
+    let value = value.trim();
+    if let Some(string) = bzl_string_expression_value(value, constants) {
+        return bzlmod_repository_rule_string_attr_expression(&string);
+    }
+    if let Some(values) = bzlmod_repository_rule_string_list_attr_expression(value, constants)? {
+        return Ok(format!("[{}]", values.join(", ")));
     }
     Ok(value.to_owned())
+}
+
+fn bzlmod_repository_rule_string_attr_expression(value: &str) -> buck2_error::Result<String> {
+    let serialized = serde_json::to_string(value)
+        .buck_error_context("Error serializing use_repo_rule string repository-rule attribute")?;
+    if bzlmod_string_looks_like_label(value) {
+        Ok(format!("Label({serialized})"))
+    } else {
+        Ok(serialized)
+    }
+}
+
+fn bzlmod_repository_rule_string_list_attr_expression(
+    value: &str,
+    constants: &[(String, String)],
+) -> buck2_error::Result<Option<Vec<String>>> {
+    let value = if is_bzl_identifier(value) {
+        constants
+            .iter()
+            .find_map(|(name, constant_value)| (name == value).then_some(constant_value.as_str()))
+            .unwrap_or(value)
+    } else {
+        value
+    };
+    let value = value.trim();
+    let Some(inner) = value
+        .strip_prefix('[')
+        .and_then(|value| value.strip_suffix(']'))
+        .or_else(|| {
+            value
+                .strip_prefix('(')
+                .and_then(|value| value.strip_suffix(')'))
+        })
+    else {
+        return Ok(None);
+    };
+    let values = bzl_split_top_level(inner, ',')
+        .into_iter()
+        .filter(|item| !item.trim().is_empty())
+        .map(|item| {
+            let string = bzl_string_expression_value(item.trim(), constants)?;
+            bzlmod_repository_rule_string_attr_expression(&string).ok()
+        })
+        .collect::<Option<Vec<_>>>();
+    Ok(values)
 }
 
 fn bzlmod_string_looks_like_label(value: &str) -> bool {
@@ -3919,6 +3971,69 @@ fn bzlmod_patch_configs(
             integrity: integrity.clone(),
         })
         .collect()
+}
+
+fn bzlmod_selected_keys_dependency_first(
+    discovered: &BTreeMap<(String, String), DiscoveredBcrModule>,
+    root_deps: &[BazelDep],
+    selected_versions: &BTreeMap<String, String>,
+    selected_keys: &BTreeSet<(String, String)>,
+) -> Vec<(String, String)> {
+    fn visit(
+        key: &(String, String),
+        discovered: &BTreeMap<(String, String), DiscoveredBcrModule>,
+        selected_versions: &BTreeMap<String, String>,
+        selected_keys: &BTreeSet<(String, String)>,
+        seen: &mut BTreeSet<(String, String)>,
+        ordered: &mut Vec<(String, String)>,
+    ) {
+        if !selected_keys.contains(key) || !seen.insert(key.clone()) {
+            return;
+        }
+        if let Some(module) = discovered.get(key) {
+            for dep in &module.deps {
+                let Some(version) = selected_versions.get(&dep.name) else {
+                    continue;
+                };
+                visit(
+                    &(dep.name.clone(), version.clone()),
+                    discovered,
+                    selected_versions,
+                    selected_keys,
+                    seen,
+                    ordered,
+                );
+            }
+        }
+        ordered.push(key.clone());
+    }
+
+    let mut seen = BTreeSet::new();
+    let mut ordered = Vec::new();
+    for dep in root_deps {
+        let Some(version) = selected_versions.get(&dep.name) else {
+            continue;
+        };
+        visit(
+            &(dep.name.clone(), version.clone()),
+            discovered,
+            selected_versions,
+            selected_keys,
+            &mut seen,
+            &mut ordered,
+        );
+    }
+    for key in selected_keys {
+        visit(
+            key,
+            discovered,
+            selected_versions,
+            selected_keys,
+            &mut seen,
+            &mut ordered,
+        );
+    }
+    ordered
 }
 
 fn bzlmod_canonical_repo_names_by_key(
@@ -5155,6 +5270,44 @@ mod tests {
         assert_eq!(
             usages[0].tags[1].bindings,
             vec![("python_version".to_owned(), "\"3.12\"".to_owned())]
+        );
+    }
+
+    #[test]
+    fn test_bzlmod_use_repo_rule_attrs_resolve_module_constants() {
+        let lines = indoc!(
+            r#"
+            http_file = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_file")
+
+            _VERSION = "v1.2.3"
+            FILE_NAME = ("tool_" + _VERSION).replace(".", "_")
+            URL = "https://example.com/{version}/tool".format(version = _VERSION)
+            SHA256 = "abc123"
+
+            http_file(
+                name = "tool",
+                sha256 = SHA256,
+                urls = [URL],
+            )
+            "#
+        )
+        .lines()
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+
+        let constants = super::bzlmod_module_constants_from_lines(&lines);
+        let invocations =
+            super::bzlmod_use_repo_rule_invocations_from_lines(&lines, &constants, false).unwrap();
+        assert_eq!(invocations.len(), 1);
+        assert_eq!(
+            invocations[0].attrs,
+            vec![
+                ("sha256".to_owned(), "\"abc123\"".to_owned()),
+                (
+                    "urls".to_owned(),
+                    "[\"https://example.com/v1.2.3/tool\"]".to_owned()
+                ),
+            ]
         );
     }
 

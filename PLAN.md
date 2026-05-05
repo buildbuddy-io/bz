@@ -123,19 +123,25 @@ Completed:
 - `cc_common.internal_DO_NOT_USE()` now exposes the Bazel `cc_internal` header-info APIs reached by rules_cc/rules_java while preserving Buck's native C++ provider callables.
 - `apple_common.apple_toolchain()` exposes the Bazel toolchain path helpers reached by rules_cc ObjC support.
 - Bazel rules may define a user `metadata` attr without colliding with Buck's internal metadata attr.
+- `module_ctx.watch(...)`, `module_ctx.report_progress(...)`, and `module_ctx.execute(...)` are available for downloaded module-extension implementations without adding module-specific toolchain logic.
+- Bazel `ProvidersLabel.same_package_label(...)` and `ConfiguredProvidersLabel.same_package_label(...)` are available for downloaded repository and extension helpers.
+- Module-extension evaluation now pre-materializes only the direct generated-repo aliases visible to the extension's defining module cell, and does not force unevaluated dynamic repos from other extensions.
+- Bzlmod module-extension evaluation requests are emitted in dependency-first module order so dependency modules such as `rules_go` can create their generated repos before dependent extension code loads helpers through those aliases.
+- `repository_ctx.original_name` is available, repository-relative paths are lexically normalized, empty `auth`/`headers` structures are accepted by download APIs, and `repository_ctx.template(...)` accepts Bazel's positional substitutions form.
+- `use_repo_rule(...)` attrs now resolve supported top-level `MODULE.bazel` string constants and string-list constants into self-contained generated repository-rule calls.
 
 Latest smoke:
 
 ```sh
 /Users/siggi/Code/buck2/bazel-bin/app/buck2/buck2_bin \
-  build --isolation-dir buildbuddy-bazel-metadata-1 //server/cmd/buildbuddy:buildbuddy
+  build --isolation-dir buildbuddy-template-positional-1 //server/cmd/buildbuddy:buildbuddy
 ```
 
 After the two-phase bzlmod cutover, the root smoke no longer stops at the pre-analysis cell-graph boundary for dynamically emitted repos such as `rules_go__download_0_darwin_amd64`. The simple rules_go smoke loads rules_go from its downloaded bzlmod module, invokes real module extensions and repository rules, materializes the Go SDK repository, analyzes the simple Go package, and runs the real `rules_go` local actions needed for `//:hello`.
 
 Bazelisk has passed the second validation rung. The next active validation target is BuildBuddy's server target; keep Bazelisk as a regression check while working the first concrete BuildBuddy failure.
 
-BuildBuddy now gets through the earlier rules_python `pip`, rules_java/rules_cc, Apple toolchain, and rules_webtesting `metadata` boundaries. The current concrete BuildBuddy boundary is in the root `@aspect_rules_js//npm:extensions.bzl` `npm` extension: `module_ctx.watch(...)` is missing from the bzlmod module extension context.
+BuildBuddy now gets through the earlier rules_python `pip`, rules_java/rules_cc, Apple toolchain, rules_webtesting `metadata`, aspect_rules_js `module_ctx.watch`, rules_go generated-alias ordering, rules_nodejs empty download-auth, and rules_jvm_external `use_repo_rule` constant/template boundaries. The latest BuildBuddy smoke reached 114 generated bzlmod external cells and about 1.1G of materialized external cells, then parked while the client waited on `Synchronizing buck2 internal state`. Sampling showed the daemon mostly parked in tokio/DICE metrics waits with no external-cell file churn, so the current boundary is a Buck sync/deadlock or event-completion issue after large generated-repo expansion.
 
 ## Constraints
 
@@ -163,7 +169,7 @@ Acceptance:
 
 ## Phase 2: Module Extensions and Generated Repos
 
-Status: module dependencies, generic `use_extension(...)` bindings, extension tags, and `use_repo(...)` imports are discovered. Repo aliases are now applied through per-module bzlmod mappings: the root module sees its root-visible imports, while downloaded module cells see the deps and extension imports declared by their own `MODULE.bazel`. Extension-imported repos are represented as generated bzlmod cells using Bazel canonical module/extension/repo names, and each generated module-extension repo now carries a serialized generic module/tag usage graph for its extension, including dev-dependency tagging. The interpreter loads the downloaded `module_extension(...)` symbol, coerces tags through the extension's real `tag_class` attrs, populates `module_ctx.modules`, and invokes the real implementation before the final cell graph is rebuilt. `module_ctx` currently supports the APIs reached by rules_go's `go_sdk` and Gazelle `go_deps` extension paths: `ctx.os`, `ctx.getenv`, `ctx.path`, `ctx.read`, `ctx.download`, and `extension_metadata(...)`. `repository_rule(...)` calls emitted by real module extensions are recorded with exported rule id, Bazel canonical repo name, original apparent repo name, and generic keyword values, and those downloaded repository-rule implementation functions now execute into generated external cells via `repository_ctx.file`, `repository_ctx.template`, `repository_ctx.path`, `repository_ctx.read`, `repository_ctx.report_progress`, `repository_ctx.delete`, `repository_ctx.download`, and `repository_ctx.download_and_extract`. The previous Go/Kotlin Rust-side generated repo materializers have been removed from this path.
+Status: module dependencies, generic `use_extension(...)` bindings, extension tags, and `use_repo(...)` imports are discovered. Repo aliases are now applied through per-module bzlmod mappings: the root module sees its root-visible imports, while downloaded module cells see the deps and extension imports declared by their own `MODULE.bazel`. Extension-imported repos are represented as generated bzlmod cells using Bazel canonical module/extension/repo names, and each generated module-extension repo now carries a serialized generic module/tag usage graph for its extension, including dev-dependency tagging. The interpreter loads the downloaded `module_extension(...)` symbol, coerces tags through the extension's real `tag_class` attrs, populates `module_ctx.modules`, and invokes the real implementation before the final cell graph is rebuilt. `module_ctx` currently supports the APIs reached by rules_go, Gazelle, aspect_rules_js, rules_nodejs, and rules_jvm_external extension paths: `ctx.os`, `ctx.getenv`, `ctx.path`, `ctx.read`, `ctx.watch`, `ctx.report_progress`, `ctx.execute`, `ctx.download`, and `extension_metadata(...)`. `repository_rule(...)` calls emitted by real module extensions are recorded with exported rule id, Bazel canonical repo name, original apparent repo name, and generic keyword values, and those downloaded repository-rule implementation functions now execute into generated external cells via `repository_ctx.file`, `repository_ctx.template`, `repository_ctx.path`, `repository_ctx.read`, `repository_ctx.report_progress`, `repository_ctx.delete`, `repository_ctx.download`, `repository_ctx.download_and_extract`, and `repository_ctx.original_name`. The previous Go/Kotlin Rust-side generated repo materializers have been removed from this path.
 
 Implement:
 
@@ -173,7 +179,7 @@ Implement:
 - Preserve per-module repo mappings so aliases imported by `rules_go`, `gazelle`, and other dependencies do not collide in the root alias set.
 - Carry the generic module/tag usage graph needed to populate `module_ctx.modules`.
 - Execute repository rules emitted by module extensions into generated external cells using the generic recorded repository-rule invocations.
-- Implement repository context APIs initially needed by rules_go:
+- Implement repository context APIs initially needed by downloaded module/repository rules:
   - `ctx.file`
   - `ctx.template`
   - `ctx.path`
@@ -182,18 +188,20 @@ Implement:
   - `ctx.delete`
   - `ctx.download`
   - `ctx.download_and_extract`
+  - `ctx.original_name`
   - label attrs in repository rules
 
 Immediate target:
 
 - Use the successful Bazelisk build as a regression check while expanding the same generic bzlmod/module-extension machinery to BuildBuddy's larger module graph.
-- Add `module_ctx.watch(...)` semantics for module-extension implementations that declare watched lockfiles or other watched inputs, starting with `aspect_rules_js`'s npm extension.
+- Investigate the BuildBuddy sync hang after large generated-repo expansion. Start from the isolated `buildbuddy-template-positional-1` observations: 114 generated repos, no recent external-cell churn, event log around 72K, daemon parked in tokio/DICE waits, and client waiting on `Synchronizing buck2 internal state`.
 - Retire any remaining module-specific generated-repo materializers as their extensions become executable.
 
 Current validation boundary:
 
 - The simple rules_go smoke and Bazelisk both resolve root and downloaded-module aliases separately, load rules_go/Gazelle through downloaded bzlmod module cells, evaluate downloaded module extensions before final cell graph injection, rebuild generated bzlmod cells from emitted repo names, materialize generated repos from downloaded repository-rule implementations, and run Buck2 actions.
 - The older smoke fixture's root-level `@rules_proto` load is intentionally not root-visible without a direct `bazel_dep`, matching Bazel 9.1.0 behavior.
+- BuildBuddy reaches post-extension sync after clearing the current concrete missing-API and generated-alias boundaries; the remaining observed blocker is parked synchronization rather than a known missing Bazel bzlmod builtin.
 
 Acceptance:
 

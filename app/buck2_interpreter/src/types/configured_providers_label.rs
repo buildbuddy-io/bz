@@ -16,6 +16,8 @@ use buck2_core::provider::label::ConfiguredProvidersLabel;
 use buck2_core::provider::label::NonDefaultProvidersName;
 use buck2_core::provider::label::ProvidersLabel;
 use buck2_core::provider::label::ProvidersName;
+use buck2_core::target::label::label::TargetLabel;
+use buck2_core::target::name::TargetNameRef;
 use derive_more::Display;
 use dupe::Dupe;
 use pagable::Pagable;
@@ -224,6 +226,19 @@ fn configured_label_methods(builder: &mut MethodsBuilder) {
             (*this.label.target()).dupe(),
         ))
     }
+
+    /// Creates a label in the same package as this label with the given target name.
+    fn same_package_label(
+        this: &StarlarkConfiguredProvidersLabel,
+        target_name: &str,
+    ) -> starlark::Result<StarlarkConfiguredProvidersLabel> {
+        let target_name = TargetNameRef::new(target_name)?;
+        let target = TargetLabel::new(this.label.target().pkg(), target_name)
+            .configure_pair(this.label.target().cfg_pair().dupe());
+        Ok(StarlarkConfiguredProvidersLabel::new(
+            ConfiguredProvidersLabel::default_for(target),
+        ))
+    }
 }
 
 impl StarlarkProvidersLabel {
@@ -354,6 +369,18 @@ fn label_methods(builder: &mut MethodsBuilder) {
     fn raw_target(this: &StarlarkProvidersLabel) -> starlark::Result<StarlarkTargetLabel> {
         Ok(StarlarkTargetLabel::new((*this.label.target()).dupe()))
     }
+
+    /// Creates a label in the same package as this label with the given target name.
+    fn same_package_label(
+        this: &StarlarkProvidersLabel,
+        target_name: &str,
+    ) -> starlark::Result<StarlarkProvidersLabel> {
+        let target_name = TargetNameRef::new(target_name)?;
+        let target = TargetLabel::new(this.label.target().pkg(), target_name);
+        Ok(StarlarkProvidersLabel::new(ProvidersLabel::default_for(
+            target,
+        )))
+    }
 }
 
 // TODO(nga): remove the `Label` alias. (T264813434)
@@ -434,6 +461,27 @@ mod tests {
         a.eq(
             "'\"foo//bar:baz[qux][quux]\"'",
             "json.encode(providers_label())",
+        );
+    }
+
+    #[test]
+    fn test_configured_providers_label_same_package_label() {
+        let mut a = Assert::new();
+        a.globals_add(register_test_providers_label);
+        a.eq(
+            &"'foo//bar:package.json (<CFG>)'"
+                .replace("<CFG>", &ConfigurationData::testing_new().to_string()),
+            "str(configured_providers_label().same_package_label('package.json'))",
+        );
+    }
+
+    #[test]
+    fn test_providers_label_same_package_label() {
+        let mut a = Assert::new();
+        a.globals_add(register_test_providers_label);
+        a.eq(
+            "'foo//bar:package.json'",
+            "str(providers_label().same_package_label('package.json'))",
         );
     }
 }
