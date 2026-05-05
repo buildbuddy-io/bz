@@ -34,6 +34,7 @@ use buck2_core::cells::build_file_cell::BuildFileCell;
 use buck2_core::cells::cell_path::CellPath;
 use buck2_core::cells::external::BzlmodModuleExtensionRepoSetup;
 use buck2_core::cells::external::BzlmodRepositoryRuleInvocationSetup;
+use buck2_core::cells::external::ExternalCellOrigin;
 use buck2_core::cells::external::bzlmod_cell_name;
 use buck2_core::cells::name::CellName;
 use buck2_core::cells::paths::CellRelativePathBuf;
@@ -1031,7 +1032,12 @@ async fn materialize_bzlmod_module_extension_source_label_deps(
         label_deps.remove(&bzlmod_cell_name(current_canonical_repo_name));
     }
     let label_deps = label_deps.into_iter().collect::<Vec<_>>();
-    materialize_repository_rule_label_deps(ctx, &label_deps).await
+    materialize_repository_rule_label_deps(
+        ctx,
+        &label_deps,
+        LabelDepMaterialization::NonGeneratedExternalOnly,
+    )
+    .await
 }
 
 async fn materialize_bzlmod_module_extension_loaded_module_label_deps(
@@ -1058,7 +1064,12 @@ async fn materialize_bzlmod_module_extension_loaded_module_label_deps(
         label_deps.remove(&bzlmod_cell_name(current_canonical_repo_name));
     }
     let label_deps = label_deps.into_iter().collect::<Vec<_>>();
-    materialize_repository_rule_label_deps(ctx, &label_deps).await
+    materialize_repository_rule_label_deps(
+        ctx,
+        &label_deps,
+        LabelDepMaterialization::NonGeneratedExternalOnly,
+    )
+    .await
 }
 
 fn collect_loaded_module_load_paths(
@@ -1132,7 +1143,12 @@ pub async fn evaluate_bzlmod_repository_rule(
             .into());
         }
     };
-    materialize_repository_rule_label_deps(ctx, &invocation.label_deps).await?;
+    materialize_repository_rule_label_deps(
+        ctx,
+        &invocation.label_deps,
+        LabelDepMaterialization::AllExternal,
+    )
+    .await?;
     materialize_repository_rule_source_label_deps(ctx, rule_path, invocation).await?;
     let rule_module = ctx
         .get_loaded_module(StarlarkModulePath::LoadFile(rule_path))
@@ -1167,7 +1183,12 @@ pub async fn evaluate_bzlmod_repository_rule(
                         error
                     ));
                 }
-                materialize_repository_rule_label_deps(ctx, &new_label_deps).await?;
+                materialize_repository_rule_label_deps(
+                    ctx,
+                    &new_label_deps,
+                    LabelDepMaterialization::AllExternal,
+                )
+                .await?;
                 repository_ctx_clean_working_dir(repository_ctx_working_dir)?;
             }
         }
@@ -1233,7 +1254,12 @@ async fn materialize_repository_rule_source_label_deps(
         &cell_alias_resolver,
     );
     let label_deps = label_deps.into_iter().collect::<Vec<_>>();
-    materialize_repository_rule_label_deps(ctx, &label_deps).await
+    materialize_repository_rule_label_deps(
+        ctx,
+        &label_deps,
+        LabelDepMaterialization::NonGeneratedExternalOnly,
+    )
+    .await
 }
 
 async fn materialize_repository_rule_loaded_module_label_deps(
@@ -1258,7 +1284,12 @@ async fn materialize_repository_rule_loaded_module_label_deps(
         );
     }
     let label_deps = label_deps.into_iter().collect::<Vec<_>>();
-    materialize_repository_rule_label_deps(ctx, &label_deps).await
+    materialize_repository_rule_label_deps(
+        ctx,
+        &label_deps,
+        LabelDepMaterialization::NonGeneratedExternalOnly,
+    )
+    .await
 }
 
 fn collect_repository_rule_source_label_deps(
@@ -1357,9 +1388,18 @@ fn repository_rule_label_literals(source: &str) -> Vec<RepositoryRuleLabelLitera
     labels
 }
 
+#[derive(Clone, Copy)]
+enum LabelDepMaterialization {
+    AllExternal,
+    // Static source scans are speculative. Generated repos are emitted by module
+    // extensions and should materialize only from concrete attrs or runtime paths.
+    NonGeneratedExternalOnly,
+}
+
 async fn materialize_repository_rule_label_deps(
     ctx: &mut DiceComputations<'_>,
     label_deps: &[String],
+    materialization: LabelDepMaterialization,
 ) -> buck2_error::Result<()> {
     let mut seen = BTreeSet::new();
     for cell_name in label_deps {
@@ -1370,7 +1410,13 @@ async fn materialize_repository_rule_label_deps(
         let should_materialize = {
             let cell_resolver = ctx.get_cell_resolver().await?;
             match cell_resolver.get(cell_name) {
-                Ok(cell) => cell.external().is_some(),
+                Ok(cell) => match cell.external() {
+                    Some(ExternalCellOrigin::BzlmodGenerated(_)) => {
+                        matches!(materialization, LabelDepMaterialization::AllExternal)
+                    }
+                    Some(_) => true,
+                    None => false,
+                },
                 Err(_) => false,
             }
         };

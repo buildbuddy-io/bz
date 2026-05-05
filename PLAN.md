@@ -144,17 +144,18 @@ Completed:
 - The broad same-extension generated-repo compatibility expansion has been removed; dynamically referenced toolchain/runtime repos must now be discovered from the downloaded module/repository-rule code at execution time.
 - `repository_ctx.watch(...)` and `repository_ctx.watch_tree(...)` are available for downloaded repository rules using the same path coercion as other repository context APIs.
 - Generated module-extension repo setup now carries the resolved extension `.bzl` cell/path from bzlmod resolution, so module-root-relative labels such as `use_extension(":extensions.bzl", ...)` load through the same resolved-label path as `//pkg:file.bzl`, `@repo//...`, and `@@canonical//...` labels.
+- Module-extension and repository-rule source preloading no longer materializes generated bzlmod repos from static `Label(...)` strings in downloaded `.bzl` files. Concrete generated repos still materialize from recorded repository-rule label attrs and observed runtime `repository_ctx` path labels, keeping generated repos lazy without module-specific toolchain logic.
 
 Latest smoke:
 
 ```sh
 /Users/siggi/Code/buck2/bazel-bin/app/buck2/buck2_bin \
-  build --isolation-dir buildbuddy-path-label-retry-1 //server/cmd/buildbuddy:buildbuddy
+  build --isolation-dir bazelisk-generated-repos-lazy-final-1 //:bazelisk
 ```
 
 After the two-phase bzlmod cutover, the root smoke no longer stops at the pre-analysis cell-graph boundary for dynamically emitted repos such as `rules_go__download_0_darwin_amd64`. The simple rules_go smoke loads rules_go from its downloaded bzlmod module, invokes real module extensions and repository rules, materializes the Go SDK repository, analyzes the simple Go package, and runs the real `rules_go` local actions needed for `//:hello`.
 
-Bazelisk previously passed the second validation rung and remains the small-regression target. The latest rerun clears the new `:extensions.bzl` relative-label boundary but currently parks in the same post-extension synchronization state as BuildBuddy, so keep it in the loop while working that shared sync boundary.
+Bazelisk now clears the previous post-extension synchronization park. The `bazelisk-generated-repos-lazy-final-1` smoke loads and invokes real `rules_go` `go_sdk`, Gazelle `go_deps`, and Gazelle `non_module_deps`; it keeps Gazelle/rules_python generated repos lazy during static source preloading and reaches normal target analysis. The current next failure is a missing Bazel builtin provider surface: `bazel_features.globals.PackageSpecificationInfo` in `protobuf+/bazel/private/proto_lang_toolchain_rule.bzl`.
 
 BuildBuddy now gets through the earlier rules_python `pip`, rules_java/rules_cc, Apple toolchain, rules_webtesting `metadata`, aspect_rules_js `module_ctx.watch`, rules_go generated-alias ordering, rules_nodejs empty download-auth, rules_jvm_external `use_repo_rule` constant/template, repository_ctx `.repository_ctx` path reuse, dynamic generated-repo executable input materialization, `repository_ctx.patch`, and SHA-384 SRI integrity boundaries. The `buildbuddy-download-retry-1` smoke no longer failed on unsupported `sha384-...` integrity and did not repeat the transient GitHub 502 before it returned to the known DICE synchronization park after large generated-repo expansion. The follow-up `buildbuddy-bcr-cache-1` smoke moved past repeated BCR network resolution and into generated repository materialization for rules_python, rules_go, Gazelle, googleapis, rules_oci, aspect_rules_js, Node, and Go SDK repos. The `buildbuddy-bcr-cache-hardlink-1` smoke confirmed hardlinked generated repo files with link count 2 and reached at least 233 generated repos before being stopped; the active nodes were still generated external-cell file delegates for rules_nodejs and Gazelle repos during pre-analysis sync.
 
