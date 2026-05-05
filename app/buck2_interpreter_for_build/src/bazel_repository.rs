@@ -277,7 +277,11 @@ fn record_repository_rule_invocation<'v>(
             };
             name = Some(name_value.to_owned());
         } else {
-            collect_repository_rule_label_deps(attr_value, &mut label_deps)?;
+            collect_repository_rule_label_deps(
+                attr_value,
+                &mut label_deps,
+                build_context.cell_info().cell_alias_resolver(),
+            )?;
             attrs.push((
                 attr_name.to_owned(),
                 repository_rule_attr_expression(attr_value)?,
@@ -354,30 +358,78 @@ fn repository_rule_attr_expression(value: Value<'_>) -> starlark::Result<String>
 fn collect_repository_rule_label_deps(
     value: Value<'_>,
     label_deps: &mut BTreeSet<String>,
+    cell_alias_resolver: &CellAliasResolver,
 ) -> starlark::Result<()> {
     if let Some(label) = StarlarkProvidersLabel::from_value(value) {
         label_deps.insert(label.label().target().pkg().cell_name().as_str().to_owned());
         return Ok(());
     }
+    if let Some(string) = value.unpack_str() {
+        collect_repository_rule_string_label_dep(string, label_deps, cell_alias_resolver);
+        return Ok(());
+    }
     if let Some(dict) = DictRef::from_value(value) {
         for (key, value) in dict.iter() {
-            collect_repository_rule_label_deps(key, label_deps)?;
-            collect_repository_rule_label_deps(value, label_deps)?;
+            collect_repository_rule_label_deps(key, label_deps, cell_alias_resolver)?;
+            collect_repository_rule_label_deps(value, label_deps, cell_alias_resolver)?;
         }
         return Ok(());
     }
     if let Some(list) = ListRef::from_value(value) {
         for value in list.iter() {
-            collect_repository_rule_label_deps(value, label_deps)?;
+            collect_repository_rule_label_deps(value, label_deps, cell_alias_resolver)?;
         }
         return Ok(());
     }
     if let Some(tuple) = TupleRef::from_value(value) {
         for value in tuple.iter() {
-            collect_repository_rule_label_deps(value, label_deps)?;
+            collect_repository_rule_label_deps(value, label_deps, cell_alias_resolver)?;
         }
     }
     Ok(())
+}
+
+fn collect_repository_rule_string_label_dep(
+    value: &str,
+    label_deps: &mut BTreeSet<String>,
+    cell_alias_resolver: &CellAliasResolver,
+) {
+    let Some((canonical, repo_name)) = repository_rule_string_repo_name(value) else {
+        return;
+    };
+    if canonical || repo_name.contains('+') {
+        label_deps.insert(bzlmod_cell_name(repo_name));
+        return;
+    }
+    if let Ok(cell_name) = cell_alias_resolver.resolve(repo_name) {
+        label_deps.insert(cell_name.as_str().to_owned());
+    }
+}
+
+fn repository_rule_string_repo_name(value: &str) -> Option<(bool, &str)> {
+    if value.chars().any(char::is_whitespace) {
+        return None;
+    }
+    let (canonical, rest) = if let Some(rest) = value.strip_prefix("@@") {
+        (true, rest)
+    } else if let Some(rest) = value.strip_prefix('@') {
+        (false, rest)
+    } else {
+        return None;
+    };
+    let repo_name = rest
+        .split_once("//")
+        .map_or(rest, |(repo_name, _)| repo_name);
+    if repo_name.is_empty() {
+        return None;
+    }
+    if !repo_name
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | '.' | '+'))
+    {
+        return None;
+    }
+    Some((canonical, repo_name))
 }
 
 fn empty_dict_value<'v>(heap: Heap<'v>) -> Value<'v> {
@@ -399,6 +451,28 @@ fn host_environ<'v>(heap: Heap<'v>) -> Value<'v> {
             value.to_string_lossy().into_owned(),
         )
     })))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_repository_rule_string_repo_name() {
+        assert_eq!(
+            repository_rule_string_repo_name("@@rules_go++go_sdk+main___download_0//:ROOT"),
+            Some((true, "rules_go++go_sdk+main___download_0"))
+        );
+        assert_eq!(
+            repository_rule_string_repo_name("@rules_go++go_sdk+main___download_0"),
+            Some((false, "rules_go++go_sdk+main___download_0"))
+        );
+        assert_eq!(repository_rule_string_repo_name("@types/node"), None);
+        assert_eq!(
+            repository_rule_string_repo_name("https://example.com/@repo"),
+            None
+        );
+    }
 }
 
 fn validate_module_extension_return<'v>(
@@ -2348,8 +2422,7 @@ fn repository_ctx_command_path(path: &str, working_dir: &str) -> String {
 
 fn repository_ctx_command_external_path(path: &str, working_dir: &str) -> Option<String> {
     let suffix = repository_external_cell_suffix(path)?;
-    let path = repository_external_cell_repository_ctx_path_relative_to(suffix, working_dir)
-        .or_else(|| repository_external_cell_existing_path_relative_to(suffix, working_dir))
+    let path = repository_external_cell_existing_path_relative_to(suffix, working_dir)
         .or_else(|| repository_external_cell_path_relative_to(suffix, working_dir))?;
     Some(path.to_string_lossy().into_owned())
 }

@@ -352,6 +352,7 @@ impl LegacyBuckConfig {
                     "target:root//...->platforms//host:host",
                 )],
             ),
+            ("bazel", &[("compatibility", "true")]),
             ("buck2", &[("starlark_max_callstack_size", "1000")]),
         ];
 

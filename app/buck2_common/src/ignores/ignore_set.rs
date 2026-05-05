@@ -131,6 +131,26 @@ impl IgnoreSet {
     }
 }
 
+pub fn bazelignore_to_ignore_spec(contents: &str) -> buck2_error::Result<String> {
+    let mut patterns = Vec::new();
+    for (index, line) in contents.lines().enumerate() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if line.starts_with('/') {
+            return Err(buck2_error::buck2_error!(
+                buck2_error::ErrorTag::Input,
+                ".bazelignore line {} must be relative, got `{}`",
+                index + 1,
+                line
+            ));
+        }
+        patterns.push(line.to_owned());
+    }
+    Ok(patterns.join(","))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -141,5 +161,27 @@ mod tests {
         assert!(set.is_match(CellRelativePath::testing_new("buck-out/gen/src/file.txt")));
         assert!(set.is_match(CellRelativePath::testing_new("buck-out/art/src/file.txt")));
         assert!(!set.is_match(CellRelativePath::testing_new("src/file.txt")));
+    }
+
+    #[test]
+    fn test_bazelignore_to_ignore_spec() {
+        let spec = bazelignore_to_ignore_spec(
+            r#"
+# comment
+node_modules
+website/build/
+
+"#,
+        )
+        .unwrap();
+        let set = IgnoreSet::from_ignore_spec(&spec, false).unwrap();
+        assert!(set.is_match(CellRelativePath::testing_new("node_modules/pkg/index.js")));
+        assert!(set.is_match(CellRelativePath::testing_new("website/build/index.html")));
+        assert!(!set.is_match(CellRelativePath::testing_new("website/src/index.ts")));
+    }
+
+    #[test]
+    fn test_bazelignore_rejects_absolute_paths() {
+        assert!(bazelignore_to_ignore_spec("/tmp").is_err());
     }
 }

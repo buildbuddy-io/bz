@@ -129,6 +129,9 @@ Completed:
 - Bzlmod module-extension evaluation requests are emitted in dependency-first module order so dependency modules such as `rules_go` can create their generated repos before dependent extension code loads helpers through those aliases.
 - `repository_ctx.original_name` is available, repository-relative paths are lexically normalized, empty `auth`/`headers` structures are accepted by download APIs, and `repository_ctx.template(...)` accepts Bazel's positional substitutions form.
 - `use_repo_rule(...)` attrs now resolve supported top-level `MODULE.bazel` string constants and string-list constants into self-contained generated repository-rule calls.
+- `repository_ctx.execute(...)` now prefers existing generated external-cell paths over synthetic `.repository_ctx` siblings when rewriting command paths, so reused generated repos do not wait on non-existent repository-rule scratch dirs.
+- Repository-rule invocations now record Bazel-shaped string attrs such as canonical repo names and `@repo//...` strings as materialization deps, allowing downloaded repository helpers to pull dynamic `ctx.path(Label(...))` inputs from bzlmod-generated repos without Go/Kotlin-specific logic.
+- Bazel compatibility cells now merge root/external `.bazelignore` contents into Buck's existing ignore machinery, so package discovery, globbing, exact-case checks, and file watching all honor Bazel ignore prefixes.
 
 Latest smoke:
 
@@ -141,7 +144,7 @@ After the two-phase bzlmod cutover, the root smoke no longer stops at the pre-an
 
 Bazelisk has passed the second validation rung. The next active validation target is BuildBuddy's server target; keep Bazelisk as a regression check while working the first concrete BuildBuddy failure.
 
-BuildBuddy now gets through the earlier rules_python `pip`, rules_java/rules_cc, Apple toolchain, rules_webtesting `metadata`, aspect_rules_js `module_ctx.watch`, rules_go generated-alias ordering, rules_nodejs empty download-auth, and rules_jvm_external `use_repo_rule` constant/template boundaries. The latest BuildBuddy smoke reached 114 generated bzlmod external cells and about 1.1G of materialized external cells, then parked while the client waited on `Synchronizing buck2 internal state`. Sampling showed the daemon mostly parked in tokio/DICE metrics waits with no external-cell file churn, so the current boundary is a Buck sync/deadlock or event-completion issue after large generated-repo expansion.
+BuildBuddy now gets through the earlier rules_python `pip`, rules_java/rules_cc, Apple toolchain, rules_webtesting `metadata`, aspect_rules_js `module_ctx.watch`, rules_go generated-alias ordering, rules_nodejs empty download-auth, rules_jvm_external `use_repo_rule` constant/template, and repository_ctx `.repository_ctx` path reuse boundaries. The latest completed smoke then failed while Gazelle tried to run the downloaded rules_go SDK from a bzlmod-generated repo that had been resolved but not materialized. The follow-up smoke with Bazel-shaped string attrs recorded as repository-rule materialization deps did not reproduce that concrete execute error before it parked again in DICE synchronization; the captured DICE snapshot contains `bzlmod_rules_go__go_sdk_go_host_compatible_sdk_label` but not `main___download_0`.
 
 ## Constraints
 
@@ -194,14 +197,16 @@ Implement:
 Immediate target:
 
 - Use the successful Bazelisk build as a regression check while expanding the same generic bzlmod/module-extension machinery to BuildBuddy's larger module graph.
-- Investigate the BuildBuddy sync hang after large generated-repo expansion. Start from the isolated `buildbuddy-template-positional-1` observations: 114 generated repos, no recent external-cell churn, event log around 72K, daemon parked in tokio/DICE waits, and client waiting on `Synchronizing buck2 internal state`.
+- Resume from the captured `buildbuddy-label-string-deps-1` boundary: thread dump `/tmp/buck2-buildbuddy-label-string-deps-thread-dump.txt`, DICE snapshot `/tmp/buck2-buildbuddy-label-string-deps-dice.json`, about 107 generated bzlmod repos, and client parked on `Synchronizing buck2 internal state` with no active bzlmod/repository frame in the thread dump.
+- Verify that the generated `rules_go++go_sdk+main___download_0` repo is eventually materialized before Gazelle executes the Go SDK once the DICE sync parking issue is addressed.
+- Keep `.bazelignore` support wired through `CellFileIgnores`; BuildBuddy's root ignores `buck-out`, `node_modules`, and website output trees, which matters for recursive package discovery and globs in the large-repo smoke.
 - Retire any remaining module-specific generated-repo materializers as their extensions become executable.
 
 Current validation boundary:
 
 - The simple rules_go smoke and Bazelisk both resolve root and downloaded-module aliases separately, load rules_go/Gazelle through downloaded bzlmod module cells, evaluate downloaded module extensions before final cell graph injection, rebuild generated bzlmod cells from emitted repo names, materialize generated repos from downloaded repository-rule implementations, and run Buck2 actions.
 - The older smoke fixture's root-level `@rules_proto` load is intentionally not root-visible without a direct `bazel_dep`, matching Bazel 9.1.0 behavior.
-- BuildBuddy reaches post-extension sync after clearing the current concrete missing-API and generated-alias boundaries; the remaining observed blocker is parked synchronization rather than a known missing Bazel bzlmod builtin.
+- BuildBuddy reaches post-extension sync after clearing the current concrete missing-API and generated-alias boundaries; the active validation boundary is again a DICE synchronization park after large generated-repo expansion, with the dynamic bzlmod-generated executable input fix in place but not yet exercised to completion.
 
 Acceptance:
 
