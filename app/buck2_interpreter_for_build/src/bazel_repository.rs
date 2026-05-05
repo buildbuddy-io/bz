@@ -1423,11 +1423,8 @@ async fn materialize_repository_rule_label_deps(
         if !should_materialize {
             continue;
         }
-        let module_file = CellPath::new(
-            cell_name,
-            CellRelativePathBuf::unchecked_new("MODULE.bazel".to_owned()),
-        );
-        DiceFileComputations::read_path_metadata_if_exists(ctx, module_file.as_ref()).await?;
+        let cell_root = CellPath::new(cell_name, CellRelativePathBuf::unchecked_new(String::new()));
+        DiceFileComputations::read_dir(ctx, cell_root.as_ref()).await?;
     }
     Ok(())
 }
@@ -3000,6 +2997,13 @@ fn repository_ctx_record_path_label_dep<'v>(
         return;
     };
     let cell_name = label.label().target().pkg().cell_name().as_str().to_owned();
+    repository_ctx_record_path_cell_dep(this, cell_name);
+}
+
+fn repository_ctx_record_path_cell_dep<'v>(
+    this: ValueTypedComplex<'v, StarlarkRepositoryContext<'v>>,
+    cell_name: String,
+) {
     match this.unpack() {
         either::Either::Left(ctx) => {
             let mut deps = ctx
@@ -3195,6 +3199,7 @@ fn repository_ctx_validate_external_inputs_ready(
     values: impl IntoIterator<Item = String>,
     repository_working_dir: &Path,
     program: &str,
+    mut record_cell_dep: impl FnMut(String),
 ) -> starlark::Result<()> {
     let mut seen = BTreeSet::new();
     for value in values {
@@ -3206,6 +3211,9 @@ fn repository_ctx_validate_external_inputs_ready(
             continue;
         }
         if !repository_ctx_external_input_ready(&path) {
+            if let Some(cell_name) = repository_ctx_external_input_cell_name(&path) {
+                record_cell_dep(cell_name);
+            }
             return Err(buck2_error::Error::from(
                 BazelRepositoryError::RepositoryCtxExecuteFailed {
                     program: program.to_owned(),
@@ -3221,26 +3229,24 @@ fn repository_ctx_validate_external_inputs_ready(
     Ok(())
 }
 
-fn repository_ctx_external_input_ready(path: &Path) -> bool {
-    if !path.exists() {
-        return false;
-    }
-    let Some(root) = repository_ctx_generated_repository_root(path) else {
-        return true;
-    };
-    root.join("BUILD.bazel").exists() || root.join("BUILD").exists()
-}
-
-fn repository_ctx_generated_repository_root(path: &Path) -> Option<PathBuf> {
+fn repository_ctx_external_input_cell_name(path: &Path) -> Option<String> {
     let path = path.to_string_lossy();
-    let (prefix, suffix) = path.split_once("/bzlmod_generated/")?;
-    let (repo_name, _) = suffix.split_once('/').unwrap_or((suffix, ""));
-    if repo_name.ends_with(".repository_ctx") {
+    let suffix = path
+        .split_once("/external_cells/bzlmod_generated/")
+        .map(|(_, suffix)| suffix)
+        .or_else(|| {
+            path.split_once("/external_cells/bzlmod/")
+                .map(|(_, suffix)| suffix)
+        })?;
+    let (canonical_repo_name, _) = suffix.split_once('/').unwrap_or((suffix, ""));
+    if canonical_repo_name.ends_with(".repository_ctx") {
         return None;
     }
-    Some(PathBuf::from(format!(
-        "{prefix}/bzlmod_generated/{repo_name}"
-    )))
+    Some(bzlmod_cell_name(canonical_repo_name))
+}
+
+fn repository_ctx_external_input_ready(path: &Path) -> bool {
+    path.exists()
 }
 
 fn repository_ctx_download_error<'v>(
@@ -3734,6 +3740,7 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
             std::iter::once(program.clone()).chain(arguments.iter().cloned()),
             &repository_working_dir_abs,
             &program,
+            |cell_name| repository_ctx_record_path_cell_dep(this, cell_name),
         )?;
         let mut command = Command::new(&program);
         command.args(arguments);
@@ -4880,6 +4887,7 @@ fn module_extension_context_methods(builder: &mut MethodsBuilder) {
             std::iter::once(program.clone()).chain(arguments.iter().cloned()),
             &repository_working_dir_abs,
             &program,
+            |_cell_name| {},
         )?;
         let mut command = Command::new(&program);
         command.args(arguments);

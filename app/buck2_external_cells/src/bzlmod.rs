@@ -16,6 +16,8 @@ use std::process::Command;
 use std::process::ExitStatus;
 use std::process::Stdio;
 use std::sync::Arc;
+use std::sync::Mutex;
+use std::sync::OnceLock;
 
 use base64::Engine;
 use buck2_build_api::actions::artifact::get_artifact_fs::GetArtifactFs;
@@ -86,6 +88,10 @@ use pagable::Pagable;
 use pagable::pagable_typetag;
 use serde::Deserialize;
 
+static BZLMOD_MATERIALIZATION_LOCKS: OnceLock<
+    Mutex<BTreeMap<String, Arc<tokio::sync::Mutex<()>>>>,
+> = OnceLock::new();
+
 #[derive(buck2_error::Error, Debug)]
 #[buck2(tag = Tier0)]
 enum BzlmodError {
@@ -134,6 +140,16 @@ enum BzlmodError {
         repo_name: String,
         emitted: Vec<String>,
     },
+}
+
+fn bzlmod_materialization_lock(path: &ProjectRelativePath) -> Arc<tokio::sync::Mutex<()>> {
+    let locks = BZLMOD_MATERIALIZATION_LOCKS.get_or_init(|| Mutex::new(BTreeMap::new()));
+    locks
+        .lock()
+        .expect("bzlmod materialization locks poisoned")
+        .entry(path.as_str().to_owned())
+        .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+        .dupe()
 }
 
 struct BzlmodExtractIoRequest {
@@ -1034,6 +1050,10 @@ fn parse_simple_bzl_string(value: &str) -> Option<String> {
 }
 
 fn parse_bazel_features_version_pair(value: &str) -> Option<(String, String)> {
+    if let Some(min_version) = parse_simple_bzl_string(value) {
+        return Some((min_version, String::new()));
+    }
+
     let value = value
         .strip_prefix('(')
         .and_then(|value| value.strip_suffix(')'))
@@ -1049,6 +1069,27 @@ fn parse_bazel_features_version_pair(value: &str) -> Option<(String, String)> {
         return None;
     }
     Some((min_version, max_version))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_bazel_features_simple_global_version() {
+        assert_eq!(
+            parse_bazel_features_version_pair("\"6.4.0\""),
+            Some(("6.4.0".to_owned(), String::new()))
+        );
+    }
+
+    #[test]
+    fn parses_bazel_features_version_range() {
+        assert_eq!(
+            parse_bazel_features_version_pair("(\"1.0.0\", \"2.0.0\")"),
+            Some(("1.0.0".to_owned(), "2.0.0".to_owned()))
+        );
+    }
 }
 
 fn bazel_feature_global_is_available(current: &str, min_version: &str, max_version: &str) -> bool {
@@ -1427,6 +1468,8 @@ async fn download_and_materialize(
     setup: &BzlmodCellSetup,
     cancellations: &CancellationContext,
 ) -> buck2_error::Result<()> {
+    let lock = bzlmod_materialization_lock(path);
+    let _guard = lock.lock().await;
     let materializer = ctx.per_transaction_data().get_materializer();
 
     if materializer.has_artifact_at(path.to_owned()).await? {
@@ -1444,6 +1487,8 @@ async fn materialize_generated(
     setup: &BzlmodGeneratedCellSetup,
     cancellations: &CancellationContext,
 ) -> buck2_error::Result<()> {
+    let lock = bzlmod_materialization_lock(path);
+    let _guard = lock.lock().await;
     let materializer = ctx.per_transaction_data().get_materializer();
 
     if materializer.has_artifact_at(path.to_owned()).await? {
