@@ -1713,10 +1713,9 @@ impl BzlmodFileOpsDelegate {
 impl FileOpsDelegate for BzlmodFileOpsDelegate {
     async fn read_file_if_exists(
         &self,
-        ctx: &mut DiceComputations<'_>,
+        _ctx: &mut DiceComputations<'_>,
         path: &'async_trait CellRelativePath,
     ) -> buck2_error::Result<ReadFileProxy> {
-        self.read_path_metadata_if_exists(ctx, path).await?;
         Ok(ReadFileProxy::new_with_captures(
             (self.resolve(path), self.io.dupe()),
             |(project_path, io)| async move {
@@ -1836,7 +1835,6 @@ impl FileOpsDelegate for BzlmodGeneratedFileOpsDelegate {
         path: &'async_trait CellRelativePath,
     ) -> buck2_error::Result<ReadFileProxy> {
         ensure_generated_materialized(ctx, self.get_base_path(), self.setup.dupe()).await?;
-        self.read_path_metadata_if_exists(ctx, path).await?;
         Ok(ReadFileProxy::new_with_captures(
             (self.resolve(path), self.io.dupe()),
             |(project_path, io)| async move {

@@ -1046,8 +1046,9 @@ struct DiscoveredBcrModule {
 
 type DiscoveredBcrModules = BTreeMap<(String, String), DiscoveredBcrModule>;
 
-static BCR_DISCOVERY_CACHE: LazyLock<Mutex<BTreeMap<BcrDiscoveryCacheKey, DiscoveredBcrModules>>> =
-    LazyLock::new(|| Mutex::new(BTreeMap::new()));
+static BCR_DISCOVERY_CACHE: LazyLock<
+    Mutex<BTreeMap<BcrDiscoveryCacheKey, Arc<DiscoveredBcrModules>>>,
+> = LazyLock::new(|| Mutex::new(BTreeMap::new()));
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
 struct BcrDiscoveryCacheKey {
@@ -1229,6 +1230,7 @@ struct BzlmodRepositoryRuleFileConfig {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct BzlmodModuleExtensionEvaluationConfig {
+    root_module_has_non_dev_dependency: bool,
     modules: Vec<BzlmodModuleExtensionModuleConfig>,
 }
 
@@ -1459,7 +1461,7 @@ async fn resolve_bcr_modules_with_client(
     resolve_bcr_modules_from_discovered(
         root_deps,
         root_module,
-        discovered,
+        &discovered,
         bzlmod_module_extension_results_complete,
         bzlmod_module_extension_results,
     )
@@ -1470,15 +1472,14 @@ async fn discover_bcr_modules_with_cache(
     archive_overrides: &BTreeMap<String, BzlmodArchiveOverride>,
     single_version_overrides: &BTreeMap<String, String>,
     client: &HttpClient,
-) -> buck2_error::Result<DiscoveredBcrModules> {
+) -> buck2_error::Result<Arc<DiscoveredBcrModules>> {
     let cache_key = bcr_discovery_cache_key(root_deps, archive_overrides, single_version_overrides);
     if let Some(discovered) = BCR_DISCOVERY_CACHE
         .lock()
         .expect("BCR discovery cache lock poisoned")
         .get(&cache_key)
-        .cloned()
     {
-        return Ok(discovered);
+        return Ok(Arc::clone(discovered));
     }
 
     let discovered = discover_bcr_modules_with_client(
@@ -1488,10 +1489,11 @@ async fn discover_bcr_modules_with_cache(
         client,
     )
     .await?;
+    let discovered = Arc::new(discovered);
     BCR_DISCOVERY_CACHE
         .lock()
         .expect("BCR discovery cache lock poisoned")
-        .insert(cache_key, discovered.clone());
+        .insert(cache_key, Arc::clone(&discovered));
     Ok(discovered)
 }
 
@@ -1541,7 +1543,7 @@ async fn discover_bcr_modules_with_client(
 fn resolve_bcr_modules_from_discovered(
     root_deps: Vec<BazelDep>,
     root_module: RootBzlmodModule,
-    discovered: DiscoveredBcrModules,
+    discovered: &DiscoveredBcrModules,
     bzlmod_module_extension_results_complete: bool,
     bzlmod_module_extension_results: &[BzlmodEvaluatedModuleExtension],
 ) -> buck2_error::Result<BcrResolution> {
@@ -2237,6 +2239,7 @@ fn bzlmod_module_extension_evaluation_config_json(
 ) -> buck2_error::Result<String> {
     let mut modules = Vec::new();
     let mut root_has_usage = false;
+    let mut root_module_has_non_dev_dependency = false;
     let mut root_tags = Vec::new();
     for usage in &root_module.extension_usages {
         let resolved_extension =
@@ -2245,6 +2248,7 @@ fn bzlmod_module_extension_evaluation_config_json(
             continue;
         }
         root_has_usage = true;
+        root_module_has_non_dev_dependency |= !usage.dev_dependency;
         root_tags.extend(usage.tags.iter().map(|tag| BzlmodModuleExtensionTagConfig {
             tag_name: tag.tag_name.clone(),
             dev_dependency: usage.dev_dependency,
@@ -2311,8 +2315,11 @@ fn bzlmod_module_extension_evaluation_config_json(
         });
     }
 
-    serde_json::to_string(&BzlmodModuleExtensionEvaluationConfig { modules })
-        .buck_error_context("Error serializing module extension evaluation configuration")
+    serde_json::to_string(&BzlmodModuleExtensionEvaluationConfig {
+        root_module_has_non_dev_dependency,
+        modules,
+    })
+    .buck_error_context("Error serializing module extension evaluation configuration")
 }
 
 fn bzlmod_module_extension_repo_config(
@@ -4438,15 +4445,17 @@ fn collect_bzl_calls(lines: &[String], function: &str) -> Vec<String> {
     let mut depth = 0i32;
 
     for line in lines {
-        let line = strip_bzl_comment(line);
         if current.is_empty() {
             let rest = line.trim_start();
             if !rest.starts_with(function) {
                 continue;
             };
+            let line = strip_bzl_comment(line);
+            let rest = line.trim_start();
             depth = paren_delta(rest);
             current.push_str(rest);
         } else {
+            let line = strip_bzl_comment(line);
             current.push('\n');
             current.push_str(&line);
             depth += paren_delta(&line);

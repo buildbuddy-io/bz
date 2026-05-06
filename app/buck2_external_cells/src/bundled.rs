@@ -372,12 +372,10 @@ impl BundledFileOpsDelegate {
 impl FileOpsDelegate for BundledFileOpsDelegate {
     async fn read_file_if_exists(
         &self,
-        ctx: &mut DiceComputations<'_>,
+        _ctx: &mut DiceComputations<'_>,
         path: &'async_trait CellRelativePath,
     ) -> buck2_error::Result<ReadFileProxy> {
         let res = self.read_file_if_exists(path)?;
-        self.declare_file_source_artifact_if_exists(ctx, path)
-            .await?;
         Ok(ReadFileProxy::new_with_captures(res, |res| async move {
             Ok(res.map(|s| s.to_owned()))
         }))
