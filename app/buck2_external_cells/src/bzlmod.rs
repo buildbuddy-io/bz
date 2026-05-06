@@ -162,13 +162,19 @@ struct BzlmodExtractIoRequest {
     temp: ProjectRelativePathBuf,
     cache_repo: ProjectRelativePathBuf,
     cache_tmp: ProjectRelativePathBuf,
+    cache_alias: ProjectRelativePathBuf,
     dest: ProjectRelativePathBuf,
 }
 
 impl IoRequest for BzlmodExtractIoRequest {
     fn execute(self: Box<Self>, project_fs: &ProjectRoot) -> buck2_error::Result<()> {
         if bzlmod_repo_contents_cache_exists(project_fs, &self.cache_repo)? {
-            copy_bzlmod_repo_contents_cache(project_fs, &self.cache_repo, &self.dest)?;
+            record_bzlmod_repo_contents_cache_alias(
+                project_fs,
+                &self.cache_alias,
+                &self.cache_repo,
+            )?;
+            prepare_bzlmod_external_cell_root(project_fs, &self.dest)?;
             return Ok(());
         }
 
@@ -215,20 +221,23 @@ impl IoRequest for BzlmodExtractIoRequest {
             fs_util::remove_all(&cache_tmp).categorize_internal()?;
         }
 
-        copy_bzlmod_repo_contents_cache(project_fs, &self.cache_repo, &self.dest)?;
+        record_bzlmod_repo_contents_cache_alias(project_fs, &self.cache_alias, &self.cache_repo)?;
+        prepare_bzlmod_external_cell_root(project_fs, &self.dest)?;
 
         Ok(())
     }
 }
 
-struct BzlmodCopyCachedRepoIoRequest {
+struct BzlmodPrepareExternalCellRootIoRequest {
     cache_repo: ProjectRelativePathBuf,
+    cache_alias: ProjectRelativePathBuf,
     dest: ProjectRelativePathBuf,
 }
 
-impl IoRequest for BzlmodCopyCachedRepoIoRequest {
+impl IoRequest for BzlmodPrepareExternalCellRootIoRequest {
     fn execute(self: Box<Self>, project_fs: &ProjectRoot) -> buck2_error::Result<()> {
-        copy_bzlmod_repo_contents_cache(project_fs, &self.cache_repo, &self.dest)
+        record_bzlmod_repo_contents_cache_alias(project_fs, &self.cache_alias, &self.cache_repo)?;
+        prepare_bzlmod_external_cell_root(project_fs, &self.dest)
     }
 }
 
@@ -842,13 +851,47 @@ fn cc_toolchains_build_template(
     let Some((external_cells_root, _)) = dest_rel.as_str().split_once("/bzlmod_generated/") else {
         return Err(BzlmodError::InvalidGeneratedRepoPath(dest_rel.to_string()).into());
     };
-    let template_path = ProjectRelativePathBuf::unchecked_new(format!(
-        "{external_cells_root}/bzlmod/{parent_canonical_repo_name}/cc/private/toolchain/BUILD.toolchains.tpl",
+    read_bzlmod_module_file_text(
+        project_fs,
+        external_cells_root,
+        parent_canonical_repo_name,
+        "cc/private/toolchain/BUILD.toolchains.tpl",
+    )
+    .with_buck_error_context(|| {
+        format!("Error reading rules_cc toolchains template from `{parent_canonical_repo_name}`")
+    })
+}
+
+fn read_bzlmod_module_file_text(
+    project_fs: &ProjectRoot,
+    external_cells_root: &str,
+    canonical_repo_name: &str,
+    path: &str,
+) -> buck2_error::Result<String> {
+    let materialized_path = ProjectRelativePathBuf::unchecked_new(format!(
+        "{external_cells_root}/bzlmod/{canonical_repo_name}/{path}",
     ));
-    fs_util::read_to_string(project_fs.resolve(&template_path))
+    match fs_util::read_to_string(project_fs.resolve(&materialized_path)) {
+        Ok(contents) => return Ok(contents),
+        Err(error)
+            if matches!(
+                error.io_error_kind(),
+                Some(ErrorKind::NotFound | ErrorKind::NotADirectory)
+            ) => {}
+        Err(error) => return Err(error.categorize_internal()),
+    }
+
+    let alias_path = bzlmod_repo_contents_cache_alias_path(canonical_repo_name);
+    let cache_repo = fs_util::read_to_string(project_fs.resolve(&alias_path))
         .categorize_internal()
         .with_buck_error_context(|| {
-            format!("Error reading rules_cc toolchains template `{template_path}`")
+            format!("Error reading bzlmod repo contents cache alias `{alias_path}`")
+        })?;
+    let cache_path = ProjectRelativePathBuf::unchecked_new(format!("{cache_repo}/{path}"));
+    fs_util::read_to_string(project_fs.resolve(&cache_path))
+        .categorize_internal()
+        .with_buck_error_context(|| {
+            format!("Error reading bzlmod cached module file `{cache_path}`")
         })
 }
 
@@ -963,11 +1006,15 @@ fn write_bazel_features_globals_repo(
         "{external_cells_root}/bzlmod/{}/private/globals.bzl",
         setup.parent_canonical_repo_name
     ));
-    let globals_text = fs_util::read_to_string(project_fs.resolve(&globals_path))
-        .categorize_internal()
-        .with_buck_error_context(|| {
-            format!("Error reading bazel_features globals `{}`", globals_path)
-        })?;
+    let globals_text = read_bzlmod_module_file_text(
+        project_fs,
+        external_cells_root,
+        &setup.parent_canonical_repo_name,
+        "private/globals.bzl",
+    )
+    .with_buck_error_context(|| {
+        format!("Error reading bazel_features globals `{}`", globals_path)
+    })?;
     let globals = parse_bazel_features_globals_dict(&globals_text, &globals_path)?;
 
     write_generated_module_file(dest, "bazel_features_globals")?;
@@ -1340,6 +1387,12 @@ fn bzlmod_repo_contents_cache_path(cache_key: &str, suffix: &str) -> ProjectRela
     ))
 }
 
+fn bzlmod_repo_contents_cache_alias_path(canonical_repo_name: &str) -> ProjectRelativePathBuf {
+    ProjectRelativePathBuf::unchecked_new(format!(
+        "buck-out/v2/cache/bzlmod_repo_contents/by_canonical/{canonical_repo_name}",
+    ))
+}
+
 fn bzlmod_repo_contents_cache_exists(
     project_fs: &ProjectRoot,
     cache_repo: &ProjectRelativePath,
@@ -1351,16 +1404,25 @@ fn bzlmod_repo_contents_cache_exists(
     ))
 }
 
-fn copy_bzlmod_repo_contents_cache(
+fn record_bzlmod_repo_contents_cache_alias(
     project_fs: &ProjectRoot,
+    cache_alias: &ProjectRelativePath,
     cache_repo: &ProjectRelativePath,
+) -> buck2_error::Result<()> {
+    let cache_alias = project_fs.resolve(cache_alias);
+    if let Some(parent) = cache_alias.parent() {
+        fs_util::create_dir_all(parent)?;
+    }
+    fs_util::write(cache_alias, cache_repo.as_str()).categorize_internal()
+}
+
+fn prepare_bzlmod_external_cell_root(
+    project_fs: &ProjectRoot,
     dest: &ProjectRelativePath,
 ) -> buck2_error::Result<()> {
-    let cache_repo = project_fs.resolve(cache_repo);
     let dest = project_fs.resolve(dest);
     fs_util::remove_all(&dest).categorize_internal()?;
-    fs_util::create_dir_all(dest.clone())?;
-    copy_dir_contents(&cache_repo, &dest)
+    fs_util::create_dir_all(dest)
 }
 
 fn bzlmod_generated_sibling_path(
@@ -1447,9 +1509,18 @@ async fn download_impl(
     dest: &ProjectRelativePath,
     cache_repo: &ProjectRelativePath,
     cache_tmp: &ProjectRelativePath,
+    cache_alias: &ProjectRelativePath,
     cancellations: &CancellationContext,
 ) -> buck2_error::Result<()> {
-    if copy_bzlmod_repo_contents_cache_if_exists(ctx, cache_repo, dest, cancellations).await? {
+    if prepare_bzlmod_external_cell_root_if_cache_exists(
+        ctx,
+        cache_repo,
+        cache_alias,
+        dest,
+        cancellations,
+    )
+    .await?
+    {
         return Ok(());
     }
 
@@ -1518,6 +1589,7 @@ async fn download_impl(
             temp,
             cache_repo: cache_repo.to_owned(),
             cache_tmp: cache_tmp.to_owned(),
+            cache_alias: cache_alias.to_owned(),
             dest: dest.to_owned(),
         }),
         cancellations,
@@ -1527,9 +1599,10 @@ async fn download_impl(
     Ok(())
 }
 
-async fn copy_bzlmod_repo_contents_cache_if_exists(
+async fn prepare_bzlmod_external_cell_root_if_cache_exists(
     ctx: &mut DiceComputations<'_>,
     cache_repo: &ProjectRelativePath,
+    cache_alias: &ProjectRelativePath,
     dest: &ProjectRelativePath,
     cancellations: &CancellationContext,
 ) -> buck2_error::Result<bool> {
@@ -1549,8 +1622,9 @@ async fn copy_bzlmod_repo_contents_cache_if_exists(
     }
 
     io.execute_io(
-        Box::new(BzlmodCopyCachedRepoIoRequest {
+        Box::new(BzlmodPrepareExternalCellRootIoRequest {
             cache_repo: cache_repo.to_owned(),
+            cache_alias: cache_alias.to_owned(),
             dest: dest.to_owned(),
         }),
         cancellations,
@@ -1621,6 +1695,38 @@ async fn declare_observed_source_artifact(
     Ok(())
 }
 
+async fn materialize_observed_bzlmod_source_path(
+    ctx: &mut DiceComputations<'_>,
+    source_path: ProjectRelativePathBuf,
+    dest_path: ProjectRelativePathBuf,
+    metadata: &RawPathMetadata<ProjectRelativePathBuf>,
+) -> buck2_error::Result<()> {
+    match metadata {
+        RawPathMetadata::File(_) | RawPathMetadata::Symlink { .. } => {}
+        RawPathMetadata::Directory => return Ok(()),
+    }
+
+    let project_root = ctx.global_data().get_io_provider().project_root().dupe();
+    let source_path = project_root.resolve(&source_path);
+    let dest_path = project_root.resolve(&dest_path);
+    ctx.get_blocking_executor()
+        .execute_io_inline(move || {
+            if let Some(parent) = dest_path.parent() {
+                fs_util::create_dir_all(parent)?;
+            }
+            fs_util::remove_all(&dest_path).categorize_internal()?;
+            let metadata = fs_util::symlink_metadata(&source_path).categorize_internal()?;
+            if metadata.file_type().is_file() {
+                link_or_copy_file(&source_path, &dest_path)?;
+            } else if metadata.file_type().is_symlink() {
+                let target = fs_util::read_link(&source_path).categorize_internal()?;
+                fs_util::symlink(target, &dest_path).categorize_internal()?;
+            }
+            buck2_error::Ok(())
+        })
+        .await
+}
+
 async fn download_and_materialize(
     ctx: &mut DiceComputations<'_>,
     path: &ProjectRelativePath,
@@ -1633,12 +1739,21 @@ async fn download_and_materialize(
     let cache_repo = bzlmod_repo_contents_cache_path(&cache_key, "repo");
     let cache_tmp =
         bzlmod_repo_contents_cache_path(&cache_key, &format!("repo.tmp.{}", std::process::id()));
+    let cache_alias = bzlmod_repo_contents_cache_alias_path(&setup.canonical_repo_name);
     let cache_lock = bzlmod_materialization_lock(&cache_repo);
     let _cache_guard = cache_lock.lock().await;
 
     cancellations
         .critical_section(|| {
-            download_impl(ctx, setup, path, &cache_repo, &cache_tmp, cancellations)
+            download_impl(
+                ctx,
+                setup,
+                path,
+                &cache_repo,
+                &cache_tmp,
+                &cache_alias,
+                cancellations,
+            )
         })
         .await
 }
@@ -1836,6 +1951,7 @@ pub(crate) struct BzlmodFileOpsDelegate {
     buck_out_resolver: BuckOutPathResolver,
     cell: CellName,
     setup: BzlmodCellSetup,
+    backing_base_path: ProjectRelativePathBuf,
     io: FsIoProvider,
 }
 
@@ -1848,6 +1964,10 @@ impl BzlmodFileOpsDelegate {
     fn get_base_path(&self) -> ProjectRelativePathBuf {
         self.resolve(CellRelativePath::empty())
     }
+
+    fn resolve_backing(&self, path: &CellRelativePath) -> ProjectRelativePathBuf {
+        self.backing_base_path.join(path.as_forward_relative_path())
+    }
 }
 
 #[pagable_typetag]
@@ -1859,7 +1979,7 @@ impl FileOpsDelegate for BzlmodFileOpsDelegate {
         path: &'async_trait CellRelativePath,
     ) -> buck2_error::Result<ReadFileProxy> {
         Ok(ReadFileProxy::new_with_captures(
-            (self.resolve(path), self.io.dupe()),
+            (self.resolve_backing(path), self.io.dupe()),
             |(project_path, io)| async move {
                 (&io as &dyn IoProvider)
                     .read_file_if_exists(project_path)
@@ -1873,14 +1993,14 @@ impl FileOpsDelegate for BzlmodFileOpsDelegate {
         _ctx: &mut DiceComputations<'_>,
         path: &'async_trait CellRelativePath,
     ) -> buck2_error::Result<Arc<[RawDirEntry]>> {
-        let project_path = self.resolve(path);
+        let project_path = self.resolve_backing(path);
         let mut entries = (&self.io as &dyn IoProvider)
             .read_dir(project_path)
             .await
             .with_buck_error_context(|| format!("Error listing dir `{path}`"))?;
         follow_bzlmod_symlinked_directory_entries(
             self.io.project_root(),
-            self.resolve(path).as_ref(),
+            self.resolve_backing(path).as_ref(),
             &mut entries,
         )?;
 
@@ -1893,7 +2013,7 @@ impl FileOpsDelegate for BzlmodFileOpsDelegate {
         ctx: &mut DiceComputations<'_>,
         path: &'async_trait CellRelativePath,
     ) -> buck2_error::Result<Option<RawPathMetadata>> {
-        let project_path = self.resolve(path);
+        let project_path = self.resolve_backing(path);
         let Some(metadata) = (&self.io as &dyn IoProvider)
             .read_path_metadata_if_exists(project_path.clone())
             .await
@@ -1901,17 +2021,27 @@ impl FileOpsDelegate for BzlmodFileOpsDelegate {
         else {
             return Ok(None);
         };
-        declare_observed_source_artifact(ctx, project_path, &metadata).await?;
-        Ok(Some(metadata.try_map(
-            |path| match path.strip_prefix_opt(self.get_base_path()) {
+        let materialized_path = self.resolve(path);
+        materialize_observed_bzlmod_source_path(
+            ctx,
+            project_path.clone(),
+            materialized_path.clone(),
+            &metadata,
+        )
+        .await?;
+        declare_observed_source_artifact(ctx, materialized_path, &metadata).await?;
+        Ok(Some(metadata.try_map(|project_path| {
+            match project_path
+                .strip_prefix_opt(self.backing_base_path.as_ref() as &ProjectRelativePath)
+            {
                 Some(path) => Ok(Arc::new(CellPath::new(self.cell, path.to_owned().into()))),
                 None => Err(internal_error!(
                     "Non-cell internal symlink at `{}` in cell `{}`",
-                    path,
+                    project_path,
                     self.cell
                 )),
-            },
-        )?))
+            }
+        })?))
     }
 
     fn eq_token(&self) -> PartialEqAny<'_> {
@@ -2070,10 +2200,13 @@ pub(crate) async fn get_file_ops_delegate(
             cancellations: &CancellationContext,
         ) -> Self::Value {
             let artifact_fs = ctx.get_artifact_fs().await?;
+            let backing_base_path =
+                bzlmod_repo_contents_cache_path(&bzlmod_repo_contents_cache_key(&self.1), "repo");
             let ops = BzlmodFileOpsDelegate {
                 buck_out_resolver: artifact_fs.buck_out_path_resolver().clone(),
                 cell: self.0,
                 setup: self.1.dupe(),
+                backing_base_path,
                 io: FsIoProvider::new(
                     artifact_fs.fs().dupe(),
                     ctx.global_data().get_digest_config().cas_digest_config(),
