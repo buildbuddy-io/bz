@@ -10,11 +10,14 @@
 
 use std::env;
 use std::fs;
+use std::hash::Hash;
+use std::hash::Hasher;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::OnceLock;
 
 use buck2_build_api::actions::artifact::get_artifact_fs::GetArtifactFs;
+use buck2_common::cas_digest::CasDigestConfig;
 use buck2_common::file_ops::delegate::FileOpsDelegate;
 use buck2_common::file_ops::dice::ReadFileProxy;
 use buck2_common::file_ops::metadata::FileMetadata;
@@ -157,10 +160,26 @@ pub(crate) fn find_bundled_data(cell_name: CellName) -> buck2_error::Result<Bund
         })
 }
 
-#[derive(Clone, PartialEq, Eq, Hash, Debug, allocative::Allocative)]
+#[derive(Clone, PartialEq, Eq, Debug, allocative::Allocative)]
 struct ContentsAndMetadata {
     contents: &'static [u8],
-    metadata: FileMetadata,
+    is_executable: bool,
+}
+
+impl ContentsAndMetadata {
+    fn metadata(&self, source_digest_config: CasDigestConfig) -> FileMetadata {
+        FileMetadata {
+            digest: TrackedFileDigest::from_content(self.contents, source_digest_config),
+            is_executable: self.is_executable,
+        }
+    }
+}
+
+impl Hash for ContentsAndMetadata {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.contents.len().hash(state);
+        self.is_executable.hash(state);
+    }
 }
 
 /// We don't actually need the directory digest, but unfortunately the directory tooling kind of
@@ -198,8 +217,6 @@ impl DirectoryDigester<ContentsAndMetadata, BundledDirectoryDigest> for BundledD
             > + 'a,
         Self: Sized,
     {
-        use std::hash::Hash;
-
         let mut hasher = Blake3StrongHasher::default();
         for (name, entry) in entries {
             name.hash(&mut hasher);
@@ -208,7 +225,7 @@ impl DirectoryDigester<ContentsAndMetadata, BundledDirectoryDigest> for BundledD
                     dir.as_fingerprinted_dyn().fingerprint().hash(&mut hasher);
                 }
                 DirectoryEntry::Leaf(leaf) => {
-                    leaf.metadata.hash(&mut hasher);
+                    leaf.hash(&mut hasher);
                 }
             }
         }
@@ -224,6 +241,7 @@ impl DirectoryDigester<ContentsAndMetadata, BundledDirectoryDigest> for BundledD
 pub(crate) struct BundledFileOpsDelegate {
     cell: CellName,
     buck_out_resolver: BuckOutPathResolver,
+    source_digest_config: CasDigestConfig,
     dir: ImmutableDirectory<ContentsAndMetadata, BundledDirectoryDigest>,
 }
 
@@ -332,9 +350,9 @@ impl BundledFileOpsDelegate {
         path: &CellRelativePath,
     ) -> buck2_error::Result<Option<RawPathMetadata>> {
         match self.get_entry_at_path_if_exists(path)? {
-            Some(DirectoryEntry::Leaf(leaf)) => {
-                Ok(Some(RawPathMetadata::File(leaf.metadata.clone())))
-            }
+            Some(DirectoryEntry::Leaf(leaf)) => Ok(Some(RawPathMetadata::File(
+                leaf.metadata(self.source_digest_config),
+            ))),
             Some(DirectoryEntry::Dir(_)) => Ok(Some(RawPathMetadata::Directory)),
             None => Ok(None),
         }
@@ -351,7 +369,7 @@ impl BundledFileOpsDelegate {
 
         let project_path = self.resolve(path);
         let contents = leaf.contents;
-        let is_executable = leaf.metadata.is_executable;
+        let is_executable = leaf.is_executable;
         let materializer = ctx.per_transaction_data().get_materializer();
         materializer
             .declare_write(Box::new(move || {
@@ -420,17 +438,13 @@ fn get_file_ops_delegate_impl(
     for file in data.files {
         let path = ForwardRelativePath::new(file.path)
             .internal_error("non-forward relative bundled path")?;
-        let metadata = FileMetadata {
-            digest: TrackedFileDigest::from_content(file.contents, source_digest_config),
-            is_executable: file.is_executable,
-        };
 
         builder
             .insert(
                 path,
                 DirectoryEntry::Leaf(ContentsAndMetadata {
                     contents: file.contents,
-                    metadata,
+                    is_executable: file.is_executable,
                 }),
             )
             .internal_error("conflicting bundled source paths")?;
@@ -439,6 +453,7 @@ fn get_file_ops_delegate_impl(
     Ok(BundledFileOpsDelegate {
         cell,
         buck_out_resolver,
+        source_digest_config,
         dir: builder,
     })
 }
@@ -460,7 +475,7 @@ async fn declare_all_source_artifacts(
         requests.push(WriteRequest {
             path,
             content: entry.contents.to_vec(),
-            is_executable: entry.metadata.is_executable,
+            is_executable: entry.is_executable,
             configuration_path: None,
         });
     }

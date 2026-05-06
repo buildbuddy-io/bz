@@ -160,17 +160,26 @@ struct BzlmodExtractIoRequest {
     archive: ProjectRelativePathBuf,
     patch_files: Vec<ProjectRelativePathBuf>,
     temp: ProjectRelativePathBuf,
+    cache_repo: ProjectRelativePathBuf,
+    cache_tmp: ProjectRelativePathBuf,
     dest: ProjectRelativePathBuf,
 }
 
 impl IoRequest for BzlmodExtractIoRequest {
     fn execute(self: Box<Self>, project_fs: &ProjectRoot) -> buck2_error::Result<()> {
+        if bzlmod_repo_contents_cache_exists(project_fs, &self.cache_repo)? {
+            copy_bzlmod_repo_contents_cache(project_fs, &self.cache_repo, &self.dest)?;
+            return Ok(());
+        }
+
         let archive = project_fs.resolve(&self.archive);
         let temp = project_fs.resolve(&self.temp);
-        let dest = project_fs.resolve(&self.dest);
+        let cache_tmp = project_fs.resolve(&self.cache_tmp);
+        let cache_repo = project_fs.resolve(&self.cache_repo);
 
+        fs_util::remove_all(&cache_tmp).categorize_internal()?;
         fs_util::create_dir_all(temp.clone())?;
-        fs_util::create_dir_all(dest.clone())?;
+        fs_util::create_dir_all(cache_tmp.clone())?;
 
         extract_archive(&self.setup, &archive, &temp)?;
 
@@ -184,13 +193,42 @@ impl IoRequest for BzlmodExtractIoRequest {
             return Err(BzlmodError::MissingExtractedDirectory(source.to_string()).into());
         }
 
-        copy_dir_contents(&source, &dest)?;
+        copy_dir_contents(&source, &cache_tmp)?;
 
         for patch in &self.patch_files {
-            apply_patch(project_fs, &dest, patch, self.setup.patch_strip)?;
+            apply_patch(project_fs, &cache_tmp, patch, self.setup.patch_strip)?;
         }
 
+        if let Some(parent) = cache_repo.parent() {
+            fs_util::create_dir_all(parent)?;
+        }
+        if !cache_repo.exists() {
+            match fs_util::rename(&cache_tmp, &cache_repo) {
+                Ok(()) => {}
+                Err(error) if cache_repo.exists() => {
+                    fs_util::remove_all(&cache_tmp).categorize_internal()?;
+                    drop(error);
+                }
+                Err(error) => return Err(error.categorize_internal()),
+            }
+        } else {
+            fs_util::remove_all(&cache_tmp).categorize_internal()?;
+        }
+
+        copy_bzlmod_repo_contents_cache(project_fs, &self.cache_repo, &self.dest)?;
+
         Ok(())
+    }
+}
+
+struct BzlmodCopyCachedRepoIoRequest {
+    cache_repo: ProjectRelativePathBuf,
+    dest: ProjectRelativePathBuf,
+}
+
+impl IoRequest for BzlmodCopyCachedRepoIoRequest {
+    fn execute(self: Box<Self>, project_fs: &ProjectRoot) -> buck2_error::Result<()> {
+        copy_bzlmod_repo_contents_cache(project_fs, &self.cache_repo, &self.dest)
     }
 }
 
@@ -1270,6 +1308,61 @@ fn bzlmod_path(setup: &BzlmodCellSetup, suffix: &str) -> ProjectRelativePathBuf 
     ))
 }
 
+fn update_bzlmod_repo_contents_cache_key(hasher: &mut blake3::Hasher, field: &str) {
+    hasher.update(field.len().to_string().as_bytes());
+    hasher.update(b"\0");
+    hasher.update(field.as_bytes());
+    hasher.update(b"\0");
+}
+
+fn bzlmod_repo_contents_cache_key(setup: &BzlmodCellSetup) -> String {
+    let mut hasher = blake3::Hasher::new();
+    update_bzlmod_repo_contents_cache_key(&mut hasher, "buck2-bzlmod-repo-contents-v1");
+    update_bzlmod_repo_contents_cache_key(&mut hasher, &setup.module_name);
+    update_bzlmod_repo_contents_cache_key(&mut hasher, &setup.version);
+    update_bzlmod_repo_contents_cache_key(&mut hasher, &setup.canonical_repo_name);
+    update_bzlmod_repo_contents_cache_key(&mut hasher, &setup.url);
+    update_bzlmod_repo_contents_cache_key(&mut hasher, &setup.integrity);
+    update_bzlmod_repo_contents_cache_key(&mut hasher, setup.strip_prefix.as_deref().unwrap_or(""));
+    update_bzlmod_repo_contents_cache_key(&mut hasher, setup.archive_type.as_deref().unwrap_or(""));
+    update_bzlmod_repo_contents_cache_key(&mut hasher, &setup.patch_strip.to_string());
+    update_bzlmod_repo_contents_cache_key(&mut hasher, &setup.patches.len().to_string());
+    for patch in setup.patches.iter() {
+        update_bzlmod_repo_contents_cache_key(&mut hasher, &patch.url);
+        update_bzlmod_repo_contents_cache_key(&mut hasher, &patch.integrity);
+    }
+    hasher.finalize().to_hex().to_string()
+}
+
+fn bzlmod_repo_contents_cache_path(cache_key: &str, suffix: &str) -> ProjectRelativePathBuf {
+    ProjectRelativePathBuf::unchecked_new(format!(
+        "buck-out/v2/cache/bzlmod_repo_contents/{cache_key}/{suffix}",
+    ))
+}
+
+fn bzlmod_repo_contents_cache_exists(
+    project_fs: &ProjectRoot,
+    cache_repo: &ProjectRelativePath,
+) -> buck2_error::Result<bool> {
+    let cache_repo = project_fs.resolve(cache_repo);
+    Ok(matches!(
+        fs_util::symlink_metadata_if_exists(&cache_repo)?,
+        Some(metadata) if metadata.is_dir()
+    ))
+}
+
+fn copy_bzlmod_repo_contents_cache(
+    project_fs: &ProjectRoot,
+    cache_repo: &ProjectRelativePath,
+    dest: &ProjectRelativePath,
+) -> buck2_error::Result<()> {
+    let cache_repo = project_fs.resolve(cache_repo);
+    let dest = project_fs.resolve(dest);
+    fs_util::remove_all(&dest).categorize_internal()?;
+    fs_util::create_dir_all(dest.clone())?;
+    copy_dir_contents(&cache_repo, &dest)
+}
+
 fn bzlmod_generated_sibling_path(
     setup: &BzlmodGeneratedCellSetup,
     dest: &ProjectRelativePath,
@@ -1352,8 +1445,14 @@ async fn download_impl(
     ctx: &mut DiceComputations<'_>,
     setup: &BzlmodCellSetup,
     dest: &ProjectRelativePath,
+    cache_repo: &ProjectRelativePath,
+    cache_tmp: &ProjectRelativePath,
     cancellations: &CancellationContext,
 ) -> buck2_error::Result<()> {
+    if copy_bzlmod_repo_contents_cache_if_exists(ctx, cache_repo, dest, cancellations).await? {
+        return Ok(());
+    }
+
     let io = ctx.get_blocking_executor();
     let archive = bzlmod_path(setup, "source.archive");
     let temp = bzlmod_path(setup, "extract-tmp");
@@ -1373,6 +1472,7 @@ async fn download_impl(
                     archive.clone(),
                     temp.clone(),
                     patch_dir.clone(),
+                    cache_tmp.to_owned(),
                 ],
             },
         ),
@@ -1416,6 +1516,8 @@ async fn download_impl(
             archive,
             patch_files,
             temp,
+            cache_repo: cache_repo.to_owned(),
+            cache_tmp: cache_tmp.to_owned(),
             dest: dest.to_owned(),
         }),
         cancellations,
@@ -1423,6 +1525,38 @@ async fn download_impl(
     .await?;
 
     Ok(())
+}
+
+async fn copy_bzlmod_repo_contents_cache_if_exists(
+    ctx: &mut DiceComputations<'_>,
+    cache_repo: &ProjectRelativePath,
+    dest: &ProjectRelativePath,
+    cancellations: &CancellationContext,
+) -> buck2_error::Result<bool> {
+    let io = ctx.get_blocking_executor();
+    let project_root = ctx.global_data().get_io_provider().project_root().dupe();
+    let cache_repo_abs = project_root.resolve(cache_repo);
+    let hit = io
+        .execute_io_inline(move || {
+            Ok(matches!(
+                fs_util::symlink_metadata_if_exists(&cache_repo_abs)?,
+                Some(metadata) if metadata.is_dir()
+            ))
+        })
+        .await?;
+    if !hit {
+        return Ok(false);
+    }
+
+    io.execute_io(
+        Box::new(BzlmodCopyCachedRepoIoRequest {
+            cache_repo: cache_repo.to_owned(),
+            dest: dest.to_owned(),
+        }),
+        cancellations,
+    )
+    .await?;
+    Ok(true)
 }
 
 async fn declare_existing_directory(
@@ -1495,9 +1629,17 @@ async fn download_and_materialize(
 ) -> buck2_error::Result<()> {
     let lock = bzlmod_materialization_lock(path);
     let _guard = lock.lock().await;
+    let cache_key = bzlmod_repo_contents_cache_key(setup);
+    let cache_repo = bzlmod_repo_contents_cache_path(&cache_key, "repo");
+    let cache_tmp =
+        bzlmod_repo_contents_cache_path(&cache_key, &format!("repo.tmp.{}", std::process::id()));
+    let cache_lock = bzlmod_materialization_lock(&cache_repo);
+    let _cache_guard = cache_lock.lock().await;
 
     cancellations
-        .critical_section(|| download_impl(ctx, setup, path, cancellations))
+        .critical_section(|| {
+            download_impl(ctx, setup, path, &cache_repo, &cache_tmp, cancellations)
+        })
         .await
 }
 
