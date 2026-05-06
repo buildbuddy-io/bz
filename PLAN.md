@@ -148,6 +148,8 @@ Completed:
 - The `bazel_features` globals parser now accepts the current simple string version form as well as legacy version ranges, restoring generated `bazel_features_globals` provider exports such as `PackageSpecificationInfo`.
 - Generated repos emitted by a module extension now inherit the repo mapping visible to the extension's defining `.bzl` module, while `use_repo(...)` still controls which aliases are imported into the consuming module. This matches Bazel's extension-generated repo mapping model and lets Gazelle-generated repos resolve helper aliases such as `@package_metadata`.
 - `repository_ctx.execute(...)` now records missing runtime external-cell paths as concrete bzlmod cell deps and retries the repository rule after materializing those cells. This covers downloaded tool paths discovered from generated files, such as rules_go's `GOROOT` in `go.env`, without hard-coded Go/Kotlin logic.
+- Generated bzlmod file delegates no longer execute repository rules or materialize generated repository directories while the cell graph is being constructed. Generated repos now materialize only when package loading or repository code performs an actual file operation in that repo.
+- Bzlmod registry and generated external cells no longer declare/hash whole repository trees during ordinary fetch/generate. Source artifacts are declared lazily per observed file or symlink metadata lookup, while explicit `materialize_all(...)` still forces full-tree declaration.
 
 Latest smoke:
 
@@ -169,6 +171,8 @@ The `buildbuddy-repo-watch-1` smoke cleared the aspect_rules_js `yq` external ex
 The `buildbuddy-path-label-retry-1` smoke replaces that broad expansion with repository_ctx-observed path-label retries. It still clears the rules_python host-runtime and `repository_ctx.watch(...)` boundaries, but the generated tree stays small: about 87M with host Python repos, rules_go host SDK label, rules_java/rules_cc support repos, and rules_python config repos, instead of hundreds of unrelated generated repos or non-host Python platform repos. The command was stopped after returning to the known long synchronization wait; DICE and thread dumps showed no concrete missing API, missing generated repo, or active IO boundary.
 
 The `bazelisk-resolved-extension-label-1` regression smoke cleared the `rules_jvm_external+` `use_extension(":extensions.bzl", "maven")` load failure by using the bzlmod-resolved extension cell/path instead of parsing the raw MODULE label as a normal `load()` import. It then executed module-extension work far enough to create the `rules_go` and `rules_python` extension working directories before returning to the known long synchronization wait. It was stopped after thread/DICE inspection showed the daemon parked without a concrete missing API or active external command.
+
+The `buildbuddy-lazy-generated-delegate-1` and `buildbuddy-lazy-source-declare-1` smokes moved the slow BuildBuddy server build away from eager generated-repo expansion. During synchronization, generated repos stayed around 2 to 6 directories instead of the earlier 838 generated dirs and 3.2G external-cell footprint. The source-declaration rerun still reached about 61M of extracted registry/source bytes, but daemon samples no longer showed `sha2`, `build_file_metadata`, `declare_existing`, or CAS digest stacks, which indicates the full-tree hashing/declaration boundary has been removed from normal sync.
 
 ## Constraints
 
@@ -227,6 +231,7 @@ Immediate target:
 - Keep module-extension `.bzl` resolution tied to the bzlmod resolver's resolved cell/path data. The evaluator should not reinterpret raw `MODULE.bazel` labels as normal Starlark `load()` imports or add extension-specific label fallbacks.
 - Keep `.bazelignore` support wired through `CellFileIgnores`; BuildBuddy's root ignores `buck-out`, `node_modules`, and website output trees, which matters for recursive package discovery and globs in the large-repo smoke.
 - Preserve Bazel's external `.bazelignore` semantics while making them lazy: Bazel's `PackageLookupFunction` checks the main repo ignore file before package lookup and checks an external repository's ignore file after fetching that repository, so Buck should not fetch unrelated generated repos solely to compute ignores during global cell setup.
+- Continue from the new BuildBuddy sync boundary: generated repository realization and full-tree source declaration are no longer the main cost, so the next investigation should focus on remaining DICE/module-graph synchronization work with the low generated-repo footprint preserved.
 - Retire any remaining module-specific generated-repo materializers as their extensions become executable.
 
 Current validation boundary:
@@ -234,7 +239,7 @@ Current validation boundary:
 - The simple rules_go smoke resolves root and downloaded-module aliases separately, loads rules_go through downloaded bzlmod module cells, evaluates downloaded module extensions before final cell graph injection, rebuilds generated bzlmod cells from emitted repo names, materializes generated repos from downloaded repository-rule implementations, and runs Buck2 actions.
 - Bazelisk builds `//:bazelisk` end to end in a fresh isolation, including downloaded rules_go/Gazelle/module-extension loading, module-root-relative `use_extension(":...")` labels, generated Go SDK materialization from runtime repository-rule inputs, rules_go analysis, and Buck2 local actions.
 - The older smoke fixture's root-level `@rules_proto` load is intentionally not root-visible without a direct `bazel_dep`, matching Bazel 9.1.0 behavior.
-- BuildBuddy reaches post-extension sync after clearing the current concrete missing-API, generated-alias, repository patch, SRI checksum, BCR rediscovery, duplicated repository-output copy, broad generated-repo pre-materialization, alias-registration map rebuild, bundled prelude declaration, aspect_rules_js templated label, rules_python dynamic host runtime, and repository_ctx watch boundaries. The active validation boundary is the remaining long synchronization phase after those concrete failures are cleared, with the latest smoke no longer expanding unrelated rules_python platform repos.
+- BuildBuddy reaches post-extension sync after clearing the current concrete missing-API, generated-alias, repository patch, SRI checksum, BCR rediscovery, duplicated repository-output copy, broad generated-repo pre-materialization, alias-registration map rebuild, bundled prelude declaration, aspect_rules_js templated label, rules_python dynamic host runtime, repository_ctx watch, eager generated-repo delegate construction, and eager full-tree source declaration boundaries. The active validation boundary is the remaining long synchronization phase after those concrete failures are cleared, with the latest smoke no longer expanding unrelated rules_python platform repos or hashing whole generated external-cell trees up front.
 
 Acceptance:
 

@@ -28,6 +28,7 @@ use buck2_common::file_ops::metadata::FileDigestConfig;
 use buck2_common::file_ops::metadata::FileType;
 use buck2_common::file_ops::metadata::RawDirEntry;
 use buck2_common::file_ops::metadata::RawPathMetadata;
+use buck2_common::file_ops::metadata::RawSymlink;
 use buck2_common::http::HasHttpClient;
 use buck2_common::io::IoProvider;
 use buck2_common::io::fs::FsIoProvider;
@@ -60,6 +61,8 @@ use buck2_error::BuckErrorContext;
 use buck2_error::internal_error;
 use buck2_execute::artifact_value::ArtifactValue;
 use buck2_execute::digest_config::HasDigestConfig;
+use buck2_execute::directory::ActionDirectoryEntry;
+use buck2_execute::directory::ActionDirectoryMember;
 use buck2_execute::directory::INTERNER;
 use buck2_execute::entry::build_entry_from_disk;
 use buck2_execute::execute::blocking::HasBlockingExecutor;
@@ -1293,13 +1296,8 @@ async fn evaluate_and_materialize_bzlmod_repository_rule(
     canonical_repo_name: &str,
     path: &ProjectRelativePath,
     invocation: &BazelRepositoryRuleInvocation,
-    materializer: &dyn Materializer,
     cancellations: &CancellationContext,
 ) -> buck2_error::Result<()> {
-    if materializer.has_artifact_at(path.to_owned()).await? {
-        return Ok(());
-    }
-
     let repository_ctx_path =
         bzlmod_generated_sibling_path_for_canonical(canonical_repo_name, path, "repository_ctx");
     ctx.get_blocking_executor()
@@ -1347,15 +1345,13 @@ async fn evaluate_and_materialize_bzlmod_repository_rule(
             }),
             cancellations,
         )
-        .await?;
-    declare_existing_directory(ctx, path, materializer).await
+        .await
 }
 
 async fn download_impl(
     ctx: &mut DiceComputations<'_>,
     setup: &BzlmodCellSetup,
     dest: &ProjectRelativePath,
-    materializer: &dyn Materializer,
     cancellations: &CancellationContext,
 ) -> buck2_error::Result<()> {
     let io = ctx.get_blocking_executor();
@@ -1426,7 +1422,7 @@ async fn download_impl(
     )
     .await?;
 
-    declare_existing_directory(ctx, dest, materializer).await
+    Ok(())
 }
 
 async fn declare_existing_directory(
@@ -1462,6 +1458,35 @@ async fn declare_existing_directory(
     Ok(())
 }
 
+async fn declare_observed_source_artifact(
+    ctx: &mut DiceComputations<'_>,
+    path: ProjectRelativePathBuf,
+    metadata: &RawPathMetadata<ProjectRelativePathBuf>,
+) -> buck2_error::Result<()> {
+    let member = match metadata {
+        RawPathMetadata::File(metadata) => ActionDirectoryMember::File(metadata.clone()),
+        RawPathMetadata::Symlink {
+            at: _,
+            to: RawSymlink::Relative(_, symlink),
+        } => ActionDirectoryMember::Symlink(symlink.dupe()),
+        RawPathMetadata::Symlink {
+            at: _,
+            to: RawSymlink::External(symlink),
+        } => ActionDirectoryMember::ExternalSymlink(symlink.dupe()),
+        RawPathMetadata::Directory => return Ok(()),
+    };
+
+    ctx.per_transaction_data()
+        .get_materializer()
+        .declare_existing(vec![DeclareArtifactPayload {
+            path,
+            artifact: ArtifactValue::new(ActionDirectoryEntry::Leaf(member), None),
+            configuration_path: None,
+        }])
+        .await?;
+    Ok(())
+}
+
 async fn download_and_materialize(
     ctx: &mut DiceComputations<'_>,
     path: &ProjectRelativePath,
@@ -1470,14 +1495,9 @@ async fn download_and_materialize(
 ) -> buck2_error::Result<()> {
     let lock = bzlmod_materialization_lock(path);
     let _guard = lock.lock().await;
-    let materializer = ctx.per_transaction_data().get_materializer();
-
-    if materializer.has_artifact_at(path.to_owned()).await? {
-        return Ok(());
-    }
 
     cancellations
-        .critical_section(|| download_impl(ctx, setup, path, &*materializer, cancellations))
+        .critical_section(|| download_impl(ctx, setup, path, cancellations))
         .await
 }
 
@@ -1489,11 +1509,6 @@ async fn materialize_generated(
 ) -> buck2_error::Result<()> {
     let lock = bzlmod_materialization_lock(path);
     let _guard = lock.lock().await;
-    let materializer = ctx.per_transaction_data().get_materializer();
-
-    if materializer.has_artifact_at(path.to_owned()).await? {
-        return Ok(());
-    }
 
     cancellations
         .critical_section(|| async move {
@@ -1520,7 +1535,6 @@ async fn materialize_generated(
                             &setup.canonical_repo_name,
                             path,
                             &invocation,
-                            &*materializer,
                             cancellations,
                         )
                         .await?;
@@ -1549,7 +1563,6 @@ async fn materialize_generated(
                         &setup.canonical_repo_name,
                         path,
                         &invocation,
-                        &*materializer,
                         cancellations,
                     )
                     .await?;
@@ -1617,9 +1630,63 @@ async fn materialize_generated(
                         .await?;
                 }
             }
-            declare_existing_directory(ctx, path, &*materializer).await
+            Ok(())
         })
         .await
+}
+
+#[derive(
+    Clone,
+    Debug,
+    derive_more::Display,
+    PartialEq,
+    Eq,
+    Hash,
+    allocative::Allocative,
+    Pagable
+)]
+#[display("({}, {})", path, setup)]
+#[pagable_typetag(dice::DiceKeyDyn)]
+struct BzlmodGeneratedCellMaterializationKey {
+    path: ProjectRelativePathBuf,
+    setup: BzlmodGeneratedCellSetup,
+}
+
+#[async_trait::async_trait]
+impl Key for BzlmodGeneratedCellMaterializationKey {
+    type Value = buck2_error::Result<()>;
+
+    async fn compute(
+        &self,
+        ctx: &mut DiceComputations,
+        cancellations: &CancellationContext,
+    ) -> Self::Value {
+        materialize_generated(ctx, &self.path, &self.setup, cancellations).await
+    }
+
+    fn equality(x: &Self::Value, y: &Self::Value) -> bool {
+        match (x, y) {
+            (Ok(x), Ok(y)) => x == y,
+            _ => false,
+        }
+    }
+
+    fn validity(x: &Self::Value) -> bool {
+        x.is_ok()
+    }
+
+    fn value_serialize() -> impl ValueSerialize<Value = Self::Value> {
+        OkPagableValueSerialize::<Self::Value>::new()
+    }
+}
+
+async fn ensure_generated_materialized(
+    ctx: &mut DiceComputations<'_>,
+    path: ProjectRelativePathBuf,
+    setup: BzlmodGeneratedCellSetup,
+) -> buck2_error::Result<()> {
+    ctx.compute(&BzlmodGeneratedCellMaterializationKey { path, setup })
+        .await?
 }
 
 #[derive(allocative::Allocative, Pagable)]
@@ -1646,9 +1713,10 @@ impl BzlmodFileOpsDelegate {
 impl FileOpsDelegate for BzlmodFileOpsDelegate {
     async fn read_file_if_exists(
         &self,
-        _ctx: &mut DiceComputations<'_>,
+        ctx: &mut DiceComputations<'_>,
         path: &'async_trait CellRelativePath,
     ) -> buck2_error::Result<ReadFileProxy> {
+        self.read_path_metadata_if_exists(ctx, path).await?;
         Ok(ReadFileProxy::new_with_captures(
             (self.resolve(path), self.io.dupe()),
             |(project_path, io)| async move {
@@ -1681,17 +1749,18 @@ impl FileOpsDelegate for BzlmodFileOpsDelegate {
 
     async fn read_path_metadata_if_exists(
         &self,
-        _ctx: &mut DiceComputations<'_>,
+        ctx: &mut DiceComputations<'_>,
         path: &'async_trait CellRelativePath,
     ) -> buck2_error::Result<Option<RawPathMetadata>> {
         let project_path = self.resolve(path);
         let Some(metadata) = (&self.io as &dyn IoProvider)
-            .read_path_metadata_if_exists(project_path)
+            .read_path_metadata_if_exists(project_path.clone())
             .await
             .with_buck_error_context(|| format!("Error accessing metadata for path `{path}`"))?
         else {
             return Ok(None);
         };
+        declare_observed_source_artifact(ctx, project_path, &metadata).await?;
         Ok(Some(metadata.try_map(
             |path| match path.strip_prefix_opt(self.get_base_path()) {
                 Some(path) => Ok(Arc::new(CellPath::new(self.cell, path.to_owned().into()))),
@@ -1763,9 +1832,11 @@ fn follow_bzlmod_symlinked_directory_entries(
 impl FileOpsDelegate for BzlmodGeneratedFileOpsDelegate {
     async fn read_file_if_exists(
         &self,
-        _ctx: &mut DiceComputations<'_>,
+        ctx: &mut DiceComputations<'_>,
         path: &'async_trait CellRelativePath,
     ) -> buck2_error::Result<ReadFileProxy> {
+        ensure_generated_materialized(ctx, self.get_base_path(), self.setup.dupe()).await?;
+        self.read_path_metadata_if_exists(ctx, path).await?;
         Ok(ReadFileProxy::new_with_captures(
             (self.resolve(path), self.io.dupe()),
             |(project_path, io)| async move {
@@ -1778,9 +1849,10 @@ impl FileOpsDelegate for BzlmodGeneratedFileOpsDelegate {
 
     async fn read_dir(
         &self,
-        _ctx: &mut DiceComputations<'_>,
+        ctx: &mut DiceComputations<'_>,
         path: &'async_trait CellRelativePath,
     ) -> buck2_error::Result<Arc<[RawDirEntry]>> {
+        ensure_generated_materialized(ctx, self.get_base_path(), self.setup.dupe()).await?;
         let project_path = self.resolve(path);
         let mut entries = (&self.io as &dyn IoProvider)
             .read_dir(project_path)
@@ -1798,17 +1870,19 @@ impl FileOpsDelegate for BzlmodGeneratedFileOpsDelegate {
 
     async fn read_path_metadata_if_exists(
         &self,
-        _ctx: &mut DiceComputations<'_>,
+        ctx: &mut DiceComputations<'_>,
         path: &'async_trait CellRelativePath,
     ) -> buck2_error::Result<Option<RawPathMetadata>> {
+        ensure_generated_materialized(ctx, self.get_base_path(), self.setup.dupe()).await?;
         let project_path = self.resolve(path);
         let Some(metadata) = (&self.io as &dyn IoProvider)
-            .read_path_metadata_if_exists(project_path)
+            .read_path_metadata_if_exists(project_path.clone())
             .await
             .with_buck_error_context(|| format!("Error accessing metadata for path `{path}`"))?
         else {
             return Ok(None);
         };
+        declare_observed_source_artifact(ctx, project_path, &metadata).await?;
         Ok(Some(metadata.try_map(
             |path| match path.strip_prefix_opt(self.get_base_path()) {
                 Some(path) => Ok(Arc::new(CellPath::new(self.cell, path.to_owned().into()))),
@@ -1908,7 +1982,7 @@ pub(crate) async fn get_generated_file_ops_delegate(
         async fn compute(
             &self,
             ctx: &mut DiceComputations,
-            cancellations: &CancellationContext,
+            _cancellations: &CancellationContext,
         ) -> Self::Value {
             let artifact_fs = ctx.get_artifact_fs().await?;
             let ops = BzlmodGeneratedFileOpsDelegate {
@@ -1920,7 +1994,6 @@ pub(crate) async fn get_generated_file_ops_delegate(
                     ctx.global_data().get_digest_config().cas_digest_config(),
                 ),
             };
-            materialize_generated(ctx, &ops.get_base_path(), &self.1, cancellations).await?;
             Ok(Arc::new(ops))
         }
 
@@ -1943,6 +2016,8 @@ pub(crate) async fn materialize_all(
     setup: BzlmodCellSetup,
 ) -> buck2_error::Result<ProjectRelativePathBuf> {
     let ops = get_file_ops_delegate(ctx, cell, setup.dupe()).await?;
+    let materializer = ctx.per_transaction_data().get_materializer();
+    declare_existing_directory(ctx, &ops.get_base_path(), &*materializer).await?;
     Ok(ops.get_base_path())
 }
 
@@ -1952,5 +2027,8 @@ pub(crate) async fn materialize_generated_all(
     setup: BzlmodGeneratedCellSetup,
 ) -> buck2_error::Result<ProjectRelativePathBuf> {
     let ops = get_generated_file_ops_delegate(ctx, cell, setup.dupe()).await?;
+    ensure_generated_materialized(ctx, ops.get_base_path(), setup).await?;
+    let materializer = ctx.per_transaction_data().get_materializer();
+    declare_existing_directory(ctx, &ops.get_base_path(), &*materializer).await?;
     Ok(ops.get_base_path())
 }
