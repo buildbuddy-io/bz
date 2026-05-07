@@ -8,11 +8,15 @@
  */
 
 use allocative::Allocative;
+use buck2_core::provider::id::ProviderId;
+use buck2_interpreter::types::provider::callable::ProviderCallableLike;
 use starlark::any::ProvidesStaticType;
 use starlark::environment::GlobalsBuilder;
+use starlark::eval::Arguments;
 use starlark::eval::Evaluator;
 use starlark::starlark_module;
 use starlark::starlark_simple_value;
+use starlark::values::Demand;
 use starlark::values::NoSerialize;
 use starlark::values::StarlarkValue;
 use starlark::values::Value;
@@ -22,6 +26,7 @@ use starlark::values::starlark_value;
 use starlark::values::structs::AllocStruct;
 
 use std::fmt;
+use std::sync::Arc;
 
 #[derive(Debug, buck2_error::Error)]
 #[buck2(tag = Input)]
@@ -51,6 +56,61 @@ impl<'v> StarlarkValue<'v> for BazelExecTransition {}
 
 pub(crate) fn bazel_exec_transition_from_value(value: Value<'_>) -> Option<&BazelExecTransition> {
     value.downcast_ref::<BazelExecTransition>()
+}
+
+#[derive(Debug, ProvidesStaticType, NoSerialize, Allocative)]
+struct BazelConfigProviderCallable {
+    name: &'static str,
+    id: Arc<ProviderId>,
+}
+
+impl BazelConfigProviderCallable {
+    fn new(name: &'static str) -> Self {
+        Self {
+            name,
+            id: Arc::new(ProviderId {
+                path: None,
+                name: name.to_owned(),
+            }),
+        }
+    }
+}
+
+impl fmt::Display for BazelConfigProviderCallable {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.name)
+    }
+}
+
+starlark_simple_value!(BazelConfigProviderCallable);
+
+#[starlark_value(type = "bazel_config_provider_callable")]
+impl<'v> StarlarkValue<'v> for BazelConfigProviderCallable {
+    fn invoke(
+        &self,
+        _me: Value<'v>,
+        args: &Arguments<'v, '_>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<Value<'v>> {
+        args.no_positional_args(eval.heap())?;
+        let mut values = args
+            .names_map()?
+            .into_iter()
+            .map(|(name, value)| (name.as_str().to_owned(), value))
+            .collect::<Vec<_>>();
+        values.sort_by(|(left, _), (right, _)| left.cmp(right));
+        Ok(eval.heap().alloc(AllocStruct(values)).to_value())
+    }
+
+    fn provide(&'v self, demand: &mut Demand<'_, 'v>) {
+        demand.provide_value::<&dyn ProviderCallableLike>(self);
+    }
+}
+
+impl ProviderCallableLike for BazelConfigProviderCallable {
+    fn id(&self) -> buck2_error::Result<&Arc<ProviderId>> {
+        Ok(&self.id)
+    }
 }
 
 fn build_setting<'v>(
@@ -108,7 +168,7 @@ fn bazel_config_module(builder: &mut GlobalsBuilder) {
     }
 
     fn exec(
-        #[starlark(require = named, default = NoneOr::None)] exec_group: NoneOr<&str>,
+        #[starlark(default = NoneOr::None)] exec_group: NoneOr<&str>,
     ) -> starlark::Result<BazelExecTransition> {
         Ok(BazelExecTransition {
             exec_group: exec_group.into_option().map(str::to_owned),
@@ -133,5 +193,11 @@ fn bazel_config_common_module(builder: &mut GlobalsBuilder) {
 
 pub(crate) fn register_bazel_config(builder: &mut GlobalsBuilder) {
     builder.namespace("config", bazel_config_module);
-    builder.namespace("config_common", bazel_config_common_module);
+    builder.namespace("config_common", |config_common| {
+        bazel_config_common_module(config_common);
+        config_common.set(
+            "FeatureFlagInfo",
+            BazelConfigProviderCallable::new("FeatureFlagInfo"),
+        );
+    });
 }

@@ -99,11 +99,11 @@ fn bazel_transition_input_value<'v>(
     eval: &mut Evaluator<'v, '_, '_>,
 ) -> buck2_error::Result<Value<'v>> {
     if key == "//command_line_option:platforms" {
-        let value = match conf.data()?.build_settings.get(key) {
-            Some(BazelBuildSettingValue::String(value)) => value.as_str(),
-            _ => conf.label()?,
-        };
-        Ok(eval.heap().alloc(value).to_value())
+        if let Some(value) = conf.data()?.build_settings.get(key) {
+            Ok(bazel_build_setting_value_to_starlark(value, eval))
+        } else {
+            Ok(eval.heap().alloc(conf.label()?).to_value())
+        }
     } else if let Some(value) = conf
         .data()?
         .build_settings
@@ -123,12 +123,53 @@ fn bazel_build_setting_value_to_starlark<'v>(
     match value {
         BazelBuildSettingValue::Bool(value) => eval.heap().alloc(*value).to_value(),
         BazelBuildSettingValue::Int(value) => eval.heap().alloc(*value).to_value(),
+        BazelBuildSettingValue::Label(value) => eval
+            .heap()
+            .alloc(StarlarkProvidersLabel::new(value.clone())),
+        BazelBuildSettingValue::LabelList(values) => eval.heap().alloc(
+            values
+                .iter()
+                .map(|value| StarlarkProvidersLabel::new(value.clone()))
+                .collect::<Vec<_>>(),
+        ),
         BazelBuildSettingValue::String(value) => eval.heap().alloc(value.as_str()).to_value(),
         BazelBuildSettingValue::StringList(values) => {
             let values = values.iter().map(String::as_str).collect::<Vec<_>>();
             eval.heap().alloc(values).to_value()
         }
     }
+}
+
+fn bazel_build_setting_list_value(
+    values: impl IntoIterator<Item = BazelBuildSettingValue>,
+) -> Option<BazelBuildSettingValue> {
+    let values = values.into_iter().collect::<Vec<_>>();
+    if values
+        .iter()
+        .all(|value| matches!(value, BazelBuildSettingValue::Label(_)))
+    {
+        return Some(BazelBuildSettingValue::LabelList(
+            values
+                .into_iter()
+                .map(|value| match value {
+                    BazelBuildSettingValue::Label(label) => label,
+                    _ => unreachable!("checked above"),
+                })
+                .collect(),
+        ));
+    }
+
+    let strings = values
+        .into_iter()
+        .map(|value| match value {
+            BazelBuildSettingValue::Bool(value) => Some(value.to_string()),
+            BazelBuildSettingValue::Int(value) => Some(value.to_string()),
+            BazelBuildSettingValue::Label(value) => Some(value.to_string()),
+            BazelBuildSettingValue::String(value) => Some(value),
+            BazelBuildSettingValue::StringList(_) | BazelBuildSettingValue::LabelList(_) => None,
+        })
+        .collect::<Option<Vec<_>>>()?;
+    Some(BazelBuildSettingValue::StringList(strings))
 }
 
 fn bazel_build_setting_value_from_attr(value: &CoercedAttr) -> Option<BazelBuildSettingValue> {
@@ -140,17 +181,14 @@ fn bazel_build_setting_value_from_attr(value: &CoercedAttr) -> Option<BazelBuild
             Some(BazelBuildSettingValue::String(value.0.to_string()))
         }
         CoercedAttr::Label(value) | CoercedAttr::Dep(value) | CoercedAttr::SourceLabel(value) => {
-            Some(BazelBuildSettingValue::String(value.to_string()))
+            Some(BazelBuildSettingValue::Label(value.dupe()))
         }
-        CoercedAttr::List(values) => Some(BazelBuildSettingValue::StringList(
+        CoercedAttr::List(values) => bazel_build_setting_list_value(
             values
                 .iter()
                 .map(bazel_build_setting_value_from_attr)
-                .collect::<Option<Vec<_>>>()?
-                .into_iter()
-                .map(|value| value.as_config_setting_value())
-                .collect(),
-        )),
+                .collect::<Option<Vec<_>>>()?,
+        ),
         CoercedAttr::None => None,
         _ => None,
     }
@@ -213,9 +251,9 @@ fn bazel_transition_setting_key(
 
 fn bazel_transition_setting_value(value: Value) -> BazelBuildSettingValue {
     if let Some(label) = StarlarkProvidersLabel::from_value(value) {
-        BazelBuildSettingValue::String(label.label().to_string())
+        BazelBuildSettingValue::Label(label.label().dupe())
     } else if let Some(label) = StarlarkTargetLabel::from_value(value) {
-        BazelBuildSettingValue::String(label.label().to_string())
+        BazelBuildSettingValue::Label(ProvidersLabel::default_for(label.label().dupe()))
     } else if let Some(value) = value.unpack_str() {
         BazelBuildSettingValue::String(value.to_owned())
     } else if let Some(value) = value.unpack_bool() {
@@ -223,22 +261,29 @@ fn bazel_transition_setting_value(value: Value) -> BazelBuildSettingValue {
     } else if let Some(value) = value.unpack_i32() {
         BazelBuildSettingValue::Int(value.into())
     } else if let Some(values) = ListRef::from_value(value) {
-        BazelBuildSettingValue::StringList(
+        bazel_build_setting_list_value(
             values
                 .iter()
                 .map(|value| {
-                    if let Some(value) = value.unpack_str() {
-                        value.to_owned()
-                    } else if let Some(label) = StarlarkProvidersLabel::from_value(value) {
-                        label.label().to_string()
+                    if let Some(label) = StarlarkProvidersLabel::from_value(value) {
+                        BazelBuildSettingValue::Label(label.label().dupe())
                     } else if let Some(label) = StarlarkTargetLabel::from_value(value) {
-                        label.label().to_string()
+                        BazelBuildSettingValue::Label(ProvidersLabel::default_for(
+                            label.label().dupe(),
+                        ))
+                    } else if let Some(value) = value.unpack_str() {
+                        BazelBuildSettingValue::String(value.to_owned())
+                    } else if let Some(value) = value.unpack_bool() {
+                        BazelBuildSettingValue::Bool(value)
+                    } else if let Some(value) = value.unpack_i32() {
+                        BazelBuildSettingValue::Int(value.into())
                     } else {
-                        value.to_repr()
+                        BazelBuildSettingValue::String(value.to_repr())
                     }
                 })
-                .collect(),
+                .collect::<Vec<_>>(),
         )
+        .unwrap_or_else(|| BazelBuildSettingValue::String(value.to_repr()))
     } else {
         BazelBuildSettingValue::String(value.to_repr())
     }

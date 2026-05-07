@@ -8,19 +8,27 @@
  */
 
 use std::fmt;
+use std::sync::Arc;
 
 use allocative::Allocative;
+use buck2_core::provider::id::ProviderId;
+use buck2_interpreter::types::provider::callable::ProviderCallableLike;
 use starlark::any::ProvidesStaticType;
 use starlark::environment::GlobalsBuilder;
 use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
 use starlark::environment::MethodsStatic;
+use starlark::eval::Arguments;
 use starlark::eval::Evaluator;
 use starlark::starlark_module;
+use starlark::values::Demand;
 use starlark::values::FrozenValue;
 use starlark::values::NoSerialize;
 use starlark::values::StarlarkValue;
 use starlark::values::Value;
+use starlark::values::ValueLike;
+use starlark::values::dict::AllocDict;
+use starlark::values::none::NoneType;
 use starlark::values::starlark_value;
 use starlark::values::structs::AllocStruct;
 
@@ -92,16 +100,98 @@ fn bazel_apple_toolchain_methods(builder: &mut MethodsBuilder) {
     }
 }
 
+#[derive(Debug, ProvidesStaticType, NoSerialize, Allocative)]
+struct BazelAppleProviderCallable {
+    name: &'static str,
+    id: Arc<ProviderId>,
+}
+
+impl BazelAppleProviderCallable {
+    fn new(name: &'static str) -> Self {
+        Self {
+            name,
+            id: Arc::new(ProviderId {
+                path: None,
+                name: name.to_owned(),
+            }),
+        }
+    }
+}
+
+impl fmt::Display for BazelAppleProviderCallable {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.name)
+    }
+}
+
+starlark::starlark_simple_value!(BazelAppleProviderCallable);
+
+#[starlark_value(type = "bazel_apple_provider_callable")]
+impl<'v> StarlarkValue<'v> for BazelAppleProviderCallable {
+    fn invoke(
+        &self,
+        _me: Value<'v>,
+        args: &Arguments<'v, '_>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<Value<'v>> {
+        args.no_positional_args(eval.heap())?;
+        let _kwargs = args.names_map()?;
+        Ok(eval
+            .heap()
+            .alloc(AllocStruct(Vec::<(&str, Value<'v>)>::new()))
+            .to_value())
+    }
+
+    fn provide(&'v self, demand: &mut Demand<'_, 'v>) {
+        demand.provide_value::<&dyn ProviderCallableLike>(self);
+    }
+}
+
+impl ProviderCallableLike for BazelAppleProviderCallable {
+    fn id(&self) -> buck2_error::Result<&Arc<ProviderId>> {
+        Ok(&self.id)
+    }
+}
+
 #[starlark_module]
 fn bazel_apple_common_module(builder: &mut GlobalsBuilder) {
     fn apple_toolchain() -> starlark::Result<BazelAppleToolchain> {
         Ok(BazelAppleToolchain)
+    }
+
+    fn apple_host_system_env<'v>(
+        _xcode_config: Value<'v>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<Value<'v>> {
+        Ok(eval.heap().alloc(AllocDict::EMPTY))
+    }
+
+    fn target_apple_env<'v>(
+        _xcode_config: Value<'v>,
+        _platform: Value<'v>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<Value<'v>> {
+        Ok(eval.heap().alloc(AllocDict::EMPTY))
+    }
+
+    fn dotted_version(version: &str) -> starlark::Result<String> {
+        Ok(version.to_owned())
     }
 }
 
 pub(crate) fn register_bazel_apple_common(builder: &mut GlobalsBuilder) {
     builder.namespace("apple_common", |apple| {
         bazel_apple_common_module(apple);
+        apple.set("XcodeProperties", NoneType);
+        apple.set(
+            "XcodeVersionConfig",
+            BazelAppleProviderCallable::new("XcodeVersionConfig"),
+        );
+        apple.set("Objc", BazelAppleProviderCallable::new("ObjcInfo"));
+        apple.set(
+            "new_objc_provider",
+            BazelAppleProviderCallable::new("ObjcInfo"),
+        );
 
         apple.namespace("platform_type", |platform_type| {
             platform_type.set("ios", "ios");

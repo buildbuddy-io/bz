@@ -8,7 +8,6 @@
  */
 
 use buck2_node::attrs::attr_type::bazel_label::BazelLabelAttrType;
-use buck2_node::attrs::attr_type::source::SourceAttrType;
 use buck2_node::attrs::coerced_attr::CoercedAttr;
 use buck2_node::attrs::coercion_context::AttrCoercionContext;
 use buck2_node::attrs::configurable::AttrIsConfigurable;
@@ -32,10 +31,7 @@ impl AttrTypeCoerce for BazelLabelAttrType {
     ) -> buck2_error::Result<CoercedAttr> {
         if let Some(value_str) = value.unpack_str() {
             if !looks_like_label(value_str) {
-                let source = SourceAttrType {
-                    allow_directory: false,
-                };
-                if let Ok(value) = source.coerce_item(configurable, ctx, value) {
+                if let Ok(value) = self.source.coerce_item(configurable, ctx, value) {
                     return Ok(value);
                 }
             }
@@ -44,10 +40,7 @@ impl AttrTypeCoerce for BazelLabelAttrType {
         match self.dep.coerce_item(configurable, ctx, value) {
             Ok(value) => Ok(value),
             Err(dep_error) => {
-                let source = SourceAttrType {
-                    allow_directory: false,
-                };
-                source
+                self.source
                     .coerce_item(configurable, ctx, value)
                     .map_err(|source_error| {
                         buck2_error::buck2_error!(

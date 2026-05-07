@@ -1,0 +1,129 @@
+#!/usr/bin/env python3
+
+import json
+import sys
+
+
+def die(message):
+    print(message, file=sys.stderr)
+    sys.exit(1)
+
+
+def read_json(path):
+    with open(path) as f:
+        return json.load(f)
+
+
+def parse_ddi(path):
+    data = read_json(path)
+    if not isinstance(data, dict):
+        die("require ddi content is JSON object")
+    rules = data.get("rules")
+    if not isinstance(rules, list):
+        die("require ddi content 'rules' is JSON array")
+    if len(rules) > 1:
+        die("require ddi content 'rules' has only 1 rule")
+    if not rules:
+        return {"gen_bmi": False, "name": "", "requires": []}
+    rule = rules[0]
+    if not isinstance(rule, dict):
+        die("require ddi content 'rules[0]' is JSON object")
+
+    provides = rule.get("provides")
+    name = ""
+    gen_bmi = False
+    if provides is not None:
+        if not isinstance(provides, list):
+            die("require ddi content 'rules[0][\"provides\"]' is JSON array")
+        if len(provides) > 1:
+            die("require ddi content 'rules[0][\"provides\"]' has only 1 provide")
+        if provides:
+            provide = provides[0]
+            if not isinstance(provide, dict):
+                die("require ddi content 'rules[0][\"provides\"][0]' is JSON object")
+            name = provide.get("logical-name")
+            if not isinstance(name, str):
+                die("require ddi content 'rules[0][\"provides\"][0][\"logical-name\"]' is JSON string")
+            gen_bmi = True
+
+    requires = rule.get("requires")
+    require_list = []
+    if requires is not None:
+        if not isinstance(requires, list):
+            die("require ddi content 'rules[0][\"requires\"]' is JSON array")
+        for item in requires:
+            if not isinstance(item, dict):
+                die("require JSON object")
+            logical_name = item.get("logical-name")
+            if not isinstance(logical_name, str):
+                die("require JSON string")
+            require_list.append(logical_name)
+
+    return {"gen_bmi": gen_bmi, "name": name, "requires": require_list}
+
+
+def parse_info(path):
+    data = read_json(path)
+    if not isinstance(data, dict):
+        die("require content is JSON object")
+    modules = data.get("modules")
+    usages = data.get("usages")
+    if not isinstance(modules, dict):
+        die("require 'modules' is JSON object")
+    if not isinstance(usages, dict):
+        die("require 'usages' is JSON object")
+    return modules, usages
+
+
+def transitive_module_deps(dep, modules, usages):
+    queued = list(dep["requires"])
+    seen = set()
+    while queued:
+        name = queued.pop(0)
+        if name in seen:
+            continue
+        seen.add(name)
+        queued.extend(usages.get(name, []))
+    result = []
+    for name in sorted(seen):
+        if name not in modules:
+            die("ERROR: Module not found: " + name)
+        result.append((name, modules[name]))
+    return result
+
+
+def write_modmap(output, compiler, items, generated):
+    with open(output, "w") as modmap, open(output + ".input", "w") as inputs:
+        if compiler == "gcc":
+            modmap.write("$root .\n")
+            if generated:
+                modmap.write(generated[0] + " " + generated[1] + "\n")
+        for name, path in items:
+            if compiler == "clang":
+                modmap.write("-fmodule-file=" + name + "=" + path + "\n")
+            elif compiler == "gcc":
+                modmap.write(name + " " + path + "\n")
+            elif compiler == "msvc-cl":
+                modmap.write("/reference " + name + "=" + path + "\n")
+            else:
+                die("bad compiler: " + compiler)
+            inputs.write(path + "\n")
+
+
+def main(argv):
+    if len(argv) != 5:
+        die("Usage: generate-modmap <compiler> <ddi-file> <cpp20modules-info-file> <output>")
+    compiler = argv[1]
+    ddi_file = argv[2]
+    info_file = argv[3]
+    output = argv[4]
+    dep = parse_ddi(ddi_file)
+    modules, usages = parse_info(info_file)
+    generated = None
+    if dep["gen_bmi"]:
+        generated = (dep["name"], modules[dep["name"]])
+    write_modmap(output, compiler, transitive_module_deps(dep, modules, usages), generated)
+
+
+if __name__ == "__main__":
+    main(sys.argv)

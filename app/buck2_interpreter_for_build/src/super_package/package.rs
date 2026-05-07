@@ -53,7 +53,7 @@ fn parse_visibility(
 ) -> buck2_error::Result<VisibilitySpecification> {
     let mut builder = VisibilityWithinViewBuilder::with_capacity(patterns.len());
     for pattern in patterns {
-        match normalize_visibility_pattern(pattern) {
+        match normalize_visibility_pattern(pattern, None) {
             NormalizedVisibilityPattern::Public => builder.add_public(),
             NormalizedVisibilityPattern::Private => {}
             NormalizedVisibilityPattern::Pattern(pattern) => {
@@ -77,7 +77,7 @@ fn parse_within_view(
 ) -> buck2_error::Result<WithinViewSpecification> {
     let mut builder = VisibilityWithinViewBuilder::with_capacity(patterns.len());
     for pattern in patterns {
-        match normalize_visibility_pattern(pattern) {
+        match normalize_visibility_pattern(pattern, None) {
             NormalizedVisibilityPattern::Public => builder.add_public(),
             NormalizedVisibilityPattern::Private => {}
             NormalizedVisibilityPattern::Pattern(pattern) => {

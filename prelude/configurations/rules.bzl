@@ -14,9 +14,24 @@ _ExecutionModifierInfo = provider(fields = {
     "execution_modifier": bool,
 })
 
+def _config_setting_values(values):
+    buckconfigs = {}
+    build_settings = {}
+    for key, value in values.items():
+        if "." in key:
+            buckconfigs[key] = value
+        else:
+            build_settings["//command_line_option:" + key] = value
+    return buckconfigs, build_settings
+
 def config_setting_impl(ctx):
+    buckconfig_values, command_line_values = _config_setting_values(ctx.attrs.values)
     subinfos = [util.constraint_values_to_configuration(ctx.attrs.constraint_values)]
-    subinfos.append(ConfigurationInfo(constraints = {}, values = ctx.attrs.values))
+    subinfos.append(ConfigurationInfo(
+        constraints = {},
+        values = buckconfig_values,
+        build_settings = command_line_values,
+    ))
     subinfos.append(ConfigurationInfo(
         constraints = {},
         values = {},
@@ -34,7 +49,10 @@ def config_setting_impl(ctx):
 def constraint_setting_impl(ctx):
     return [
         DefaultInfo(),
-        ConstraintSettingInfo(label = ctx.label.raw_target()),
+        ConstraintSettingInfo(
+            label = ctx.label.raw_target(),
+            default = ctx.attrs.default_constraint_value,
+        ),
         # In order for the constraint_value to access the execution modifier info, we need to provide an additional provider here.
         _ExecutionModifierInfo(execution_modifier = ctx.attrs.execution_modifier),
     ]
@@ -165,8 +183,10 @@ def constraint_impl(ctx):
     ]
 
 def platform_impl(ctx):
+    _ = (ctx.attrs.exec_properties, ctx.attrs.remote_execution_properties)
     subinfos = (
         [dep[PlatformInfo].configuration for dep in ctx.attrs.deps] +
+        [dep[PlatformInfo].configuration for dep in ctx.attrs.parents] +
         [util.constraint_values_to_configuration(ctx.attrs.constraint_values)]
     )
     return [

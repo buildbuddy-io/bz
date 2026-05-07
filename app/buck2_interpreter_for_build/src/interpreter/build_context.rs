@@ -275,7 +275,7 @@ impl<'a> BuildContext<'a> {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, allocative::Allocative)]
 pub struct BazelRepositoryRuleInvocation {
     pub rule_id: StarlarkRuleType,
     pub name: String,
@@ -284,7 +284,7 @@ pub struct BazelRepositoryRuleInvocation {
     pub label_deps: Vec<String>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, allocative::Allocative)]
 pub struct BazelModuleExtensionEvaluationResult {
     pub repository_rule_invocations: Vec<BazelRepositoryRuleInvocation>,
     pub registered_toolchains: Vec<String>,

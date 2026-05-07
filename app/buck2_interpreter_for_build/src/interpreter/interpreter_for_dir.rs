@@ -26,6 +26,7 @@ use buck2_core::bzl::ImportPath;
 use buck2_core::cells::build_file_cell::BuildFileCell;
 use buck2_core::cells::cell_path::CellPath;
 use buck2_core::cells::cell_path_with_allowed_relative_dir::CellPathWithAllowedRelativeDir;
+use buck2_core::cells::paths::CellRelativePathBuf;
 use buck2_error::BuckErrorContext;
 use buck2_error::conversion::from_any_with_tag;
 use buck2_error::internal_error;
@@ -40,8 +41,9 @@ use buck2_interpreter::file_loader::LoadedModules;
 use buck2_interpreter::file_type::StarlarkFileType;
 use buck2_interpreter::import_paths::ImplicitImportPaths;
 use buck2_interpreter::package_imports::ImplicitImport;
+use buck2_interpreter::parse_import::ParseImportOptions;
 use buck2_interpreter::parse_import::RelativeImports;
-use buck2_interpreter::parse_import::parse_import;
+use buck2_interpreter::parse_import::parse_import_with_config_and_package_root;
 use buck2_interpreter::paths::module::OwnedStarlarkModulePath;
 use buck2_interpreter::paths::module::StarlarkModulePath;
 use buck2_interpreter::paths::package::PackageFilePath;
@@ -194,11 +196,17 @@ impl LoadResolver for InterpreterLoadResolver {
         let relative_import_option = RelativeImports::Allow {
             current_dir_with_allowed_relative: &self.config.current_dir_with_allowed_relative_dirs,
         };
-        let path = parse_import(
-            self.config.cell_info.cell_alias_resolver(),
+        let opts = ParseImportOptions {
+            allow_missing_at_symbol: false,
             relative_import_option,
+        };
+        let parsed_import = parse_import_with_config_and_package_root(
+            self.config.cell_info.cell_alias_resolver(),
             path,
+            &opts,
         )?;
+        let package_root = parsed_import.package_root;
+        let path = parsed_import.path;
 
         // check for bxl files first before checking for prelude.
         // All bxl imports are parsed the same regardless of prelude or not.
@@ -251,11 +259,11 @@ impl LoadResolver for InterpreterLoadResolver {
             if prelude_import.is_prelude_path(&path) {
                 if path.path().extension() == Some("json") {
                     return Ok(OwnedStarlarkModulePath::JsonFile(
-                        ImportPath::new_same_cell(path)?,
+                        ImportPath::new_same_cell_with_package_root(path, package_root)?,
                     ));
                 } else {
                     return Ok(OwnedStarlarkModulePath::LoadFile(
-                        ImportPath::new_same_cell(path)?,
+                        ImportPath::new_same_cell_with_package_root(path, package_root)?,
                     ));
                 }
             }
@@ -265,14 +273,18 @@ impl LoadResolver for InterpreterLoadResolver {
         // bzlmod repo must therefore resolve its own label literals and transitive loads in that
         // repo's context, not in the context of the BUILD or .bzl file that imported it.
         if path.cell().as_str().starts_with("bzlmod_") || path.cell().as_str() == "bazel_tools" {
-            let import_path = ImportPath::new_same_cell(path)?;
+            let import_path = ImportPath::new_same_cell_with_package_root(path, package_root)?;
             return Ok(match import_path.path().path().extension() {
                 Some("json") => OwnedStarlarkModulePath::JsonFile(import_path),
                 Some("toml") => OwnedStarlarkModulePath::TomlFile(import_path),
                 _ => OwnedStarlarkModulePath::LoadFile(import_path),
             });
         }
-        let import_path = ImportPath::new_with_build_file_cells(path, self.build_file_cell)?;
+        let import_path = ImportPath::new_with_build_file_cells_and_package_root(
+            path,
+            self.build_file_cell,
+            package_root,
+        )?;
         Ok(match import_path.path().path().extension() {
             Some("json") => OwnedStarlarkModulePath::JsonFile(import_path),
             Some("toml") => OwnedStarlarkModulePath::TomlFile(import_path),
@@ -330,16 +342,46 @@ impl InterpreterForDir {
         })
     }
 
+    fn bazel_compat_prelude_enabled(&self) -> bool {
+        match self.global_state.configuror.prelude_import() {
+            Some(prelude_import) => {
+                prelude_import.import_path().path().path().as_str() == "bazel/prelude.bzl"
+            }
+            None => false,
+        }
+    }
+
+    fn is_bazel_compat_path(&self, import: StarlarkPath<'_>) -> bool {
+        let import_cell = import.cell();
+        let import_cell_name = import_cell.as_str();
+        if import_cell_name == "bazel_tools" || import_cell_name.starts_with("bzlmod_") {
+            return true;
+        }
+        if import_cell_name == "root" && self.bazel_compat_prelude_enabled() {
+            return true;
+        }
+        match self.global_state.configuror.prelude_import() {
+            Some(prelude_import) if prelude_import.prelude_cell() == import_cell => {
+                if self.bazel_compat_prelude_enabled() {
+                    return true;
+                }
+
+                import.path().path().as_str().starts_with("bazel/")
+            }
+            _ => false,
+        }
+    }
+
     fn create_env<'v>(
         &self,
         env: BuckStarlarkModule<'v>,
         starlark_path: StarlarkPath<'_>,
         loaded_modules: &LoadedModules,
     ) -> buck2_error::Result<BuckStarlarkModule<'v>> {
-        if let Some(prelude_import) = self.prelude_import(starlark_path) {
+        if let Some(prelude_import) = self.prelude_import(starlark_path)? {
             let prelude_env = loaded_modules
                 .map
-                .get(&StarlarkModulePath::LoadFile(prelude_import.import_path()))
+                .get(&StarlarkModulePath::LoadFile(&prelude_import))
                 .ok_or_else(|| {
                     internal_error!(
                         "Should've had an env for the prelude import `{prelude_import}`"
@@ -424,7 +466,14 @@ impl InterpreterForDir {
         self.implicit_import_paths.root_import.clone()
     }
 
-    fn prelude_import(&self, import: StarlarkPath) -> Option<&PreludePath> {
+    fn cell_default_prelude_import(
+        prelude_import: &PreludePath,
+    ) -> buck2_error::Result<ImportPath> {
+        let prelude_file = CellRelativePathBuf::unchecked_new("prelude.bzl".to_owned());
+        ImportPath::new_same_cell(CellPath::new(prelude_import.prelude_cell(), prelude_file))
+    }
+
+    fn prelude_import(&self, import: StarlarkPath) -> buck2_error::Result<Option<ImportPath>> {
         let prelude_import = self.global_state.configuror.prelude_import();
         if let Some(prelude_import) = prelude_import {
             let import_path = import.path();
@@ -432,17 +481,22 @@ impl InterpreterForDir {
             match import {
                 StarlarkPath::BuildFile(_)
                 | StarlarkPath::PackageFile(_)
-                | StarlarkPath::BxlFile(_) => return Some(prelude_import),
+                | StarlarkPath::BxlFile(_) => {
+                    if import_path.cell() == prelude_import.prelude_cell() {
+                        return Ok(Some(Self::cell_default_prelude_import(prelude_import)?));
+                    }
+                    return Ok(Some(prelude_import.import_path().clone()));
+                }
                 StarlarkPath::LoadFile(_) => {
                     if !prelude_import.is_prelude_path(&import_path) {
-                        return Some(prelude_import);
+                        return Ok(Some(prelude_import.import_path().clone()));
                     }
                 }
-                StarlarkPath::JsonFile(_) | StarlarkPath::TomlFile(_) => return None,
+                StarlarkPath::JsonFile(_) | StarlarkPath::TomlFile(_) => return Ok(None),
             }
         }
 
-        None
+        Ok(None)
     }
 
     /// Parses skylark code to an AST.
@@ -455,11 +509,8 @@ impl InterpreterForDir {
         // This check also prohibits tabs even where spaces are not significant,
         // for example inside parentheses in function call arguments,
         // which restricts what the spec allows.
-        let import_cell = import.cell();
-        let import_cell_name = import_cell.as_str();
-        let is_bazel_compat_cell =
-            import_cell_name == "bazel_tools" || import_cell_name.starts_with("bzlmod_");
-        if content.contains('\t') && !is_bazel_compat_cell {
+        let is_bazel_compat_path = self.is_bazel_compat_path(import);
+        if content.contains('\t') && !is_bazel_compat_path {
             return Err(StarlarkTabsError(OwnedStarlarkPath::new(import)).into());
         }
 
@@ -468,7 +519,8 @@ impl InterpreterForDir {
             .cell_resolver
             .resolve_path(import.path().as_ref().as_ref())?;
 
-        let disable_starlark_types = self.global_state.disable_starlark_types;
+        let disable_starlark_types =
+            self.global_state.disable_starlark_types || is_bazel_compat_path;
         let ast = match AstModule::parse(
             project_relative_path.as_str(),
             content,
@@ -483,8 +535,8 @@ impl InterpreterForDir {
             }
         };
         let mut implicit_imports = Vec::new();
-        if let Some(i) = self.prelude_import(import) {
-            implicit_imports.push(OwnedStarlarkModulePath::LoadFile(i.import_path().clone()));
+        if let Some(i) = self.prelude_import(import)? {
+            implicit_imports.push(OwnedStarlarkModulePath::LoadFile(i));
         }
         if let StarlarkPath::BuildFile(build_file) = import {
             if let Some(i) = self.package_import(build_file) {
@@ -597,15 +649,16 @@ impl InterpreterForDir {
                 StarlarkModulePath::JsonFile(j) => PerFileTypeContext::Json(j.clone()),
                 StarlarkModulePath::TomlFile(t) => PerFileTypeContext::Toml(t.clone()),
             };
-            let typecheck = self.global_state.unstable_typecheck
-                || matches!(starlark_path, StarlarkModulePath::BxlFile(..))
-                || match self.global_state.configuror.prelude_import() {
-                    Some(prelude_import) => {
-                        prelude_import.prelude_cell()
-                            == self.cell_info.cell_alias_resolver().resolve_self()
-                    }
-                    None => false,
-                };
+            let typecheck = !self.is_bazel_compat_path(starlark_path.starlark_path())
+                && (self.global_state.unstable_typecheck
+                    || matches!(starlark_path, StarlarkModulePath::BxlFile(..))
+                    || match self.global_state.configuror.prelude_import() {
+                        Some(prelude_import) => {
+                            prelude_import.prelude_cell()
+                                == self.cell_info.cell_alias_resolver().resolve_self()
+                        }
+                        None => false,
+                    });
             let (finished_eval, _) = self.eval(
                 &env,
                 ast,
@@ -632,8 +685,7 @@ impl InterpreterForDir {
         buckconfigs: &mut dyn BuckConfigsViewForStarlark,
         eval_provider: StarlarkEvaluatorProvider,
         cancellation: &CancellationContext,
-    ) -> buck2_error::Result<crate::interpreter::build_context::BazelModuleExtensionEvaluationResult>
-    {
+    ) -> buck2_error::Result<crate::bazel_repository::BazelModuleExtensionEvaluation> {
         BuckStarlarkModule::with_profiling(|env| {
             let extension_value = extension_module
                 .get_option(extension_name)
@@ -664,7 +716,7 @@ impl InterpreterForDir {
 
             let print = EventDispatcherPrintHandler(get_dispatcher());
             let globals = self.global_state.globals();
-            let (finished_eval, ()) =
+            let (finished_eval, evaluation) =
                 eval_provider.with_evaluator(&env, cancellation.into(), |eval, _| {
                     eval.set_print_handler(&print);
                     eval.set_soft_error_handler(&Buck2StarlarkSoftErrorHandler);
@@ -678,11 +730,28 @@ impl InterpreterForDir {
                             globals,
                             eval,
                         )?;
-                    extension.invoke_implementation(module_ctx, eval)?;
-                    Ok(())
+                    match extension.invoke_implementation(module_ctx, eval) {
+                        Ok(_) => Ok(crate::bazel_repository::BazelModuleExtensionEvaluation::Success(
+                            recorder.take_result(),
+                        )),
+                        Err(error) => {
+                            let label_deps =
+                                crate::bazel_repository::take_module_ctx_path_label_deps(
+                                    module_ctx,
+                                )?;
+                            if label_deps.is_empty() {
+                                Err(error.into())
+                            } else {
+                                Ok(crate::bazel_repository::BazelModuleExtensionEvaluation::NeedsPathLabelDeps {
+                                    label_deps,
+                                    error: error.to_string(),
+                                })
+                            }
+                        }
+                    }
                 })?;
             let (token, _) = finished_eval.finish()?;
-            Ok((token, recorder.take_result()))
+            Ok((token, evaluation))
         })
     }
 

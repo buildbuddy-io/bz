@@ -57,6 +57,8 @@ use starlark::values::starlark_value;
 enum SelectError {
     #[error("select() condition was not a string or label, got `{0}`.")]
     KeyNotStringOrLabel(String),
+    #[error("Cannot combine incompatible types (select of {0}, {1})")]
+    CannotCombineIncompatibleTypes(String, String),
 }
 
 /// Representation of `select()` in Starlark.
@@ -124,7 +126,7 @@ impl<'v> StarlarkSelector<'v> {
         if let Some(key) = key.unpack_str() {
             Ok(key.to_owned())
         } else if let Some(key) = StarlarkProvidersLabel::from_value(key) {
-            Ok(key.label().to_string())
+            Ok(key.starlark_label_string())
         } else {
             Err(buck2_error::Error::from(SelectError::KeyNotStringOrLabel(key.to_repr())).into())
         }
@@ -132,6 +134,56 @@ impl<'v> StarlarkSelector<'v> {
 
     fn sum(left: Value<'v>, right: Value<'v>, heap: Heap<'v>) -> Value<'v> {
         heap.alloc(StarlarkSelector::Sum(left, right))
+    }
+
+    fn dict_union(left: DictRef<'v>, right: &DictRef<'v>, heap: Heap<'v>) -> Value<'v> {
+        let mut items = SmallMap::with_capacity(left.len() + right.len());
+        for (k, v) in left.iter_hashed() {
+            items.insert_hashed(k, v);
+        }
+        for (k, v) in right.iter_hashed() {
+            items.insert_hashed(k, v);
+        }
+        heap.alloc(Dict::new(items))
+    }
+
+    fn select_value_type(value: Value<'v>) -> Option<String> {
+        if StarlarkSelectFail::from_value(value).is_some()
+            || StarlarkSelectIncompatible::from_value(value).is_some()
+        {
+            None
+        } else {
+            Some(value.get_type().to_owned())
+        }
+    }
+
+    fn union_dict_into_primary(
+        selector: DictRef<'v>,
+        other: DictRef<'v>,
+        heap: Heap<'v>,
+    ) -> starlark::Result<Value<'v>> {
+        let mut mapped = SmallMap::with_capacity(selector.len());
+        for (k, v) in selector.iter_hashed() {
+            if StarlarkSelectFail::from_value(v).is_some()
+                || StarlarkSelectIncompatible::from_value(v).is_some()
+            {
+                mapped.insert_hashed(k, v);
+            } else if let Some(v) = DictRef::from_value(v) {
+                mapped.insert_hashed(k, Self::dict_union(v, &other, heap));
+            } else {
+                return Err(
+                    buck2_error::Error::from(SelectError::CannotCombineIncompatibleTypes(
+                        Self::select_value_type(v).unwrap_or_else(|| v.get_type().to_owned()),
+                        "dict".to_owned(),
+                    ))
+                    .into(),
+                );
+            }
+        }
+        Ok(heap.alloc(StarlarkSelector::new(
+            ValueOf::unpack_value_err(heap.alloc(Dict::new(mapped)))
+                .internal_error("validated at construction")?,
+        )))
     }
 
     pub fn from_concat<I>(iter: I, heap: Heap<'v>) -> buck2_error::Result<Value<'v>>
@@ -341,6 +393,21 @@ where
                 let this = StarlarkSelector::sum(l.to_value(), r.to_value(), heap);
                 Some(Ok(StarlarkSelector::sum(this, other, heap)))
             }
+        }
+    }
+
+    fn bit_or(&self, other_value: Value<'v>, heap: Heap<'v>) -> starlark::Result<Value<'v>> {
+        let Some(other) = DictRef::from_value(other_value) else {
+            return starlark::values::ValueError::unsupported_with(self, "|", other_value);
+        };
+
+        match self {
+            Self::Primary(v) => {
+                let selector = DictRef::from_value(v.get().to_value())
+                    .ok_or_else(|| buck2_error::internal_error!("validated at construction"))?;
+                StarlarkSelector::union_dict_into_primary(selector, other, heap)
+            }
+            Self::Sum(..) => starlark::values::ValueError::unsupported_with(self, "|", other_value),
         }
     }
 

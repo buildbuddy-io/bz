@@ -349,6 +349,10 @@ impl<'v> StarlarkValue<'v> for StarlarkPromiseArtifact {
         StarlarkArtifactLike::write_hash(self, hasher)
     }
 
+    fn is_in(&self, _other: Value<'v>) -> starlark::Result<bool> {
+        Ok(false)
+    }
+
     fn provide(&'v self, demand: &mut Demand<'_, 'v>) {
         demand.provide_value::<&dyn CommandLineArgLike>(self);
     }

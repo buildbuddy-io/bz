@@ -25,6 +25,7 @@ use buck2_core::configuration::transition::applied::TransitionApplied;
 use buck2_core::configuration::transition::id::TransitionId;
 use buck2_core::execution_types::execution::ExecutionPlatform;
 use buck2_core::execution_types::execution::ExecutionPlatformResolution;
+use buck2_core::package::PackageLabel;
 use buck2_core::package::source_path::SourcePathRef;
 use buck2_core::plugins::PluginKind;
 use buck2_core::plugins::PluginKindSet;
@@ -149,6 +150,13 @@ impl TargetNodeOrForward {
         match self {
             TargetNodeOrForward::TargetNode(node) => node.is_visible_to(target),
             TargetNodeOrForward::Forward(_, forward) => forward.is_visible_to(target),
+        }
+    }
+
+    fn is_visible_to_package(&self, package: &PackageLabel) -> buck2_error::Result<bool> {
+        match self {
+            TargetNodeOrForward::TargetNode(node) => node.is_visible_to_package(package),
+            TargetNodeOrForward::Forward(_, forward) => forward.is_visible_to_package(package),
         }
     }
 
@@ -464,6 +472,10 @@ impl ConfiguredTargetNode {
 
     pub fn is_visible_to(&self, target: &TargetLabel) -> buck2_error::Result<bool> {
         self.0.target_node.is_visible_to(target)
+    }
+
+    pub fn is_visible_to_package(&self, package: &PackageLabel) -> buck2_error::Result<bool> {
+        self.0.target_node.is_visible_to_package(package)
     }
 
     #[inline]

@@ -11,6 +11,8 @@
 use async_trait::async_trait;
 use buck2_core::cells::cell_path::CellPath;
 use buck2_core::cells::cell_path::CellPathRef;
+use buck2_core::cells::external::ExternalCellOrigin;
+use buck2_core::cells::name::CellName;
 use buck2_core::cells::paths::CellRelativePath;
 use buck2_core::package::PackageLabel;
 use buck2_core::package::package_relative_path::PackageRelativePath;
@@ -24,11 +26,15 @@ use futures::future::BoxFuture;
 use starlark_map::sorted_set::SortedSet;
 use starlark_map::sorted_vec::SortedVec;
 
+use crate::dice::cells::HasCellResolver;
 use crate::file_ops::dice::DiceFileComputations;
 use crate::find_buildfile::find_buildfile;
 use crate::ignores::file_ignores::FileIgnoreReason;
 use crate::io::DirectoryDoesNotExistSuggestion;
 use crate::io::ReadDirError;
+use crate::legacy_configs::dice::HasLegacyConfigs;
+use crate::legacy_configs::dice::OpaqueLegacyBuckConfigOnDice;
+use crate::legacy_configs::key::BuckconfigKeyRef;
 use crate::package_listing::listing::PackageListing;
 use crate::package_listing::resolver::PackageListingResolver;
 
@@ -100,6 +106,12 @@ impl PackageListingResolver for InterpreterPackageListingResolver<'_, '_> {
 
 pub struct InterpreterPackageListingResolver<'c, 'd> {
     ctx: &'c mut DiceComputations<'d>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PackageListingMode {
+    Recursive,
+    Shallow,
 }
 
 #[derive(Debug, buck2_error::Error)]
@@ -389,6 +401,19 @@ struct Directory {
 }
 
 impl Directory {
+    fn shallow(path: PackageRelativePathBuf) -> Self {
+        Self {
+            path: path.to_arc(),
+            files: Vec::new(),
+            subdirs: Vec::new(),
+            subpackages: Vec::new(),
+            buildfile: None,
+            recursive_files_count: 0,
+            recursive_dirs_count: 0,
+            recursive_subpackages_count: 0,
+        }
+    }
+
     // Ok(None) indicates that the path is a subpackage
     async fn gather(
         ctx: &mut DiceComputations<'_>,
@@ -396,6 +421,7 @@ impl Directory {
         root: CellPathRef<'_>,
         path: &PackageRelativePath,
         is_root: bool,
+        mode: PackageListingMode,
     ) -> Result<Option<Directory>, GatherPackageListingError> {
         let cell_path = root.join(path.as_forward_rel_path());
         let entries = DiceFileComputations::read_dir_ext(ctx, cell_path.as_ref())
@@ -417,20 +443,27 @@ impl Directory {
             _ => {}
         }
 
-        let mut subdirs = Vec::new();
+        let mut child_dirs = Vec::new();
         let mut files = Vec::new();
 
         for d in &*entries {
             let child_path = path.join(&d.file_name);
             if d.file_type.is_dir() {
-                subdirs.push(child_path);
+                child_dirs.push(child_path);
             } else {
                 files.push(child_path.to_arc());
             }
         }
 
-        let (subdirs, subpackages) =
-            Self::gather_subdirs(ctx, buildfile_candidates, root, subdirs).await?;
+        let (subdirs, subpackages) = match mode {
+            PackageListingMode::Recursive => {
+                Self::gather_subdirs(ctx, buildfile_candidates, root, child_dirs, mode).await?
+            }
+            PackageListingMode::Shallow => (
+                child_dirs.into_iter().map(Self::shallow).collect(),
+                Vec::new(),
+            ),
+        };
 
         let mut recursive_files_count = files.len();
         let mut recursive_dirs_count = subdirs.len();
@@ -458,6 +491,7 @@ impl Directory {
         buildfile_candidates: &'a [FileNameBuf],
         root: CellPathRef<'a>,
         subdirs: Vec<PackageRelativePathBuf>,
+        mode: PackageListingMode,
     ) -> BoxFuture<
         'a,
         Result<(Vec<Directory>, Vec<ArcS<PackageRelativePath>>), GatherPackageListingError>,
@@ -469,8 +503,9 @@ impl Directory {
             for res in ctx
                 .compute_join(subdirs, |ctx: &mut DiceComputations, path| {
                     async move {
-                        let res = Directory::gather(ctx, buildfile_candidates, root, &path, false)
-                            .await?;
+                        let res =
+                            Directory::gather(ctx, buildfile_candidates, root, &path, false, mode)
+                                .await?;
                         Ok((path, res))
                     }
                     .boxed()
@@ -535,14 +570,113 @@ async fn gather_package_listing_impl(
     let buildfile_candidates = DiceFileComputations::buildfiles(ctx, root.cell_name())
         .await
         .map_err(|e| GatherPackageListingError::error(cell_path, e))?;
+    let mode = package_listing_mode(ctx, cell_path, &buildfile_candidates).await?;
     Ok(Directory::gather(
         ctx,
         &buildfile_candidates,
         cell_path,
         PackageRelativePath::empty(),
         true,
+        mode,
     )
     .await?
     .unwrap()
     .flatten())
+}
+
+async fn package_listing_mode(
+    ctx: &mut DiceComputations<'_>,
+    package: CellPathRef<'_>,
+    buildfile_candidates: &[FileNameBuf],
+) -> Result<PackageListingMode, GatherPackageListingError> {
+    if !bazel_compat_package_listing_enabled(ctx, package.cell())
+        .await
+        .map_err(|e| GatherPackageListingError::error(package, e))?
+    {
+        return Ok(PackageListingMode::Recursive);
+    }
+
+    let entries = DiceFileComputations::read_dir_ext(ctx, package)
+        .await
+        .map_err(|e| GatherPackageListingError::from_read_dir(package, e))?
+        .included;
+    let Some(buildfile) = find_buildfile(buildfile_candidates, &entries) else {
+        return Ok(PackageListingMode::Recursive);
+    };
+    let buildfile_path = package.join(buildfile);
+    let contents = DiceFileComputations::read_file_if_exists(ctx, buildfile_path.as_ref())
+        .await
+        .map_err(|e| GatherPackageListingError::error(package, e))?;
+
+    match contents {
+        Some(contents) if !build_file_may_call_glob(&contents) => Ok(PackageListingMode::Shallow),
+        _ => Ok(PackageListingMode::Recursive),
+    }
+}
+
+async fn bazel_compat_package_listing_enabled(
+    ctx: &mut DiceComputations<'_>,
+    cell_name: CellName,
+) -> buck2_error::Result<bool> {
+    let cells = ctx.get_cell_resolver().await?;
+    let instance = cells.get(cell_name)?;
+    if matches!(
+        instance.external(),
+        Some(ExternalCellOrigin::Bzlmod(_)) | Some(ExternalCellOrigin::BzlmodGenerated(_))
+    ) {
+        return Ok(true);
+    }
+
+    let config = ctx.get_legacy_config_on_dice(cell_name).await?;
+    bazel_compat_enabled(ctx, &config)
+}
+
+fn bazel_compat_enabled(
+    ctx: &mut DiceComputations<'_>,
+    config: &OpaqueLegacyBuckConfigOnDice,
+) -> buck2_error::Result<bool> {
+    let enabled = config.lookup(
+        ctx,
+        BuckconfigKeyRef {
+            section: "bazel",
+            property: "compatibility",
+        },
+    )?;
+    Ok(enabled
+        .as_deref()
+        .map(|value| matches!(value.trim(), "1" | "true" | "True" | "TRUE"))
+        .unwrap_or(false))
+}
+
+fn build_file_may_call_glob(contents: &str) -> bool {
+    let mut rest = contents;
+    while let Some(index) = rest.find("glob") {
+        let before = rest[..index].chars().next_back();
+        let after = rest[index + "glob".len()..].chars().next();
+        if !before.is_some_and(is_starlark_identifier_char)
+            && !after.is_some_and(is_starlark_identifier_char)
+        {
+            return true;
+        }
+        rest = &rest[index + "glob".len()..];
+    }
+    false
+}
+
+fn is_starlark_identifier_char(c: char) -> bool {
+    c == '_' || c.is_ascii_alphanumeric()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::build_file_may_call_glob;
+
+    #[test]
+    fn test_build_file_may_call_glob() {
+        assert!(build_file_may_call_glob("srcs = glob([\"*.go\"])"));
+        assert!(build_file_may_call_glob("g = glob\ng([\"**\"])"));
+        assert!(build_file_may_call_glob("native.glob([\"*\"])"));
+        assert!(!build_file_may_call_glob("go_library(name = \"globular\")"));
+        assert!(!build_file_may_call_glob("my_glob_helper(name = \"x\")"));
+    }
 }

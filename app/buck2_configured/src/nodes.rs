@@ -29,6 +29,7 @@ use buck2_common::dice::cycles::CycleGuard;
 use buck2_common::legacy_configs::dice::HasLegacyConfigs;
 use buck2_common::legacy_configs::key::BuckconfigKeyRef;
 use buck2_common::legacy_configs::view::LegacyBuckConfigView;
+use buck2_common::pattern::resolve::ResolveTargetPatterns;
 use buck2_core::configuration::compatibility::IncompatiblePlatformReason;
 use buck2_core::configuration::compatibility::IncompatiblePlatformReasonCause;
 use buck2_core::configuration::compatibility::MaybeCompatible;
@@ -40,7 +41,7 @@ use buck2_core::configuration::transition::applied::TransitionApplied;
 use buck2_core::configuration::transition::id::TransitionId;
 use buck2_core::execution_types::execution::ExecutionPlatformResolution;
 use buck2_core::execution_types::execution::ExecutionPlatformResolutionPartial;
-use buck2_core::pattern::pattern::PackageSpec;
+use buck2_core::package::PackageLabel;
 use buck2_core::pattern::pattern::ParsedPattern;
 use buck2_core::pattern::pattern::TargetParsingRel;
 use buck2_core::pattern::pattern_type::TargetPatternExtra;
@@ -390,10 +391,50 @@ async fn check_plugin_deps(
     Ok(())
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub(crate) enum CheckVisibility {
     Yes,
+    OrPackages(Vec<PackageLabel>),
     No,
+}
+
+impl CheckVisibility {
+    fn for_bazel_attr(
+        target_node: TargetNodeRef<'_>,
+        attr_name: &str,
+    ) -> buck2_error::Result<Self> {
+        Ok(
+            match target_node.bazel_implicit_attr_visibility_package(attr_name)? {
+                Some(package) => CheckVisibility::OrPackages(vec![package]),
+                None => CheckVisibility::Yes,
+            },
+        )
+    }
+
+    fn merge(&mut self, other: &CheckVisibility) {
+        match (&mut *self, other) {
+            (CheckVisibility::Yes, _) | (_, CheckVisibility::Yes) => {
+                *self = CheckVisibility::Yes;
+            }
+            (CheckVisibility::No, check) => {
+                *self = check.clone();
+            }
+            (CheckVisibility::OrPackages(packages), CheckVisibility::OrPackages(other)) => {
+                for package in other {
+                    if !packages.contains(package) {
+                        packages.push(package.dupe());
+                    }
+                }
+            }
+            (_, CheckVisibility::No) => {}
+        }
+    }
+}
+
+impl Default for CheckVisibility {
+    fn default() -> Self {
+        CheckVisibility::Yes
+    }
 }
 
 #[derive(Default)]
@@ -407,7 +448,7 @@ impl ErrorsAndIncompatibilities {
         &mut self,
         target_label: &TargetConfiguredTargetLabel,
         result: ResultMaybeCompatible<ConfiguredTargetNode>,
-        check_visibility: CheckVisibility,
+        check_visibility: &CheckVisibility,
         list: &mut Vec<ConfiguredTargetNode>,
     ) {
         list.extend(self.unpack_dep(target_label, result, check_visibility));
@@ -417,7 +458,7 @@ impl ErrorsAndIncompatibilities {
         &mut self,
         target_label: &TargetConfiguredTargetLabel,
         result: ResultMaybeCompatible<ConfiguredTargetNode>,
-        check_visibility: CheckVisibility,
+        check_visibility: &CheckVisibility,
     ) -> Option<ConfiguredTargetNode> {
         match result {
             ResultMaybeCompatible::Err(e) => {
@@ -430,10 +471,10 @@ impl ErrorsAndIncompatibilities {
                 }));
             }
             ResultMaybeCompatible::Compatible(dep) => {
-                if CheckVisibility::No == check_visibility {
+                if CheckVisibility::No == *check_visibility {
                     return Some(dep);
                 }
-                match dep.is_visible_to(target_label.unconfigured()) {
+                match dependency_is_visible(&dep, target_label, check_visibility) {
                     Ok(true) => {
                         return Some(dep);
                     }
@@ -468,6 +509,28 @@ impl ErrorsAndIncompatibilities {
     }
 }
 
+fn dependency_is_visible(
+    dep: &ConfiguredTargetNode,
+    target_label: &TargetConfiguredTargetLabel,
+    check_visibility: &CheckVisibility,
+) -> buck2_error::Result<bool> {
+    if dep.is_visible_to(target_label.unconfigured())? {
+        return Ok(true);
+    }
+
+    match check_visibility {
+        CheckVisibility::No | CheckVisibility::Yes => Ok(false),
+        CheckVisibility::OrPackages(packages) => {
+            for package in packages {
+                if dep.is_visible_to_package(package)? {
+                    return Ok(true);
+                }
+            }
+            Ok(false)
+        }
+    }
+}
+
 #[derive(Default)]
 pub(crate) struct GatheredDeps {
     pub(crate) deps: Vec<ConfiguredTargetNode>,
@@ -484,15 +547,33 @@ pub(crate) async fn gather_deps(
 ) -> ResultMaybeCompatible<(GatheredDeps, ErrorsAndIncompatibilities)> {
     #[derive(Default)]
     struct Traversal {
-        deps: OrderedMap<ConfiguredProvidersLabel, SmallSet<PluginKindSet>>,
+        deps: OrderedMap<ConfiguredProvidersLabel, (SmallSet<PluginKindSet>, CheckVisibility)>,
         exec_deps: SmallMap<ConfiguredProvidersLabel, CheckVisibility>,
         toolchain_deps: SmallSet<TargetConfiguredTargetLabel>,
         plugin_lists: PluginLists,
+        current_visibility_check: CheckVisibility,
+    }
+
+    impl Traversal {
+        fn insert_dep_visibility(&mut self, dep: &ConfiguredProvidersLabel) {
+            self.deps
+                .entry(dep.dupe())
+                .or_insert_with(|| (SmallSet::new(), self.current_visibility_check.clone()))
+                .1
+                .merge(&self.current_visibility_check);
+        }
+
+        fn insert_exec_dep_visibility(&mut self, dep: &ConfiguredProvidersLabel) {
+            self.exec_deps
+                .entry(dep.dupe())
+                .or_insert_with(|| self.current_visibility_check.clone())
+                .merge(&self.current_visibility_check);
+        }
     }
 
     impl ConfiguredAttrTraversal for Traversal {
         fn dep(&mut self, dep: &ConfiguredProvidersLabel) -> buck2_error::Result<()> {
-            self.deps.entry(dep.dupe()).or_default();
+            self.insert_dep_visibility(dep);
             Ok(())
         }
 
@@ -501,15 +582,17 @@ pub(crate) async fn gather_deps(
             dep: &ConfiguredProvidersLabel,
             plugin_kinds: &PluginKindSet,
         ) -> buck2_error::Result<()> {
+            self.insert_dep_visibility(dep);
             self.deps
                 .entry(dep.dupe())
-                .or_default()
+                .or_insert_with(|| (SmallSet::new(), self.current_visibility_check.clone()))
+                .0
                 .insert(plugin_kinds.dupe());
             Ok(())
         }
 
         fn exec_dep(&mut self, dep: &ConfiguredProvidersLabel) -> buck2_error::Result<()> {
-            self.exec_deps.insert(dep.dupe(), CheckVisibility::Yes);
+            self.insert_exec_dep_visibility(dep);
             Ok(())
         }
 
@@ -530,6 +613,7 @@ pub(crate) async fn gather_deps(
 
     let mut traversal = Traversal::default();
     for a in target_node.attrs(AttrInspectOptions::All) {
+        traversal.current_visibility_check = CheckVisibility::for_bazel_attr(target_node, a.name)?;
         a.configure(attr_cfg_ctx)?
             .traverse(target_node.label().pkg(), &mut traversal)
             .with_buck_error_context(|| format!("traversing attribute `{}`", a.name))?;
@@ -544,8 +628,10 @@ pub(crate) async fn gather_deps(
     let mut plugin_lists = traversal.plugin_lists;
     let mut deps = Vec::new();
     let mut errors_and_incompats = ErrorsAndIncompatibilities::default();
-    for (res, (_, plugin_kind_sets)) in dep_results.into_iter().zip(traversal.deps) {
-        let Some(dep) = errors_and_incompats.unpack_dep(target_label, res, CheckVisibility::Yes)
+    for (res, (_, (plugin_kind_sets, check_visibility))) in
+        dep_results.into_iter().zip(traversal.deps)
+    {
+        let Some(dep) = errors_and_incompats.unpack_dep(target_label, res, &check_visibility)
         else {
             continue;
         };
@@ -633,9 +719,12 @@ async fn resolve_transition_input_attrs<'a>(
         }
 
         fn base_exec_cfg(&self) -> buck2_error::Result<ConfigurationNoExec> {
-            Err(internal_error!(
-                "exec_cfg() is not needed in pre transition attribute resolution."
-            ))
+            // Bazel transition implementations receive attrs in the pre-rule
+            // configuration, and label attrs are exposed as unconfigured Label
+            // values. If an attr itself has `cfg = "exec"`, we still need to
+            // produce an intermediate ConfiguredAttr before converting it back
+            // into that Label-shaped Starlark value.
+            Ok(self.matched_cfg_keys.cfg().dupe())
         }
 
         fn toolchain_cfg(&self) -> ConfigurationWithExec {
@@ -657,6 +746,17 @@ async fn resolve_transition_input_attrs<'a>(
             Err(internal_error!(
                 "resolved_transitions() can't be used before transition execution."
             ))
+        }
+
+        fn configure_transition_target(
+            &self,
+            label: &ProvidersLabel,
+            _tr: &TransitionId,
+        ) -> buck2_error::Result<ConfiguredProvidersLabel> {
+            // Transition implementations receive attr label values as labels in the
+            // pre-transition configuration. The outgoing attr transition is applied
+            // later when configured deps are gathered.
+            Ok(label.configure_pair(self.matched_cfg_keys.cfg().cfg_pair().dupe()))
         }
 
         fn incompatible_platform_reason(
@@ -712,7 +812,32 @@ async fn resolve_transition_input_attrs<'a>(
                     }
                 }
             }
-            TransitionAttrs::All | TransitionAttrs::BazelAll => {
+            TransitionAttrs::All => {
+                for coerced_attr in target_node.attrs(AttrInspectOptions::All) {
+                    if !coerced_attr_can_be_transition_attr(coerced_attr.value) {
+                        continue;
+                    }
+
+                    // Multiple outgoing transitions may refer the same attribute.
+                    if result.contains_key(coerced_attr.name) {
+                        continue;
+                    }
+
+                    let configured_attr = coerced_attr.configure(&cfg_ctx)?;
+                    if let Some(old_val) =
+                        result.insert(configured_attr.name, Arc::new(configured_attr.value))
+                    {
+                        return internal_error!(
+                            "Found duplicated value `{}` for attr `{}` on target `{}`",
+                            &old_val.as_display_no_ctx(),
+                            coerced_attr.name,
+                            target_node.label()
+                        )
+                        .into();
+                    }
+                }
+            }
+            TransitionAttrs::BazelAll => {
                 for coerced_attr in target_node.attrs(AttrInspectOptions::All) {
                     if !coerced_attr_can_be_bazel_transition_attr(coerced_attr.value) {
                         continue;
@@ -745,7 +870,7 @@ async fn resolve_transition_input_attrs<'a>(
     })
 }
 
-fn coerced_attr_can_be_bazel_transition_attr(value: &CoercedAttr) -> bool {
+fn coerced_attr_can_be_transition_attr(value: &CoercedAttr) -> bool {
     match value {
         CoercedAttr::ExplicitConfiguredDep(_)
         | CoercedAttr::TransitionDep(_)
@@ -756,17 +881,57 @@ fn coerced_attr_can_be_bazel_transition_attr(value: &CoercedAttr) -> bool {
         | CoercedAttr::Dep(_)
         | CoercedAttr::SourceLabel(_)
         | CoercedAttr::SourceFile(_) => false,
+        CoercedAttr::OneOf(value, _) => coerced_attr_can_be_transition_attr(value),
+        CoercedAttr::Selector(select) => select
+            .all_entries()
+            .all(|(_, value)| coerced_attr_can_be_transition_attr(value)),
+        CoercedAttr::Concat(values) => values.iter().all(coerced_attr_can_be_transition_attr),
+        CoercedAttr::List(values) => values.iter().all(coerced_attr_can_be_transition_attr),
+        CoercedAttr::Tuple(values) => values.iter().all(coerced_attr_can_be_transition_attr),
+        CoercedAttr::Dict(values) => values.iter().all(|(key, value)| {
+            coerced_attr_can_be_transition_attr(key) && coerced_attr_can_be_transition_attr(value)
+        }),
+        CoercedAttr::SelectFail(_)
+        | CoercedAttr::SelectIncompatible(_)
+        | CoercedAttr::Bool(_)
+        | CoercedAttr::Int(_)
+        | CoercedAttr::String(_)
+        | CoercedAttr::EnumVariant(_)
+        | CoercedAttr::None
+        | CoercedAttr::Visibility(_)
+        | CoercedAttr::WithinView(_)
+        | CoercedAttr::Label(_)
+        | CoercedAttr::Arg(_)
+        | CoercedAttr::Query(_)
+        | CoercedAttr::Metadata(_)
+        | CoercedAttr::TargetModifiers(_) => true,
+    }
+}
+
+fn coerced_attr_can_be_bazel_transition_attr(value: &CoercedAttr) -> bool {
+    match value {
+        CoercedAttr::TransitionDep(_)
+        | CoercedAttr::SplitTransitionDep(_)
+        | CoercedAttr::ConfiguredDepForForwardNode(_)
+        | CoercedAttr::PluginDep(_)
+        | CoercedAttr::SourceFile(_) => false,
         CoercedAttr::OneOf(value, _) => coerced_attr_can_be_bazel_transition_attr(value),
+        CoercedAttr::Selector(select) => select
+            .all_entries()
+            .all(|(_, value)| coerced_attr_can_be_bazel_transition_attr(value)),
+        CoercedAttr::Concat(values) => values.iter().all(coerced_attr_can_be_bazel_transition_attr),
         CoercedAttr::List(values) => values.iter().all(coerced_attr_can_be_bazel_transition_attr),
         CoercedAttr::Tuple(values) => values.iter().all(coerced_attr_can_be_bazel_transition_attr),
         CoercedAttr::Dict(values) => values.iter().all(|(key, value)| {
             coerced_attr_can_be_bazel_transition_attr(key)
                 && coerced_attr_can_be_bazel_transition_attr(value)
         }),
-        CoercedAttr::Selector(_)
+        CoercedAttr::ExplicitConfiguredDep(_)
+        | CoercedAttr::ConfigurationDep(_)
+        | CoercedAttr::Dep(_)
+        | CoercedAttr::SourceLabel(_)
         | CoercedAttr::SelectFail(_)
         | CoercedAttr::SelectIncompatible(_)
-        | CoercedAttr::Concat(_)
         | CoercedAttr::Bool(_)
         | CoercedAttr::Int(_)
         | CoercedAttr::String(_)
@@ -820,7 +985,7 @@ fn verify_transitioned_attrs(
 }
 
 fn normalize_bazel_toolchain_key(key: &str) -> String {
-    key.strip_prefix('@').unwrap_or(key).to_owned()
+    key.trim_start_matches('@').to_owned()
 }
 
 fn bazel_toolchain_keys_match(declared: &str, candidate: &str) -> bool {
@@ -986,9 +1151,20 @@ async fn toolchain_constraints_match(
     Ok(true)
 }
 
-async fn registered_bazel_toolchain_nodes(
+#[derive(Clone, Debug, Allocative, Eq, PartialEq)]
+struct BazelRegisteredToolchain {
+    toolchain_type: String,
+    node: TargetNode,
+}
+
+#[derive(Clone, Dupe, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable)]
+#[display("registered_bazel_toolchain_nodes")]
+#[pagable_typetag(dice::DiceKeyDyn)]
+struct RegisteredBazelToolchainNodesKey;
+
+async fn compute_registered_bazel_toolchain_nodes(
     ctx: &mut DiceComputations<'_>,
-) -> buck2_error::Result<Vec<TargetNode>> {
+) -> buck2_error::Result<Arc<Vec<BazelRegisteredToolchain>>> {
     let root_conf = ctx.get_legacy_root_config_on_dice().await?;
     let registered: Vec<String> = root_conf
         .view(ctx)
@@ -998,14 +1174,14 @@ async fn registered_bazel_toolchain_nodes(
         })?
         .unwrap_or_default();
     if registered.is_empty() {
-        return Ok(Vec::new());
+        return Ok(Arc::new(Vec::new()));
     }
 
     let cell_resolver = ctx.get_cell_resolver().await?;
     let root_cell = cell_resolver.root_cell();
     let alias_resolver = ctx.get_cell_alias_resolver(root_cell).await?;
 
-    let mut nodes = Vec::new();
+    let mut parsed_patterns = Vec::new();
     for pattern in registered {
         let pattern = ParsedPattern::<TargetPatternExtra>::parse_precise(
             pattern.trim(),
@@ -1013,37 +1189,72 @@ async fn registered_bazel_toolchain_nodes(
             &cell_resolver,
             &alias_resolver,
         )?;
-        match pattern {
-            ParsedPattern::Target(package, target_name, extra) => {
-                let result = ctx.get_interpreter_results(package).await?;
-                let (targets, missing) = if target_name.as_ref().as_str() == "all" {
-                    result.apply_spec(PackageSpec::<TargetPatternExtra>::All())
-                } else {
-                    result.apply_spec(PackageSpec::Targets(vec![(target_name, extra)]))
-                };
-                if let Some(missing) = missing {
-                    return Err(missing.into_first_error().into());
-                }
-                nodes.extend(
-                    targets
-                        .into_values()
-                        .filter(|node| node.rule_type().name() == "toolchain"),
-                );
+        if let ParsedPattern::Target(package, target_name, _) = &pattern {
+            if target_name.as_ref().as_str() == "all" {
+                parsed_patterns.push(ParsedPattern::Package(package.dupe()));
+                continue;
             }
-            ParsedPattern::Package(package) => {
-                let result = ctx.get_interpreter_results(package).await?;
-                let (targets, _missing) =
-                    result.apply_spec(PackageSpec::<TargetPatternExtra>::All());
-                nodes.extend(
-                    targets
-                        .into_values()
-                        .filter(|node| node.rule_type().name() == "toolchain"),
-                );
+        }
+        parsed_patterns.push(pattern);
+    }
+
+    let resolved = ResolveTargetPatterns::resolve(ctx, &parsed_patterns).await?;
+    let mut toolchains = Vec::new();
+    for (package_with_modifiers, spec) in resolved.specs {
+        let result = ctx
+            .get_interpreter_results(package_with_modifiers.package)
+            .await?;
+        let (targets, missing) = result.apply_spec(spec);
+        if let Some(missing) = missing {
+            return Err(missing.into_first_error().into());
+        }
+        for node in targets.into_values() {
+            if node.rule_type().name() != "toolchain" {
+                continue;
             }
-            ParsedPattern::Recursive(_) => {}
+            let Some(toolchain_type) = node
+                .attr_or_none("toolchain_type", AttrInspectOptions::All)
+                .and_then(|attr| attr_target_label(&attr.value).map(|label| label.to_string()))
+            else {
+                continue;
+            };
+            toolchains.push(BazelRegisteredToolchain {
+                toolchain_type: normalize_bazel_toolchain_key(&toolchain_type),
+                node,
+            });
         }
     }
-    Ok(nodes)
+    Ok(Arc::new(toolchains))
+}
+
+#[async_trait]
+impl Key for RegisteredBazelToolchainNodesKey {
+    type Value = buck2_error::Result<Arc<Vec<BazelRegisteredToolchain>>>;
+
+    async fn compute(
+        &self,
+        ctx: &mut DiceComputations,
+        _cancellation: &CancellationContext,
+    ) -> Self::Value {
+        compute_registered_bazel_toolchain_nodes(ctx).await
+    }
+
+    fn equality(x: &Self::Value, y: &Self::Value) -> bool {
+        match (x, y) {
+            (Ok(x), Ok(y)) => x == y,
+            _ => false,
+        }
+    }
+
+    fn value_serialize() -> impl ValueSerialize<Value = Self::Value> {
+        NoValueSerialize::<Self::Value>::new()
+    }
+}
+
+async fn registered_bazel_toolchain_nodes(
+    ctx: &mut DiceComputations<'_>,
+) -> buck2_error::Result<Arc<Vec<BazelRegisteredToolchain>>> {
+    ctx.compute(&RegisteredBazelToolchainNodesKey).await?
 }
 
 async fn resolve_bazel_toolchain_deps(
@@ -1068,26 +1279,19 @@ async fn resolve_bazel_toolchain_deps(
     for declared in target_node.bazel_toolchains() {
         let declared = normalize_bazel_toolchain_key(declared);
         let mut toolchain_node = None;
-        for candidate in &registered {
-            if candidate.rule_type().name() != "toolchain" {
+        for candidate in registered.iter() {
+            if !bazel_toolchain_keys_match(&declared, &candidate.toolchain_type) {
                 continue;
             }
-            let Some(toolchain_type) = candidate
-                .attr_or_none("toolchain_type", AttrInspectOptions::All)
-                .and_then(|attr| attr_target_label(&attr.value).map(|label| label.to_string()))
-            else {
-                continue;
-            };
-            if !bazel_toolchain_keys_match(
-                &declared,
-                &normalize_bazel_toolchain_key(&toolchain_type),
-            ) {
-                continue;
-            }
-            if toolchain_constraints_match(ctx, candidate, &target_constraints, &exec_constraints)
-                .await?
+            if toolchain_constraints_match(
+                ctx,
+                &candidate.node,
+                &target_constraints,
+                &exec_constraints,
+            )
+            .await?
             {
-                toolchain_node = Some(candidate);
+                toolchain_node = Some(&candidate.node);
                 break;
             }
         }
@@ -1295,7 +1499,7 @@ async fn compute_configured_target_node_no_transition(
                     )
                     .await;
 
-                    (result, *check_visibility)
+                    (result, check_visibility.clone())
                 }
                 .boxed()
             })
@@ -1314,7 +1518,7 @@ async fn compute_configured_target_node_no_transition(
         errors_and_incompats.unpack_dep_into(
             partial_target_label,
             dep,
-            CheckVisibility::Yes,
+            &CheckVisibility::Yes,
             &mut deps,
         );
     }
@@ -1322,7 +1526,7 @@ async fn compute_configured_target_node_no_transition(
         errors_and_incompats.unpack_dep_into(
             partial_target_label,
             dep,
-            check_visibility,
+            &check_visibility,
             &mut exec_deps,
         );
     }

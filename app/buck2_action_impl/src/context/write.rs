@@ -39,6 +39,7 @@ use starlark::eval::Evaluator;
 use starlark::starlark_module;
 use starlark::values::AllocValue;
 use starlark::values::UnpackValue;
+use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
 use starlark::values::none::NoneOr;
@@ -196,9 +197,13 @@ pub(crate) fn analysis_actions_methods_write(methods: &mut MethodsBuilder) {
     /// newline separated unless another delimiter is explicitly specified.
     fn write<'v>(
         this: &AnalysisActions<'v>,
-        #[starlark(require = pos)] output: OutputArtifactArg<'v>,
-        #[starlark(require = pos)] content: WriteContentArg<'v>,
+        output: OutputArtifactArg<'v>,
+        content: WriteContentArg<'v>,
         #[starlark(require = named, default = false)] is_executable: bool,
+        #[starlark(require = named, default = NoneOr::None)] _mnemonic: NoneOr<&str>,
+        #[starlark(require = named, default = NoneOr::None)] _execution_requirements: NoneOr<
+            Value<'v>,
+        >,
         #[starlark(require = named, default = false)] allow_args: bool,
         // If set, add artifacts in content as associated artifacts of the output. This will only work for bound artifacts.
         #[starlark(require = named, default = false)] with_inputs: bool,

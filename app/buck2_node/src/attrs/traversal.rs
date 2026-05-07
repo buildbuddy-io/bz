@@ -60,6 +60,10 @@ pub trait CoercedAttrTraversal<'a> {
 
     fn input(&mut self, input: SourcePathRef) -> buck2_error::Result<()>;
 
+    fn inputs_require_package(&self) -> bool {
+        true
+    }
+
     fn label(&mut self, _label: &'a ProvidersLabel) -> buck2_error::Result<()> {
         Ok(())
     }

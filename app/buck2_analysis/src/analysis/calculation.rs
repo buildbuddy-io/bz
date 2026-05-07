@@ -69,6 +69,7 @@ use smallvec::SmallVec;
 use crate::analysis::env::RuleSpec;
 use crate::analysis::env::get_user_defined_rule_spec;
 use crate::analysis::env::run_analysis;
+use crate::analysis::env::run_bazel_input_file_analysis;
 use crate::analysis::env::run_bazel_output_file_analysis;
 use crate::attrs::resolve::ctx::AnalysisQueryResult;
 
@@ -395,6 +396,22 @@ async fn get_analysis_result_inner(
 
                 ((res, now, None), spans)
             }
+            RuleType::BazelInputFile => {
+                let now = std::time::Instant::now();
+                let (res, spans) = async_record_root_spans(async {
+                    run_bazel_input_file_analysis(
+                        ctx,
+                        target,
+                        configured_node.execution_platform_resolution(),
+                        cancellation,
+                    )
+                    .await
+                    .map(MaybeCompatible::Compatible)
+                })
+                .await;
+
+                ((res, now, None), spans)
+            }
         };
 
     let analysis_end = std::time::Instant::now();
@@ -445,6 +462,9 @@ fn all_deps(nodes: &[ConfiguredTargetNode]) -> LabelIndexedSet<ConfiguredTargetN
                 }
                 RuleType::BazelOutputFile => {
                     // No user Starlark code ran on Bazel output-file node.
+                }
+                RuleType::BazelInputFile => {
+                    // No user Starlark code ran on Bazel input-file node.
                 }
             }
 

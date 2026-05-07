@@ -22,6 +22,7 @@ use buck2_cli_proto::unstable_dice_dump_request::DiceDumpFormat;
 use buck2_common::cas_digest::DigestAlgorithm;
 use buck2_common::cas_digest::DigestAlgorithmFamily;
 use buck2_common::ignores::ignore_set::IgnoreSet;
+use buck2_common::ignores::ignore_set::bazelignore_to_ignore_spec;
 use buck2_common::init::DaemonStartupConfig;
 use buck2_common::init::SystemWarningConfig;
 use buck2_common::init::Timeout;
@@ -32,6 +33,8 @@ use buck2_common::legacy_configs::key::BuckconfigKeyRef;
 use buck2_common::sqlite::sqlite_db::SqliteDb;
 use buck2_common::sqlite::sqlite_db::SqliteIdentity;
 use buck2_core::buck2_env;
+use buck2_core::cells::cell_root_path::CellRootPath;
+use buck2_core::cells::external::ExternalCellOrigin;
 use buck2_core::cells::name::CellName;
 use buck2_core::facebook_only;
 use buck2_core::fs::project::ProjectRoot;
@@ -67,6 +70,8 @@ use buck2_execute_impl::sqlite::materializer_db::MaterializerState;
 use buck2_execute_impl::sqlite::materializer_db::MaterializerStateSqliteDb;
 use buck2_file_watcher::file_watcher::FileWatcher;
 use buck2_fs::cwd::WorkingDirectory;
+use buck2_fs::fs_util;
+use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
 use buck2_hash::StdBuckHashMap;
 use buck2_http::HttpClient;
 use buck2_http::HttpClientBuilder;
@@ -99,6 +104,39 @@ use crate::daemon::forkserver::maybe_launch_forkserver;
 use crate::daemon::io_provider::create_io_provider;
 use crate::daemon::panic::DaemonStatePanicDiceDump;
 use crate::daemon::server::BuckdServerInitPreferences;
+
+fn buckconfig_truthy(value: Option<&str>) -> bool {
+    value
+        .map(|value| matches!(value.trim(), "1" | "true" | "True" | "TRUE"))
+        .unwrap_or(false)
+}
+
+fn read_cell_bazelignore_spec_for_file_watcher(
+    project_fs: &ProjectRoot,
+    cell_root: &CellRootPath,
+) -> buck2_error::Result<String> {
+    let path = cell_root
+        .as_project_relative_path()
+        .join(ForwardRelativePath::unchecked_new(".bazelignore"));
+    let Some(contents) = fs_util::read_to_string_if_exists(project_fs.resolve(&path))
+        .with_buck_error_context(|| format!("Reading `{}`", path.as_str()))?
+    else {
+        return Ok(String::new());
+    };
+    bazelignore_to_ignore_spec(&contents)
+}
+
+fn merge_ignore_specs_for_file_watcher(project_ignore: &str, bazelignore: &str) -> String {
+    match (
+        project_ignore.trim().is_empty(),
+        bazelignore.trim().is_empty(),
+    ) {
+        (true, true) => String::new(),
+        (false, true) => project_ignore.to_owned(),
+        (true, false) => bazelignore.to_owned(),
+        (false, false) => format!("{project_ignore},{bazelignore}"),
+    }
+}
 
 /// For a buckd process there is a single DaemonState created at startup and never destroyed.
 #[derive(Allocative)]
@@ -388,19 +426,38 @@ impl DaemonState {
             )?);
 
             let mut ignore_specs: StdBuckHashMap<CellName, IgnoreSet> = StdBuckHashMap::default();
-            for (cell, _) in cells.cells() {
+            let empty_external_bzlmod_ignore = IgnoreSet::from_ignore_spec("", false)?;
+            for (cell, instance) in cells.cells() {
+                if matches!(
+                    instance.external(),
+                    Some(ExternalCellOrigin::Bzlmod(_))
+                        | Some(ExternalCellOrigin::BzlmodGenerated(_))
+                ) {
+                    ignore_specs.insert(cell, empty_external_bzlmod_ignore.clone());
+                    continue;
+                }
                 let config = legacy_cells.parse_single_cell(cell, &fs).await?;
+                let mut ignore_spec = config
+                    .get(BuckconfigKeyRef {
+                        section: "project",
+                        property: "ignore",
+                    })
+                    .unwrap_or("")
+                    .to_owned();
+                if buckconfig_truthy(config.get(BuckconfigKeyRef {
+                    section: "bazel",
+                    property: "compatibility",
+                })) {
+                    let bazelignore_spec =
+                        read_cell_bazelignore_spec_for_file_watcher(&fs, instance.path())?;
+                    ignore_spec = merge_ignore_specs_for_file_watcher(
+                        ignore_spec.as_str(),
+                        bazelignore_spec.as_str(),
+                    );
+                }
                 ignore_specs.insert(
                     cell,
-                    IgnoreSet::from_ignore_spec(
-                        config
-                            .get(BuckconfigKeyRef {
-                                section: "project",
-                                property: "ignore",
-                            })
-                            .unwrap_or(""),
-                        cells.is_root_cell(cell),
-                    )?,
+                    IgnoreSet::from_ignore_spec(&ignore_spec, cells.is_root_cell(cell))?,
                 );
             }
 

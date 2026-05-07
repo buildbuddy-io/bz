@@ -1,0 +1,132 @@
+#!/usr/bin/env python3
+
+import json
+import sys
+
+
+def die(message):
+    print(message, file=sys.stderr)
+    sys.exit(1)
+
+
+def read_json(path):
+    with open(path) as f:
+        return json.load(f)
+
+
+def parse_ddi(path):
+    data = read_json(path)
+    if not isinstance(data, dict):
+        die("require ddi content is JSON object")
+    rules = data.get("rules")
+    if not isinstance(rules, list):
+        die("require ddi content 'rules' is JSON array")
+    if len(rules) > 1:
+        die("require ddi content 'rules' has only 1 rule")
+    if not rules:
+        return {"gen_bmi": False, "name": "", "requires": []}
+    rule = rules[0]
+    if not isinstance(rule, dict):
+        die("require ddi content 'rules[0]' is JSON object")
+
+    provides = rule.get("provides")
+    name = ""
+    gen_bmi = False
+    if provides is not None:
+        if not isinstance(provides, list):
+            die("require ddi content 'rules[0][\"provides\"]' is JSON array")
+        if len(provides) > 1:
+            die("require ddi content 'rules[0][\"provides\"]' has only 1 provide")
+        if provides:
+            provide = provides[0]
+            if not isinstance(provide, dict):
+                die("require ddi content 'rules[0][\"provides\"][0]' is JSON object")
+            name = provide.get("logical-name")
+            if not isinstance(name, str):
+                die("require ddi content 'rules[0][\"provides\"][0][\"logical-name\"]' is JSON string")
+            gen_bmi = True
+
+    requires = rule.get("requires")
+    require_list = []
+    if requires is not None:
+        if not isinstance(requires, list):
+            die("require ddi content 'rules[0][\"requires\"]' is JSON array")
+        for item in requires:
+            if not isinstance(item, dict):
+                die("require JSON object")
+            logical_name = item.get("logical-name")
+            if not isinstance(logical_name, str):
+                die("require JSON string")
+            require_list.append(logical_name)
+
+    return {"gen_bmi": gen_bmi, "name": name, "requires": require_list}
+
+
+def parse_info(path):
+    data = read_json(path)
+    if not isinstance(data, dict):
+        die("require content is JSON object")
+    modules = data.get("modules")
+    usages = data.get("usages")
+    if not isinstance(modules, dict):
+        die("require 'modules' is JSON object")
+    if not isinstance(usages, dict):
+        die("require 'usages' is JSON object")
+    return modules, usages
+
+
+def main(argv):
+    info_files = []
+    ddi_files = []
+    module_files = []
+    output = None
+    i = 1
+    while i < len(argv):
+        arg = argv[i]
+        if arg == "-m" and i + 1 < len(argv):
+            i += 1
+            info_files.append(argv[i])
+        elif arg == "-d" and i + 1 < len(argv):
+            i += 1
+            ddi_files.append(argv[i])
+        elif arg == "-f" and i + 1 < len(argv):
+            i += 1
+            module_files.append(argv[i])
+        elif arg == "-o" and i + 1 < len(argv):
+            i += 1
+            output = argv[i]
+        else:
+            die("ERROR: Unknown or incomplete argument: " + arg)
+        i += 1
+
+    if len(ddi_files) != len(module_files):
+        die("ERROR: The number of -d and -f arguments must match.")
+    if not output:
+        die("ERROR: output not specified")
+
+    modules = {}
+    usages = {}
+    for info_file in info_files:
+        info_modules, info_usages = parse_info(info_file)
+        modules.update(info_modules)
+        usages.update(info_usages)
+
+    for ddi_file, module_file in zip(ddi_files, module_files):
+        dep = parse_ddi(ddi_file)
+        if dep["gen_bmi"]:
+            modules[dep["name"]] = module_file
+            usages[dep["name"]] = dep["requires"]
+
+    with open(output, "w") as f:
+        json.dump(
+            {
+                "modules": {k: modules[k] for k in sorted(modules)},
+                "usages": {k: usages[k] for k in sorted(usages)},
+            },
+            f,
+            separators=(",", ":"),
+        )
+
+
+if __name__ == "__main__":
+    main(sys.argv)

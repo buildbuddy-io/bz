@@ -18,6 +18,7 @@ use allocative::Allocative;
 use buck2_core::build_file_path::BuildFilePath;
 use buck2_core::cells::cell_path::CellPath;
 use buck2_core::configuration::transition::id::TransitionId;
+use buck2_core::package::PackageLabel;
 use buck2_core::package::source_path::SourcePathRef;
 use buck2_core::plugins::PluginKind;
 use buck2_core::provider::label::ProvidersLabel;
@@ -45,6 +46,7 @@ use crate::attrs::spec::internal::VISIBILITY_ATTRIBUTE;
 use crate::attrs::traversal::CoercedAttrTraversal;
 use crate::attrs::values::AttrValues;
 use crate::attrs::values::TargetModifiersValue;
+use crate::bzl_or_bxl_path::BzlOrBxlPath;
 use crate::call_stack::StarlarkCallStack;
 use crate::call_stack::StarlarkTargetCallStackRoot;
 use crate::metadata::map::MetadataMap;
@@ -59,6 +61,21 @@ use crate::package::Package;
 use crate::rule::Rule;
 use crate::rule_type::RuleType;
 use crate::visibility::VisibilitySpecification;
+
+fn package_pattern_matches(
+    pattern: &buck2_core::pattern::pattern::ParsedPattern<
+        buck2_core::pattern::pattern_type::TargetPatternExtra,
+    >,
+    package: &PackageLabel,
+) -> bool {
+    match pattern {
+        buck2_core::pattern::pattern::ParsedPattern::Target(..) => false,
+        buck2_core::pattern::pattern::ParsedPattern::Package(pkg) => pkg == package,
+        buck2_core::pattern::pattern::ParsedPattern::Recursive(cell_path) => {
+            package.as_cell_path().starts_with(cell_path.as_ref())
+        }
+    }
+}
 
 /// Describes a target including its name, type, and the values that the user provided.
 /// Some information (e.g. deps) is extracted eagerly, most is in the attrs map and needs to be
@@ -292,7 +309,105 @@ impl TargetNode {
         if self.label().pkg() == target.pkg() {
             return Ok(true);
         }
-        Ok(self.visibility()?.0.matches_target(target))
+        if self.visibility()?.0.matches_target(target) {
+            return Ok(true);
+        }
+        Ok(self.package_group_visibility_matches(target)?)
+    }
+
+    pub fn is_visible_to_package(&self, package: &PackageLabel) -> buck2_error::Result<bool> {
+        if self.label().pkg() == *package {
+            return Ok(true);
+        }
+        if self.visibility_matches_package(package)? {
+            return Ok(true);
+        }
+        Ok(self.package_group_visibility_matches_package(package)?)
+    }
+
+    fn visibility_matches_package(&self, package: &PackageLabel) -> buck2_error::Result<bool> {
+        match &self.visibility()?.0 {
+            crate::visibility::VisibilityPatternList::Public => Ok(true),
+            crate::visibility::VisibilityPatternList::List(patterns) => Ok(patterns
+                .iter()
+                .any(|pattern| package_pattern_matches(&pattern.0, package))),
+        }
+    }
+
+    fn package_group_visibility_matches(&self, target: &TargetLabel) -> buck2_error::Result<bool> {
+        let Some(package_groups) = self.package.package_groups.get() else {
+            return Ok(false);
+        };
+
+        match &self.visibility()?.0 {
+            crate::visibility::VisibilityPatternList::Public => Ok(true),
+            crate::visibility::VisibilityPatternList::List(patterns) => {
+                for pattern in patterns {
+                    if let buck2_core::pattern::pattern::ParsedPattern::Target(
+                        package,
+                        group,
+                        buck2_core::pattern::pattern_type::TargetPatternExtra,
+                    ) = &pattern.0
+                        && package == &self.label().pkg()
+                        && let Some(group_patterns) = package_groups.get(group)
+                        && group_patterns.iter().any(|pattern| pattern.matches(target))
+                    {
+                        return Ok(true);
+                    }
+                }
+                Ok(false)
+            }
+        }
+    }
+
+    fn package_group_visibility_matches_package(
+        &self,
+        package: &PackageLabel,
+    ) -> buck2_error::Result<bool> {
+        let Some(package_groups) = self.package.package_groups.get() else {
+            return Ok(false);
+        };
+
+        match &self.visibility()?.0 {
+            crate::visibility::VisibilityPatternList::Public => Ok(true),
+            crate::visibility::VisibilityPatternList::List(patterns) => {
+                for pattern in patterns {
+                    if let buck2_core::pattern::pattern::ParsedPattern::Target(
+                        group_package,
+                        group,
+                        buck2_core::pattern::pattern_type::TargetPatternExtra,
+                    ) = &pattern.0
+                        && group_package == &self.label().pkg()
+                        && let Some(group_patterns) = package_groups.get(group)
+                        && group_patterns
+                            .iter()
+                            .any(|pattern| package_pattern_matches(pattern, package))
+                    {
+                        return Ok(true);
+                    }
+                }
+                Ok(false)
+            }
+        }
+    }
+
+    pub fn bazel_implicit_attr_visibility_package(
+        &self,
+        attr_name: &str,
+    ) -> buck2_error::Result<Option<PackageLabel>> {
+        if !self.0.rule.is_bazel_rule || !attr_name.starts_with('_') {
+            return Ok(None);
+        }
+
+        match &self.0.rule.rule_type {
+            RuleType::Starlark(rule_type) => match &rule_type.path {
+                BzlOrBxlPath::Bzl(path) => {
+                    Ok(Some(PackageLabel::from_cell_path(path.path_parent())?))
+                }
+                BzlOrBxlPath::Bxl(_) => Ok(None),
+            },
+            RuleType::Forward | RuleType::BazelOutputFile | RuleType::BazelInputFile => Ok(None),
+        }
     }
 
     /// Returns an iterator of all attributes.
@@ -436,6 +551,26 @@ impl<'a> TargetNodeRef<'a> {
     #[inline]
     pub fn label(self) -> &'a TargetLabel {
         &self.0.get().label
+    }
+
+    pub fn bazel_implicit_attr_visibility_package(
+        self,
+        attr_name: &str,
+    ) -> buck2_error::Result<Option<PackageLabel>> {
+        let rule = &self.0.get().rule;
+        if !rule.is_bazel_rule || !attr_name.starts_with('_') {
+            return Ok(None);
+        }
+
+        match &rule.rule_type {
+            RuleType::Starlark(rule_type) => match &rule_type.path {
+                BzlOrBxlPath::Bzl(path) => {
+                    Ok(Some(PackageLabel::from_cell_path(path.path_parent())?))
+                }
+                BzlOrBxlPath::Bxl(_) => Ok(None),
+            },
+            RuleType::Forward | RuleType::BazelOutputFile | RuleType::BazelInputFile => Ok(None),
+        }
     }
 
     #[inline]
@@ -738,6 +873,7 @@ pub mod testing {
                 Arc::new(Package {
                     buildfile_path,
                     oncall: None,
+                    package_groups: Arc::default(),
                 }),
                 label,
                 attributes,

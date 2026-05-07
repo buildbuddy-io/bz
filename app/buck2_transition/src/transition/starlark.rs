@@ -193,6 +193,29 @@ impl TransitionValue for Transition<'_> {
             .map(Dupe::dupe)
             .ok_or_else(|| TransitionError::TransitionNotAssigned.into())
     }
+
+    fn transition_id_for_bazel_attr<'v>(
+        &self,
+        value: Value<'v>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> buck2_error::Result<Arc<TransitionId>> {
+        if let Some(id) = self.id.borrow().as_ref() {
+            return Ok(id.dupe());
+        }
+
+        for index in 0.. {
+            let name = format!("__buck2_bazel_transition_{index}");
+            if eval.module().get(&name).is_none() {
+                value
+                    .export_as(&name, eval)
+                    .map_err(buck2_error::Error::from)?;
+                eval.module().set(&name, value);
+                return self.transition_id();
+            }
+        }
+
+        unreachable!("unbounded synthetic transition names")
+    }
 }
 
 impl TransitionValue for FrozenTransition {

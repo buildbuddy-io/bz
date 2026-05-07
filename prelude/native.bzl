@@ -19,6 +19,8 @@ load("@prelude//apple:apple_macro_layer.bzl", "apple_binary_macro_impl", "apple_
 load("@prelude//apple:prebuilt_apple_xcframework_macro_impl.bzl", "prebuilt_apple_xcframework_macro_impl")
 load("@prelude//apple/swift:swift_toolchain_macro_layer.bzl", "swift_toolchain_macro_impl")
 load("@prelude//bazel:filegroup.bzl", "bazel_filegroup")
+load("@prelude//bazel:genquery.bzl", "bazel_genquery")
+load("@prelude//bazel:package_group.bzl", "bazel_package_group")
 load("@prelude//cxx:cxx_toolchain.bzl", "cxx_toolchain_inheriting_target_platform")
 load("@prelude//cxx:cxx_toolchain_macro_layer.bzl", "cxx_toolchain_macro_impl")
 load("@prelude//cxx:cxx_toolchain_types.bzl", _cxx = "cxx")
@@ -557,6 +559,8 @@ __extra_rules__ = {
     "erlang_tests": _erlang_tests_macro_stub,
     "export_file": _export_file_macro_stub,
     "filegroup": _filegroup_macro_stub,
+    "genquery": bazel_genquery,
+    "package_group": bazel_package_group,
     "kotlin_library": _kotlin_library_macro_stub,
     "kotlin_test": _kotlin_test_macro_stub,
     "prebuilt_apple_framework": _prebuilt_apple_framework_macro_stub,

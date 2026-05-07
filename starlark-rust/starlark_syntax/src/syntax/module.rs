@@ -31,6 +31,7 @@ use crate::lexer::Lexer;
 use crate::lexer::Token;
 use crate::syntax::AstLoad;
 use crate::syntax::Dialect;
+use crate::syntax::DialectTypes;
 use crate::syntax::ast::ArgumentP;
 use crate::syntax::ast::AstExpr;
 use crate::syntax::ast::AstStmt;
@@ -150,7 +151,8 @@ impl AstModule {
     /// assert_eq!(span.to_string(), "filename:2:11");
     /// ```
     pub fn parse(filename: &str, content: String, dialect: &Dialect) -> crate::Result<Self> {
-        let typecheck = content.contains("@starlark-rust: typecheck");
+        let typecheck = dialect.enable_types == DialectTypes::Enable
+            && content.contains("@starlark-rust: typecheck");
         let codemap = CodeMap::new(filename.to_owned(), content);
         let lexer = Lexer::new(codemap.source(), dialect, codemap.dupe());
         // Store lint suppressions found during parsing

@@ -220,11 +220,12 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
             ValueOf<'v, UnpackDictEntries<UnpackAndDiscard<&'v str>, ValueAsCommandLineLike<'v>>>,
         >,
         #[starlark(require = named)] mnemonic: Option<StringValue<'v>>,
+        #[starlark(require = named, default = NoneType)] progress_message: Value<'v>,
         #[starlark(require = named, default = NoneType)] execution_requirements: Value<'v>,
         #[starlark(require = named, default = NoneType)] toolchain: Value<'v>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<NoneType> {
-        let _unused = (execution_requirements, toolchain);
+        let _unused = (progress_message, execution_requirements, toolchain);
         let heap = eval.heap();
         let exe = StarlarkCmdArgs::from_values([heap.alloc_str("/bin/bash").to_value()])?;
         let mut shell_args = Vec::with_capacity(arguments.items.len() + 3);
@@ -371,6 +372,7 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
         #[starlark(require = named, default = UnpackListOrTuple::default())]
         outputs: UnpackListOrTuple<ValueTyped<'v, StarlarkDeclaredArtifact<'v>>>,
         #[starlark(require = named)] mnemonic: Option<StringValue<'v>>,
+        #[starlark(require = named, default = NoneType)] progress_message: Value<'v>,
         #[starlark(require = named, default = NoneType)] execution_requirements: Value<'v>,
         #[starlark(require = named, default = NoneType)] toolchain: Value<'v>,
         #[starlark(require = named, default = false)] local_only: bool,
@@ -422,7 +424,7 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
     ) -> starlark::Result<NoneType> {
         let arguments = arguments.into_option();
         if let Some(executable) = executable {
-            let _unused = (execution_requirements, toolchain);
+            let _unused = (progress_message, execution_requirements, toolchain);
             let exe = StarlarkCmdArgs::from_values([executable])?;
             let args = match arguments {
                 Some(arguments) => StarlarkCmdArgs::try_from_value_typed(arguments)?,
@@ -437,6 +439,7 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
             tools,
             outputs,
             mnemonic,
+            progress_message,
             execution_requirements,
             toolchain,
         );

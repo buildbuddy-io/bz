@@ -54,6 +54,8 @@ pub enum RuleType {
     Forward,
     #[display("bazel_output_file")]
     BazelOutputFile,
+    #[display("bazel_input_file")]
+    BazelInputFile,
 }
 
 impl RuleType {
@@ -62,6 +64,7 @@ impl RuleType {
             RuleType::Starlark(rule_type) => rule_type.name.as_str(),
             RuleType::Forward => "forward",
             RuleType::BazelOutputFile => "bazel_output_file",
+            RuleType::BazelInputFile => "bazel_input_file",
         }
     }
 }

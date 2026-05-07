@@ -13,13 +13,18 @@ use buck2_core::cells::alias::NonEmptyCellAlias;
 use buck2_core::cells::external::bzlmod_cell_aliases_for_cell;
 use buck2_core::cells::external::bzlmod_cell_name;
 use buck2_core::cells::name::CellName;
+use buck2_core::cells::paths::CellRelativePathBuf;
 use buck2_core::configuration::data::ConfigurationData;
 use buck2_core::fs::project_rel_path::ProjectRelativePath;
 use buck2_core::package::PackageLabel;
 use buck2_core::pattern::pattern::ParsedPattern;
 use buck2_core::pattern::pattern_type::ProvidersPatternExtra;
 use buck2_core::pattern::pattern_type::TargetPatternExtra;
+use buck2_core::provider::label::ProvidersLabel;
+use buck2_core::provider::label::ProvidersName;
 use buck2_core::target::label::label::TargetLabel;
+use buck2_core::target::name::TargetNameRef;
+use buck2_hash::StdBuckHashMap;
 use buck2_interpreter::types::configured_providers_label::StarlarkConfiguredProvidersLabel;
 use buck2_interpreter::types::configured_providers_label::StarlarkProvidersLabel;
 use buck2_interpreter::types::target_label::StarlarkTargetLabel;
@@ -29,6 +34,8 @@ use starlark::eval::Evaluator;
 use starlark::starlark_module;
 use starlark::values::Value;
 
+use crate::bazel_label::bazel_absolute_label_parts;
+use crate::bazel_label::parse_bazel_canonical_providers_label;
 use crate::interpreter::build_context::BuildContext;
 
 #[derive(Debug, buck2_error::Error)]
@@ -65,22 +72,19 @@ fn bzlmod_cell_alias_resolver(
     c: &BuildContext<'_>,
     cell_name: CellName,
 ) -> buck2_error::Result<CellAliasResolver> {
-    let aliases = bzlmod_cell_aliases_for_cell(cell_name.as_str())
-        .into_iter()
-        .map(|(alias, destination)| {
-            Ok((
-                NonEmptyCellAlias::new(alias)?,
-                NonEmptyCellAlias::new(destination)?,
-            ))
-        })
-        .collect::<buck2_error::Result<Vec<_>>>()?;
-    CellAliasResolver::new_for_non_root_cell(
-        cell_name,
-        c.cell_info()
-            .cell_resolver()
-            .root_cell_cell_alias_resolver(),
-        aliases,
-    )
+    let mut aliases = StdBuckHashMap::default();
+    for alias in ["root", "prelude", "bazel_tools"] {
+        let alias = NonEmptyCellAlias::new(alias.to_owned())?;
+        let destination = CellName::unchecked_new(alias.as_str())?;
+        c.cell_info().cell_resolver().get(destination)?;
+        aliases.insert(alias, destination);
+    }
+    for (alias, destination) in bzlmod_cell_aliases_for_cell(cell_name.as_str()) {
+        let destination = CellName::unchecked_new(&destination)?;
+        c.cell_info().cell_resolver().get(destination)?;
+        aliases.insert(NonEmptyCellAlias::new(alias)?, destination);
+    }
+    CellAliasResolver::new(cell_name, aliases)
 }
 
 fn label_parse_context<'v>(
@@ -133,8 +137,8 @@ fn parse_providers_label<'v>(
         format!("{}{}", package, s)
     } else if let Some(root_label) = s.strip_prefix("@@root//") {
         format!("root//{root_label}")
-    } else if let Some(canonical_label) = bazel_canonical_label_to_buck_label(s) {
-        canonical_label
+    } else if let Some(canonical_label) = parse_bazel_canonical_providers_label(s)? {
+        return Ok(StarlarkProvidersLabel::new(canonical_label));
     } else {
         s.to_owned()
     };
@@ -143,7 +147,16 @@ fn parse_providers_label<'v>(
         label_context.cell_name,
         c.cell_info().cell_resolver(),
         &label_context.cell_alias_resolver,
-    )? {
+    ) {
+        Ok(pattern) => pattern,
+        Err(e) => {
+            if let Some(label) = bazel_non_visible_repo_label(&label, &label_context)? {
+                return Ok(StarlarkProvidersLabel::new(label));
+            }
+            return Err(e.into());
+        }
+    };
+    let target = match target {
         ParsedPattern::Target(package, target_name, providers) => {
             providers.into_providers_label(package, target_name.as_ref())
         }
@@ -156,17 +169,43 @@ fn parse_providers_label<'v>(
     Ok(StarlarkProvidersLabel::new(target))
 }
 
-fn bazel_canonical_label_to_buck_label(label: &str) -> Option<String> {
-    let label = label.strip_prefix("@@")?;
-    let (repo_name, package_and_target) = label.split_once("//")?;
-    let cell_name = if repo_name.is_empty() || repo_name == "root" {
-        "root".to_owned()
-    } else if repo_name == "bazel_tools" {
-        "bazel_tools".to_owned()
-    } else {
-        bzlmod_cell_name(repo_name)
+fn bazel_non_visible_repo_label(
+    value: &str,
+    label_context: &LabelParseContext,
+) -> buck2_error::Result<Option<ProvidersLabel>> {
+    if !is_bazel_compat_cell(label_context.cell_name) {
+        return Ok(None);
+    }
+
+    let Some(value) = value.strip_prefix('@') else {
+        return Ok(None);
     };
-    Some(format!("{cell_name}//{package_and_target}"))
+    if value.starts_with('@') {
+        return Ok(None);
+    }
+
+    let Some((repo, label)) = value.split_once("//") else {
+        return Ok(None);
+    };
+    if repo.is_empty() || label_context.cell_alias_resolver.resolve(repo).is_ok() {
+        return Ok(None);
+    }
+
+    let Some((package, target)) = bazel_absolute_label_parts(label) else {
+        return Ok(None);
+    };
+
+    let cell_name = CellName::unchecked_new(&bzlmod_cell_name(&format!(
+        "unknown+{}+{}",
+        label_context.cell_name.as_str(),
+        repo
+    )))?;
+    let package = PackageLabel::new(cell_name, CellRelativePathBuf::try_from(package)?.as_ref())?;
+    let target = TargetNameRef::new(&target)?;
+    Ok(Some(ProvidersLabel::new(
+        TargetLabel::new(package, target),
+        ProvidersName::Default,
+    )))
 }
 
 #[starlark_module]

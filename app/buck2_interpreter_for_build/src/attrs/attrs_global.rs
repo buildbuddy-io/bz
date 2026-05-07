@@ -22,6 +22,7 @@ use buck2_fs::paths::file_name::FileNameBuf;
 use buck2_interpreter::coerce::COERCE_PROVIDERS_LABEL_FOR_BZL;
 use buck2_interpreter::types::provider::callable::ValueAsProviderCallableLike;
 use buck2_interpreter::types::transition::transition_id_from_value;
+use buck2_interpreter::types::transition::transition_id_from_value_for_bazel_attr;
 use buck2_node::attrs::attr::Attribute;
 use buck2_node::attrs::attr::AttributeAllowedValues;
 use buck2_node::attrs::attr_type::AttrType;
@@ -258,6 +259,7 @@ fn bazel_label_allows_files(allow_files: Option<Value>, allow_single_file: Optio
 fn bazel_dep_attr_type<'v>(
     required_providers: ProviderIdSet,
     cfg: Option<Value<'v>>,
+    eval: &mut Evaluator<'v, '_, '_>,
 ) -> buck2_error::Result<AttrType> {
     match cfg {
         None => Ok(AttrType::dep(required_providers, PluginKindSet::EMPTY)),
@@ -271,7 +273,9 @@ fn bazel_dep_attr_type<'v>(
             Some(other) => Err(AttrError::UnsupportedBazelAttrCfg(other.to_owned()).into()),
             None => Ok(AttrType::split_transition_dep(
                 required_providers,
-                Arc::new(TransitionId::BazelAttribute(transition_id_from_value(cfg)?)),
+                Arc::new(TransitionId::BazelAttribute(
+                    transition_id_from_value_for_bazel_attr(cfg, eval)?,
+                )),
             )),
         },
     }
@@ -283,10 +287,15 @@ fn bazel_label_attr_type<'v>(
     allow_single_file: Option<Value<'v>>,
     cfg: Option<Value<'v>>,
     list: bool,
+    eval: &mut Evaluator<'v, '_, '_>,
 ) -> buck2_error::Result<AttrType> {
-    let dep = bazel_dep_attr_type(dep_like_attr_handle_providers_arg(providers.items)?, cfg)?;
+    let dep = bazel_dep_attr_type(
+        dep_like_attr_handle_providers_arg(providers.items)?,
+        cfg,
+        eval,
+    )?;
     let inner = if bazel_label_allows_files(allow_files, allow_single_file) {
-        AttrType::bazel_label(dep, AttrType::source(false))
+        AttrType::bazel_label(dep, AttrType::source(true))
     } else {
         dep
     };
@@ -993,7 +1002,8 @@ fn bazel_attr_module(registry: &mut GlobalsBuilder) {
             for_dependency_resolution,
             materializer,
         );
-        let inner = bazel_label_attr_type(providers, allow_files, allow_single_file, cfg, false)?;
+        let inner =
+            bazel_label_attr_type(providers, allow_files, allow_single_file, cfg, false, eval)?;
         let coercer = if mandatory {
             inner
         } else {
@@ -1040,7 +1050,7 @@ fn bazel_attr_module(registry: &mut GlobalsBuilder) {
             for_dependency_resolution,
             materializer,
         );
-        let coercer = bazel_label_attr_type(providers, allow_files, None, cfg, true)?;
+        let coercer = bazel_label_attr_type(providers, allow_files, None, cfg, true, eval)?;
         let fallback = eval.heap().alloc(AllocList::EMPTY);
         Ok(bazel_attr(
             eval,
@@ -1174,7 +1184,7 @@ fn bazel_attr_module(registry: &mut GlobalsBuilder) {
             flags,
             for_dependency_resolution,
         );
-        let value = bazel_label_attr_type(providers, allow_files, None, cfg, false)?;
+        let value = bazel_label_attr_type(providers, allow_files, None, cfg, false, eval)?;
         let fallback = eval.heap().alloc(AllocDict::EMPTY);
         Ok(bazel_attr(
             eval,
@@ -1214,7 +1224,7 @@ fn bazel_attr_module(registry: &mut GlobalsBuilder) {
             skip_validations,
             for_dependency_resolution,
         );
-        let key = bazel_label_attr_type(providers, allow_files, None, cfg, false)?;
+        let key = bazel_label_attr_type(providers, allow_files, None, cfg, false, eval)?;
         let fallback = eval.heap().alloc(AllocDict::EMPTY);
         Ok(bazel_attr(
             eval,

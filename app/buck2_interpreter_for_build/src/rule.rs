@@ -23,9 +23,11 @@ use buck2_interpreter::types::rule::FROZEN_PROMISE_ARTIFACT_MAPPINGS_GET_IMPL;
 use buck2_interpreter::types::rule::FROZEN_RULE_GET_IMPL;
 use buck2_interpreter::types::target_label::StarlarkTargetLabel;
 use buck2_interpreter::types::transition::transition_id_from_value;
+use buck2_interpreter::types::transition::transition_id_from_value_for_bazel_attr;
 use buck2_node::attrs::attr::Attribute;
 use buck2_node::attrs::attr_type::AttrType;
 use buck2_node::attrs::attr_type::bool::BoolLiteral;
+use buck2_node::attrs::attr_type::dict::DictLiteral;
 use buck2_node::attrs::attr_type::list::ListLiteral;
 use buck2_node::attrs::attr_type::string::StringLiteral;
 use buck2_node::attrs::coerced_attr::CoercedAttr;
@@ -52,6 +54,9 @@ use starlark::docs::DocItem;
 use starlark::docs::DocMember;
 use starlark::docs::DocStringKind;
 use starlark::environment::GlobalsBuilder;
+use starlark::environment::Methods;
+use starlark::environment::MethodsBuilder;
+use starlark::environment::MethodsStatic;
 use starlark::eval::Arguments;
 use starlark::eval::Evaluator;
 use starlark::eval::ParametersSpec;
@@ -79,6 +84,7 @@ use starlark::values::list::ListType;
 use starlark::values::list::UnpackList;
 use starlark::values::list_or_tuple::UnpackListOrTuple;
 use starlark::values::starlark_value;
+use starlark::values::structs::AllocStruct;
 use starlark::values::structs::StructRef;
 use starlark::values::typing::FrozenStarlarkCallable;
 use starlark::values::typing::StarlarkCallable;
@@ -117,6 +123,137 @@ starlark_simple_value!(StarlarkExecGroup);
 
 #[starlark_value(type = "exec_group")]
 impl<'v> StarlarkValue<'v> for StarlarkExecGroup {}
+
+#[derive(Debug, ProvidesStaticType, NoSerialize, Allocative)]
+struct BazelSubruleCppFragment;
+
+impl fmt::Display for BazelSubruleCppFragment {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("<cpp fragment>")
+    }
+}
+
+starlark_simple_value!(BazelSubruleCppFragment);
+
+#[starlark_value(type = "cpp")]
+impl<'v> StarlarkValue<'v> for BazelSubruleCppFragment {
+    fn get_methods() -> Option<&'static Methods> {
+        static RES: MethodsStatic = MethodsStatic::new();
+        RES.methods_for_type::<Self::Canonical>(bazel_subrule_cpp_fragment_methods)
+    }
+}
+
+#[starlark_module]
+fn bazel_subrule_cpp_fragment_methods(builder: &mut MethodsBuilder) {
+    fn compilation_mode(
+        #[starlark(this)] _this: &BazelSubruleCppFragment,
+    ) -> starlark::Result<&'static str> {
+        Ok("fastbuild")
+    }
+}
+
+fn bazel_subrule_context<'v>(heap: Heap<'v>) -> Value<'v> {
+    let cpp = heap.alloc(BazelSubruleCppFragment);
+    let fragments = heap.alloc(AllocStruct([("cpp", cpp)]));
+    heap.alloc(AllocStruct([("fragments", fragments)]))
+}
+
+#[derive(Debug, ProvidesStaticType, Trace, NoSerialize, Allocative)]
+struct StarlarkSubrule<'v> {
+    implementation: Value<'v>,
+    attr_names: Vec<String>,
+}
+
+#[derive(Debug, ProvidesStaticType, NoSerialize, Allocative)]
+struct FrozenStarlarkSubrule {
+    implementation: FrozenValue,
+    attr_names: Vec<String>,
+}
+
+impl<'v> fmt::Display for StarlarkSubrule<'v> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("<subrule>")
+    }
+}
+
+impl fmt::Display for FrozenStarlarkSubrule {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("<subrule>")
+    }
+}
+
+impl<'v> AllocValue<'v> for StarlarkSubrule<'v> {
+    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
+        heap.alloc_complex(self)
+    }
+}
+
+impl<'v> Freeze for StarlarkSubrule<'v> {
+    type Frozen = FrozenStarlarkSubrule;
+
+    fn freeze(self, freezer: &Freezer) -> FreezeResult<Self::Frozen> {
+        Ok(FrozenStarlarkSubrule {
+            implementation: self.implementation.freeze(freezer)?,
+            attr_names: self.attr_names,
+        })
+    }
+}
+
+fn invoke_bazel_subrule<'v>(
+    implementation: Value<'v>,
+    attr_names: &[String],
+    args: &Arguments<'v, '_>,
+    eval: &mut Evaluator<'v, '_, '_>,
+) -> starlark::Result<Value<'v>> {
+    let mut positional = Vec::with_capacity(args.len()? + 1);
+    positional.push(bazel_subrule_context(eval.heap()));
+    positional.extend(args.positions(eval.heap())?);
+
+    let mut named = args
+        .names_map()?
+        .into_iter()
+        .map(|(name, value)| (name.as_str().to_owned(), value))
+        .collect::<Vec<_>>();
+    for attr_name in attr_names {
+        if !named.iter().any(|(name, _)| name == attr_name) {
+            named.push((attr_name.clone(), Value::new_none()));
+        }
+    }
+    let named = named
+        .iter()
+        .map(|(name, value)| (name.as_str(), *value))
+        .collect::<Vec<_>>();
+
+    eval.eval_function(implementation, &positional, &named)
+}
+
+#[starlark_value(type = "subrule")]
+impl<'v> StarlarkValue<'v> for StarlarkSubrule<'v> {
+    fn invoke(
+        &self,
+        _me: Value<'v>,
+        args: &Arguments<'v, '_>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<Value<'v>> {
+        invoke_bazel_subrule(self.implementation, &self.attr_names, args, eval)
+    }
+}
+
+starlark_simple_value!(FrozenStarlarkSubrule);
+
+#[starlark_value(type = "subrule")]
+impl<'v> StarlarkValue<'v> for FrozenStarlarkSubrule {
+    type Canonical = StarlarkSubrule<'v>;
+
+    fn invoke(
+        &self,
+        _me: Value<'v>,
+        args: &Arguments<'v, '_>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<Value<'v>> {
+        invoke_bazel_subrule(self.implementation.to_value(), &self.attr_names, args, eval)
+    }
+}
 
 #[derive(Debug, ProvidesStaticType, Trace, NoSerialize, Allocative, Clone, Copy)]
 enum RuleImpl<'v> {
@@ -277,23 +414,77 @@ fn add_bazel_common_implicit_attrs(
         ));
         Ok(())
     }
+    fn empty_list() -> CoercedAttr {
+        CoercedAttr::List(ListLiteral(ArcSlice::new([])))
+    }
+    fn empty_dict() -> CoercedAttr {
+        CoercedAttr::Dict(DictLiteral(ArcSlice::new([])))
+    }
+    fn empty_string() -> CoercedAttr {
+        CoercedAttr::String(StringLiteral(ArcStr::from("")))
+    }
 
     add_if_absent(
         attrs,
         "applicable_licenses",
-        CoercedAttr::List(ListLiteral(ArcSlice::new([]))),
+        empty_list(),
         AttrType::list(AttrType::label()),
     )?;
     add_if_absent(
         attrs,
-        "deprecation",
-        CoercedAttr::String(StringLiteral(ArcStr::from(""))),
+        "aspect_hints",
+        empty_list(),
+        AttrType::list(AttrType::label()),
+    )?;
+    add_if_absent(attrs, "deprecation", empty_string(), AttrType::string())?;
+    add_if_absent(
+        attrs,
+        "exec_group_compatible_with",
+        empty_dict(),
+        AttrType::dict(AttrType::string(), AttrType::list(AttrType::label()), false),
+    )?;
+    add_if_absent(
+        attrs,
+        "exec_properties",
+        empty_dict(),
+        AttrType::dict(AttrType::string(), AttrType::string(), false),
+    )?;
+    add_if_absent(attrs, "expect_failure", empty_string(), AttrType::string())?;
+    add_if_absent(
+        attrs,
+        "features",
+        empty_list(),
+        AttrType::list(AttrType::string()),
+    )?;
+    add_if_absent(
+        attrs,
+        "generator_function",
+        empty_string(),
         AttrType::string(),
     )?;
     add_if_absent(
         attrs,
+        "generator_location",
+        empty_string(),
+        AttrType::string(),
+    )?;
+    add_if_absent(attrs, "generator_name", empty_string(), AttrType::string())?;
+    add_if_absent(
+        attrs,
+        "package_metadata",
+        empty_list(),
+        AttrType::list(AttrType::label()),
+    )?;
+    add_if_absent(
+        attrs,
+        "restricted_to",
+        empty_list(),
+        AttrType::list(AttrType::label()),
+    )?;
+    add_if_absent(
+        attrs,
         "tags",
-        CoercedAttr::List(ListLiteral(ArcSlice::new([]))),
+        empty_list(),
         AttrType::list(AttrType::string()),
     )?;
     add_if_absent(
@@ -304,9 +495,15 @@ fn add_bazel_common_implicit_attrs(
     )?;
     add_if_absent(
         attrs,
-        "features",
-        CoercedAttr::List(ListLiteral(ArcSlice::new([]))),
-        AttrType::list(AttrType::string()),
+        "toolchains",
+        empty_list(),
+        AttrType::list(AttrType::label()),
+    )?;
+    add_if_absent(
+        attrs,
+        "transitive_configs",
+        empty_list(),
+        AttrType::list(AttrType::label()),
     )?;
     attrs.sort_by(|(a, _), (b, _)| a.cmp(b));
     Ok(())
@@ -392,15 +589,15 @@ fn add_bazel_executable_implicit_attrs(
 }
 
 fn normalize_bazel_toolchain_key(key: &str) -> String {
-    key.strip_prefix('@').unwrap_or(key).to_owned()
+    key.trim_start_matches('@').to_owned()
 }
 
 fn bazel_toolchain_key_from_value(value: Value<'_>) -> buck2_error::Result<String> {
     if let Some(toolchain) = StarlarkProvidersLabel::from_value(value) {
-        return Ok(toolchain.to_string());
+        return Ok(normalize_bazel_toolchain_key(&toolchain.to_string()));
     }
     if let Some(toolchain) = StarlarkTargetLabel::from_value(value) {
-        return Ok(toolchain.to_string());
+        return Ok(normalize_bazel_toolchain_key(&toolchain.to_string()));
     }
     if let Some(toolchain) = value.unpack_str() {
         return Ok(normalize_bazel_toolchain_key(toolchain));
@@ -454,7 +651,7 @@ impl<'v> StarlarkRuleCallable<'v> {
     fn new(
         implementation: RuleImpl<'v>,
         attrs: UnpackDictEntries<&'v str, &'v StarlarkAttribute>,
-        cfg: Option<Value>,
+        cfg: Option<Value<'v>>,
         supports_incoming_transition: Option<bool>,
         doc: &str,
         is_configuration_rule: bool,
@@ -523,7 +720,14 @@ impl<'v> StarlarkRuleCallable<'v> {
 
         let cfg = match (cfg, supports_incoming_transition) {
             (Some(_), Some(_)) => return Err(RuleError::CfgAndSupportsIncomingTransition.into()),
-            (Some(cfg), None) => RuleIncomingTransition::Fixed(transition_id_from_value(cfg)?),
+            (Some(cfg), None) => {
+                let transition_id = if is_bazel_rule {
+                    transition_id_from_value_for_bazel_attr(cfg, eval)?
+                } else {
+                    transition_id_from_value(cfg)?
+                };
+                RuleIncomingTransition::Fixed(transition_id)
+            }
             (None, Some(true)) => RuleIncomingTransition::FromAttribute,
             (None, Some(false) | None) => RuleIncomingTransition::None,
         };
@@ -1049,17 +1253,25 @@ pub fn register_rule_function(builder: &mut GlobalsBuilder) {
         Ok(implementation)
     }
 
-    /// Define a Bazel subrule. This keeps the implementation callable available for Starlark that
-    /// gates behavior on the existence of the Bazel builtin; full subrule execution is still owned
-    /// by the rules that request it.
+    /// Define a Bazel subrule.
     fn subrule<'v>(
-        #[starlark(require = named)] implementation: Value<'v>,
-        #[starlark(require = named)] attrs: Option<Value<'v>>,
+        #[starlark(require = named)] implementation: StarlarkCallable<'v, (), Value<'v>>,
+        #[starlark(require = named, default = UnpackDictEntries::default())]
+        attrs: UnpackDictEntries<&'v str, &'v StarlarkAttribute>,
         #[starlark(require = named)] fragments: Option<Value<'v>>,
         #[starlark(require = named)] toolchains: Option<Value<'v>>,
-    ) -> starlark::Result<Value<'v>> {
-        let _ = (attrs, fragments, toolchains);
-        Ok(implementation)
+        #[starlark(require = named, default = UnpackListOrTuple::default())]
+        subrules: UnpackListOrTuple<Value<'v>>,
+    ) -> starlark::Result<StarlarkSubrule<'v>> {
+        let _ = (fragments, toolchains, subrules);
+        Ok(StarlarkSubrule {
+            implementation: implementation.0,
+            attr_names: attrs
+                .entries
+                .into_iter()
+                .map(|(name, _)| name.to_owned())
+                .collect(),
+        })
     }
 
     /// Define a Bazel execution group for rules that declare per-action toolchain sets.

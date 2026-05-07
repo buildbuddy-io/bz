@@ -13,6 +13,7 @@ use buck2_core::provider::label::ConfiguredProvidersLabel;
 use buck2_core::provider::label::ProvidersName;
 use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
 use buck2_interpreter::types::configured_providers_label::StarlarkConfiguredProvidersLabel;
+use buck2_interpreter::types::configured_providers_label::StarlarkProvidersLabel;
 use dupe::Dupe;
 use starlark::environment::MethodsBuilder;
 use starlark::values::AllocValue;
@@ -21,7 +22,6 @@ use starlark::values::StringValue;
 use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::list::UnpackList;
-use starlark::values::none::NoneOr;
 use starlark::values::structs::AllocStruct;
 use starlark::values::type_repr::StarlarkTypeRepr;
 
@@ -117,21 +117,39 @@ pub(crate) fn any_artifact_methods(builder: &mut MethodsBuilder) {
         Ok(this.is_source()?)
     }
 
-    /// The `Label` of the rule that originally created this artifact. May also be None in
-    /// the case of source files, or if the artifact has not be used in an action, or if the
-    /// action was not created by a rule.
+    /// Whether this artifact was declared as a directory.
+    #[starlark(attribute)]
+    fn is_directory<'v>(this: &'v dyn StarlarkArtifactLike<'v>) -> starlark::Result<bool> {
+        Ok(this.is_directory()?)
+    }
+
+    /// Whether this artifact was declared as a symlink.
+    #[starlark(attribute)]
+    fn is_symlink<'v>(this: &'v dyn StarlarkArtifactLike<'v>) -> starlark::Result<bool> {
+        Ok(this.is_symlink()?)
+    }
+
+    /// The `Label` of the rule or source-file target that originally created this artifact. May
+    /// also be None if the artifact has not been used in an action, or if the action was not
+    /// created by a rule.
     #[starlark(attribute)]
     fn owner<'v>(
         this: &'v dyn StarlarkArtifactLike<'v>,
-    ) -> starlark::Result<NoneOr<StarlarkConfiguredProvidersLabel>> {
+        heap: Heap<'v>,
+    ) -> starlark::Result<Value<'v>> {
+        if let Some(owner) = this.source_owner()? {
+            return Ok(heap.alloc(StarlarkProvidersLabel::new(owner)));
+        }
         match this.owner()? {
-            None => Ok(NoneOr::None),
+            None => Ok(Value::new_none()),
             Some(BaseDeferredKey::TargetLabel(target)) => {
-                Ok(NoneOr::Other(StarlarkConfiguredProvidersLabel::new(
+                Ok(heap.alloc(StarlarkConfiguredProvidersLabel::new(
                     ConfiguredProvidersLabel::new(target.dupe(), ProvidersName::Default),
                 )))
             }
-            Some(BaseDeferredKey::AnonTarget(_) | BaseDeferredKey::BxlLabel(_)) => Ok(NoneOr::None),
+            Some(BaseDeferredKey::AnonTarget(_) | BaseDeferredKey::BxlLabel(_)) => {
+                Ok(Value::new_none())
+            }
         }
     }
 

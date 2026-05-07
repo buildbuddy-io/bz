@@ -289,9 +289,18 @@ impl Key for ConfigurationNodeKey {
         ctx: &mut DiceComputations,
         _cancellation: &CancellationContext,
     ) -> Self::Value {
+        // A selectable key may be a Starlark/native alias over configuration rules
+        // (for example bazel_skylib's config_setting_group). Those aliases can use
+        // select() in their own attrs, so evaluate the key in the candidate target
+        // configuration being matched rather than forcing <unbound>.
+        let configured_target = self
+            .cfg_target
+            .0
+            .configure_pair_no_exec(ConfigurationNoExec::new(self.target_cfg.dupe()));
         let providers = ctx
-            .get_configuration_analysis_result(&self.cfg_target.0)
-            .await?;
+            .get_providers(&configured_target)
+            .await?
+            .require_compatible()?;
 
         // capture the result so the temporaries get dropped before providers
         let result = match providers

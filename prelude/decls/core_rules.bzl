@@ -346,6 +346,7 @@ constraint_setting = prelude_rule(
     further = None,
     attrs = (
         {
+            "default_constraint_value": attrs.option(attrs.label(), default = None),
             "execution_modifier": attrs.bool(default = False),
         }
     ),
@@ -1013,6 +1014,21 @@ platform = prelude_rule(
                 attrs.configuration_label(),
                 default = [],
                 doc = "List of other platform target dependencies. The constraints from these platforms will be part of this platform (unless overridden)",
+            ),
+            "exec_properties": attrs.dict(
+                key = attrs.string(),
+                value = attrs.string(),
+                default = {},
+                doc = "Bazel execution properties for this platform.",
+            ),
+            "parents": attrs.list(
+                attrs.configuration_label(),
+                default = [],
+                doc = "Bazel parent platforms whose constraints are inherited.",
+            ),
+            "remote_execution_properties": attrs.string(
+                default = "",
+                doc = "Legacy Bazel remote execution properties string.",
             ),
         }
     ),

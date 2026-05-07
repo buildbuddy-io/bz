@@ -84,6 +84,20 @@ def _test_single_config_dict():
     )
     _assert_eq(False, select_test(dict_select, _test_func))
 
+def _test_dict_union():
+    dict_select = select({
+        "config/windows:x86_64": {"a": "1", "override": "left"},
+        "DEFAULT": {},
+    })
+
+    _assert_eq(
+        select({
+            "config/windows:x86_64": {"a": "1", "override": "right", "b": "2"},
+            "DEFAULT": {"override": "right", "b": "2"},
+        }),
+        dict_select | {"override": "right", "b": "2"},
+    )
+
 def _test_multi_config():
     multi_select = select({
         "DEFAULT": ["-DBASE", "TEST"],
@@ -181,6 +195,7 @@ def test():
     _test_single_config_str()
     _test_single_config_list()
     _test_single_config_dict()
+    _test_dict_union()
     _test_multi_config()
     _test_concatenated_native()
     _test_concatenated_nested()

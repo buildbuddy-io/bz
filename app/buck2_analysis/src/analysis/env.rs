@@ -11,10 +11,12 @@
 use std::sync::Arc;
 use std::time::Instant;
 
+use buck2_artifact::artifact::source_artifact::SourceArtifact;
 use buck2_build_api::analysis::AnalysisResult;
 use buck2_build_api::analysis::anon_promises_dyn::RunAnonPromisesAccessorPair;
 use buck2_build_api::analysis::registry::AnalysisRegistry;
 use buck2_build_api::interpreter::rule_defs::artifact::associated::AssociatedArtifacts;
+use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact::StarlarkArtifact;
 use buck2_build_api::interpreter::rule_defs::artifact::starlark_declared_artifact::StarlarkDeclaredArtifact;
 use buck2_build_api::interpreter::rule_defs::cmd_args::value::FrozenCommandLineArg;
 use buck2_build_api::interpreter::rule_defs::context::AnalysisContext;
@@ -33,6 +35,8 @@ use buck2_build_api::validation::transitive_validations::TransitiveValidationsDa
 use buck2_core::deferred::base_deferred_key::BaseDeferredKey;
 use buck2_core::execution_types::execution::ExecutionPlatformResolution;
 use buck2_core::fs::buck_out_path::BuckOutPathKind;
+use buck2_core::package::package_relative_path::PackageRelativePath;
+use buck2_core::package::source_path::SourcePath;
 use buck2_core::provider::label::ConfiguredProvidersLabel;
 use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
 use buck2_core::unsafe_send_future::UnsafeSendFuture;
@@ -271,6 +275,80 @@ pub(crate) fn run_bazel_output_file_analysis<'a, 'd: 'a>(
     unsafe { UnsafeSendFuture::new_encapsulates_starlark(fut) }
 }
 
+pub(crate) fn run_bazel_input_file_analysis<'a, 'd: 'a>(
+    dice: &'a mut DiceComputations<'d>,
+    label: &'a ConfiguredTargetLabel,
+    execution_platform: &'a ExecutionPlatformResolution,
+    cancellation: &'a CancellationContext,
+) -> impl Future<Output = buck2_error::Result<AnalysisResult>> + 'a + Captures<'d> {
+    let fut = async move {
+        run_bazel_input_file_analysis_underlying(dice, label, execution_platform, cancellation)
+            .await
+    };
+    unsafe { UnsafeSendFuture::new_encapsulates_starlark(fut) }
+}
+
+async fn run_bazel_input_file_analysis_underlying(
+    dice: &mut DiceComputations<'_>,
+    label: &ConfiguredTargetLabel,
+    execution_platform: &ExecutionPlatformResolution,
+    cancellation: &CancellationContext,
+) -> buck2_error::Result<AnalysisResult> {
+    BuckStarlarkModule::with_profiling_async(async move |env| {
+        let print = EventDispatcherPrintHandler(get_dispatcher());
+        let registry = AnalysisRegistry::new_from_owner(
+            BaseDeferredKey::TargetLabel(label.dupe()),
+            execution_platform.dupe(),
+        )?;
+
+        let eval_kind = StarlarkEvalKind::Analysis(label.dupe());
+        let eval_provider = StarlarkEvaluatorProvider::new(dice, eval_kind).await?;
+        let mut reentrant_eval =
+            eval_provider.make_reentrant_evaluator(&env, cancellation.into())?;
+
+        let provider_collection = reentrant_eval.with_evaluator(|eval| {
+            eval.set_print_handler(&print);
+            eval.set_soft_error_handler(&Buck2StarlarkSoftErrorHandler);
+
+            let path = PackageRelativePath::new(label.unconfigured().name().as_str())?.to_arc();
+            let source =
+                SourceArtifact::new(SourcePath::new(label.unconfigured().pkg().dupe(), path));
+            let source = eval.heap().alloc(StarlarkArtifact::new(source.into()));
+            let default_info = eval
+                .heap()
+                .alloc(DefaultInfo::with_default_outputs(eval.heap(), [source]));
+            let providers =
+                ProviderCollection::try_from_value(eval.heap().alloc(AllocList([default_info])))?;
+            Ok(ValueTypedComplex::new_err(eval.heap().alloc(providers))
+                .internal_error("Just allocated provider collection")?)
+        })?;
+
+        registry
+            .analysis_value_storage
+            .set_result_value(provider_collection)?;
+
+        let finished_eval = reentrant_eval.finish_evaluation();
+        let declared_actions = registry.num_declared_actions();
+        let declared_artifacts = registry.num_declared_artifacts();
+        let registry_finalizer = registry.finalize(&env)?;
+        let (token, frozen_env, profile_data) = finished_eval.freeze_and_finish(env)?;
+        let recorded_values = registry_finalizer(&frozen_env)?;
+
+        Ok((
+            token,
+            AnalysisResult::new(
+                recorded_values,
+                profile_data,
+                StdBuckHashMap::default(),
+                declared_actions,
+                declared_artifacts,
+                None,
+            ),
+        ))
+    })
+    .await
+}
+
 async fn run_bazel_output_file_analysis_underlying(
     dice: &mut DiceComputations<'_>,
     label: &ConfiguredTargetLabel,
@@ -407,6 +485,7 @@ fn declare_bazel_output_artifact<'v>(
     registry: &mut AnalysisRegistry<'v>,
     output_path: &str,
 ) -> buck2_error::Result<Value<'v>> {
+    let output_path = normalize_bazel_output_path(output_path);
     let artifact = registry.declare_output(
         None,
         output_path,
@@ -425,6 +504,13 @@ fn declare_bazel_output_artifact<'v>(
         .to_value())
 }
 
+fn normalize_bazel_output_path(value: &str) -> &str {
+    value
+        .strip_prefix(':')
+        .filter(|output_path| !output_path.is_empty())
+        .unwrap_or(value)
+}
+
 fn declare_bazel_output_attr<'v>(
     eval: &mut Evaluator<'v, '_, '_>,
     registry: &mut AnalysisRegistry<'v>,
@@ -437,7 +523,10 @@ fn declare_bazel_output_attr<'v>(
     }
     if let Some(output_path) = value.unpack_str() {
         let artifact = declare_bazel_output_artifact(eval, registry, output_path)?;
-        output_file_targets.push((output_path.to_owned(), artifact));
+        output_file_targets.push((
+            normalize_bazel_output_path(output_path).to_owned(),
+            artifact,
+        ));
         return Ok(artifact);
     }
     if let Some(values) = ListRef::from_value(value) {
@@ -451,7 +540,10 @@ fn declare_bazel_output_attr<'v>(
                 .into());
             };
             let artifact = declare_bazel_output_artifact(eval, registry, output_path)?;
-            output_file_targets.push((output_path.to_owned(), artifact));
+            output_file_targets.push((
+                normalize_bazel_output_path(output_path).to_owned(),
+                artifact,
+            ));
             artifacts.push(artifact);
         }
         return Ok(eval.heap().alloc(AllocList(artifacts)));

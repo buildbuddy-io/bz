@@ -17,7 +17,7 @@ use std::sync::Arc;
 use allocative::Allocative;
 use buck2_cli_proto::ConfigOverride;
 use buck2_core::cells::cell_root_path::CellRootPath;
-use buck2_core::cells::external::register_bzlmod_cell_canonical_repo_name;
+use buck2_core::cells::external::register_bzlmod_cell_canonical_repo_name_for_cell;
 use buck2_core::fs::project_rel_path::ProjectRelativePath;
 use buck2_hash::StdBuckHashMap;
 use dupe::Dupe;
@@ -187,13 +187,6 @@ impl BazelCompatExternalModule {
         }
     }
 
-    pub(crate) fn aliases(&self) -> &[String] {
-        match self {
-            Self::Registry(module) => &module.aliases,
-            Self::Generated(module) => &module.aliases,
-        }
-    }
-
     pub(crate) fn canonical_repo_name(&self) -> &str {
         match self {
             Self::Registry(module) => &module.canonical_repo_name,
@@ -311,9 +304,33 @@ impl LegacyBuckConfig {
         registered_toolchains: &[String],
     ) -> Self {
         for module in external_modules {
-            register_bzlmod_cell_canonical_repo_name(module.canonical_repo_name());
+            register_bzlmod_cell_canonical_repo_name_for_cell(
+                module.cell_name(),
+                module.canonical_repo_name(),
+            );
         }
 
+        self.with_bazel_compat_defaults_inner(
+            current_cell_aliases,
+            external_modules,
+            registered_toolchains,
+        )
+    }
+
+    pub(crate) fn with_bazel_compat_cell_defaults(
+        &self,
+        current_cell_aliases: &[BazelCompatCellAlias],
+        registered_toolchains: &[String],
+    ) -> Self {
+        self.with_bazel_compat_defaults_inner(current_cell_aliases, &[], registered_toolchains)
+    }
+
+    fn with_bazel_compat_defaults_inner(
+        &self,
+        current_cell_aliases: &[BazelCompatCellAlias],
+        external_modules: &[BazelCompatExternalModule],
+        registered_toolchains: &[String],
+    ) -> Self {
         const BAZEL_COMPAT_DEFAULTS: &[(&str, &[(&str, &str)])] = &[
             (
                 "cells",
@@ -400,13 +417,6 @@ impl LegacyBuckConfig {
                 }
             }
             if is_cell_aliases {
-                for module in external_modules {
-                    for alias in module.aliases() {
-                        section_values
-                            .entry(alias.clone())
-                            .or_insert_with(|| synthetic_config_value(module.cell_name()));
-                    }
-                }
                 for alias in current_cell_aliases {
                     section_values.insert(
                         alias.alias.clone(),

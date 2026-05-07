@@ -14,6 +14,7 @@ use allocative::Allocative;
 use async_trait::async_trait;
 use buck2_core::cells::CellAliasResolver;
 use buck2_core::cells::CellResolver;
+use buck2_core::cells::external::ExternalCellOrigin;
 use buck2_core::cells::name::CellName;
 use buck2_core::fs::project_rel_path::ProjectRelativePath;
 use derive_more::Display;
@@ -126,6 +127,17 @@ impl Key for CellAliasResolverKey {
         let resolver = ctx.get_cell_resolver().await?;
         let root_aliases = resolver.root_cell_cell_alias_resolver();
         let config = ctx.get_legacy_config_for_cell(self.0).await?;
+        let cell = resolver.get(self.0)?;
+        if self.0.as_str() == "bazel_tools"
+            || matches!(
+                cell.external(),
+                Some(ExternalCellOrigin::Bzlmod(_)) | Some(ExternalCellOrigin::BzlmodGenerated(_))
+            )
+        {
+            return BuckConfigBasedCells::get_bazel_cell_alias_resolver_from_config(
+                self.0, &resolver, &config,
+            );
+        }
         // Cell alias resolvers that are parsed within dice differ from those outside of dice in
         // that they cannot create new cells, and so respect only their `cell_aliases` section, not
         // their `cells` section. This is the expected behavior for external cells, moving other

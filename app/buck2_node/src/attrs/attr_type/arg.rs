@@ -314,9 +314,15 @@ impl MacroBase<ProvidersLabel> {
             } => traversal.dep(label),
             MacroBase::Query(query) => query.traverse(traversal),
             MacroBase::Source(path) => {
-                let pkg = pkg.ok_or_else(|| {
-                    StringMacroTraversalError::NoPackageForSource(path.path().to_string())
-                })?;
+                let Some(pkg) = pkg else {
+                    if traversal.inputs_require_package() {
+                        return Err(StringMacroTraversalError::NoPackageForSource(
+                            path.path().to_string(),
+                        )
+                        .into());
+                    }
+                    return Ok(());
+                };
                 for x in path.inputs() {
                     traversal.input(SourcePathRef::new(pkg.dupe(), x))?;
                 }

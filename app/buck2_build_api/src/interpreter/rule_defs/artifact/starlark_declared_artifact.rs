@@ -19,6 +19,7 @@ use buck2_artifact::artifact::artifact_type::OutputArtifact;
 use buck2_core::deferred::base_deferred_key::BaseDeferredKey;
 use buck2_error::BuckErrorContext;
 use buck2_error::buck2_error;
+use buck2_execute::execute::request::OutputType;
 use buck2_execute::path::artifact_path::ArtifactPath;
 use buck2_fs::paths::file_name::FileName;
 use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
@@ -141,6 +142,10 @@ impl<'v> StarlarkArtifactLike<'v> for StarlarkDeclaredArtifact<'v> {
 
     fn is_source(&'v self) -> buck2_error::Result<bool> {
         Ok(false)
+    }
+
+    fn is_directory(&'v self) -> buck2_error::Result<bool> {
+        Ok(self.artifact.output_type() == OutputType::Directory)
     }
 
     fn owner(&'v self) -> buck2_error::Result<Option<BaseDeferredKey>> {
@@ -347,6 +352,10 @@ impl<'v> StarlarkValue<'v> for StarlarkDeclaredArtifact<'v> {
 
     fn write_hash(&self, hasher: &mut StarlarkHasher) -> starlark::Result<()> {
         StarlarkArtifactLike::write_hash(self, hasher)
+    }
+
+    fn is_in(&self, _other: Value<'v>) -> starlark::Result<bool> {
+        Ok(false)
     }
 
     fn provide(&'v self, demand: &mut Demand<'_, 'v>) {

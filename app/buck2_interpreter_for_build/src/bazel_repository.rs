@@ -14,12 +14,15 @@ use std::collections::HashMap;
 use std::env;
 use std::fmt;
 use std::fs;
+use std::io::Read;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::sync::OnceLock;
 use std::time::Duration;
+use std::time::SystemTime;
 
 use allocative::Allocative;
 use base64::Engine;
@@ -27,6 +30,7 @@ use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use buck2_common::dice::cells::HasCellResolver;
 use buck2_common::file_ops::dice::DiceFileComputations;
 use buck2_common::file_ops::error::FileReadErrorContext;
+use buck2_common::file_ops::metadata::RawPathMetadata;
 use buck2_core::bzl::ImportPath;
 use buck2_core::cells::CellAliasResolver;
 use buck2_core::cells::alias::NonEmptyCellAlias;
@@ -35,6 +39,7 @@ use buck2_core::cells::cell_path::CellPath;
 use buck2_core::cells::external::BzlmodModuleExtensionRepoSetup;
 use buck2_core::cells::external::BzlmodRepositoryRuleInvocationSetup;
 use buck2_core::cells::external::ExternalCellOrigin;
+use buck2_core::cells::external::bzlmod_canonical_repo_name_for_cell;
 use buck2_core::cells::external::bzlmod_cell_name;
 use buck2_core::cells::name::CellName;
 use buck2_core::cells::paths::CellRelativePathBuf;
@@ -45,6 +50,7 @@ use buck2_interpreter::paths::module::StarlarkModulePath;
 use buck2_interpreter::paths::path::OwnedStarlarkPath;
 use buck2_interpreter::types::configured_providers_label::StarlarkProvidersLabel;
 use buck2_node::attrs::attr::Attribute;
+use buck2_node::attrs::attr::CoercedValue;
 use buck2_node::attrs::coerced_attr::CoercedAttr;
 use buck2_node::attrs::configurable::AttrIsConfigurable;
 use buck2_node::attrs::fmt_context::AttrFmtContext;
@@ -53,8 +59,13 @@ use buck2_node::rule_type::StarlarkRuleType;
 use derive_more::Display;
 use dice::CancellationContext;
 use dice::DiceComputations;
+use dice::Key;
+use dice::NoValueSerialize;
+use dice::ValueSerialize;
 use dupe::Dupe;
 use itertools::Itertools;
+use pagable::Pagable;
+use pagable::pagable_typetag;
 use serde::Deserialize;
 use serde::Serialize;
 use sha1::Sha1;
@@ -109,7 +120,7 @@ use starlark::values::tuple::TupleRef;
 use starlark::values::typing::StarlarkCallable;
 use starlark_map::small_map::SmallMap;
 
-use crate::attrs::coerce::attr_type::AttrTypeExt;
+use crate::attrs::AttributeCoerceExt;
 use crate::attrs::coerce::ctx::BuildAttrCoercionContext;
 use crate::attrs::starlark_attribute::StarlarkAttribute;
 use crate::interpreter::build_context::BazelModuleExtensionEvaluationResult;
@@ -309,15 +320,7 @@ fn record_repository_rule_invocation<'v>(
 
 fn repository_rule_attr_expression(value: Value<'_>) -> starlark::Result<String> {
     if let Some(label) = StarlarkProvidersLabel::from_value(value) {
-        return Ok(format!(
-            "Label({})",
-            serde_json::to_string(&label.label().to_string()).map_err(|e| {
-                buck2_error::buck2_error!(
-                    buck2_error::ErrorTag::Tier0,
-                    "failed to serialize repository_rule label attr: {e}"
-                )
-            })?
-        ));
+        return repository_rule_label_attr_expression(&label);
     }
     if let Some(string) = value.unpack_str() {
         return serde_json::to_string(string).map_err(|e| {
@@ -357,6 +360,37 @@ fn repository_rule_attr_expression(value: Value<'_>) -> starlark::Result<String>
         return Ok(format!("({})", values.join(", ")));
     }
     Ok(value.to_repr())
+}
+
+fn repository_rule_label_attr_expression(
+    label: &StarlarkProvidersLabel,
+) -> starlark::Result<String> {
+    let target = label.label().target();
+    let cell_name = target.pkg().cell_name();
+    let cell_name = cell_name.as_str();
+    let repo_name = if cell_name == "root" {
+        String::new()
+    } else if cell_name == "bazel_tools" {
+        "bazel_tools".to_owned()
+    } else {
+        bzlmod_canonical_repo_name_for_cell(cell_name).unwrap_or_else(|| cell_name.to_owned())
+    };
+    let package = target.pkg().cell_relative_path().as_str();
+    let name = target.name().as_str();
+    let label = if repo_name.is_empty() {
+        format!("//{package}:{name}")
+    } else {
+        format!("@@{repo_name}//{package}:{name}")
+    };
+    Ok(format!(
+        "Label({})",
+        serde_json::to_string(&label).map_err(|e| {
+            buck2_error::buck2_error!(
+                buck2_error::ErrorTag::Tier0,
+                "failed to serialize repository_rule label attr: {e}"
+            )
+        })?
+    ))
 }
 
 fn collect_repository_rule_label_deps(
@@ -641,70 +675,189 @@ fn repository_rule_dynamic_label_attr_names(source: &str) -> BTreeSet<String> {
 
 fn repository_rule_dynamic_repo_name_attr_names(source: &str) -> BTreeSet<String> {
     let mut names = BTreeSet::new();
-    let compact = repository_rule_source_without_ascii_whitespace(source);
-    collect_repository_rule_attr_names_after(&compact, "Label(\"@\"+ctx.attr.", &mut names);
-    collect_repository_rule_attr_names_after(&compact, "Label('@'+ctx.attr.", &mut names);
-    collect_repository_rule_attr_names_after(&compact, "Label(\"@@\"+ctx.attr.", &mut names);
-    collect_repository_rule_attr_names_after(&compact, "Label('@@'+ctx.attr.", &mut names);
-
-    for (local, attr) in repository_rule_ctx_attr_aliases(source) {
-        if repository_rule_compact_source_contains_repo_name_label(&compact, &local) {
-            names.insert(attr);
-        }
+    let mut alias_locals = BTreeSet::new();
+    collect_repository_rule_repo_name_label_attr_names(source, &mut names, &mut alias_locals);
+    if !alias_locals.is_empty() {
+        collect_repository_rule_ctx_attr_alias_attrs(source, &alias_locals, &mut names);
     }
     names
 }
 
-fn repository_rule_compact_source_contains_repo_name_label(source: &str, name: &str) -> bool {
-    source.contains(&format!("Label(\"@\"+{name}"))
-        || source.contains(&format!("Label('@'+{name}"))
-        || source.contains(&format!("Label(\"@@\"+{name}"))
-        || source.contains(&format!("Label('@@'+{name}"))
+fn collect_repository_rule_repo_name_label_attr_names(
+    source: &str,
+    names: &mut BTreeSet<String>,
+    alias_locals: &mut BTreeSet<String>,
+) {
+    let bytes = source.as_bytes();
+    let mut offset = 0usize;
+    while let Some(found) = source[offset..].find("Label") {
+        let mut index = offset + found + "Label".len();
+        if !repository_rule_parse_label_repo_name_prefix(bytes, &mut index) {
+            offset = index;
+            continue;
+        }
+        if let Some((attr, end)) = repository_rule_parse_ctx_attr_name(source, index) {
+            names.insert(attr);
+            offset = end;
+            continue;
+        }
+        if let Some((local, end)) = repository_rule_parse_identifier(source, index) {
+            alias_locals.insert(local.to_owned());
+            offset = end;
+            continue;
+        }
+        offset = index;
+    }
 }
 
-fn repository_rule_ctx_attr_aliases(source: &str) -> BTreeMap<String, String> {
-    let mut aliases = BTreeMap::new();
+fn repository_rule_parse_label_repo_name_prefix(bytes: &[u8], index: &mut usize) -> bool {
+    repository_rule_skip_ascii_whitespace(bytes, index);
+    if !repository_rule_consume_byte(bytes, index, b'(') {
+        return false;
+    }
+    repository_rule_skip_ascii_whitespace(bytes, index);
+    let Some(quote @ (b'"' | b'\'')) = bytes.get(*index).copied() else {
+        return false;
+    };
+    *index += 1;
+    if !repository_rule_consume_byte(bytes, index, b'@') {
+        return false;
+    }
+    let _canonical = repository_rule_consume_byte(bytes, index, b'@');
+    if !repository_rule_consume_byte(bytes, index, quote) {
+        return false;
+    }
+    repository_rule_skip_ascii_whitespace(bytes, index);
+    if !repository_rule_consume_byte(bytes, index, b'+') {
+        return false;
+    }
+    repository_rule_skip_ascii_whitespace(bytes, index);
+    true
+}
+
+fn repository_rule_parse_ctx_attr_name(source: &str, mut index: usize) -> Option<(String, usize)> {
+    let bytes = source.as_bytes();
+    repository_rule_skip_ascii_whitespace(bytes, &mut index);
+    if !repository_rule_consume_keyword(source, &mut index, "ctx") {
+        return None;
+    }
+    repository_rule_skip_ascii_whitespace(bytes, &mut index);
+    if !repository_rule_consume_byte(bytes, &mut index, b'.') {
+        return None;
+    }
+    repository_rule_skip_ascii_whitespace(bytes, &mut index);
+    if !repository_rule_consume_keyword(source, &mut index, "attr") {
+        return None;
+    }
+    repository_rule_skip_ascii_whitespace(bytes, &mut index);
+    if !repository_rule_consume_byte(bytes, &mut index, b'.') {
+        return None;
+    }
+    repository_rule_skip_ascii_whitespace(bytes, &mut index);
+    let (name, index) = repository_rule_parse_identifier(source, index)?;
+    Some((name.to_owned(), index))
+}
+
+fn repository_rule_source_uses_unresolved_dynamic_label(source: &str) -> bool {
+    let bytes = source.as_bytes();
+    let mut offset = 0usize;
+    while let Some(found) = source[offset..].find("Label") {
+        let mut index = offset + found + "Label".len();
+        repository_rule_skip_ascii_whitespace(bytes, &mut index);
+        if !repository_rule_consume_byte(bytes, &mut index, b'(') {
+            offset = index;
+            continue;
+        }
+        repository_rule_skip_ascii_whitespace(bytes, &mut index);
+        let Some(quote @ (b'"' | b'\'')) = bytes.get(index).copied() else {
+            offset = index;
+            continue;
+        };
+        index += 1;
+        if bytes.get(index) == Some(&b'{') {
+            return true;
+        }
+        while index < bytes.len() && bytes[index] != quote {
+            index += 1;
+        }
+        offset = index;
+    }
+    false
+}
+
+fn repository_rule_skip_ascii_whitespace(bytes: &[u8], index: &mut usize) {
+    while *index < bytes.len() && bytes[*index].is_ascii_whitespace() {
+        *index += 1;
+    }
+}
+
+fn repository_rule_consume_byte(bytes: &[u8], index: &mut usize, expected: u8) -> bool {
+    if bytes.get(*index) == Some(&expected) {
+        *index += 1;
+        true
+    } else {
+        false
+    }
+}
+
+fn repository_rule_consume_keyword(source: &str, index: &mut usize, keyword: &str) -> bool {
+    let Some(rest) = source.get(*index..) else {
+        return false;
+    };
+    let Some(after) = rest.strip_prefix(keyword) else {
+        return false;
+    };
+    if after
+        .chars()
+        .next()
+        .is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+    {
+        return false;
+    }
+    *index += keyword.len();
+    true
+}
+
+fn repository_rule_parse_identifier(source: &str, index: usize) -> Option<(&str, usize)> {
+    let rest = source.get(index..)?;
+    let mut chars = rest.char_indices();
+    let (_, first) = chars.next()?;
+    if !first.is_ascii_alphabetic() && first != '_' {
+        return None;
+    }
+    let mut end = index + first.len_utf8();
+    for (offset, ch) in chars {
+        if !ch.is_ascii_alphanumeric() && ch != '_' {
+            return Some((&source[index..index + offset], index + offset));
+        }
+        end = index + offset + ch.len_utf8();
+    }
+    Some((&source[index..end], end))
+}
+
+fn collect_repository_rule_ctx_attr_alias_attrs(
+    source: &str,
+    alias_locals: &BTreeSet<String>,
+    names: &mut BTreeSet<String>,
+) {
+    if alias_locals.is_empty() {
+        return;
+    }
     for line in source.lines() {
         let line = line.trim();
         let Some((left, right)) = line.split_once('=') else {
             continue;
         };
         let left = left.trim();
-        if !repository_rule_identifier(left) {
+        if !alias_locals.contains(left) {
             continue;
         }
         let right = right.trim();
-        let Some(rest) = right.strip_prefix("ctx.attr.") else {
+        let Some((attr, _end)) = repository_rule_parse_ctx_attr_name(right, 0) else {
             continue;
         };
-        let attr = rest
-            .chars()
-            .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_')
-            .collect::<String>();
-        if attr.is_empty() {
-            continue;
-        }
-        aliases.insert(left.to_owned(), attr);
+        names.insert(attr);
     }
-    aliases
-}
-
-fn repository_rule_identifier(value: &str) -> bool {
-    let mut chars = value.chars();
-    let Some(first) = chars.next() else {
-        return false;
-    };
-    if !first.is_ascii_alphabetic() && first != '_' {
-        return false;
-    }
-    chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
-}
-
-fn repository_rule_source_without_ascii_whitespace(source: &str) -> String {
-    source
-        .chars()
-        .filter(|ch| !ch.is_ascii_whitespace())
-        .collect()
 }
 
 fn collect_repository_rule_attr_names_after(
@@ -817,6 +970,9 @@ mod tests {
         assert!(repository_rule_source_uses_unresolved_dynamic_label(
             r#"Label("{repo}//:BUILD.bazel".format(repo = repo))"#
         ));
+        assert!(repository_rule_source_uses_unresolved_dynamic_label(
+            r#"Label ( "{repo}//:BUILD.bazel".format(repo = repo))"#
+        ));
         assert!(!repository_rule_source_uses_unresolved_dynamic_label(
             r#"Label("@yq_{}//:yq{}".format(platform, extension))"#
         ));
@@ -831,6 +987,7 @@ def _impl(ctx):
     go_sdk_name = ctx.attr.go_sdk_name
     go_sdk_label = Label("@" + go_sdk_name + "//:ROOT")
     direct = Label("@@" + ctx.attr.direct_repo + "//:ROOT")
+    spaced = Label ( "@@" + ctx . attr . spaced_repo + "//:ROOT")
     ctx.file("go_tools.bzl", "GO_TOOLS = {k: Label(v) for k, v in %r}" % ctx.attr.tool_targets)
 "#;
         let names = repository_rule_dynamic_label_attr_names(source);
@@ -840,7 +997,65 @@ def _impl(ctx):
         let names = repository_rule_dynamic_repo_name_attr_names(source);
         assert!(names.contains("go_sdk_name"));
         assert!(names.contains("direct_repo"));
+        assert!(names.contains("spaced_repo"));
         assert!(!names.contains("tool_targets"));
+    }
+
+    #[test]
+    fn test_repository_rule_loaded_module_scan_skips_prelude() {
+        assert!(!repository_rule_should_scan_loaded_module_cell("prelude"));
+        assert!(repository_rule_should_scan_loaded_module_cell(
+            "bazel_tools"
+        ));
+        assert!(repository_rule_should_scan_loaded_module_cell(
+            "bzlmod_rules_go_"
+        ));
+    }
+
+    #[test]
+    fn test_repository_ctx_external_input_dep_includes_path() {
+        assert_eq!(
+            repository_ctx_external_input_dep(Path::new(
+                "/repo/buck-out/v2/external_cells/bzlmod/gazelle+/internal/list_repository_tools_srcs.go",
+            )),
+            Some(RepositoryPathLabelDep::cell_path(
+                "bzlmod_gazelle_".to_owned(),
+                "internal/list_repository_tools_srcs.go".to_owned(),
+            ))
+        );
+        assert_eq!(
+            repository_ctx_external_input_dep(Path::new(
+                "/repo/buck-out/v2/external_cells/bzlmod_generated/rules_go++go_sdk+main___download_0/bin/go",
+            )),
+            Some(RepositoryPathLabelDep::cell_path(
+                "bzlmod_rules_go__go_sdk_main___download_0".to_owned(),
+                "bin/go".to_owned(),
+            ))
+        );
+        assert_eq!(
+            repository_ctx_external_input_dep(Path::new(
+                "/repo/buck-out/v2/external_cells/bzlmod_generated/repo.repository_ctx/file",
+            )),
+            None
+        );
+        assert_eq!(
+            repository_ctx_external_input_tree_dep(Path::new(
+                "/repo/buck-out/v2/external_cells/bzlmod/gazelle+",
+            )),
+            Some(RepositoryPathLabelDep::tree(
+                "bzlmod_gazelle_".to_owned(),
+                None,
+            ))
+        );
+        assert_eq!(
+            repository_ctx_external_input_tree_dep(Path::new(
+                "/repo/buck-out/v2/external_cells/bzlmod/gazelle+/internal",
+            )),
+            Some(RepositoryPathLabelDep::tree(
+                "bzlmod_gazelle_".to_owned(),
+                Some("internal".to_owned()),
+            ))
+        );
     }
 
     #[test]
@@ -895,6 +1110,7 @@ fn validate_module_extension_return<'v>(
 
 #[derive(Debug, Deserialize)]
 struct BzlmodModuleExtensionEvaluationConfig {
+    root_module_has_non_dev_dependency: bool,
     modules: Vec<BzlmodModuleExtensionModuleConfig>,
 }
 
@@ -927,9 +1143,50 @@ pub struct BazelRepositoryGeneratedFile {
 pub(crate) enum BazelRepositoryRuleEvaluation {
     Success(Vec<BazelRepositoryGeneratedFile>),
     NeedsPathLabelDeps {
-        label_deps: Vec<String>,
+        label_deps: Vec<RepositoryPathLabelDep>,
         error: String,
     },
+}
+
+pub enum BazelModuleExtensionEvaluation {
+    Success(BazelModuleExtensionEvaluationResult),
+    NeedsPathLabelDeps {
+        label_deps: Vec<RepositoryPathLabelDep>,
+        error: String,
+    },
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Freeze, Allocative)]
+pub struct RepositoryPathLabelDep {
+    cell_name: String,
+    path: Option<String>,
+    recursive: bool,
+}
+
+impl RepositoryPathLabelDep {
+    fn cell(cell_name: String) -> Self {
+        Self {
+            cell_name,
+            path: None,
+            recursive: false,
+        }
+    }
+
+    fn cell_path(cell_name: String, path: String) -> Self {
+        Self {
+            cell_name,
+            path: Some(path),
+            recursive: false,
+        }
+    }
+
+    fn tree(cell_name: String, path: Option<String>) -> Self {
+        Self {
+            cell_name,
+            path,
+            recursive: true,
+        }
+    }
 }
 
 pub async fn evaluate_bzlmod_module_extension_repo(
@@ -956,23 +1213,51 @@ pub async fn evaluate_bzlmod_module_extension_repo(
         .await?;
     materialize_bzlmod_module_extension_loaded_module_label_deps(
         ctx,
-        &extension_module,
+        &extension_path,
         current_canonical_repo_name,
     )
     .await?;
-    let mut interpreter = ctx
-        .get_interpreter_calculator(OwnedStarlarkPath::LoadFile(extension_path.clone()))
-        .await?;
-    interpreter
-        .eval_bzlmod_module_extension(
-            &extension_path,
-            &extension_module,
-            &setup.extension_name,
-            &setup.extension_usages_json,
-            module_ctx_working_dir,
-            cancellation,
-        )
-        .await
+    let mut materialized_path_label_deps = BTreeSet::new();
+    loop {
+        let mut interpreter = ctx
+            .get_interpreter_calculator(OwnedStarlarkPath::LoadFile(extension_path.clone()))
+            .await?;
+        match interpreter
+            .eval_bzlmod_module_extension(
+                &extension_path,
+                &extension_module,
+                &setup.extension_name,
+                &setup.extension_usages_json,
+                module_ctx_working_dir,
+                cancellation,
+            )
+            .await?
+        {
+            BazelModuleExtensionEvaluation::Success(result) => return Ok(result),
+            BazelModuleExtensionEvaluation::NeedsPathLabelDeps { label_deps, error } => {
+                let new_label_deps = label_deps
+                    .into_iter()
+                    .filter(|dep| materialized_path_label_deps.insert(dep.clone()))
+                    .collect::<Vec<_>>();
+                if new_label_deps.is_empty() {
+                    return Err(buck2_error::buck2_error!(
+                        buck2_error::ErrorTag::Input,
+                        "module_extension `{}%{}` failed after materializing module_ctx path labels: {}",
+                        extension_path,
+                        setup.extension_name,
+                        error
+                    ));
+                }
+                materialize_repository_rule_path_label_deps(
+                    ctx,
+                    &new_label_deps,
+                    LabelDepMaterialization::AllExternal,
+                )
+                .await?;
+                repository_ctx_clean_working_dir(module_ctx_working_dir)?;
+            }
+        }
+    }
 }
 
 async fn materialize_bzlmod_module_extension_source_label_deps(
@@ -981,15 +1266,13 @@ async fn materialize_bzlmod_module_extension_source_label_deps(
     setup: &BzlmodModuleExtensionRepoSetup,
     current_canonical_repo_name: Option<&str>,
 ) -> buck2_error::Result<()> {
-    let source = DiceFileComputations::read_file(ctx, extension_path.path().as_ref())
-        .await
-        .with_package_context_information(extension_path.path().path().to_string())?;
+    let scan = repository_rule_source_label_dep_scan_for_path(ctx, extension_path).await?;
     let extension_cell_alias_resolver = ctx
         .get_cell_alias_resolver(extension_path.path().cell())
         .await?;
     let mut label_deps = BTreeSet::new();
-    collect_bzlmod_module_extension_string_label_deps(
-        &source,
+    collect_repository_rule_label_literal_deps(
+        &scan.labels,
         &mut label_deps,
         &extension_cell_alias_resolver,
     );
@@ -1042,20 +1325,17 @@ async fn materialize_bzlmod_module_extension_source_label_deps(
 
 async fn materialize_bzlmod_module_extension_loaded_module_label_deps(
     ctx: &mut DiceComputations<'_>,
-    extension_module: &LoadedModule,
+    extension_path: &ImportPath,
     current_canonical_repo_name: Option<&str>,
 ) -> buck2_error::Result<()> {
-    let mut loaded_paths = Vec::new();
-    collect_loaded_module_load_paths(extension_module, &mut BTreeSet::new(), &mut loaded_paths);
+    let loaded_paths = repository_rule_loaded_module_load_paths(ctx, extension_path).await?;
 
     let mut label_deps = BTreeSet::new();
-    for path in loaded_paths {
-        let source = DiceFileComputations::read_file(ctx, path.path().as_ref())
-            .await
-            .with_package_context_information(path.path().path().to_string())?;
+    for path in loaded_paths.iter() {
+        let scan = repository_rule_source_label_dep_scan_for_path(ctx, path).await?;
         let cell_alias_resolver = ctx.get_cell_alias_resolver(path.path().cell()).await?;
-        collect_bzlmod_module_extension_string_label_deps(
-            &source,
+        collect_repository_rule_label_literal_deps(
+            &scan.labels,
             &mut label_deps,
             &cell_alias_resolver,
         );
@@ -1083,10 +1363,17 @@ fn collect_loaded_module_load_paths(
             continue;
         }
         if let StarlarkModulePath::LoadFile(path) = loaded.path() {
+            if !repository_rule_should_scan_loaded_module_cell(path.path().cell().as_str()) {
+                continue;
+            }
             paths.push(path.clone());
         }
         collect_loaded_module_load_paths(loaded, seen, paths);
     }
+}
+
+fn repository_rule_should_scan_loaded_module_cell(cell_name: &str) -> bool {
+    cell_name != "prelude"
 }
 
 async fn bzlmod_module_cell_name_from_config(
@@ -1102,6 +1389,7 @@ async fn bzlmod_module_cell_name_from_config(
     CellName::unchecked_new(&bzlmod_cell_name(&module_config.canonical_repo_name))
 }
 
+#[cfg(test)]
 fn collect_bzlmod_module_extension_string_label_deps(
     source: &str,
     label_deps: &mut BTreeSet<String>,
@@ -1153,7 +1441,7 @@ pub async fn evaluate_bzlmod_repository_rule(
     let rule_module = ctx
         .get_loaded_module(StarlarkModulePath::LoadFile(rule_path))
         .await?;
-    materialize_repository_rule_loaded_module_label_deps(ctx, &rule_module, invocation).await?;
+    materialize_repository_rule_loaded_module_label_deps(ctx, rule_path, invocation).await?;
     let mut materialized_path_label_deps = BTreeSet::new();
     loop {
         let mut interpreter = ctx
@@ -1173,7 +1461,7 @@ pub async fn evaluate_bzlmod_repository_rule(
             BazelRepositoryRuleEvaluation::NeedsPathLabelDeps { label_deps, error } => {
                 let new_label_deps = label_deps
                     .into_iter()
-                    .filter(|cell_name| materialized_path_label_deps.insert(cell_name.clone()))
+                    .filter(|dep| materialized_path_label_deps.insert(dep.clone()))
                     .collect::<Vec<_>>();
                 if new_label_deps.is_empty() {
                     return Err(buck2_error::buck2_error!(
@@ -1183,7 +1471,7 @@ pub async fn evaluate_bzlmod_repository_rule(
                         error
                     ));
                 }
-                materialize_repository_rule_label_deps(
+                materialize_repository_rule_path_label_deps(
                     ctx,
                     &new_label_deps,
                     LabelDepMaterialization::AllExternal,
@@ -1210,12 +1498,8 @@ pub async fn repository_rule_uses_unresolved_dynamic_label(
         return Ok(true);
     }
 
-    let rule_module = ctx
-        .get_loaded_module(StarlarkModulePath::LoadFile(rule_path))
-        .await?;
-    let mut loaded_paths = Vec::new();
-    collect_loaded_module_load_paths(&rule_module, &mut BTreeSet::new(), &mut loaded_paths);
-    for path in loaded_paths {
+    let loaded_paths = repository_rule_loaded_module_load_paths(ctx, rule_path).await?;
+    for path in loaded_paths.iter() {
         let source = DiceFileComputations::read_file(ctx, path.path().as_ref())
             .await
             .with_package_context_information(path.path().path().to_string())?;
@@ -1226,15 +1510,107 @@ pub async fn repository_rule_uses_unresolved_dynamic_label(
     Ok(false)
 }
 
-fn repository_rule_source_uses_unresolved_dynamic_label(source: &str) -> bool {
-    let compact = repository_rule_source_without_ascii_whitespace(source);
-    compact.contains("Label(\"{") || compact.contains("Label('{")
-}
-
+#[derive(Clone, Debug, Eq, PartialEq, Allocative)]
 enum RepositoryRuleLabelLiteral {
     Apparent(String),
     ApparentTemplate(String),
     Canonical(String),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Allocative)]
+struct RepositoryRuleSourceLabelDepScan {
+    labels: Vec<RepositoryRuleLabelLiteral>,
+    dynamic_label_attr_names: Vec<String>,
+}
+
+#[derive(Clone, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable)]
+#[display("repository rule source label dependency scan for {}", path)]
+#[pagable_typetag(dice::DiceKeyDyn)]
+struct RepositoryRuleSourceLabelDepScanKey {
+    path: CellPath,
+}
+
+#[async_trait::async_trait]
+impl Key for RepositoryRuleSourceLabelDepScanKey {
+    type Value = buck2_error::Result<Arc<RepositoryRuleSourceLabelDepScan>>;
+
+    async fn compute(
+        &self,
+        ctx: &mut DiceComputations,
+        _cancellations: &CancellationContext,
+    ) -> Self::Value {
+        let source = DiceFileComputations::read_file(ctx, self.path.as_ref())
+            .await
+            .with_package_context_information(self.path.path().to_string())?;
+        Ok(Arc::new(repository_rule_source_label_dep_scan(&source)))
+    }
+
+    fn equality(_x: &Self::Value, _y: &Self::Value) -> bool {
+        false
+    }
+
+    fn validity(x: &Self::Value) -> bool {
+        x.is_ok()
+    }
+
+    fn value_serialize() -> impl ValueSerialize<Value = Self::Value> {
+        NoValueSerialize::<Self::Value>::new()
+    }
+}
+
+async fn repository_rule_source_label_dep_scan_for_path(
+    ctx: &mut DiceComputations<'_>,
+    path: &ImportPath,
+) -> buck2_error::Result<Arc<RepositoryRuleSourceLabelDepScan>> {
+    ctx.compute(&RepositoryRuleSourceLabelDepScanKey {
+        path: path.path().clone(),
+    })
+    .await?
+}
+
+#[derive(Clone, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable)]
+#[display("repository rule loaded module load paths for {}", path)]
+#[pagable_typetag(dice::DiceKeyDyn)]
+struct RepositoryRuleLoadedModuleLoadPathsKey {
+    path: ImportPath,
+}
+
+#[async_trait::async_trait]
+impl Key for RepositoryRuleLoadedModuleLoadPathsKey {
+    type Value = buck2_error::Result<Arc<Vec<ImportPath>>>;
+
+    async fn compute(
+        &self,
+        ctx: &mut DiceComputations,
+        _cancellations: &CancellationContext,
+    ) -> Self::Value {
+        let module = ctx
+            .get_loaded_module(StarlarkModulePath::LoadFile(&self.path))
+            .await?;
+        let mut paths = Vec::new();
+        collect_loaded_module_load_paths(&module, &mut BTreeSet::new(), &mut paths);
+        Ok(Arc::new(paths))
+    }
+
+    fn equality(_x: &Self::Value, _y: &Self::Value) -> bool {
+        false
+    }
+
+    fn validity(x: &Self::Value) -> bool {
+        x.is_ok()
+    }
+
+    fn value_serialize() -> impl ValueSerialize<Value = Self::Value> {
+        NoValueSerialize::<Self::Value>::new()
+    }
+}
+
+async fn repository_rule_loaded_module_load_paths(
+    ctx: &mut DiceComputations<'_>,
+    path: &ImportPath,
+) -> buck2_error::Result<Arc<Vec<ImportPath>>> {
+    ctx.compute(&RepositoryRuleLoadedModuleLoadPathsKey { path: path.clone() })
+        .await?
 }
 
 async fn materialize_repository_rule_source_label_deps(
@@ -1242,14 +1618,13 @@ async fn materialize_repository_rule_source_label_deps(
     rule_path: &ImportPath,
     invocation: &BazelRepositoryRuleInvocation,
 ) -> buck2_error::Result<()> {
-    let source = DiceFileComputations::read_file(ctx, rule_path.path().as_ref())
-        .await
-        .with_package_context_information(rule_path.path().path().to_string())?;
+    let scan = repository_rule_source_label_dep_scan_for_path(ctx, rule_path).await?;
     let cell_alias_resolver = ctx.get_cell_alias_resolver(rule_path.path().cell()).await?;
+    let attrs = repository_rule_attr_expressions_by_name(&invocation.attrs);
     let mut label_deps = BTreeSet::new();
-    collect_repository_rule_source_label_deps(
-        &source,
-        &invocation.attrs,
+    collect_repository_rule_source_scan_label_deps(
+        &scan,
+        &attrs,
         &mut label_deps,
         &cell_alias_resolver,
     );
@@ -1264,21 +1639,18 @@ async fn materialize_repository_rule_source_label_deps(
 
 async fn materialize_repository_rule_loaded_module_label_deps(
     ctx: &mut DiceComputations<'_>,
-    rule_module: &LoadedModule,
+    rule_path: &ImportPath,
     invocation: &BazelRepositoryRuleInvocation,
 ) -> buck2_error::Result<()> {
-    let mut loaded_paths = Vec::new();
-    collect_loaded_module_load_paths(rule_module, &mut BTreeSet::new(), &mut loaded_paths);
-
+    let loaded_paths = repository_rule_loaded_module_load_paths(ctx, rule_path).await?;
+    let attrs = repository_rule_attr_expressions_by_name(&invocation.attrs);
     let mut label_deps = BTreeSet::new();
-    for path in loaded_paths {
-        let source = DiceFileComputations::read_file(ctx, path.path().as_ref())
-            .await
-            .with_package_context_information(path.path().path().to_string())?;
+    for path in loaded_paths.iter() {
+        let scan = repository_rule_source_label_dep_scan_for_path(ctx, path).await?;
         let cell_alias_resolver = ctx.get_cell_alias_resolver(path.path().cell()).await?;
-        collect_repository_rule_source_label_deps(
-            &source,
-            &invocation.attrs,
+        collect_repository_rule_source_scan_label_deps(
+            &scan,
+            &attrs,
             &mut label_deps,
             &cell_alias_resolver,
         );
@@ -1292,41 +1664,14 @@ async fn materialize_repository_rule_loaded_module_label_deps(
     .await
 }
 
-fn collect_repository_rule_source_label_deps(
-    source: &str,
-    attrs: &[(String, String)],
+fn collect_repository_rule_source_scan_label_deps(
+    scan: &RepositoryRuleSourceLabelDepScan,
+    attrs: &BTreeMap<&str, &str>,
     label_deps: &mut BTreeSet<String>,
     cell_alias_resolver: &CellAliasResolver,
 ) {
-    for label in repository_rule_label_literals(&source) {
-        let cell_name = match label {
-            RepositoryRuleLabelLiteral::Apparent(repo_name) => {
-                match cell_alias_resolver.resolve(&repo_name) {
-                    Ok(cell_name) => cell_name.to_string(),
-                    Err(_) => continue,
-                }
-            }
-            RepositoryRuleLabelLiteral::ApparentTemplate(repo_template) => {
-                collect_repository_rule_repo_template_label_deps(
-                    &repo_template,
-                    label_deps,
-                    cell_alias_resolver,
-                );
-                continue;
-            }
-            RepositoryRuleLabelLiteral::Canonical(canonical_repo_name) => {
-                bzlmod_cell_name(&canonical_repo_name)
-            }
-        };
-        label_deps.insert(cell_name);
-    }
-    let attrs = attrs
-        .iter()
-        .map(|(name, expression)| (name.as_str(), expression.as_str()))
-        .collect::<BTreeMap<_, _>>();
-    let mut dynamic_label_attr_names = repository_rule_dynamic_label_attr_names(&source);
-    dynamic_label_attr_names.extend(repository_rule_dynamic_repo_name_attr_names(&source));
-    for attr_name in dynamic_label_attr_names {
+    collect_repository_rule_label_literal_deps(&scan.labels, label_deps, cell_alias_resolver);
+    for attr_name in &scan.dynamic_label_attr_names {
         let Some(expression) = attrs.get(attr_name.as_str()) else {
             continue;
         };
@@ -1335,6 +1680,51 @@ fn collect_repository_rule_source_label_deps(
             label_deps,
             cell_alias_resolver,
         );
+    }
+}
+
+fn collect_repository_rule_label_literal_deps(
+    labels: &[RepositoryRuleLabelLiteral],
+    label_deps: &mut BTreeSet<String>,
+    cell_alias_resolver: &CellAliasResolver,
+) {
+    for label in labels {
+        let cell_name = match label {
+            RepositoryRuleLabelLiteral::Apparent(repo_name) => {
+                match cell_alias_resolver.resolve(repo_name) {
+                    Ok(cell_name) => cell_name.to_string(),
+                    Err(_) => continue,
+                }
+            }
+            RepositoryRuleLabelLiteral::ApparentTemplate(repo_template) => {
+                collect_repository_rule_repo_template_label_deps(
+                    repo_template,
+                    label_deps,
+                    cell_alias_resolver,
+                );
+                continue;
+            }
+            RepositoryRuleLabelLiteral::Canonical(canonical_repo_name) => {
+                bzlmod_cell_name(canonical_repo_name)
+            }
+        };
+        label_deps.insert(cell_name);
+    }
+}
+
+fn repository_rule_attr_expressions_by_name(attrs: &[(String, String)]) -> BTreeMap<&str, &str> {
+    attrs
+        .iter()
+        .map(|(name, expression)| (name.as_str(), expression.as_str()))
+        .collect()
+}
+
+fn repository_rule_source_label_dep_scan(source: &str) -> RepositoryRuleSourceLabelDepScan {
+    let mut dynamic_label_attr_names = repository_rule_dynamic_label_attr_names(source);
+    dynamic_label_attr_names.extend(repository_rule_dynamic_repo_name_attr_names(source));
+    RepositoryRuleSourceLabelDepScan {
+        labels: repository_rule_label_literals(source),
+        dynamic_label_attr_names: dynamic_label_attr_names.into_iter().collect(),
     }
 }
 
@@ -1401,12 +1791,24 @@ async fn materialize_repository_rule_label_deps(
     label_deps: &[String],
     materialization: LabelDepMaterialization,
 ) -> buck2_error::Result<()> {
+    let label_deps = label_deps
+        .iter()
+        .map(|cell_name| RepositoryPathLabelDep::cell(cell_name.clone()))
+        .collect::<Vec<_>>();
+    materialize_repository_rule_path_label_deps(ctx, &label_deps, materialization).await
+}
+
+async fn materialize_repository_rule_path_label_deps(
+    ctx: &mut DiceComputations<'_>,
+    label_deps: &[RepositoryPathLabelDep],
+    materialization: LabelDepMaterialization,
+) -> buck2_error::Result<()> {
     let mut seen = BTreeSet::new();
-    for cell_name in label_deps {
-        if !seen.insert(cell_name) {
+    for dep in label_deps {
+        if !seen.insert(dep) {
             continue;
         }
-        let cell_name = CellName::unchecked_new(cell_name)?;
+        let cell_name = CellName::unchecked_new(&dep.cell_name)?;
         let should_materialize = {
             let cell_resolver = ctx.get_cell_resolver().await?;
             match cell_resolver.get(cell_name) {
@@ -1423,8 +1825,54 @@ async fn materialize_repository_rule_label_deps(
         if !should_materialize {
             continue;
         }
-        let cell_root = CellPath::new(cell_name, CellRelativePathBuf::unchecked_new(String::new()));
-        DiceFileComputations::read_dir(ctx, cell_root.as_ref()).await?;
+        match &dep.path {
+            Some(path) if dep.recursive => {
+                materialize_repository_rule_path_label_dep_tree(ctx, cell_name, path).await?;
+            }
+            Some(path) => {
+                let cell_path =
+                    CellPath::new(cell_name, CellRelativePathBuf::try_from(path.to_owned())?);
+                DiceFileComputations::read_path_metadata_if_exists(ctx, cell_path.as_ref()).await?;
+            }
+            None if dep.recursive => {
+                materialize_repository_rule_path_label_dep_tree(ctx, cell_name, "").await?;
+            }
+            None => {
+                let cell_root =
+                    CellPath::new(cell_name, CellRelativePathBuf::unchecked_new(String::new()));
+                DiceFileComputations::read_dir(ctx, cell_root.as_ref()).await?;
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn materialize_repository_rule_path_label_dep_tree(
+    ctx: &mut DiceComputations<'_>,
+    cell_name: CellName,
+    path: &str,
+) -> buck2_error::Result<()> {
+    let root = CellPath::new(cell_name, CellRelativePathBuf::try_from(path.to_owned())?);
+    let Some(metadata) =
+        DiceFileComputations::read_path_metadata_if_exists(ctx, root.as_ref()).await?
+    else {
+        return Ok(());
+    };
+    if !matches!(metadata, RawPathMetadata::Directory) {
+        return Ok(());
+    }
+
+    let mut dirs = vec![root];
+    while let Some(dir) = dirs.pop() {
+        let entries = DiceFileComputations::read_dir(ctx, dir.as_ref()).await?;
+        for entry in entries.included.iter() {
+            let child = dir.join(&entry.file_name);
+            if entry.file_type.is_dir() {
+                dirs.push(child);
+            } else {
+                DiceFileComputations::read_path_metadata_if_exists(ctx, child.as_ref()).await?;
+            }
+        }
     }
     Ok(())
 }
@@ -1583,6 +2031,36 @@ fn alloc_coerced_attr_value<'v>(
     Ok(eval.heap().alloc(json))
 }
 
+fn alloc_attr_value<'v>(
+    attr_name: &str,
+    attr: &Attribute,
+    attr_coercion_ctx: &BuildAttrCoercionContext,
+    raw_value: Value<'v>,
+    eval: &mut Evaluator<'v, '_, '_>,
+) -> starlark::Result<Value<'v>> {
+    match attr
+        .coerce(
+            attr_name,
+            AttrIsConfigurable::No,
+            attr_coercion_ctx,
+            raw_value,
+        )
+        .map_err(starlark::Error::from)?
+    {
+        CoercedValue::Custom(value) => alloc_coerced_attr_value(&value, eval),
+        CoercedValue::Default => {
+            let default = attr.default().ok_or_else(|| {
+                buck2_error::buck2_error!(
+                    buck2_error::ErrorTag::Tier0,
+                    "attribute `{}` selected a default but has no default value",
+                    attr_name
+                )
+            })?;
+            alloc_coerced_attr_value(default, eval)
+        }
+    }
+}
+
 fn bzlmod_module_cell_name(
     canonical_repo_name: &str,
     is_root: bool,
@@ -1624,6 +2102,18 @@ fn bzlmod_module_attr_coercion_context(
         cell_resolver,
         cell_name,
         cell_alias_resolver,
+        Arc::new(ConcurrentTargetLabelInterner::default()),
+    ))
+}
+
+fn bzlmod_current_attr_coercion_context(
+    eval: &Evaluator<'_, '_, '_>,
+) -> buck2_error::Result<BuildAttrCoercionContext> {
+    let build_context = BuildContext::from_context(eval)?;
+    Ok(BuildAttrCoercionContext::new_no_package(
+        build_context.cell_info().cell_resolver().dupe(),
+        build_context.cell_info().name().name(),
+        build_context.cell_info().cell_alias_resolver().dupe(),
         Arc::new(ConcurrentTargetLabelInterner::default()),
     ))
 }
@@ -1690,11 +2180,7 @@ pub(crate) fn alloc_bzlmod_module_extension_context<'v>(
                             globals,
                             eval,
                         )?;
-                        let coerced_value = attr
-                            .coercer()
-                            .coerce(AttrIsConfigurable::No, &attr_coercion_ctx, raw_value)
-                            .map_err(starlark::Error::from)?;
-                        alloc_coerced_attr_value(&coerced_value, eval)?
+                        alloc_attr_value(attr_name, attr, &attr_coercion_ctx, raw_value, eval)?
                     }
                     None => match attr.default() {
                         Some(default) => alloc_coerced_attr_value(default, eval)?,
@@ -1733,6 +2219,10 @@ pub(crate) fn alloc_bzlmod_module_extension_context<'v>(
                 .push(tag_value);
         }
 
+        let tags = tags
+            .into_iter()
+            .map(|(name, values)| (name, eval.heap().alloc(AllocList(values))))
+            .collect();
         let tags_value = eval.heap().alloc(StarlarkBazelModuleTags::new(tags));
         let module_value = eval.heap().alloc(StarlarkBazelModule::new(
             module_config.name,
@@ -1742,10 +2232,12 @@ pub(crate) fn alloc_bzlmod_module_extension_context<'v>(
         ));
         modules.push(module_value);
     }
+    let modules = eval.heap().alloc(AllocList(modules));
 
     Ok(eval.heap().alloc(StarlarkModuleExtensionContext::new(
         modules,
         working_dir.to_owned(),
+        config.root_module_has_non_dev_dependency,
     )))
 }
 
@@ -1762,13 +2254,17 @@ pub(crate) fn alloc_bzlmod_repository_context<'v>(
         .iter()
         .cloned()
         .collect::<BTreeMap<String, String>>();
+    let attr_coercion_ctx =
+        bzlmod_current_attr_coercion_context(eval).map_err(starlark::Error::from)?;
     let mut attrs = Vec::new();
     for (attr_name, attr) in repository_rule.attributes.attributes() {
         let value = match explicit_attrs.remove(attr_name) {
             Some(expression) => {
                 let value_name = format!("buck_repository_rule_attr_{expression_index}");
                 expression_index += 1;
-                eval_bzlmod_tag_expression(&expression, &[], &value_name, globals, eval)?
+                let raw_value =
+                    eval_bzlmod_tag_expression(&expression, &[], &value_name, globals, eval)?;
+                alloc_attr_value(attr_name, attr, &attr_coercion_ctx, raw_value, eval)?
             }
             None => match attr.default() {
                 Some(default) => alloc_coerced_attr_value(default, eval)?,
@@ -2408,23 +2904,39 @@ impl<'v> StarlarkValue<'v> for FrozenStarlarkRepositoryOs {
 #[derive(
     Clone,
     Debug,
-    Display,
     ProvidesStaticType,
     Trace,
     Freeze,
     NoSerialize,
     Allocative
 )]
-#[display("{}", path)]
 pub(crate) struct StarlarkRepositoryPath {
     path: String,
+    #[trace(unsafe_ignore)]
+    dep: Option<RepositoryPathLabelDep>,
 }
 
 starlark_simple_value!(StarlarkRepositoryPath);
 
 impl StarlarkRepositoryPath {
     fn new(path: String) -> Self {
-        Self { path }
+        Self { path, dep: None }
+    }
+
+    fn new_with_dep(path: String, dep: Option<RepositoryPathLabelDep>) -> Self {
+        Self { path, dep }
+    }
+}
+
+impl Display for StarlarkRepositoryPath {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.dep.is_some() {
+            repository_path_for_read_abs(&self.path)
+                .to_string_lossy()
+                .fmt(f)
+        } else {
+            self.path.fmt(f)
+        }
     }
 }
 
@@ -2448,12 +2960,12 @@ fn repository_path_methods(builder: &mut MethodsBuilder) {
 
     #[starlark(attribute)]
     fn dirname(this: &StarlarkRepositoryPath) -> starlark::Result<StarlarkRepositoryPath> {
-        Ok(StarlarkRepositoryPath::new(
-            Path::new(&this.path)
-                .parent()
-                .map(|path| path.to_string_lossy().into_owned())
-                .unwrap_or_default(),
-        ))
+        let path = Path::new(&this.path)
+            .parent()
+            .map(|path| path.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let dep = repository_ctx_external_input_tree_dep(Path::new(&path));
+        Ok(StarlarkRepositoryPath::new_with_dep(path, dep))
     }
 
     fn get_child<'v>(
@@ -2539,8 +3051,16 @@ fn repository_path_from_value_relative_to(
     eval: &Evaluator<'_, '_, '_>,
     relative_root: Option<&str>,
 ) -> starlark::Result<String> {
+    Ok(repository_path_and_dep_from_value_relative_to(value, eval, relative_root)?.0)
+}
+
+fn repository_path_and_dep_from_value_relative_to(
+    value: Value<'_>,
+    eval: &Evaluator<'_, '_, '_>,
+    relative_root: Option<&str>,
+) -> starlark::Result<(String, Option<RepositoryPathLabelDep>)> {
     if let Some(path) = value.downcast_ref::<StarlarkRepositoryPath>() {
-        return Ok(path.path.clone());
+        return Ok((path.path.clone(), path.dep.clone()));
     }
     if let Some(label) = StarlarkProvidersLabel::from_value(value) {
         let target = label.label().target();
@@ -2551,16 +3071,22 @@ fn repository_path_from_value_relative_to(
         let project_path = BuildContext::from_context(eval)?
             .cell_resolver()
             .resolve_path(cell_path.as_ref())?;
-        return Ok(project_path.as_str().to_owned());
+        return Ok((
+            project_path.as_str().to_owned(),
+            Some(RepositoryPathLabelDep::cell_path(
+                cell_path.cell().as_str().to_owned(),
+                cell_path.path().as_str().to_owned(),
+            )),
+        ));
     }
     if let Some(path) = value.unpack_str() {
         if let Some(relative_root) = relative_root
             && !Path::new(path).is_absolute()
             && !path.starts_with("buck-out/")
         {
-            return Ok(repository_join_normalized(relative_root, path));
+            return Ok((repository_join_normalized(relative_root, path), None));
         }
-        return Ok(path.to_owned());
+        return Ok((path.to_owned(), None));
     }
     Err(
         buck2_error::Error::from(BazelRepositoryError::ModuleCtxPathUnsupportedValue(
@@ -2772,7 +3298,7 @@ pub(crate) struct StarlarkRepositoryContext<'v> {
     files: Mutex<Vec<BazelRepositoryGeneratedFile>>,
     #[trace(unsafe_ignore)]
     #[allocative(skip)]
-    path_label_deps: Mutex<Vec<String>>,
+    path_label_deps: Mutex<Vec<RepositoryPathLabelDep>>,
 }
 
 impl<'v> StarlarkRepositoryContext<'v> {
@@ -2798,7 +3324,7 @@ impl<'v> StarlarkRepositoryContext<'v> {
         std::mem::take(&mut *self.files.lock().expect("repository_ctx files poisoned"))
     }
 
-    fn take_path_label_deps(&self) -> Vec<String> {
+    fn take_path_label_deps(&self) -> Vec<RepositoryPathLabelDep> {
         std::mem::take(
             &mut *self
                 .path_label_deps
@@ -2885,7 +3411,7 @@ pub(crate) struct FrozenStarlarkRepositoryContext {
     #[allocative(skip)]
     files: Mutex<Vec<BazelRepositoryGeneratedFile>>,
     #[allocative(skip)]
-    path_label_deps: Mutex<Vec<String>>,
+    path_label_deps: Mutex<Vec<RepositoryPathLabelDep>>,
 }
 
 impl Display for FrozenStarlarkRepositoryContext {
@@ -2967,7 +3493,7 @@ pub(crate) fn take_repository_ctx_files<'v>(
 
 pub(crate) fn take_repository_ctx_path_label_deps<'v>(
     repository_ctx: Value<'v>,
-) -> starlark::Result<Vec<String>> {
+) -> starlark::Result<Vec<RepositoryPathLabelDep>> {
     let repository_ctx = repository_ctx
         .downcast_ref::<StarlarkRepositoryContext>()
         .ok_or_else(|| {
@@ -2980,6 +3506,21 @@ pub(crate) fn take_repository_ctx_path_label_deps<'v>(
     Ok(repository_ctx.take_path_label_deps())
 }
 
+pub(crate) fn take_module_ctx_path_label_deps<'v>(
+    module_ctx: Value<'v>,
+) -> starlark::Result<Vec<RepositoryPathLabelDep>> {
+    let module_ctx = module_ctx
+        .downcast_ref::<StarlarkModuleExtensionContext>()
+        .ok_or_else(|| {
+            buck2_error::buck2_error!(
+                buck2_error::ErrorTag::Input,
+                "expected module_ctx, got `{}`",
+                module_ctx.get_type()
+            )
+        })?;
+    Ok(module_ctx.take_path_label_deps())
+}
+
 fn repository_ctx_working_dir<'v>(
     this: ValueTypedComplex<'v, StarlarkRepositoryContext<'v>>,
 ) -> &'v str {
@@ -2989,20 +3530,9 @@ fn repository_ctx_working_dir<'v>(
     }
 }
 
-fn repository_ctx_record_path_label_dep<'v>(
+fn repository_ctx_record_path_dep<'v>(
     this: ValueTypedComplex<'v, StarlarkRepositoryContext<'v>>,
-    value: Value<'v>,
-) {
-    let Some(label) = StarlarkProvidersLabel::from_value(value) else {
-        return;
-    };
-    let cell_name = label.label().target().pkg().cell_name().as_str().to_owned();
-    repository_ctx_record_path_cell_dep(this, cell_name);
-}
-
-fn repository_ctx_record_path_cell_dep<'v>(
-    this: ValueTypedComplex<'v, StarlarkRepositoryContext<'v>>,
-    cell_name: String,
+    dep: RepositoryPathLabelDep,
 ) {
     match this.unpack() {
         either::Either::Left(ctx) => {
@@ -3010,8 +3540,8 @@ fn repository_ctx_record_path_cell_dep<'v>(
                 .path_label_deps
                 .lock()
                 .expect("repository_ctx path label deps poisoned");
-            if !deps.iter().any(|dep| dep == &cell_name) {
-                deps.push(cell_name);
+            if !deps.iter().any(|existing| existing == &dep) {
+                deps.push(dep);
             }
         }
         either::Either::Right(ctx) => {
@@ -3019,8 +3549,8 @@ fn repository_ctx_record_path_cell_dep<'v>(
                 .path_label_deps
                 .lock()
                 .expect("repository_ctx path label deps poisoned");
-            if !deps.iter().any(|dep| dep == &cell_name) {
-                deps.push(cell_name);
+            if !deps.iter().any(|existing| existing == &dep) {
+                deps.push(dep);
             }
         }
     }
@@ -3031,8 +3561,57 @@ fn repository_ctx_path_from_value_relative_to<'v>(
     path: Value<'v>,
     eval: &Evaluator<'v, '_, '_>,
 ) -> starlark::Result<String> {
-    repository_ctx_record_path_label_dep(this, path);
-    repository_path_from_value_relative_to(path, eval, Some(repository_ctx_working_dir(this)))
+    let (path, dep) = repository_path_and_dep_from_value_relative_to(
+        path,
+        eval,
+        Some(repository_ctx_working_dir(this)),
+    )?;
+    if let Some(dep) = dep {
+        repository_ctx_record_path_dep(this, dep);
+    }
+    Ok(path)
+}
+
+fn module_ctx_record_path_dep<'v>(
+    this: ValueTypedComplex<'v, StarlarkModuleExtensionContext<'v>>,
+    dep: RepositoryPathLabelDep,
+) {
+    match this.unpack() {
+        either::Either::Left(ctx) => {
+            let mut deps = ctx
+                .path_label_deps
+                .lock()
+                .expect("module_ctx path label deps poisoned");
+            if !deps.iter().any(|existing| existing == &dep) {
+                deps.push(dep);
+            }
+        }
+        either::Either::Right(ctx) => {
+            let mut deps = ctx
+                .path_label_deps
+                .lock()
+                .expect("module_ctx path label deps poisoned");
+            if !deps.iter().any(|existing| existing == &dep) {
+                deps.push(dep);
+            }
+        }
+    }
+}
+
+fn module_ctx_path_from_value_relative_to<'v>(
+    this: ValueTypedComplex<'v, StarlarkModuleExtensionContext<'v>>,
+    path: Value<'v>,
+    eval: &Evaluator<'v, '_, '_>,
+) -> starlark::Result<String> {
+    let (path, dep) = repository_path_and_dep_from_value_relative_to(
+        path,
+        eval,
+        Some(module_ctx_working_dir(this)),
+    )?;
+    if let Some(dep) = dep {
+        module_ctx_record_path_dep(this, dep);
+    }
+    Ok(path)
 }
 
 fn repository_ctx_clean_working_dir(working_dir: &str) -> buck2_error::Result<()> {
@@ -3138,14 +3717,32 @@ fn repository_ctx_create_symlink(target: &Path, link: &Path) -> std::io::Result<
     }
 }
 
-fn repository_ctx_command_arg(value: Value<'_>, working_dir: &str) -> String {
+fn repository_ctx_command_arg(
+    value: Value<'_>,
+    working_dir: &str,
+    eval: &Evaluator<'_, '_, '_>,
+) -> starlark::Result<String> {
     if let Some(path) = value.downcast_ref::<StarlarkRepositoryPath>() {
-        return repository_ctx_command_path(&path.path, working_dir);
+        return Ok(repository_ctx_command_path_object(&path.path, working_dir));
+    }
+    if StarlarkProvidersLabel::from_value(value).is_some() {
+        let (path, _dep) =
+            repository_path_and_dep_from_value_relative_to(value, eval, Some(working_dir))?;
+        return Ok(repository_ctx_command_path_object(&path, working_dir));
     }
     if let Some(path) = value.unpack_str() {
-        return repository_ctx_command_path(path, working_dir);
+        return Ok(repository_ctx_command_path(path, working_dir));
     }
-    value.to_string()
+    Ok(value.to_string())
+}
+
+fn repository_ctx_command_path_object(path: &str, working_dir: &str) -> String {
+    if let Some(path) = repository_ctx_command_external_path(path, working_dir) {
+        return path;
+    }
+    repository_path_for_read_abs_relative_to(path, working_dir)
+        .to_string_lossy()
+        .into_owned()
 }
 
 fn repository_ctx_command_env(value: &str, working_dir: &str) -> String {
@@ -3199,7 +3796,7 @@ fn repository_ctx_validate_external_inputs_ready(
     values: impl IntoIterator<Item = String>,
     repository_working_dir: &Path,
     program: &str,
-    mut record_cell_dep: impl FnMut(String),
+    mut record_dep: impl FnMut(RepositoryPathLabelDep),
 ) -> starlark::Result<()> {
     let mut seen = BTreeSet::new();
     for value in values {
@@ -3211,8 +3808,8 @@ fn repository_ctx_validate_external_inputs_ready(
             continue;
         }
         if !repository_ctx_external_input_ready(&path) {
-            if let Some(cell_name) = repository_ctx_external_input_cell_name(&path) {
-                record_cell_dep(cell_name);
+            if let Some(dep) = repository_ctx_external_input_dep(&path) {
+                record_dep(dep);
             }
             return Err(buck2_error::Error::from(
                 BazelRepositoryError::RepositoryCtxExecuteFailed {
@@ -3229,7 +3826,18 @@ fn repository_ctx_validate_external_inputs_ready(
     Ok(())
 }
 
-fn repository_ctx_external_input_cell_name(path: &Path) -> Option<String> {
+fn repository_ctx_external_input_dep(path: &Path) -> Option<RepositoryPathLabelDep> {
+    repository_ctx_external_input_dep_impl(path, false)
+}
+
+fn repository_ctx_external_input_tree_dep(path: &Path) -> Option<RepositoryPathLabelDep> {
+    repository_ctx_external_input_dep_impl(path, true)
+}
+
+fn repository_ctx_external_input_dep_impl(
+    path: &Path,
+    recursive: bool,
+) -> Option<RepositoryPathLabelDep> {
     let path = path.to_string_lossy();
     let suffix = path
         .split_once("/external_cells/bzlmod_generated/")
@@ -3238,11 +3846,24 @@ fn repository_ctx_external_input_cell_name(path: &Path) -> Option<String> {
             path.split_once("/external_cells/bzlmod/")
                 .map(|(_, suffix)| suffix)
         })?;
-    let (canonical_repo_name, _) = suffix.split_once('/').unwrap_or((suffix, ""));
+    let (canonical_repo_name, repo_path) = suffix.split_once('/').unwrap_or((suffix, ""));
     if canonical_repo_name.ends_with(".repository_ctx") {
         return None;
     }
-    Some(bzlmod_cell_name(canonical_repo_name))
+    let cell_name = bzlmod_cell_name(canonical_repo_name);
+    if recursive {
+        Some(RepositoryPathLabelDep::tree(
+            cell_name,
+            (!repo_path.is_empty()).then(|| repo_path.to_owned()),
+        ))
+    } else if repo_path.is_empty() {
+        Some(RepositoryPathLabelDep::cell(cell_name))
+    } else {
+        Some(RepositoryPathLabelDep::cell_path(
+            cell_name,
+            repo_path.to_owned(),
+        ))
+    }
 }
 
 fn repository_ctx_external_input_ready(path: &Path) -> bool {
@@ -3302,6 +3923,7 @@ fn repository_ctx_download_to_path<'v>(
     executable: bool,
     allow_fail: bool,
     integrity: &str,
+    canonical_id: &str,
     eval: &mut Evaluator<'v, '_, '_>,
 ) -> starlark::Result<(Value<'v>, bool)> {
     let expected_checksum = match module_ctx_expected_checksum(sha256, integrity) {
@@ -3313,8 +3935,8 @@ fn repository_ctx_download_to_path<'v>(
             ));
         }
     };
-    let bytes = match module_ctx_download_bytes_blocking(&urls) {
-        Ok(bytes) => bytes,
+    let write_path = match repository_path_for_write(&output_path) {
+        Ok(path) => path,
         Err(error) => {
             return Ok((
                 repository_ctx_download_error(allow_fail, error, eval)?,
@@ -3322,30 +3944,21 @@ fn repository_ctx_download_to_path<'v>(
             ));
         }
     };
-    if let Err(error) =
-        module_ctx_validate_download_checksum(&output_path, &bytes, expected_checksum.as_ref())
-    {
-        return Ok((
-            repository_ctx_download_error(allow_fail, error, eval)?,
-            false,
-        ));
-    }
-    let (got_sha256, got_integrity) =
-        match module_ctx_download_result_checksums(&bytes, expected_checksum.as_ref()) {
-            Ok(checksums) => checksums,
-            Err(error) => {
-                return Ok((
-                    repository_ctx_download_error(allow_fail, error, eval)?,
-                    false,
-                ));
-            }
-        };
-    if let Err(error) = repository_ctx_write_bytes(&output_path, &bytes, executable) {
-        return Ok((
-            repository_ctx_download_error(allow_fail, error.into(), eval)?,
-            false,
-        ));
-    }
+    let (got_sha256, got_integrity) = match module_ctx_download_to_path_blocking(
+        &urls,
+        &write_path,
+        expected_checksum.as_ref(),
+        canonical_id,
+        executable,
+    ) {
+        Ok(checksums) => checksums,
+        Err(error) => {
+            return Ok((
+                repository_ctx_download_error(allow_fail, error, eval)?,
+                false,
+            ));
+        }
+    };
     Ok((
         module_ctx_download_result(
             true,
@@ -3482,9 +4095,15 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
         #[starlark(require = pos)] path: Value<'v>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<StarlarkRepositoryPath> {
-        Ok(StarlarkRepositoryPath::new(
-            repository_ctx_path_from_value_relative_to(this, path, eval)?,
-        ))
+        let (path, dep) = repository_path_and_dep_from_value_relative_to(
+            path,
+            eval,
+            Some(repository_ctx_working_dir(this)),
+        )?;
+        if let Some(dep) = dep.clone() {
+            repository_ctx_record_path_dep(this, dep);
+        }
+        Ok(StarlarkRepositoryPath::new_with_dep(path, dep))
     }
 
     fn read<'v>(
@@ -3518,7 +4137,10 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
         #[starlark(require = pos)] path: Value<'v>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<NoneType> {
-        let _path = repository_ctx_path_from_value_relative_to(this, path, eval)?;
+        let path = repository_ctx_path_from_value_relative_to(this, path, eval)?;
+        if let Some(dep) = repository_ctx_external_input_tree_dep(Path::new(&path)) {
+            repository_ctx_record_path_dep(this, dep);
+        }
         Ok(NoneType)
     }
 
@@ -3644,6 +4266,9 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
         let link = repository_ctx_path_from_value_relative_to(this, link_name, eval)?;
         let target_path = repository_path_for_read_abs_relative_to(&target, working_dir);
         let link_path = repository_path_for_write(&link)?;
+        if let Some(dep) = repository_ctx_external_input_tree_dep(&target_path) {
+            repository_ctx_record_path_dep(this, dep);
+        }
         if let Some(parent) = link_path.parent() {
             fs::create_dir_all(parent).map_err(|error| {
                 buck2_error::Error::from(BazelRepositoryError::RepositoryCtxSymlink {
@@ -3716,8 +4341,8 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
         let mut arguments = arguments
             .items
             .into_iter()
-            .map(|arg| repository_ctx_command_arg(arg, &repository_working_dir))
-            .collect::<Vec<_>>();
+            .map(|arg| repository_ctx_command_arg(arg, &repository_working_dir, eval))
+            .collect::<starlark::Result<Vec<_>>>()?;
         if arguments.is_empty() {
             return Err(buck2_error::Error::from(
                 BazelRepositoryError::RepositoryCtxExecuteEmptyArguments,
@@ -3740,7 +4365,7 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
             std::iter::once(program.clone()).chain(arguments.iter().cloned()),
             &repository_working_dir_abs,
             &program,
-            |cell_name| repository_ctx_record_path_cell_dep(this, cell_name),
+            |dep| repository_ctx_record_path_dep(this, dep),
         )?;
         let mut command = Command::new(&program);
         command.args(arguments);
@@ -3811,7 +4436,6 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
         #[starlark(require = named, default = true)] block: bool,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {
-        let _unused = canonical_id;
         if !repository_ctx_download_options_are_empty(&auth) {
             return Err(buck2_error::Error::from(
                 BazelRepositoryError::ModuleCtxDownloadUnsupportedField { field: "auth" },
@@ -3838,6 +4462,7 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
             executable,
             allow_fail,
             integrity,
+            canonical_id,
             eval,
         )?;
         Ok(module_ctx_pending_download(block, result, eval))
@@ -3869,7 +4494,6 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
         #[starlark(require = named, default = true)] block: bool,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {
-        let _unused = canonical_id;
         let working_dir = repository_ctx_working_dir(this);
         let archive_name = if r#type.is_empty() {
             ".buck2_download_and_extract.archive".to_owned()
@@ -3909,6 +4533,7 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
             false,
             allow_fail,
             integrity,
+            canonical_id,
             eval,
         )?;
         if !success {
@@ -3938,17 +4563,36 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
 #[allow(dead_code)]
 #[derive(Debug, ProvidesStaticType, Trace, NoSerialize, Allocative)]
 pub(crate) struct StarlarkModuleExtensionContext<'v> {
-    modules: Vec<Value<'v>>,
+    modules: Value<'v>,
     working_dir: String,
+    root_module_has_non_dev_dependency: bool,
+    #[trace(unsafe_ignore)]
+    #[allocative(skip)]
+    path_label_deps: Mutex<Vec<RepositoryPathLabelDep>>,
 }
 
 #[allow(dead_code)]
 impl<'v> StarlarkModuleExtensionContext<'v> {
-    pub(crate) fn new(modules: Vec<Value<'v>>, working_dir: String) -> Self {
+    pub(crate) fn new(
+        modules: Value<'v>,
+        working_dir: String,
+        root_module_has_non_dev_dependency: bool,
+    ) -> Self {
         Self {
             modules,
             working_dir,
+            root_module_has_non_dev_dependency,
+            path_label_deps: Mutex::new(Vec::new()),
         }
+    }
+
+    fn take_path_label_deps(&self) -> Vec<RepositoryPathLabelDep> {
+        std::mem::take(
+            &mut *self
+                .path_label_deps
+                .lock()
+                .expect("module_ctx path label deps poisoned"),
+        )
     }
 }
 
@@ -3973,6 +4617,7 @@ impl<'v> StarlarkValue<'v> for StarlarkModuleExtensionContext<'v> {
             "modules".to_owned(),
             "os".to_owned(),
             "report_progress".to_owned(),
+            "root_module_has_non_dev_dependency".to_owned(),
             "watch".to_owned(),
         ]
     }
@@ -3980,8 +4625,11 @@ impl<'v> StarlarkValue<'v> for StarlarkModuleExtensionContext<'v> {
     fn get_attr(&self, attribute: &str, heap: Heap<'v>) -> Option<Value<'v>> {
         match attribute {
             "facts" => Some(empty_dict_value(heap)),
-            "modules" => Some(heap.alloc(AllocList(self.modules.iter().copied()))),
+            "modules" => Some(self.modules),
             "os" => Some(heap.alloc(StarlarkRepositoryOs)),
+            "root_module_has_non_dev_dependency" => {
+                Some(Value::new_bool(self.root_module_has_non_dev_dependency))
+            }
             _ => None,
         }
     }
@@ -3996,14 +4644,15 @@ impl<'v> Freeze for StarlarkModuleExtensionContext<'v> {
     type Frozen = FrozenStarlarkModuleExtensionContext;
 
     fn freeze(self, freezer: &Freezer) -> FreezeResult<Self::Frozen> {
-        let modules = self
-            .modules
-            .into_iter()
-            .map(|module| module.freeze(freezer))
-            .collect::<FreezeResult<Vec<_>>>()?;
         Ok(FrozenStarlarkModuleExtensionContext {
-            modules,
+            modules: self.modules.freeze(freezer)?,
             working_dir: self.working_dir,
+            root_module_has_non_dev_dependency: self.root_module_has_non_dev_dependency,
+            path_label_deps: Mutex::new(
+                self.path_label_deps
+                    .into_inner()
+                    .expect("module_ctx path label deps poisoned"),
+            ),
         })
     }
 }
@@ -4011,8 +4660,11 @@ impl<'v> Freeze for StarlarkModuleExtensionContext<'v> {
 #[allow(dead_code)]
 #[derive(Debug, ProvidesStaticType, NoSerialize, Allocative)]
 pub(crate) struct FrozenStarlarkModuleExtensionContext {
-    modules: Vec<FrozenValue>,
+    modules: FrozenValue,
     working_dir: String,
+    root_module_has_non_dev_dependency: bool,
+    #[allocative(skip)]
+    path_label_deps: Mutex<Vec<RepositoryPathLabelDep>>,
 }
 
 impl Display for FrozenStarlarkModuleExtensionContext {
@@ -4034,6 +4686,7 @@ impl<'v> StarlarkValue<'v> for FrozenStarlarkModuleExtensionContext {
             "modules".to_owned(),
             "os".to_owned(),
             "report_progress".to_owned(),
+            "root_module_has_non_dev_dependency".to_owned(),
             "watch".to_owned(),
         ]
     }
@@ -4041,10 +4694,11 @@ impl<'v> StarlarkValue<'v> for FrozenStarlarkModuleExtensionContext {
     fn get_attr(&self, attribute: &str, heap: Heap<'v>) -> Option<Value<'v>> {
         match attribute {
             "facts" => Some(empty_dict_value(heap)),
-            "modules" => Some(heap.alloc(AllocList(
-                self.modules.iter().map(|module| module.to_value()),
-            ))),
+            "modules" => Some(self.modules.to_value()),
             "os" => Some(heap.alloc(FrozenStarlarkRepositoryOs)),
+            "root_module_has_non_dev_dependency" => {
+                Some(Value::new_bool(self.root_module_has_non_dev_dependency))
+            }
             _ => None,
         }
     }
@@ -4167,12 +4821,12 @@ impl<'v> StarlarkValue<'v> for FrozenStarlarkBazelModule {
 #[allow(dead_code)]
 #[derive(Debug, ProvidesStaticType, Trace, NoSerialize, Allocative)]
 pub(crate) struct StarlarkBazelModuleTags<'v> {
-    tags: SmallMap<String, Vec<Value<'v>>>,
+    tags: SmallMap<String, Value<'v>>,
 }
 
 #[allow(dead_code)]
 impl<'v> StarlarkBazelModuleTags<'v> {
-    pub(crate) fn new(tags: SmallMap<String, Vec<Value<'v>>>) -> Self {
+    pub(crate) fn new(tags: SmallMap<String, Value<'v>>) -> Self {
         Self { tags }
     }
 }
@@ -4196,9 +4850,8 @@ impl<'v> StarlarkValue<'v> for StarlarkBazelModuleTags<'v> {
     }
 
     fn get_attr(&self, attribute: &str, heap: Heap<'v>) -> Option<Value<'v>> {
-        self.tags
-            .get(attribute)
-            .map(|tags| heap.alloc(AllocList(tags.iter().copied())))
+        let _unused = heap;
+        self.tags.get(attribute).copied()
     }
 }
 
@@ -4209,13 +4862,7 @@ impl<'v> Freeze for StarlarkBazelModuleTags<'v> {
         let tags = self
             .tags
             .into_iter()
-            .map(|(name, values)| {
-                let values = values
-                    .into_iter()
-                    .map(|value| value.freeze(freezer))
-                    .collect::<FreezeResult<Vec<_>>>()?;
-                Ok((name, values))
-            })
+            .map(|(name, values)| Ok((name, values.freeze(freezer)?)))
             .collect::<FreezeResult<SmallMap<_, _>>>()?;
         Ok(FrozenStarlarkBazelModuleTags { tags })
     }
@@ -4224,7 +4871,7 @@ impl<'v> Freeze for StarlarkBazelModuleTags<'v> {
 #[allow(dead_code)]
 #[derive(Debug, ProvidesStaticType, NoSerialize, Allocative)]
 pub(crate) struct FrozenStarlarkBazelModuleTags {
-    tags: SmallMap<String, Vec<FrozenValue>>,
+    tags: SmallMap<String, FrozenValue>,
 }
 
 impl Display for FrozenStarlarkBazelModuleTags {
@@ -4244,9 +4891,8 @@ impl<'v> StarlarkValue<'v> for FrozenStarlarkBazelModuleTags {
     }
 
     fn get_attr(&self, attribute: &str, heap: Heap<'v>) -> Option<Value<'v>> {
-        self.tags
-            .get(attribute)
-            .map(|tags| heap.alloc(AllocList(tags.iter().map(|tag| tag.to_value()))))
+        let _unused = heap;
+        self.tags.get(attribute).map(|tags| tags.to_value())
     }
 }
 
@@ -4437,6 +5083,20 @@ fn module_ctx_download_retry_delay(attempt: usize) -> Duration {
     Duration::from_millis(MIN_RETRY_DELAY_MS.saturating_mul(1u64 << shift))
 }
 
+const MODULE_CTX_HTTP_MAX_PARALLEL_DOWNLOADS: usize = 8;
+
+static MODULE_CTX_HTTP_DOWNLOAD_SEMAPHORE: OnceLock<Arc<tokio::sync::Semaphore>> = OnceLock::new();
+
+fn module_ctx_http_download_semaphore() -> &'static tokio::sync::Semaphore {
+    MODULE_CTX_HTTP_DOWNLOAD_SEMAPHORE
+        .get_or_init(|| {
+            Arc::new(tokio::sync::Semaphore::new(
+                MODULE_CTX_HTTP_MAX_PARALLEL_DOWNLOADS,
+            ))
+        })
+        .as_ref()
+}
+
 async fn module_ctx_download_url_bytes(
     client: &buck2_http::HttpClient,
     url: &str,
@@ -4444,16 +5104,26 @@ async fn module_ctx_download_url_bytes(
     const MAX_ATTEMPTS: usize = 8;
 
     for attempt in 0..MAX_ATTEMPTS {
-        match client.get(url).await {
-            Ok(response) => {
-                let body = buck2_http::to_bytes(response.into_body())
-                    .await
-                    .map_err(|error| error.to_string())?;
-                return Ok(body.to_vec());
-            }
-            Err(error) => {
-                let message = error.to_string();
-                if attempt + 1 == MAX_ATTEMPTS || !module_ctx_download_error_is_retryable(&error) {
+        let _permit = module_ctx_http_download_semaphore()
+            .acquire()
+            .await
+            .map_err(|error| error.to_string())?;
+        let result = match client.get(url).await {
+            Ok(response) => match buck2_http::to_bytes(response.into_body()).await {
+                Ok(body) => Ok(body.to_vec()),
+                Err(error) => Err((error.to_string(), true)),
+            },
+            Err(error) => Err((
+                error.to_string(),
+                module_ctx_download_error_is_retryable(&error),
+            )),
+        };
+        drop(_permit);
+
+        match result {
+            Ok(bytes) => return Ok(bytes),
+            Err((message, retryable)) => {
+                if attempt + 1 == MAX_ATTEMPTS || !retryable {
                     return Err(message);
                 }
                 tokio::time::sleep(module_ctx_download_retry_delay(attempt)).await;
@@ -4485,7 +5155,7 @@ async fn module_ctx_download_bytes(urls: &[String]) -> buck2_error::Result<Vec<u
     .into())
 }
 
-fn module_ctx_download_bytes_blocking(urls: &[String]) -> buck2_error::Result<Vec<u8>> {
+fn module_ctx_download_bytes_uncached_blocking(urls: &[String]) -> buck2_error::Result<Vec<u8>> {
     let urls = urls.to_owned();
     std::thread::spawn(move || {
         tokio::runtime::Builder::new_current_thread()
@@ -4507,6 +5177,311 @@ fn module_ctx_download_bytes_blocking(urls: &[String]) -> buck2_error::Result<Ve
             "module_ctx.download worker thread panicked"
         )
     })?
+}
+
+static MODULE_CTX_DOWNLOAD_CACHE_LOCKS: OnceLock<Mutex<BTreeMap<String, Arc<Mutex<()>>>>> =
+    OnceLock::new();
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ModuleCtxVerifiedDownloadCacheMetadata {
+    len: u64,
+    modified: Option<SystemTime>,
+}
+
+static MODULE_CTX_VERIFIED_DOWNLOAD_CACHE: OnceLock<
+    Mutex<BTreeMap<String, ModuleCtxVerifiedDownloadCacheMetadata>>,
+> = OnceLock::new();
+
+fn module_ctx_download_cache_lock(key: &str) -> Arc<Mutex<()>> {
+    let locks = MODULE_CTX_DOWNLOAD_CACHE_LOCKS.get_or_init(|| Mutex::new(BTreeMap::new()));
+    let mut locks = locks
+        .lock()
+        .expect("module ctx download cache lock map is poisoned");
+    locks
+        .entry(key.to_owned())
+        .or_insert_with(|| Arc::new(Mutex::new(())))
+        .clone()
+}
+
+fn module_ctx_download_cache_verification_key(
+    file: &Path,
+    checksum: &ModuleCtxChecksum,
+    canonical_id: &str,
+) -> String {
+    format!(
+        "{}:{}:{}:{}",
+        file.to_string_lossy(),
+        checksum.kind.repository_cache_dir_name(),
+        checksum.hex,
+        canonical_id
+    )
+}
+
+fn module_ctx_download_cache_file_metadata(
+    file: &Path,
+) -> buck2_error::Result<ModuleCtxVerifiedDownloadCacheMetadata> {
+    let metadata = fs::metadata(file)
+        .map_err(|error| module_ctx_download_cache_io_error("stat", file, error))?;
+    Ok(ModuleCtxVerifiedDownloadCacheMetadata {
+        len: metadata.len(),
+        modified: metadata.modified().ok(),
+    })
+}
+
+fn module_ctx_download_cache_is_verified(
+    key: &str,
+    metadata: ModuleCtxVerifiedDownloadCacheMetadata,
+) -> bool {
+    let verified = MODULE_CTX_VERIFIED_DOWNLOAD_CACHE.get_or_init(|| Mutex::new(BTreeMap::new()));
+    verified
+        .lock()
+        .expect("module ctx verified download cache is poisoned")
+        .get(key)
+        .copied()
+        == Some(metadata)
+}
+
+fn module_ctx_download_cache_record_verified(
+    key: String,
+    metadata: ModuleCtxVerifiedDownloadCacheMetadata,
+) {
+    let verified = MODULE_CTX_VERIFIED_DOWNLOAD_CACHE.get_or_init(|| Mutex::new(BTreeMap::new()));
+    verified
+        .lock()
+        .expect("module ctx verified download cache is poisoned")
+        .insert(key, metadata);
+}
+
+fn module_ctx_repository_cache_path() -> Option<PathBuf> {
+    if let Ok(path) = env::var("BUCK2_BAZEL_REPOSITORY_CACHE") {
+        if path.is_empty() {
+            return None;
+        }
+        return Some(PathBuf::from(path));
+    }
+    Some(
+        PathBuf::from(env::var_os("HOME")?)
+            .join(".cache")
+            .join("buck2")
+            .join("cache")
+            .join("repos")
+            .join("v1"),
+    )
+}
+
+fn module_ctx_repository_cache_entry_dir(checksum: &ModuleCtxChecksum) -> Option<PathBuf> {
+    Some(
+        module_ctx_repository_cache_path()?
+            .join("content_addressable")
+            .join(checksum.kind.repository_cache_dir_name())
+            .join(&checksum.hex),
+    )
+}
+
+fn module_ctx_repository_cache_id_path(
+    entry: &Path,
+    checksum: &ModuleCtxChecksum,
+    canonical_id: &str,
+) -> Option<PathBuf> {
+    if canonical_id.is_empty() {
+        return None;
+    }
+    Some(entry.join(format!(
+        "id-{}",
+        module_ctx_checksum_hex(checksum.kind, canonical_id.as_bytes())
+    )))
+}
+
+fn module_ctx_download_cache_io_error(
+    action: &str,
+    path: &Path,
+    error: std::io::Error,
+) -> buck2_error::Error {
+    buck2_error::buck2_error!(
+        buck2_error::ErrorTag::Input,
+        "failed to {} Bazel repository cache path `{}`: {}",
+        action,
+        path.display(),
+        error
+    )
+}
+
+fn module_ctx_download_write_error(path: &Path, error: std::io::Error) -> buck2_error::Error {
+    BazelRepositoryError::ModuleCtxDownloadWriteFile {
+        path: path.to_string_lossy().into_owned(),
+        error: error.to_string(),
+    }
+    .into()
+}
+
+fn module_ctx_set_executable(path: &Path, executable: bool) -> buck2_error::Result<()> {
+    if executable {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            fs::set_permissions(path, fs::Permissions::from_mode(0o755))
+                .map_err(|error| module_ctx_download_write_error(path, error))?;
+        }
+    }
+    Ok(())
+}
+
+fn module_ctx_write_download_bytes(
+    path: &Path,
+    bytes: &[u8],
+    executable: bool,
+) -> buck2_error::Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| module_ctx_download_write_error(parent, error))?;
+    }
+    fs::write(path, bytes).map_err(|error| module_ctx_download_write_error(path, error))?;
+    module_ctx_set_executable(path, executable)
+}
+
+fn module_ctx_copy_download_file(
+    source: &Path,
+    destination: &Path,
+    executable: bool,
+) -> buck2_error::Result<()> {
+    if let Some(parent) = destination.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| module_ctx_download_write_error(parent, error))?;
+    }
+    fs::copy(source, destination)
+        .map_err(|error| module_ctx_download_write_error(destination, error))?;
+    module_ctx_set_executable(destination, executable)
+}
+
+fn module_ctx_download_cache_get_to_path(
+    checksum: &ModuleCtxChecksum,
+    canonical_id: &str,
+    destination: &Path,
+    executable: bool,
+) -> buck2_error::Result<bool> {
+    let Some(entry) = module_ctx_repository_cache_entry_dir(checksum) else {
+        return Ok(false);
+    };
+    let file = entry.join("file");
+    if !file.is_file() {
+        return Ok(false);
+    }
+    if let Some(id_path) = module_ctx_repository_cache_id_path(&entry, checksum, canonical_id)
+        && !id_path.exists()
+    {
+        return Ok(false);
+    }
+    let verification_key =
+        module_ctx_download_cache_verification_key(&file, checksum, canonical_id);
+    let metadata = module_ctx_download_cache_file_metadata(&file)?;
+    if !module_ctx_download_cache_is_verified(&verification_key, metadata) {
+        module_ctx_validate_download_file_checksum(&file, checksum)?;
+        module_ctx_download_cache_record_verified(verification_key, metadata);
+    }
+    module_ctx_copy_download_file(&file, destination, executable)?;
+    Ok(true)
+}
+
+fn module_ctx_download_cache_put_verified(
+    checksum: &ModuleCtxChecksum,
+    canonical_id: &str,
+    bytes: &[u8],
+) -> buck2_error::Result<()> {
+    let Some(entry) = module_ctx_repository_cache_entry_dir(checksum) else {
+        return Ok(());
+    };
+    fs::create_dir_all(&entry)
+        .map_err(|error| module_ctx_download_cache_io_error("create", &entry, error))?;
+    let file = entry.join("file");
+    if !file.is_file() {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |duration| duration.as_nanos());
+        let tmp = entry.join(format!("tmp-{}-{}", std::process::id(), nanos));
+        fs::write(&tmp, bytes)
+            .map_err(|error| module_ctx_download_cache_io_error("write", &tmp, error))?;
+        if let Err(error) = fs::rename(&tmp, &file) {
+            let _unused = fs::remove_file(&tmp);
+            if !file.is_file() {
+                return Err(module_ctx_download_cache_io_error("rename", &file, error));
+            }
+        }
+    }
+    if let Some(id_path) = module_ctx_repository_cache_id_path(&entry, checksum, canonical_id) {
+        fs::write(&id_path, b"")
+            .map_err(|error| module_ctx_download_cache_io_error("write", &id_path, error))?;
+    }
+    Ok(())
+}
+
+fn module_ctx_download_to_path_blocking(
+    urls: &[String],
+    destination: &Path,
+    expected_checksum: Option<&ModuleCtxChecksum>,
+    canonical_id: &str,
+    executable: bool,
+) -> buck2_error::Result<(Option<String>, String)> {
+    if let Some(expected_checksum) = expected_checksum {
+        if destination.is_file()
+            && module_ctx_validate_download_file_checksum(destination, expected_checksum).is_ok()
+        {
+            module_ctx_set_executable(destination, executable)?;
+            return module_ctx_download_result_checksums_verified(expected_checksum);
+        }
+
+        let lock_key = format!(
+            "{}:{}:{}",
+            expected_checksum.kind.repository_cache_dir_name(),
+            expected_checksum.hex,
+            canonical_id
+        );
+        let lock = module_ctx_download_cache_lock(&lock_key);
+        let _guard = lock
+            .lock()
+            .expect("module ctx download cache entry lock is poisoned");
+        if destination.is_file()
+            && module_ctx_validate_download_file_checksum(destination, expected_checksum).is_ok()
+        {
+            module_ctx_set_executable(destination, executable)?;
+            return module_ctx_download_result_checksums_verified(expected_checksum);
+        }
+        if module_ctx_download_cache_get_to_path(
+            expected_checksum,
+            canonical_id,
+            destination,
+            executable,
+        )
+        .unwrap_or(false)
+        {
+            return module_ctx_download_result_checksums_verified(expected_checksum);
+        }
+
+        let bytes = module_ctx_download_bytes_uncached_blocking(urls)?;
+        module_ctx_validate_download_checksum(
+            &destination.to_string_lossy(),
+            &bytes,
+            Some(expected_checksum),
+        )?;
+        module_ctx_write_download_bytes(destination, &bytes, executable)?;
+        module_ctx_download_cache_put_verified(expected_checksum, canonical_id, &bytes)?;
+        return module_ctx_download_result_checksums_verified(expected_checksum);
+    }
+
+    let bytes = module_ctx_download_bytes_uncached_blocking(urls)?;
+    let checksums = module_ctx_download_result_checksums(&bytes, None)?;
+    module_ctx_write_download_bytes(destination, &bytes, executable)?;
+    if let Some(sha256) = &checksums.0 {
+        module_ctx_download_cache_put_verified(
+            &ModuleCtxChecksum {
+                kind: ModuleCtxChecksumKind::Sha256,
+                hex: sha256.clone(),
+            },
+            canonical_id,
+            &bytes,
+        )?;
+    }
+    Ok(checksums)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -4533,6 +5508,15 @@ impl ModuleCtxChecksumKind {
             Self::Sha256 => 32,
             Self::Sha384 => 48,
             Self::Sha512 => 64,
+        }
+    }
+
+    fn repository_cache_dir_name(&self) -> &'static str {
+        match self {
+            Self::Sha1 => "sha1",
+            Self::Sha256 => "sha256",
+            Self::Sha384 => "sha384",
+            Self::Sha512 => "sha512",
         }
     }
 }
@@ -4599,6 +5583,56 @@ fn module_ctx_checksum_hex(kind: ModuleCtxChecksumKind, bytes: &[u8]) -> String 
     }
 }
 
+fn module_ctx_checksum_hex_file(
+    kind: ModuleCtxChecksumKind,
+    path: &Path,
+) -> buck2_error::Result<String> {
+    fn read_chunks(path: &Path, mut update: impl FnMut(&[u8])) -> buck2_error::Result<()> {
+        let mut file = fs::File::open(path).map_err(|error| {
+            buck2_error::Error::from(BazelRepositoryError::ModuleCtxReadFile {
+                path: path.to_string_lossy().into_owned(),
+                error: error.to_string(),
+            })
+        })?;
+        let mut buffer = [0u8; 64 * 1024];
+        loop {
+            let bytes_read = file.read(&mut buffer).map_err(|error| {
+                buck2_error::Error::from(BazelRepositoryError::ModuleCtxReadFile {
+                    path: path.to_string_lossy().into_owned(),
+                    error: error.to_string(),
+                })
+            })?;
+            if bytes_read == 0 {
+                return Ok(());
+            }
+            update(&buffer[..bytes_read]);
+        }
+    }
+
+    match kind {
+        ModuleCtxChecksumKind::Sha1 => {
+            let mut hasher = Sha1::new();
+            read_chunks(path, |bytes| hasher.update(bytes))?;
+            Ok(hex::encode(hasher.finalize()))
+        }
+        ModuleCtxChecksumKind::Sha256 => {
+            let mut hasher = Sha256::new();
+            read_chunks(path, |bytes| hasher.update(bytes))?;
+            Ok(hex::encode(hasher.finalize()))
+        }
+        ModuleCtxChecksumKind::Sha384 => {
+            let mut hasher = Sha384::new();
+            read_chunks(path, |bytes| hasher.update(bytes))?;
+            Ok(hex::encode(hasher.finalize()))
+        }
+        ModuleCtxChecksumKind::Sha512 => {
+            let mut hasher = Sha512::new();
+            read_chunks(path, |bytes| hasher.update(bytes))?;
+            Ok(hex::encode(hasher.finalize()))
+        }
+    }
+}
+
 fn module_ctx_integrity_from_checksum(checksum: &ModuleCtxChecksum) -> buck2_error::Result<String> {
     let bytes = hex::decode(&checksum.hex).map_err(|_| {
         BazelRepositoryError::ModuleCtxDownloadUnsupportedIntegrity(checksum.hex.clone())
@@ -4628,6 +5662,31 @@ fn module_ctx_validate_download_checksum(
         got,
     }
     .into())
+}
+
+fn module_ctx_validate_download_file_checksum(
+    path: &Path,
+    expected_checksum: &ModuleCtxChecksum,
+) -> buck2_error::Result<()> {
+    let got = module_ctx_checksum_hex_file(expected_checksum.kind, path)?;
+    if expected_checksum.hex == got {
+        return Ok(());
+    }
+    Err(BazelRepositoryError::ModuleCtxDownloadChecksumMismatch {
+        path: path.to_string_lossy().into_owned(),
+        expected: expected_checksum.hex.clone(),
+        got,
+    }
+    .into())
+}
+
+fn module_ctx_download_result_checksums_verified(
+    expected_checksum: &ModuleCtxChecksum,
+) -> buck2_error::Result<(Option<String>, String)> {
+    let sha256 = (expected_checksum.kind == ModuleCtxChecksumKind::Sha256)
+        .then(|| expected_checksum.hex.clone());
+    let integrity = module_ctx_integrity_from_checksum(expected_checksum)?;
+    Ok((sha256, integrity))
 }
 
 fn module_ctx_download_result_checksums(
@@ -4825,9 +5884,15 @@ fn module_extension_context_methods(builder: &mut MethodsBuilder) {
         #[starlark(require = pos)] path: Value<'v>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<StarlarkRepositoryPath> {
-        Ok(StarlarkRepositoryPath::new(
-            repository_path_from_value_relative_to(path, eval, Some(module_ctx_working_dir(this)))?,
-        ))
+        let (path, dep) = repository_path_and_dep_from_value_relative_to(
+            path,
+            eval,
+            Some(module_ctx_working_dir(this)),
+        )?;
+        if let Some(dep) = dep.clone() {
+            module_ctx_record_path_dep(this, dep);
+        }
+        Ok(StarlarkRepositoryPath::new_with_dep(path, dep))
     }
 
     fn watch<'v>(
@@ -4835,8 +5900,7 @@ fn module_extension_context_methods(builder: &mut MethodsBuilder) {
         #[starlark(require = pos)] path: Value<'v>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<NoneType> {
-        let _path =
-            repository_path_from_value_relative_to(path, eval, Some(module_ctx_working_dir(this)))?;
+        let _path = module_ctx_path_from_value_relative_to(this, path, eval)?;
         Ok(NoneType)
     }
 
@@ -4863,8 +5927,8 @@ fn module_extension_context_methods(builder: &mut MethodsBuilder) {
         let mut arguments = arguments
             .items
             .into_iter()
-            .map(|arg| repository_ctx_command_arg(arg, &repository_working_dir))
-            .collect::<Vec<_>>();
+            .map(|arg| repository_ctx_command_arg(arg, &repository_working_dir, eval))
+            .collect::<starlark::Result<Vec<_>>>()?;
         if arguments.is_empty() {
             return Err(buck2_error::Error::from(
                 BazelRepositoryError::RepositoryCtxExecuteEmptyArguments,
@@ -4887,7 +5951,7 @@ fn module_extension_context_methods(builder: &mut MethodsBuilder) {
             std::iter::once(program.clone()).chain(arguments.iter().cloned()),
             &repository_working_dir_abs,
             &program,
-            |_cell_name| {},
+            |dep| module_ctx_record_path_dep(this, dep),
         )?;
         let mut command = Command::new(&program);
         command.args(arguments);
@@ -4895,11 +5959,9 @@ fn module_extension_context_methods(builder: &mut MethodsBuilder) {
             command.env(key, value);
         }
         let working_directory = match working_directory {
-            Some(working_directory) => repository_path_from_value_relative_to(
-                working_directory,
-                eval,
-                Some(&repository_working_dir),
-            )?,
+            Some(working_directory) => {
+                module_ctx_path_from_value_relative_to(this, working_directory, eval)?
+            }
             None => repository_working_dir.clone(),
         };
         let working_directory = if working_directory == repository_working_dir {
@@ -4944,8 +6006,7 @@ fn module_extension_context_methods(builder: &mut MethodsBuilder) {
         #[starlark(require = named, default = "auto")] _watch: &str,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<String> {
-        let path =
-            repository_path_from_value_relative_to(path, eval, Some(module_ctx_working_dir(this)))?;
+        let path = module_ctx_path_from_value_relative_to(this, path, eval)?;
         let read_path = repository_path_for_read(&path);
         let bytes = fs::read(&read_path).map_err(|e| {
             buck2_error::Error::from(BazelRepositoryError::ModuleCtxReadFile {
@@ -4963,7 +6024,7 @@ fn module_extension_context_methods(builder: &mut MethodsBuilder) {
         #[starlark(require = named, default = "")] sha256: &str,
         #[starlark(require = named, default = false)] executable: bool,
         #[starlark(require = named, default = false)] allow_fail: bool,
-        #[starlark(require = named, default = "")] _canonical_id: &str,
+        #[starlark(require = named, default = "")] canonical_id: &str,
         #[starlark(require = named, default = UnpackDictEntries::default())]
         auth: UnpackDictEntries<Value<'v>, Value<'v>>,
         #[starlark(require = named, default = UnpackDictEntries::default())]
@@ -4992,6 +6053,12 @@ fn module_extension_context_methods(builder: &mut MethodsBuilder) {
             eval,
             Some(module_ctx_working_dir(this)),
         )?;
+        let write_path = match repository_path_for_write(&output_path) {
+            Ok(path) => path,
+            Err(error) => {
+                return module_ctx_download_error_with_block(block, allow_fail, error, eval);
+            }
+        };
         let expected_checksum = match module_ctx_expected_checksum(sha256, integrity) {
             Ok(expected_checksum) => expected_checksum,
             Err(error) => {
@@ -4999,79 +6066,18 @@ fn module_extension_context_methods(builder: &mut MethodsBuilder) {
             }
         };
 
-        let bytes = match module_ctx_download_bytes_blocking(&urls) {
-            Ok(bytes) => bytes,
+        let (got_sha256, got_integrity) = match module_ctx_download_to_path_blocking(
+            &urls,
+            &write_path,
+            expected_checksum.as_ref(),
+            canonical_id,
+            executable,
+        ) {
+            Ok(checksums) => checksums,
             Err(error) => {
                 return module_ctx_download_error_with_block(block, allow_fail, error, eval);
             }
         };
-        if let Err(error) =
-            module_ctx_validate_download_checksum(&output_path, &bytes, expected_checksum.as_ref())
-        {
-            return module_ctx_download_error_with_block(block, allow_fail, error, eval);
-        }
-        let (got_sha256, got_integrity) =
-            match module_ctx_download_result_checksums(&bytes, expected_checksum.as_ref()) {
-                Ok(checksums) => checksums,
-                Err(error) => {
-                    return module_ctx_download_error_with_block(block, allow_fail, error, eval);
-                }
-            };
-
-        let write_path = match repository_path_for_write(&output_path) {
-            Ok(path) => path,
-            Err(error) => {
-                return module_ctx_download_error_with_block(block, allow_fail, error, eval);
-            }
-        };
-        if let Some(parent) = write_path.parent()
-            && let Err(error) = fs::create_dir_all(parent)
-        {
-            return module_ctx_download_error_with_block(
-                block,
-                allow_fail,
-                BazelRepositoryError::ModuleCtxDownloadWriteFile {
-                    path: write_path.to_string_lossy().into_owned(),
-                    error: error.to_string(),
-                }
-                .into(),
-                eval,
-            );
-        }
-        if let Err(error) = fs::write(&write_path, &bytes) {
-            return module_ctx_download_error_with_block(
-                block,
-                allow_fail,
-                BazelRepositoryError::ModuleCtxDownloadWriteFile {
-                    path: write_path.to_string_lossy().into_owned(),
-                    error: error.to_string(),
-                }
-                .into(),
-                eval,
-            );
-        }
-        if executable {
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-
-                let executable_mode = 0o755;
-                if let Err(error) =
-                    fs::set_permissions(&write_path, fs::Permissions::from_mode(executable_mode))
-                {
-                    return module_ctx_download_error_with_block(
-                        block,
-                        allow_fail,
-                        BazelRepositoryError::ModuleCtxDownloadWriteFile {
-                            path: write_path.to_string_lossy().into_owned(),
-                            error: error.to_string(),
-                        }
-                        .into(),
-                        eval,
-                    );
-                }
-            }
-        }
 
         let result = module_ctx_download_result(
             true,

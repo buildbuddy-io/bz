@@ -8,7 +8,6 @@
  * above-listed licenses.
  */
 
-use std::collections::BTreeMap;
 use std::fmt;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -16,6 +15,7 @@ use std::sync::Mutex;
 
 use allocative::Allocative;
 use buck2_error::buck2_error;
+use buck2_hash::StdBuckHashMap;
 use derive_more::Display;
 use dupe::Dupe;
 use once_cell::sync::Lazy;
@@ -26,10 +26,11 @@ use crate::cells::name::CellName;
 pub const BZLMOD_BAZEL_COMPAT_VERSION: &str = "9.1.0";
 
 pub fn bzlmod_cell_name(canonical_repo_name: &str) -> String {
-    let mut cell = String::from("bzlmod_");
-    for ch in canonical_repo_name.chars() {
-        if ch == '_' || ch.is_ascii_alphanumeric() {
-            cell.push(ch);
+    let mut cell = String::with_capacity("bzlmod_".len() + canonical_repo_name.len());
+    cell.push_str("bzlmod_");
+    for ch in canonical_repo_name.bytes() {
+        if ch == b'_' || ch.is_ascii_alphanumeric() {
+            cell.push(ch as char);
         } else {
             cell.push('_');
         }
@@ -37,20 +38,31 @@ pub fn bzlmod_cell_name(canonical_repo_name: &str) -> String {
     cell
 }
 
-static BZLMOD_CANONICAL_REPO_NAMES: Lazy<Mutex<BTreeMap<String, String>>> =
-    Lazy::new(|| Mutex::new(BTreeMap::new()));
+static BZLMOD_CANONICAL_REPO_NAMES: Lazy<Mutex<StdBuckHashMap<String, String>>> =
+    Lazy::new(|| Mutex::new(StdBuckHashMap::default()));
 
-static BZLMOD_CELL_ALIASES: Lazy<Mutex<BTreeMap<String, Vec<(String, String)>>>> =
-    Lazy::new(|| Mutex::new(BTreeMap::new()));
+static BZLMOD_CELL_ALIASES: Lazy<Mutex<StdBuckHashMap<String, Vec<(String, String)>>>> =
+    Lazy::new(|| Mutex::new(StdBuckHashMap::default()));
 
 pub fn register_bzlmod_cell_canonical_repo_name(canonical_repo_name: &str) {
-    BZLMOD_CANONICAL_REPO_NAMES
+    let cell_name = bzlmod_cell_name(canonical_repo_name);
+    register_bzlmod_cell_canonical_repo_name_for_cell(&cell_name, canonical_repo_name);
+}
+
+pub fn register_bzlmod_cell_canonical_repo_name_for_cell(
+    cell_name: &str,
+    canonical_repo_name: &str,
+) {
+    let mut names = BZLMOD_CANONICAL_REPO_NAMES
         .lock()
-        .expect("bzlmod canonical repo map poisoned")
-        .insert(
-            bzlmod_cell_name(canonical_repo_name),
-            canonical_repo_name.to_owned(),
-        );
+        .expect("bzlmod canonical repo map poisoned");
+    if matches!(
+        names.get(cell_name),
+        Some(existing) if existing == canonical_repo_name
+    ) {
+        return;
+    }
+    names.insert(cell_name.to_owned(), canonical_repo_name.to_owned());
 }
 
 pub fn bzlmod_canonical_repo_name_for_cell(cell_name: &str) -> Option<String> {
@@ -72,6 +84,43 @@ pub fn register_bzlmod_cell_aliases(
         .insert(cell_name.to_owned(), aliases);
 }
 
+pub fn register_bzlmod_cell_aliases_from_refs<'a, I>(cell_name: &str, aliases: I)
+where
+    I: Clone + IntoIterator<Item = (&'a str, &'a str)>,
+{
+    let mut aliases_by_cell = BZLMOD_CELL_ALIASES
+        .lock()
+        .expect("bzlmod cell alias map poisoned");
+    if let Some(existing) = aliases_by_cell.get(cell_name)
+        && bzlmod_cell_aliases_equal(existing, aliases.clone())
+    {
+        return;
+    }
+    aliases_by_cell.insert(
+        cell_name.to_owned(),
+        aliases
+            .into_iter()
+            .map(|(alias, cell_name)| (alias.to_owned(), cell_name.to_owned()))
+            .collect(),
+    );
+}
+
+fn bzlmod_cell_aliases_equal<'a, I>(existing: &[(String, String)], aliases: I) -> bool
+where
+    I: IntoIterator<Item = (&'a str, &'a str)>,
+{
+    let mut aliases = aliases.into_iter();
+    for (existing_alias, existing_cell_name) in existing {
+        let Some((alias, cell_name)) = aliases.next() else {
+            return false;
+        };
+        if existing_alias != alias || existing_cell_name != cell_name {
+            return false;
+        }
+    }
+    aliases.next().is_none()
+}
+
 pub fn bzlmod_cell_aliases_for_cell(cell_name: &str) -> Vec<(String, String)> {
     BZLMOD_CELL_ALIASES
         .lock()
@@ -89,8 +138,8 @@ pub enum ExternalCellOrigin {
     BzlmodGenerated(BzlmodGeneratedCellSetup),
 }
 
-static EXTERNAL_CELL_ORIGINS: Lazy<Mutex<BTreeMap<String, ExternalCellOrigin>>> =
-    Lazy::new(|| Mutex::new(BTreeMap::new()));
+static EXTERNAL_CELL_ORIGINS: Lazy<Mutex<StdBuckHashMap<String, ExternalCellOrigin>>> =
+    Lazy::new(|| Mutex::new(StdBuckHashMap::default()));
 
 pub fn register_external_cell_origin(cell_name: CellName, origin: ExternalCellOrigin) {
     EXTERNAL_CELL_ORIGINS

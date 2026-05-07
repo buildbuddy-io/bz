@@ -13,6 +13,10 @@ use std::sync::Arc;
 
 use allocative::Allocative;
 use buck2_build_api_derive::internal_provider;
+use buck2_core::cells::cell_path::CellPath;
+use buck2_core::cells::external::bzlmod_cell_name;
+use buck2_core::cells::name::CellName;
+use buck2_core::cells::paths::CellRelativePathBuf;
 use buck2_core::provider::id::ProviderId;
 use buck2_interpreter::types::provider::callable::ProviderCallableLike;
 use dupe::Dupe;
@@ -38,7 +42,9 @@ use starlark::values::ValueLifetimeless;
 use starlark::values::ValueLike;
 use starlark::values::ValueOfUnchecked;
 use starlark::values::ValueOfUncheckedGeneric;
+use starlark::values::dict::AllocDict;
 use starlark::values::list::AllocList;
+use starlark::values::list::UnpackList;
 use starlark::values::none::NoneType;
 use starlark::values::starlark_value;
 use starlark::values::structs::AllocStruct;
@@ -55,6 +61,29 @@ const CC_TOOLCHAIN_CONFIG_INFO: &str = "CcToolchainConfigInfo";
 const CC_SHARED_LIBRARY_INFO: &str = "CcSharedLibraryInfo";
 const CC_SHARED_LIBRARY_HINT_INFO: &str = "CcSharedLibraryHintInfo";
 const CC_TOOLCHAIN_INFO: &str = "CcToolchainInfo";
+
+fn rules_cc_provider_path(path: &str) -> CellPath {
+    CellPath::new(
+        CellName::unchecked_new(&bzlmod_cell_name("rules_cc+"))
+            .expect("rules_cc bzlmod cell name should be valid"),
+        CellRelativePathBuf::unchecked_new(path.to_owned()),
+    )
+}
+
+fn cc_native_provider_path(name: &str) -> Option<CellPath> {
+    match name {
+        // Bazel's C++ builtins wrap the bzlmod rules_cc providers for these
+        // symbols, so their provider identity is the @rules_cc+ .bzl file.
+        DEBUG_PACKAGE_INFO => Some(rules_cc_provider_path("cc/private/debug_package_info.bzl")),
+        CC_TOOLCHAIN_CONFIG_INFO => Some(rules_cc_provider_path(
+            "cc/private/toolchain_config/cc_toolchain_config_info.bzl",
+        )),
+        CC_TOOLCHAIN_INFO => Some(rules_cc_provider_path(
+            "cc/private/rules_impl/cc_toolchain_info.bzl",
+        )),
+        _ => None,
+    }
+}
 
 #[internal_provider(cc_info_creator)]
 #[derive(Clone, Debug, Trace, Coerce, Freeze, ProvidesStaticType, Allocative)]
@@ -167,7 +196,7 @@ impl CcNativeProviderCallable {
         Self {
             name,
             id: Arc::new(ProviderId {
-                path: None,
+                path: cc_native_provider_path(name),
                 name: name.to_owned(),
             }),
         }
@@ -259,6 +288,50 @@ impl fmt::Display for BazelCcInternal {
 
 starlark::starlark_simple_value!(BazelCcInternal);
 
+#[derive(Debug, ProvidesStaticType, NoSerialize, Allocative)]
+struct BazelCcToolchainFeatures;
+
+impl fmt::Display for BazelCcToolchainFeatures {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("<CcToolchainFeatures>")
+    }
+}
+
+starlark::starlark_simple_value!(BazelCcToolchainFeatures);
+
+#[starlark_value(type = "CcToolchainFeatures")]
+impl<'v> StarlarkValue<'v> for BazelCcToolchainFeatures {
+    fn get_methods() -> Option<&'static Methods> {
+        static RES: MethodsStatic = MethodsStatic::new();
+        RES.methods_for_type::<Self::Canonical>(bazel_cc_toolchain_features_methods)
+    }
+}
+
+#[derive(Debug, ProvidesStaticType, NoSerialize, Allocative)]
+struct BazelFeatureConfiguration {
+    requested_features: Vec<String>,
+}
+
+impl fmt::Display for BazelFeatureConfiguration {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "<FeatureConfiguration({})>",
+            self.requested_features.join(", ")
+        )
+    }
+}
+
+starlark::starlark_simple_value!(BazelFeatureConfiguration);
+
+#[starlark_value(type = "FeatureConfiguration")]
+impl<'v> StarlarkValue<'v> for BazelFeatureConfiguration {
+    fn get_methods() -> Option<&'static Methods> {
+        static RES: MethodsStatic = MethodsStatic::new();
+        RES.methods_for_type::<Self::Canonical>(bazel_feature_configuration_methods)
+    }
+}
+
 #[starlark_value(type = "cc_internal")]
 impl<'v> StarlarkValue<'v> for BazelCcInternal {
     fn get_methods() -> Option<&'static Methods> {
@@ -269,10 +342,30 @@ impl<'v> StarlarkValue<'v> for BazelCcInternal {
     fn dir_attr(&self) -> Vec<String> {
         vec![
             "check_private_api".to_owned(),
+            "cc_toolchain_features".to_owned(),
+            "cc_toolchain_variables".to_owned(),
+            "combine_cc_toolchain_variables".to_owned(),
             "create_header_info".to_owned(),
             "create_header_info_with_deps".to_owned(),
+            "exec_os".to_owned(),
             "freeze".to_owned(),
         ]
+    }
+}
+
+fn bazel_cc_exec_os() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "DARWIN"
+    } else if cfg!(target_os = "linux") {
+        "LINUX"
+    } else if cfg!(target_os = "windows") {
+        "WINDOWS"
+    } else if cfg!(target_os = "freebsd") {
+        "FREEBSD"
+    } else if cfg!(target_os = "openbsd") {
+        "OPENBSD"
+    } else {
+        "UNKNOWN"
     }
 }
 
@@ -282,6 +375,15 @@ fn cc_internal_kw_value<'v>(
     default: Value<'v>,
 ) -> Value<'v> {
     kwargs.get(name).copied().unwrap_or(default)
+}
+
+fn cc_internal_kw_value_or_default<'v>(
+    kwargs: &SmallMap<String, Value<'v>>,
+    name: &str,
+    default: Value<'v>,
+) -> Value<'v> {
+    let value = cc_internal_kw_value(kwargs, name, default);
+    if value.is_none() { default } else { value }
 }
 
 fn cc_internal_header_info_attr<'v>(
@@ -392,7 +494,77 @@ fn cc_internal_alloc_header_info_with_deps<'v>(
 }
 
 #[starlark_module]
+fn bazel_cc_toolchain_features_methods(builder: &mut MethodsBuilder) {
+    fn default_features_and_action_configs<'v>(
+        #[starlark(this)] _this: &BazelCcToolchainFeatures,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<Value<'v>> {
+        Ok(eval.heap().alloc(AllocList::EMPTY))
+    }
+
+    fn configure_features(
+        #[starlark(this)] _this: &BazelCcToolchainFeatures,
+        #[starlark(require = named, default = UnpackList::default())]
+        requested_features: UnpackList<String>,
+    ) -> starlark::Result<BazelFeatureConfiguration> {
+        Ok(BazelFeatureConfiguration {
+            requested_features: requested_features.into_iter().collect(),
+        })
+    }
+}
+
+#[starlark_module]
+fn bazel_feature_configuration_methods(builder: &mut MethodsBuilder) {
+    fn is_enabled(
+        #[starlark(this)] this: &BazelFeatureConfiguration,
+        feature: &str,
+    ) -> starlark::Result<bool> {
+        Ok(this
+            .requested_features
+            .iter()
+            .any(|requested| requested == feature))
+    }
+
+    fn is_requested(
+        #[starlark(this)] this: &BazelFeatureConfiguration,
+        feature: &str,
+    ) -> starlark::Result<bool> {
+        Ok(this
+            .requested_features
+            .iter()
+            .any(|requested| requested == feature))
+    }
+}
+
+#[starlark_module]
 fn bazel_cc_internal_methods(builder: &mut MethodsBuilder) {
+    fn cc_toolchain_features<'v>(
+        #[starlark(this)] _this: &BazelCcInternal,
+        #[starlark(kwargs)] _kwargs: SmallMap<String, Value<'v>>,
+    ) -> starlark::Result<BazelCcToolchainFeatures> {
+        Ok(BazelCcToolchainFeatures)
+    }
+
+    fn cc_toolchain_variables<'v>(
+        #[starlark(this)] _this: &BazelCcInternal,
+        #[starlark(require = named)] vars: Value<'v>,
+    ) -> starlark::Result<Value<'v>> {
+        Ok(vars)
+    }
+
+    fn combine_cc_toolchain_variables<'v>(
+        #[starlark(this)] _this: &BazelCcInternal,
+        parent: Value<'v>,
+        #[starlark(args)] _variables: UnpackTuple<Value<'v>>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<Value<'v>> {
+        if parent.is_none() {
+            Ok(eval.heap().alloc(AllocDict::EMPTY))
+        } else {
+            Ok(parent)
+        }
+    }
+
     fn create_header_info<'v>(
         #[starlark(this)] _this: &BazelCcInternal,
         #[starlark(kwargs)] kwargs: SmallMap<String, Value<'v>>,
@@ -407,6 +579,14 @@ fn bazel_cc_internal_methods(builder: &mut MethodsBuilder) {
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {
         cc_internal_alloc_header_info_with_deps(&kwargs, eval)
+    }
+
+    fn exec_os<'v>(
+        #[starlark(this)] _this: &BazelCcInternal,
+        #[starlark(require = named)] ctx: Value<'v>,
+    ) -> starlark::Result<&'static str> {
+        let _unused = ctx;
+        Ok(bazel_cc_exec_os())
     }
 
     fn freeze<'v>(
@@ -438,13 +618,147 @@ fn bazel_cc_common_module(builder: &mut GlobalsBuilder) {
         Ok(true)
     }
 
+    fn get_tool_for_action<'v>(
+        #[starlark(kwargs)] _kwargs: SmallMap<String, Value<'v>>,
+    ) -> starlark::Result<NoneType> {
+        Ok(NoneType)
+    }
+
+    fn get_execution_requirements<'v>(
+        #[starlark(kwargs)] _kwargs: SmallMap<String, Value<'v>>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<Value<'v>> {
+        Ok(eval.heap().alloc(AllocDict::EMPTY))
+    }
+
+    fn action_is_enabled<'v>(
+        #[starlark(kwargs)] _kwargs: SmallMap<String, Value<'v>>,
+    ) -> starlark::Result<bool> {
+        Ok(false)
+    }
+
+    fn get_memory_inefficient_command_line<'v>(
+        #[starlark(kwargs)] _kwargs: SmallMap<String, Value<'v>>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<Value<'v>> {
+        Ok(eval.heap().alloc(AllocList::EMPTY))
+    }
+
+    fn get_environment_variables<'v>(
+        #[starlark(kwargs)] _kwargs: SmallMap<String, Value<'v>>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<Value<'v>> {
+        Ok(eval.heap().alloc(AllocDict::EMPTY))
+    }
+
+    fn empty_variables<'v>(eval: &mut Evaluator<'v, '_, '_>) -> starlark::Result<Value<'v>> {
+        Ok(eval
+            .heap()
+            .alloc(AllocStruct(Vec::<(&str, Value<'v>)>::new())))
+    }
+
+    fn legacy_cc_flags_make_variable_do_not_use<'v>(
+        #[starlark(kwargs)] _kwargs: SmallMap<String, Value<'v>>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<Value<'v>> {
+        Ok(eval.heap().alloc(AllocList::EMPTY))
+    }
+
+    fn incompatible_disable_objc_library_transition() -> starlark::Result<bool> {
+        Ok(false)
+    }
+
+    fn add_go_exec_groups_to_binary_rules() -> starlark::Result<bool> {
+        Ok(false)
+    }
+
+    fn check_experimental_cc_shared_library() -> starlark::Result<bool> {
+        Ok(false)
+    }
+
+    fn get_tool_requirement_for_action<'v>(
+        #[starlark(kwargs)] _kwargs: SmallMap<String, Value<'v>>,
+    ) -> starlark::Result<NoneType> {
+        Ok(NoneType)
+    }
+
+    fn implementation_deps_allowed_by_allowlist<'v>(
+        #[starlark(kwargs)] _kwargs: SmallMap<String, Value<'v>>,
+    ) -> starlark::Result<bool> {
+        Ok(true)
+    }
+
     fn create_cc_toolchain_config_info<'v>(
         #[starlark(kwargs)] kwargs: SmallMap<String, Value<'v>>,
+        eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<CcNativeProvider<'v>> {
+        let empty_list = eval.heap().alloc(AllocList::EMPTY);
+        let empty_string = eval.heap().alloc("");
         Ok(make_cc_native_provider(
             CC_TOOLCHAIN_CONFIG_INFO,
             CcNativeProviderCallable::new(CC_TOOLCHAIN_CONFIG_INFO).id,
-            kwargs.into_iter().filter(|(name, _)| name != "ctx"),
+            [
+                (
+                    "_action_configs_DO_NOT_USE".to_owned(),
+                    cc_internal_kw_value(&kwargs, "action_configs", empty_list),
+                ),
+                (
+                    "_artifact_name_patterns_DO_NOT_USE".to_owned(),
+                    cc_internal_kw_value(&kwargs, "artifact_name_patterns", empty_list),
+                ),
+                (
+                    "_exec_os_DO_NOT_USE".to_owned(),
+                    eval.heap().alloc(bazel_cc_exec_os()),
+                ),
+                (
+                    "_features_DO_NOT_USE".to_owned(),
+                    cc_internal_kw_value(&kwargs, "features", empty_list),
+                ),
+                (
+                    "abi_libc_version".to_owned(),
+                    cc_internal_kw_value_or_default(&kwargs, "abi_libc_version", empty_string),
+                ),
+                (
+                    "abi_version".to_owned(),
+                    cc_internal_kw_value_or_default(&kwargs, "abi_version", empty_string),
+                ),
+                (
+                    "builtin_sysroot".to_owned(),
+                    cc_internal_kw_value_or_default(&kwargs, "builtin_sysroot", empty_string),
+                ),
+                (
+                    "compiler".to_owned(),
+                    cc_internal_kw_value(&kwargs, "compiler", empty_string),
+                ),
+                (
+                    "cxx_builtin_include_directories".to_owned(),
+                    cc_internal_kw_value(&kwargs, "cxx_builtin_include_directories", empty_list),
+                ),
+                (
+                    "make_variables".to_owned(),
+                    cc_internal_kw_value(&kwargs, "make_variables", empty_list),
+                ),
+                (
+                    "target_cpu".to_owned(),
+                    cc_internal_kw_value_or_default(&kwargs, "target_cpu", empty_string),
+                ),
+                (
+                    "target_libc".to_owned(),
+                    cc_internal_kw_value_or_default(&kwargs, "target_libc", empty_string),
+                ),
+                (
+                    "target_system_name".to_owned(),
+                    cc_internal_kw_value_or_default(&kwargs, "target_system_name", empty_string),
+                ),
+                (
+                    "tool_paths".to_owned(),
+                    cc_internal_kw_value(&kwargs, "tool_paths", empty_list),
+                ),
+                (
+                    "toolchain_id".to_owned(),
+                    cc_internal_kw_value(&kwargs, "toolchain_identifier", empty_string),
+                ),
+            ],
         ))
     }
 }

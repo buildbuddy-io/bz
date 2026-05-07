@@ -63,6 +63,12 @@ pub(crate) fn dice_clear_on_mergebase_change(
     Ok(config_value && !env_skip)
 }
 
+fn buckconfig_truthy(value: Option<&str>) -> bool {
+    value
+        .map(|value| matches!(value.trim(), "1" | "true" | "True" | "TRUE"))
+        .unwrap_or(false)
+}
+
 impl dyn FileWatcher {
     /// Create a new FileWatcher. Note that this is not async, since it's called during daemon
     /// startup and shouldn't be doing any work that could warrant suspending.
@@ -90,7 +96,14 @@ impl dyn FileWatcher {
         };
 
         #[cfg(not(fbcode_build))]
-        let default = "notify";
+        let default = if buckconfig_truthy(root_config.get(BuckconfigKeyRef {
+            section: "bazel",
+            property: "compatibility",
+        })) {
+            "fs_hash_crawler"
+        } else {
+            "notify"
+        };
 
         let _allow_unused = fb;
 

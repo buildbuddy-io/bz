@@ -159,15 +159,24 @@ impl<'c, 'd> HasCalculationDelegate<'c, 'd> for DiceComputations<'d> {
         }
 
         let build_file_cell = path.borrow().build_file_cell();
+        let path_ref = path.borrow();
+        let import_dir = match path_ref {
+            StarlarkPath::LoadFile(path)
+            | StarlarkPath::JsonFile(path)
+            | StarlarkPath::TomlFile(path) => path.package_root().cloned(),
+            StarlarkPath::BuildFile(_)
+            | StarlarkPath::PackageFile(_)
+            | StarlarkPath::BxlFile(_) => None,
+        }
+        .unwrap_or_else(|| {
+            path_ref
+                .path()
+                .parent()
+                .expect("starlark path to have parent")
+                .to_owned()
+        });
         let configs = self
-            .compute(&InterpreterConfigForDirKey(
-                path.borrow()
-                    .path()
-                    .parent()
-                    .expect("starlark path to have parent")
-                    .to_owned(),
-                build_file_cell,
-            ))
+            .compute(&InterpreterConfigForDirKey(import_dir, build_file_cell))
             .await??;
 
         Ok(DiceCalculationDelegate {
@@ -380,8 +389,7 @@ impl<'c, 'd: 'c> DiceCalculationDelegate<'c, 'd> {
         extension_usages_json: &str,
         module_ctx_working_dir: &str,
         cancellation: &CancellationContext,
-    ) -> buck2_error::Result<crate::interpreter::build_context::BazelModuleExtensionEvaluationResult>
-    {
+    ) -> buck2_error::Result<crate::bazel_repository::BazelModuleExtensionEvaluation> {
         let buckconfig = self.get_legacy_buck_config_for_starlark().await?;
         let root_buckconfig = self.ctx.get_legacy_root_config_on_dice().await?;
 

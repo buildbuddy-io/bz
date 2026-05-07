@@ -12,6 +12,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use buck2_core::cells::cell_path::CellPath;
+use buck2_core::cells::external::ExternalCellOrigin;
 use buck2_core::cells::name::CellName;
 use buck2_core::cells::paths::CellRelativePathBuf;
 use dice::DiceComputations;
@@ -40,6 +41,19 @@ impl HasCellFileIgnores for DiceComputations<'_> {
     ) -> buck2_error::Result<Arc<CellFileIgnores>> {
         let cells = self.get_cell_resolver().await?;
         let instance = cells.get(cell_name)?;
+        if matches!(
+            instance.external(),
+            Some(ExternalCellOrigin::Bzlmod(_)) | Some(ExternalCellOrigin::BzlmodGenerated(_))
+        ) {
+            let ignore_spec = read_bazelignore_spec(self, cell_name).await?;
+            let cell_ignores = CellFileIgnores::new_for_interpreter(
+                &ignore_spec,
+                instance.nested_cells().clone(),
+                cells.is_root_cell(cell_name),
+            )?;
+            return Ok(Arc::new(cell_ignores));
+        }
+
         let config = self.get_legacy_config_on_dice(cell_name).await?;
 
         let ignore_spec = config.lookup(
@@ -51,16 +65,7 @@ impl HasCellFileIgnores for DiceComputations<'_> {
         )?;
         let ignore_spec = ignore_spec.as_ref().map_or("", |s| &**s);
         let ignore_spec = if bazel_compat_enabled(self, &config)? {
-            let bazelignore_path = CellPath::new(
-                cell_name,
-                CellRelativePathBuf::unchecked_new(".bazelignore".to_owned()),
-            );
-            let bazelignore =
-                DiceFileComputations::read_file_if_exists(self, bazelignore_path.as_ref()).await?;
-            let bazelignore_spec = match &bazelignore {
-                Some(contents) => bazelignore_to_ignore_spec(contents)?,
-                None => String::new(),
-            };
+            let bazelignore_spec = read_bazelignore_spec(self, cell_name).await?;
             merge_ignore_specs(ignore_spec, &bazelignore_spec)
         } else {
             ignore_spec.to_owned()
@@ -73,6 +78,22 @@ impl HasCellFileIgnores for DiceComputations<'_> {
         )?;
 
         Ok(Arc::new(cell_ignores))
+    }
+}
+
+async fn read_bazelignore_spec(
+    ctx: &mut DiceComputations<'_>,
+    cell_name: CellName,
+) -> buck2_error::Result<String> {
+    let bazelignore_path = CellPath::new(
+        cell_name,
+        CellRelativePathBuf::unchecked_new(".bazelignore".to_owned()),
+    );
+    let bazelignore =
+        DiceFileComputations::read_file_if_exists(ctx, bazelignore_path.as_ref()).await?;
+    match &bazelignore {
+        Some(contents) => bazelignore_to_ignore_spec(contents),
+        None => Ok(String::new()),
     }
 }
 

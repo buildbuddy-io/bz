@@ -12,12 +12,15 @@ use std::hash::Hash;
 
 use allocative::Allocative;
 use buck2_core::cells::external::bzlmod_canonical_repo_name_for_cell;
+use buck2_core::cells::paths::CellRelativePath;
+use buck2_core::package::PackageLabel;
 use buck2_core::provider::label::ConfiguredProvidersLabel;
 use buck2_core::provider::label::NonDefaultProvidersName;
 use buck2_core::provider::label::ProvidersLabel;
 use buck2_core::provider::label::ProvidersName;
 use buck2_core::target::label::label::TargetLabel;
 use buck2_core::target::name::TargetNameRef;
+use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
 use derive_more::Display;
 use dupe::Dupe;
 use pagable::Pagable;
@@ -43,6 +46,7 @@ use starlark::values::starlark_value;
 
 use crate::types::cell_path::StarlarkCellPath;
 use crate::types::cell_root::CellRoot;
+use crate::types::label_display::starlark_providers_label_str;
 use crate::types::package_path::StarlarkPackagePath;
 use crate::types::project_root::StarlarkProjectRoot;
 use crate::types::target_label::StarlarkConfiguredTargetLabel;
@@ -50,6 +54,49 @@ use crate::types::target_label::StarlarkTargetLabel;
 
 fn bazel_repo_name_for_cell(cell: &str) -> String {
     bzlmod_canonical_repo_name_for_cell(cell).unwrap_or_else(|| cell.to_owned())
+}
+
+fn bazel_workspace_root_for_cell(cell: &str) -> String {
+    if cell == "root" {
+        String::new()
+    } else {
+        format!("external/{}", bazel_repo_name_for_cell(cell))
+    }
+}
+
+fn bazel_label_relative_target(
+    base_package: PackageLabel,
+    label: &str,
+) -> buck2_error::Result<TargetLabel> {
+    if label.starts_with('@') {
+        return Err(buck2_error::buck2_error!(
+            buck2_error::ErrorTag::Input,
+            "Label.relative does not support repository-qualified labels yet: `{}`",
+            label
+        ));
+    }
+
+    let (package, target_name) = if let Some(label) = label.strip_prefix("//") {
+        let (package, target_name) = label
+            .split_once(':')
+            .map(|(package, target_name)| (package, target_name.to_owned()))
+            .unwrap_or_else(|| {
+                let target_name = label.rsplit('/').next().unwrap_or(label).to_owned();
+                (label, target_name)
+            });
+        let package_path = CellRelativePath::new(ForwardRelativePath::new(package)?);
+        (
+            PackageLabel::new(base_package.cell_name(), package_path)?,
+            target_name,
+        )
+    } else if let Some(target_name) = label.strip_prefix(':') {
+        (base_package, target_name.to_owned())
+    } else {
+        (base_package, label.to_owned())
+    };
+
+    let target_name = TargetNameRef::new(&target_name)?;
+    Ok(TargetLabel::new(package, target_name))
 }
 
 impl StarlarkConfiguredProvidersLabel {
@@ -185,6 +232,13 @@ fn configured_label_methods(builder: &mut MethodsBuilder) {
         ))
     }
 
+    #[starlark(attribute)]
+    fn workspace_root(this: &StarlarkConfiguredProvidersLabel) -> starlark::Result<String> {
+        Ok(bazel_workspace_root_for_cell(
+            this.label.target().pkg().cell_name().as_str(),
+        ))
+    }
+
     /// Returns the PackagePath for this configured providers label.
     #[starlark(attribute)]
     fn package_path<'v>(
@@ -239,11 +293,27 @@ fn configured_label_methods(builder: &mut MethodsBuilder) {
             ConfiguredProvidersLabel::default_for(target),
         ))
     }
+
+    /// Resolve a label string relative to this label's repository/package, following Bazel's Label.relative API.
+    fn relative(
+        this: &StarlarkConfiguredProvidersLabel,
+        label: &str,
+    ) -> starlark::Result<StarlarkConfiguredProvidersLabel> {
+        let target = bazel_label_relative_target(this.label.target().pkg(), label)?
+            .configure_pair(this.label.target().cfg_pair().dupe());
+        Ok(StarlarkConfiguredProvidersLabel::new(
+            ConfiguredProvidersLabel::default_for(target),
+        ))
+    }
 }
 
 impl StarlarkProvidersLabel {
     pub fn label(&self) -> &ProvidersLabel {
         &self.label
+    }
+
+    pub fn starlark_label_string(&self) -> String {
+        starlark_providers_label_str(&self.label)
     }
 }
 
@@ -277,7 +347,7 @@ impl StarlarkProvidersLabel {
     }
 }
 
-#[starlark_value(type = "ProvidersLabel", skip_pagable)]
+#[starlark_value(type = "Label", skip_pagable)]
 impl<'v> StarlarkValue<'v> for StarlarkProvidersLabel
 where
     Self: ProvidesStaticType<'v>,
@@ -298,6 +368,10 @@ where
     fn write_hash(&self, hasher: &mut StarlarkHasher) -> starlark::Result<()> {
         self.label.hash(hasher);
         Ok(())
+    }
+
+    fn collect_repr(&self, collector: &mut String) {
+        collector.push_str(&starlark_providers_label_str(&self.label));
     }
 }
 
@@ -352,6 +426,13 @@ fn label_methods(builder: &mut MethodsBuilder) {
     }
 
     #[starlark(attribute)]
+    fn workspace_root(this: &StarlarkProvidersLabel) -> starlark::Result<String> {
+        Ok(bazel_workspace_root_for_cell(
+            this.label.target().pkg().cell_name().as_str(),
+        ))
+    }
+
+    #[starlark(attribute)]
     fn package<'v>(
         this: &'v StarlarkProvidersLabel,
         heap: Heap<'v>,
@@ -381,6 +462,17 @@ fn label_methods(builder: &mut MethodsBuilder) {
             target,
         )))
     }
+
+    /// Resolve a label string relative to this label's repository/package, following Bazel's Label.relative API.
+    fn relative(
+        this: &StarlarkProvidersLabel,
+        label: &str,
+    ) -> starlark::Result<StarlarkProvidersLabel> {
+        let target = bazel_label_relative_target(this.label.target().pkg(), label)?;
+        Ok(StarlarkProvidersLabel::new(ProvidersLabel::default_for(
+            target,
+        )))
+    }
 }
 
 // TODO(nga): remove the `Label` alias. (T264813434)
@@ -393,6 +485,8 @@ pub fn register_providers_label(globals: &mut GlobalsBuilder) {}
 
 #[cfg(test)]
 mod tests {
+    use buck2_core::cells::external::bzlmod_cell_name;
+    use buck2_core::cells::external::register_bzlmod_cell_canonical_repo_name;
     use buck2_core::configuration::data::ConfigurationData;
     use buck2_core::provider::label::ConfiguredProvidersLabel;
     use buck2_core::provider::label::NonDefaultProvidersName;
@@ -441,6 +535,23 @@ mod tests {
                 ),
             })
         }
+
+        fn bzlmod_providers_label() -> starlark::Result<StarlarkProvidersLabel> {
+            let cell_name = bzlmod_cell_name("rules_python+");
+            Ok(StarlarkProvidersLabel {
+                label: ProvidersLabel::default_for(TargetLabel::testing_parse(&format!(
+                    "{cell_name}//python/config_settings:add_srcs_to_runfiles"
+                ))),
+            })
+        }
+
+        fn command_line_option_label() -> starlark::Result<StarlarkProvidersLabel> {
+            Ok(StarlarkProvidersLabel {
+                label: ProvidersLabel::default_for(TargetLabel::testing_parse(
+                    "root//command_line_option:platforms",
+                )),
+            })
+        }
     }
 
     #[test]
@@ -465,6 +576,48 @@ mod tests {
     }
 
     #[test]
+    fn test_providers_label_starlark_type_is_bazel_label() {
+        let mut a = Assert::new();
+        a.globals_add(register_test_providers_label);
+        a.eq("'Label'", "type(providers_label())");
+    }
+
+    #[test]
+    fn test_label_workspace_root() {
+        register_bzlmod_cell_canonical_repo_name("rules_python+");
+
+        let mut a = Assert::new();
+        a.globals_add(register_test_providers_label);
+        a.eq("''", "command_line_option_label().workspace_root");
+        a.eq(
+            "'external/rules_python+'",
+            "bzlmod_providers_label().workspace_root",
+        );
+    }
+
+    #[test]
+    fn test_bzlmod_providers_label_str() {
+        register_bzlmod_cell_canonical_repo_name("rules_python+");
+
+        let mut a = Assert::new();
+        a.globals_add(register_test_providers_label);
+        a.eq(
+            "'@@rules_python+//python/config_settings:add_srcs_to_runfiles'",
+            "str(bzlmod_providers_label())",
+        );
+    }
+
+    #[test]
+    fn test_command_line_option_label_str() {
+        let mut a = Assert::new();
+        a.globals_add(register_test_providers_label);
+        a.eq(
+            "'//command_line_option:platforms'",
+            "str(command_line_option_label())",
+        );
+    }
+
+    #[test]
     fn test_configured_providers_label_same_package_label() {
         let mut a = Assert::new();
         a.globals_add(register_test_providers_label);
@@ -482,6 +635,36 @@ mod tests {
         a.eq(
             "'foo//bar:package.json'",
             "str(providers_label().same_package_label('package.json'))",
+        );
+    }
+
+    #[test]
+    fn test_configured_providers_label_relative() {
+        let mut a = Assert::new();
+        a.globals_add(register_test_providers_label);
+        a.eq(
+            &"'foo//bar:patches/fix.patch (<CFG>)'"
+                .replace("<CFG>", &ConfigurationData::testing_new().to_string()),
+            "str(configured_providers_label().relative('patches/fix.patch'))",
+        );
+        a.eq(
+            &"'foo//other/pkg:file.txt (<CFG>)'"
+                .replace("<CFG>", &ConfigurationData::testing_new().to_string()),
+            "str(configured_providers_label().relative('//other/pkg:file.txt'))",
+        );
+    }
+
+    #[test]
+    fn test_providers_label_relative() {
+        let mut a = Assert::new();
+        a.globals_add(register_test_providers_label);
+        a.eq(
+            "'foo//bar:patches/fix.patch'",
+            "str(providers_label().relative('patches/fix.patch'))",
+        );
+        a.eq(
+            "'foo//other/pkg:file.txt'",
+            "str(providers_label().relative('//other/pkg:file.txt'))",
         );
     }
 }

@@ -564,12 +564,15 @@ impl CoercedAttr {
             CoercedAttrWithType::Arg(arg, _t) => arg.traverse(traversal, pkg),
             CoercedAttrWithType::Query(query, _t) => query.traverse(traversal),
             CoercedAttrWithType::SourceFile(source, _t) => {
-                let pkg = pkg.ok_or_else(|| {
-                    buck2_error::internal_error!(
-                        "Expected a package when traversing coerced source attribute: `{}`.",
-                        source.path()
-                    )
-                })?;
+                let Some(pkg) = pkg else {
+                    if traversal.inputs_require_package() {
+                        return Err(buck2_error::internal_error!(
+                            "Expected a package when traversing coerced source attribute: `{}`.",
+                            source.path()
+                        ));
+                    }
+                    return Ok(());
+                };
                 for x in source.inputs() {
                     traversal.input(SourcePathRef::new(pkg, x))?;
                 }

@@ -76,14 +76,17 @@ use buck2_fs::error::IoResultExt;
 use buck2_fs::fs_util;
 use buck2_fs::paths::abs_norm_path::AbsNormPath;
 use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
+use buck2_interpreter_for_build::bazel_repository::BazelRepositoryGeneratedFile;
 use buck2_interpreter_for_build::bazel_repository::bzlmod_repository_rule_invocation_from_setup;
 use buck2_interpreter_for_build::bazel_repository::evaluate_bzlmod_module_extension_repo;
 use buck2_interpreter_for_build::bazel_repository::evaluate_bzlmod_repository_rule;
+use buck2_interpreter_for_build::interpreter::build_context::BazelModuleExtensionEvaluationResult;
 use buck2_interpreter_for_build::interpreter::build_context::BazelRepositoryRuleInvocation;
 use cmp_any::PartialEqAny;
 use dice::CancellationContext;
 use dice::DiceComputations;
 use dice::Key;
+use dice::NoValueSerialize;
 use dice::OkPagableValueSerialize;
 use dice::ValueSerialize;
 use dupe::Dupe;
@@ -1446,6 +1449,128 @@ fn bzlmod_generated_sibling_path_for_canonical(
     ProjectRelativePathBuf::unchecked_new(format!("{}/{}.{}", parent, canonical_repo_name, suffix))
 }
 
+fn bzlmod_module_extension_evaluation_cache_key(setup: &BzlmodModuleExtensionRepoSetup) -> String {
+    let mut hasher = blake3::Hasher::new();
+    update_bzlmod_repo_contents_cache_key(&mut hasher, "buck2-bzlmod-module-extension-v1");
+    update_bzlmod_repo_contents_cache_key(&mut hasher, &setup.parent_canonical_repo_name);
+    update_bzlmod_repo_contents_cache_key(&mut hasher, &setup.parent_is_root.to_string());
+    update_bzlmod_repo_contents_cache_key(&mut hasher, &setup.extension_bzl_file);
+    update_bzlmod_repo_contents_cache_key(&mut hasher, &setup.extension_bzl_cell);
+    update_bzlmod_repo_contents_cache_key(&mut hasher, &setup.extension_bzl_path);
+    update_bzlmod_repo_contents_cache_key(&mut hasher, &setup.extension_name);
+    update_bzlmod_repo_contents_cache_key(&mut hasher, &setup.extension_usages_json);
+    hasher.finalize().to_hex().to_string()
+}
+
+fn bzlmod_module_extension_evaluation_setup(
+    setup: &BzlmodModuleExtensionRepoSetup,
+) -> BzlmodModuleExtensionRepoSetup {
+    BzlmodModuleExtensionRepoSetup {
+        parent_canonical_repo_name: setup.parent_canonical_repo_name.dupe(),
+        parent_is_root: setup.parent_is_root,
+        extension_bzl_file: setup.extension_bzl_file.dupe(),
+        extension_bzl_cell: setup.extension_bzl_cell.dupe(),
+        extension_bzl_path: setup.extension_bzl_path.dupe(),
+        extension_name: setup.extension_name.dupe(),
+        repo_name: Arc::from(""),
+        extension_usages_json: setup.extension_usages_json.dupe(),
+    }
+}
+
+fn bzlmod_module_extension_evaluation_working_dir(
+    generated_repo_path: &ProjectRelativePath,
+    setup: &BzlmodModuleExtensionRepoSetup,
+) -> ProjectRelativePathBuf {
+    let external_cells_root = generated_repo_path
+        .as_str()
+        .rsplit_once("/bzlmod_generated/")
+        .map(|(external_cells_root, _)| external_cells_root)
+        .unwrap_or_else(|| {
+            generated_repo_path
+                .as_str()
+                .rsplit_once('/')
+                .map(|(parent, _)| parent)
+                .unwrap_or("")
+        });
+    ProjectRelativePathBuf::unchecked_new(format!(
+        "{}/bzlmod_module_extensions/{}",
+        external_cells_root,
+        bzlmod_module_extension_evaluation_cache_key(setup)
+    ))
+}
+
+#[derive(
+    Clone,
+    Debug,
+    derive_more::Display,
+    PartialEq,
+    Eq,
+    Hash,
+    allocative::Allocative,
+    Pagable
+)]
+#[display("{setup:?}")]
+#[pagable_typetag(dice::DiceKeyDyn)]
+struct BzlmodModuleExtensionEvaluationKey {
+    setup: BzlmodModuleExtensionRepoSetup,
+    working_dir: ProjectRelativePathBuf,
+}
+
+#[async_trait::async_trait]
+impl Key for BzlmodModuleExtensionEvaluationKey {
+    type Value = buck2_error::Result<Arc<BazelModuleExtensionEvaluationResult>>;
+
+    async fn compute(
+        &self,
+        ctx: &mut DiceComputations,
+        cancellations: &CancellationContext,
+    ) -> Self::Value {
+        ctx.get_blocking_executor()
+            .execute_io(
+                Box::new(
+                    buck2_execute::execute::clean_output_paths::CleanOutputPaths {
+                        paths: vec![self.working_dir.clone()],
+                    },
+                ),
+                cancellations,
+            )
+            .await?;
+        Ok(Arc::new(
+            evaluate_bzlmod_module_extension_repo(
+                ctx,
+                &self.setup,
+                self.working_dir.as_str(),
+                None,
+                cancellations,
+            )
+            .await?,
+        ))
+    }
+
+    fn equality(_x: &Self::Value, _y: &Self::Value) -> bool {
+        false
+    }
+
+    fn validity(x: &Self::Value) -> bool {
+        x.is_ok()
+    }
+
+    fn value_serialize() -> impl ValueSerialize<Value = Self::Value> {
+        NoValueSerialize::<Self::Value>::new()
+    }
+}
+
+async fn evaluate_cached_bzlmod_module_extension(
+    ctx: &mut DiceComputations<'_>,
+    setup: &BzlmodModuleExtensionRepoSetup,
+    generated_repo_path: &ProjectRelativePath,
+) -> buck2_error::Result<Arc<BazelModuleExtensionEvaluationResult>> {
+    let setup = bzlmod_module_extension_evaluation_setup(setup);
+    let working_dir = bzlmod_module_extension_evaluation_working_dir(generated_repo_path, &setup);
+    ctx.compute(&BzlmodModuleExtensionEvaluationKey { setup, working_dir })
+        .await?
+}
+
 async fn evaluate_and_materialize_bzlmod_repository_rule(
     ctx: &mut DiceComputations<'_>,
     canonical_repo_name: &str,
@@ -1465,13 +1590,14 @@ async fn evaluate_and_materialize_bzlmod_repository_rule(
             cancellations,
         )
         .await?;
-    let files = evaluate_bzlmod_repository_rule(
+    let mut files = evaluate_bzlmod_repository_rule(
         ctx,
         invocation,
         repository_ctx_path.as_str(),
         cancellations,
     )
     .await?;
+    remap_repository_ctx_paths(&mut files, repository_ctx_path.as_ref(), path);
     let files_json = serde_json::to_string(&files)
         .buck_error_context("Error serializing evaluated repository_rule file manifest")?;
     ctx.get_blocking_executor()
@@ -1501,6 +1627,23 @@ async fn evaluate_and_materialize_bzlmod_repository_rule(
             cancellations,
         )
         .await
+}
+
+fn remap_repository_ctx_paths(
+    files: &mut [BazelRepositoryGeneratedFile],
+    repository_ctx_path: &ProjectRelativePath,
+    materialized_repo_path: &ProjectRelativePath,
+) {
+    let from = repository_ctx_path.as_str();
+    let to = materialized_repo_path.as_str();
+    if from == to {
+        return;
+    }
+    for file in files {
+        if file.content.contains(from) {
+            file.content = file.content.replace(from, to);
+        }
+    }
 }
 
 async fn download_impl(
@@ -1771,15 +1914,9 @@ async fn materialize_generated(
         .critical_section(|| async move {
             match &setup.generator {
                 BzlmodGeneratedCellGenerator::ModuleExtensionRepo(module_extension) => {
-                    let module_ctx_working_dir = format!("{}/.buck2_module_ctx", path.as_str());
-                    let evaluation = evaluate_bzlmod_module_extension_repo(
-                        ctx,
-                        module_extension,
-                        &module_ctx_working_dir,
-                        Some(&setup.canonical_repo_name),
-                        cancellations,
-                    )
-                    .await?;
+                    let evaluation =
+                        evaluate_cached_bzlmod_module_extension(ctx, module_extension, path)
+                            .await?;
                     if let Some(invocation) = evaluation
                         .repository_rule_invocations
                         .iter()
@@ -1799,8 +1936,8 @@ async fn materialize_generated(
                     }
                     let emitted = evaluation
                         .repository_rule_invocations
-                        .into_iter()
-                        .map(|invocation| invocation.name)
+                        .iter()
+                        .map(|invocation| invocation.name.clone())
                         .collect();
                     return Err(BzlmodError::ModuleExtensionRepoNotEmitted {
                         extension_bzl_file: module_extension.extension_bzl_file.to_string(),

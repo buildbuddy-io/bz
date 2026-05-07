@@ -19,6 +19,7 @@ use buck2_core::build_file_path::BuildFilePath;
 use buck2_core::bzl::ImportPath;
 use buck2_core::cells::cell_path::CellPath;
 use buck2_core::cells::cell_path_with_allowed_relative_dir::CellPathWithAllowedRelativeDir;
+use buck2_core::target::name::TargetNameRef;
 use buck2_interpreter::file_loader::LoadedModules;
 use buck2_interpreter::paths::module::OwnedStarlarkModulePath;
 use buck2_interpreter::paths::path::StarlarkPath;
@@ -427,6 +428,35 @@ fn test_package_import() -> buck2_error::Result<()> {
 }
 
 #[test]
+fn bazel_build_files_materialize_input_file_targets() -> buck2_error::Result<()> {
+    let tester = Tester::new()?;
+    let build_path = BuildFilePath::testing_new("root//some/package:BUILD");
+    let eval_result = tester.eval_build_file(
+        &build_path,
+        indoc!(
+            r#"
+            def _impl(ctx):
+                pass
+
+            uses_file = rule(impl = _impl, attrs = {
+                "actual": attrs.dep(),
+            })
+
+            uses_file(name = "node_bin", actual = "bin/nodejs/bin/node")
+            "#
+        ),
+        PackageListing::testing_files(&["bin/nodejs/bin/node"]),
+    )?;
+
+    let input_file = eval_result
+        .targets()
+        .get(TargetNameRef::new("bin/nodejs/bin/node")?)
+        .expect("Bazel input file target should be materialized");
+    assert_eq!("bazel_input_file", input_file.rule_type().name());
+    Ok(())
+}
+
+#[test]
 fn eval() -> buck2_error::Result<()> {
     let mut tester = Tester::new()?;
     let content = indoc!(
@@ -437,10 +467,12 @@ fn eval() -> buck2_error::Result<()> {
 
             def test():
                 assert_eq("some/package", __buck2_builtins__.package_name())
+                assert_eq("some/package", __buck2_builtins__.native.package_name())
                 assert_eq("@root", __buck2_builtins__.repository_name())
 
                 assert_eq(package_name(), __buck2_builtins__.package_name())
                 assert_eq(repository_name(), __buck2_builtins__.repository_name())
+                assert_eq(True, hasattr(__buck2_builtins__.native, "starlark_doc_extract"))
 
                 assert_eq(package_name(), get_base_path())
 

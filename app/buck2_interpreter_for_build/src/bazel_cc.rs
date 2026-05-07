@@ -23,6 +23,7 @@ use starlark::values::StarlarkValue;
 use starlark::values::Value;
 use starlark::values::dict::AllocDict;
 use starlark::values::list::AllocList;
+use starlark::values::list::UnpackList;
 use starlark::values::none::NoneType;
 use starlark::values::starlark_value;
 use starlark::values::structs::AllocStruct;
@@ -39,6 +40,50 @@ impl fmt::Display for BazelCcInternal {
 
 starlark::starlark_simple_value!(BazelCcInternal);
 
+#[derive(Debug, ProvidesStaticType, NoSerialize, Allocative)]
+struct BazelCcToolchainFeatures;
+
+impl fmt::Display for BazelCcToolchainFeatures {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("<CcToolchainFeatures>")
+    }
+}
+
+starlark::starlark_simple_value!(BazelCcToolchainFeatures);
+
+#[starlark_value(type = "CcToolchainFeatures")]
+impl<'v> StarlarkValue<'v> for BazelCcToolchainFeatures {
+    fn get_methods() -> Option<&'static Methods> {
+        static RES: MethodsStatic = MethodsStatic::new();
+        RES.methods_for_type::<Self::Canonical>(bazel_cc_toolchain_features_methods)
+    }
+}
+
+#[derive(Debug, ProvidesStaticType, NoSerialize, Allocative)]
+struct BazelFeatureConfiguration {
+    requested_features: Vec<String>,
+}
+
+impl fmt::Display for BazelFeatureConfiguration {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "<FeatureConfiguration({})>",
+            self.requested_features.join(", ")
+        )
+    }
+}
+
+starlark::starlark_simple_value!(BazelFeatureConfiguration);
+
+#[starlark_value(type = "FeatureConfiguration")]
+impl<'v> StarlarkValue<'v> for BazelFeatureConfiguration {
+    fn get_methods() -> Option<&'static Methods> {
+        static RES: MethodsStatic = MethodsStatic::new();
+        RES.methods_for_type::<Self::Canonical>(bazel_feature_configuration_methods)
+    }
+}
+
 #[starlark_value(type = "cc_internal")]
 impl<'v> StarlarkValue<'v> for BazelCcInternal {
     fn get_methods() -> Option<&'static Methods> {
@@ -49,10 +94,30 @@ impl<'v> StarlarkValue<'v> for BazelCcInternal {
     fn dir_attr(&self) -> Vec<String> {
         vec![
             "check_private_api".to_owned(),
+            "cc_toolchain_features".to_owned(),
+            "cc_toolchain_variables".to_owned(),
+            "combine_cc_toolchain_variables".to_owned(),
             "create_header_info".to_owned(),
             "create_header_info_with_deps".to_owned(),
+            "exec_os".to_owned(),
             "freeze".to_owned(),
         ]
+    }
+}
+
+fn bazel_cc_exec_os() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "DARWIN"
+    } else if cfg!(target_os = "linux") {
+        "LINUX"
+    } else if cfg!(target_os = "windows") {
+        "WINDOWS"
+    } else if cfg!(target_os = "freebsd") {
+        "FREEBSD"
+    } else if cfg!(target_os = "openbsd") {
+        "OPENBSD"
+    } else {
+        "UNKNOWN"
     }
 }
 
@@ -156,7 +221,77 @@ fn alloc_header_info_with_deps<'v>(
 }
 
 #[starlark_module]
+fn bazel_cc_toolchain_features_methods(builder: &mut MethodsBuilder) {
+    fn default_features_and_action_configs<'v>(
+        #[starlark(this)] _this: &BazelCcToolchainFeatures,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<Value<'v>> {
+        Ok(eval.heap().alloc(AllocList::EMPTY))
+    }
+
+    fn configure_features(
+        #[starlark(this)] _this: &BazelCcToolchainFeatures,
+        #[starlark(require = named, default = UnpackList::default())]
+        requested_features: UnpackList<String>,
+    ) -> starlark::Result<BazelFeatureConfiguration> {
+        Ok(BazelFeatureConfiguration {
+            requested_features: requested_features.into_iter().collect(),
+        })
+    }
+}
+
+#[starlark_module]
+fn bazel_feature_configuration_methods(builder: &mut MethodsBuilder) {
+    fn is_enabled(
+        #[starlark(this)] this: &BazelFeatureConfiguration,
+        feature: &str,
+    ) -> starlark::Result<bool> {
+        Ok(this
+            .requested_features
+            .iter()
+            .any(|requested| requested == feature))
+    }
+
+    fn is_requested(
+        #[starlark(this)] this: &BazelFeatureConfiguration,
+        feature: &str,
+    ) -> starlark::Result<bool> {
+        Ok(this
+            .requested_features
+            .iter()
+            .any(|requested| requested == feature))
+    }
+}
+
+#[starlark_module]
 fn bazel_cc_internal_methods(builder: &mut MethodsBuilder) {
+    fn cc_toolchain_features<'v>(
+        #[starlark(this)] _this: &BazelCcInternal,
+        #[starlark(kwargs)] _kwargs: SmallMap<String, Value<'v>>,
+    ) -> starlark::Result<BazelCcToolchainFeatures> {
+        Ok(BazelCcToolchainFeatures)
+    }
+
+    fn cc_toolchain_variables<'v>(
+        #[starlark(this)] _this: &BazelCcInternal,
+        #[starlark(require = named)] vars: Value<'v>,
+    ) -> starlark::Result<Value<'v>> {
+        Ok(vars)
+    }
+
+    fn combine_cc_toolchain_variables<'v>(
+        #[starlark(this)] _this: &BazelCcInternal,
+        parent: Value<'v>,
+        #[starlark(args)] _variables: UnpackTuple<Value<'v>>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<Value<'v>> {
+        if parent.is_none() {
+            Ok(eval.heap().alloc(AllocDict::EMPTY))
+        } else {
+            Ok(parent)
+        }
+    }
+
     fn create_header_info<'v>(
         #[starlark(this)] _this: &BazelCcInternal,
         #[starlark(kwargs)] kwargs: SmallMap<String, Value<'v>>,
@@ -171,6 +306,14 @@ fn bazel_cc_internal_methods(builder: &mut MethodsBuilder) {
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {
         alloc_header_info_with_deps(&kwargs, eval)
+    }
+
+    fn exec_os<'v>(
+        #[starlark(this)] _this: &BazelCcInternal,
+        #[starlark(require = named)] ctx: Value<'v>,
+    ) -> starlark::Result<&'static str> {
+        let _unused = ctx;
+        Ok(bazel_cc_exec_os())
     }
 
     fn freeze<'v>(

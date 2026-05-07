@@ -1,0 +1,18 @@
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "pkg_sources",
+    srcs = glob(["**"]),
+)
+
+toolchain_type(
+    name = "toolchain_type",
+)
+
+toolchain_type(
+    name = "runtime_toolchain_type",
+)
+
+toolchain_type(
+    name = "bootstrap_runtime_toolchain_type",
+)

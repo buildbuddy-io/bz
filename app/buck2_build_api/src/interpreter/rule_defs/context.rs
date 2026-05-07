@@ -40,6 +40,8 @@ use starlark::environment::GlobalsBuilder;
 use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
 use starlark::environment::MethodsStatic;
+use starlark::eval::Arguments;
+use starlark::eval::Evaluator;
 use starlark::typing::Ty;
 use starlark::values::AllocValue;
 use starlark::values::Heap;
@@ -72,9 +74,9 @@ use crate::interpreter::rule_defs::artifact::associated::AssociatedArtifacts;
 use crate::interpreter::rule_defs::artifact::starlark_artifact::StarlarkArtifact;
 use crate::interpreter::rule_defs::artifact::starlark_declared_artifact::StarlarkDeclaredArtifact;
 use crate::interpreter::rule_defs::plugins::AnalysisPlugins;
+use crate::interpreter::rule_defs::provider::builtin::constraint_value_info::ConstraintValueInfo;
 use crate::interpreter::rule_defs::provider::builtin::default_info::BazelRunfiles;
 use crate::interpreter::rule_defs::provider::builtin::default_info::bazel_runfiles_from_files;
-use crate::interpreter::rule_defs::provider::builtin::constraint_value_info::ConstraintValueInfo;
 use crate::interpreter::rule_defs::provider::dependency::Dependency;
 use buck2_hash::BuckIndexSet;
 
@@ -162,15 +164,32 @@ impl<'v> AnalysisToolchains<'v> {
     }
 
     fn normalize_key(key: &str) -> String {
-        key.strip_prefix('@').unwrap_or(key).to_owned()
+        key.trim_start_matches('@').to_owned()
+    }
+
+    fn keys_match(requested: &str, declared: &str) -> bool {
+        requested == declared
+            || requested
+                .split_once("//")
+                .zip(declared.split_once("//"))
+                .is_some_and(|((_, requested_rest), (_, declared_rest))| {
+                    requested_rest == declared_rest
+                })
+    }
+
+    fn declared_key_for(&self, key: &str) -> Option<&str> {
+        self.toolchains
+            .iter()
+            .find(|declared| Self::keys_match(key, declared))
+            .map(String::as_str)
     }
 
     fn key_from_value(value: Value<'_>) -> String {
         if let Some(label) = StarlarkProvidersLabel::from_value(value) {
-            return label.to_string();
+            return Self::normalize_key(&label.to_string());
         }
         if let Some(label) = StarlarkTargetLabel::from_value(value) {
-            return label.to_string();
+            return Self::normalize_key(&label.to_string());
         }
         if let Some(key) = value.unpack_str() {
             return Self::normalize_key(key);
@@ -180,7 +199,7 @@ impl<'v> AnalysisToolchains<'v> {
 
     fn contains_value(&self, value: Value<'_>) -> bool {
         let key = Self::key_from_value(value);
-        self.toolchains.iter().any(|candidate| candidate == &key)
+        self.declared_key_for(&key).is_some()
     }
 }
 
@@ -194,10 +213,10 @@ impl<'v> AllocValue<'v> for AnalysisToolchains<'v> {
 impl<'v> StarlarkValue<'v> for AnalysisToolchains<'v> {
     fn at(&self, index: Value<'v>, _heap: Heap<'v>) -> starlark::Result<Value<'v>> {
         let key = Self::key_from_value(index);
-        if self.toolchains.iter().any(|candidate| candidate == &key) {
+        if let Some(declared_key) = self.declared_key_for(&key) {
             Ok(self
                 .resolved
-                .get(&key)
+                .get(declared_key)
                 .copied()
                 .unwrap_or_else(Value::new_none))
         } else {
@@ -432,6 +451,15 @@ fn bazel_build_setting_value_to_starlark<'v>(
     match value {
         BazelBuildSettingValue::Bool(value) => heap.alloc(*value).to_value(),
         BazelBuildSettingValue::Int(value) => heap.alloc(*value).to_value(),
+        BazelBuildSettingValue::Label(value) => {
+            heap.alloc(StarlarkProvidersLabel::new(value.clone()))
+        }
+        BazelBuildSettingValue::LabelList(values) => heap.alloc(
+            values
+                .iter()
+                .map(|value| StarlarkProvidersLabel::new(value.clone()))
+                .collect::<Vec<_>>(),
+        ),
         BazelBuildSettingValue::String(value) => heap.alloc(value.as_str()).to_value(),
         BazelBuildSettingValue::StringList(values) => {
             let values = values.iter().map(String::as_str).collect::<Vec<_>>();
@@ -467,10 +495,398 @@ fn bazel_file_root<'v>(heap: Heap<'v>, path: &str) -> Value<'v> {
     heap.alloc(AllocStruct([("path", heap.alloc_str(path).to_value())]))
 }
 
-fn analysis_context_configuration<'v>(heap: Heap<'v>) -> ValueOfUnchecked<'v, StructRef<'static>> {
+#[derive(Debug, ProvidesStaticType, NoSerialize, Allocative)]
+struct BazelConfigurationBoolMethod {
+    name: &'static str,
+    value: bool,
+}
+
+impl fmt::Display for BazelConfigurationBoolMethod {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "<configuration method {}>", self.name)
+    }
+}
+
+starlark::starlark_simple_value!(BazelConfigurationBoolMethod);
+
+#[starlark_value(type = "function")]
+impl<'v> StarlarkValue<'v> for BazelConfigurationBoolMethod {
+    fn invoke(
+        &self,
+        _me: Value<'v>,
+        args: &Arguments<'v, '_>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<Value<'v>> {
+        args.no_positional_args(eval.heap())?;
+        Ok(Value::new_bool(self.value))
+    }
+}
+
+fn bazel_configuration_bool_method<'v>(
+    heap: Heap<'v>,
+    name: &'static str,
+    value: bool,
+) -> Value<'v> {
+    heap.alloc(BazelConfigurationBoolMethod { name, value })
+}
+
+#[derive(Debug, ProvidesStaticType, NoSerialize, Allocative)]
+struct BazelCppConfiguration;
+
+impl fmt::Display for BazelCppConfiguration {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("<cpp fragment>")
+    }
+}
+
+starlark::starlark_simple_value!(BazelCppConfiguration);
+
+#[starlark_value(type = "cpp")]
+impl<'v> StarlarkValue<'v> for BazelCppConfiguration {
+    fn get_methods() -> Option<&'static Methods> {
+        static RES: MethodsStatic = MethodsStatic::new();
+        RES.methods_for_type::<Self::Canonical>(bazel_cpp_configuration_methods)
+    }
+}
+
+fn bazel_empty_list<'v>(heap: Heap<'v>) -> Value<'v> {
+    heap.alloc(AllocList::EMPTY)
+}
+
+#[starlark_module]
+fn bazel_cpp_configuration_methods(builder: &mut MethodsBuilder) {
+    #[starlark(attribute)]
+    fn _dont_enable_host_nonhost(
+        #[starlark(this)] this: &BazelCppConfiguration,
+    ) -> starlark::Result<bool> {
+        let _ = this;
+        Ok(false)
+    }
+
+    #[starlark(attribute)]
+    fn _fdo_prefetch_hints_label<'v>(
+        #[starlark(this)] this: &BazelCppConfiguration,
+    ) -> starlark::Result<Value<'v>> {
+        let _ = this;
+        Ok(Value::new_none())
+    }
+
+    #[starlark(attribute)]
+    fn apple_generate_dsym(
+        #[starlark(this)] this: &BazelCppConfiguration,
+    ) -> starlark::Result<bool> {
+        let _ = this;
+        Ok(false)
+    }
+
+    #[starlark(attribute)]
+    fn conlyopts<'v>(
+        #[starlark(this)] this: &BazelCppConfiguration,
+        heap: Heap<'v>,
+    ) -> starlark::Result<Value<'v>> {
+        let _ = this;
+        Ok(bazel_empty_list(heap))
+    }
+
+    #[starlark(attribute)]
+    fn copts<'v>(
+        #[starlark(this)] this: &BazelCppConfiguration,
+        heap: Heap<'v>,
+    ) -> starlark::Result<Value<'v>> {
+        let _ = this;
+        Ok(bazel_empty_list(heap))
+    }
+
+    #[starlark(attribute)]
+    fn custom_malloc<'v>(
+        #[starlark(this)] this: &BazelCppConfiguration,
+    ) -> starlark::Result<Value<'v>> {
+        let _ = this;
+        Ok(Value::new_none())
+    }
+
+    #[starlark(attribute)]
+    fn cxxopts<'v>(
+        #[starlark(this)] this: &BazelCppConfiguration,
+        heap: Heap<'v>,
+    ) -> starlark::Result<Value<'v>> {
+        let _ = this;
+        Ok(bazel_empty_list(heap))
+    }
+
+    #[starlark(attribute)]
+    fn do_not_use_macos_set_install_name(
+        #[starlark(this)] this: &BazelCppConfiguration,
+    ) -> starlark::Result<bool> {
+        let _ = this;
+        Ok(true)
+    }
+
+    #[starlark(attribute)]
+    fn linkopts<'v>(
+        #[starlark(this)] this: &BazelCppConfiguration,
+        heap: Heap<'v>,
+    ) -> starlark::Result<Value<'v>> {
+        let _ = this;
+        Ok(bazel_empty_list(heap))
+    }
+
+    #[starlark(attribute)]
+    fn lto_backend_options<'v>(
+        #[starlark(this)] this: &BazelCppConfiguration,
+        heap: Heap<'v>,
+    ) -> starlark::Result<Value<'v>> {
+        let _ = this;
+        Ok(bazel_empty_list(heap))
+    }
+
+    #[starlark(attribute)]
+    fn objc_generate_linkmap(
+        #[starlark(this)] this: &BazelCppConfiguration,
+    ) -> starlark::Result<bool> {
+        let _ = this;
+        Ok(false)
+    }
+
+    #[starlark(attribute)]
+    fn objc_should_strip_binary(
+        #[starlark(this)] this: &BazelCppConfiguration,
+    ) -> starlark::Result<bool> {
+        let _ = this;
+        Ok(false)
+    }
+
+    #[starlark(attribute)]
+    fn objccopts<'v>(
+        #[starlark(this)] this: &BazelCppConfiguration,
+        heap: Heap<'v>,
+    ) -> starlark::Result<Value<'v>> {
+        let _ = this;
+        Ok(bazel_empty_list(heap))
+    }
+
+    fn build_test_dwp(#[starlark(this)] _this: &BazelCppConfiguration) -> starlark::Result<bool> {
+        Ok(false)
+    }
+
+    fn compilation_mode(
+        #[starlark(this)] _this: &BazelCppConfiguration,
+    ) -> starlark::Result<&'static str> {
+        Ok("fastbuild")
+    }
+
+    fn cs_fdo_instrument<'v>(
+        #[starlark(this)] _this: &BazelCppConfiguration,
+    ) -> starlark::Result<Value<'v>> {
+        Ok(Value::new_none())
+    }
+
+    fn cs_fdo_path<'v>(
+        #[starlark(this)] _this: &BazelCppConfiguration,
+    ) -> starlark::Result<Value<'v>> {
+        Ok(Value::new_none())
+    }
+
+    fn disable_nocopts(#[starlark(this)] _this: &BazelCppConfiguration) -> starlark::Result<bool> {
+        Ok(true)
+    }
+
+    fn dynamic_mode(
+        #[starlark(this)] _this: &BazelCppConfiguration,
+    ) -> starlark::Result<&'static str> {
+        Ok("DEFAULT")
+    }
+
+    fn experimental_cc_implementation_deps(
+        #[starlark(this)] _this: &BazelCppConfiguration,
+    ) -> starlark::Result<bool> {
+        Ok(true)
+    }
+
+    fn experimental_cpp_modules(
+        #[starlark(this)] _this: &BazelCppConfiguration,
+    ) -> starlark::Result<bool> {
+        Ok(false)
+    }
+
+    fn experimental_link_static_libraries_once(
+        #[starlark(this)] _this: &BazelCppConfiguration,
+    ) -> starlark::Result<bool> {
+        Ok(false)
+    }
+
+    fn extra_allowlisted_feature_layering_check_macros<'v>(
+        #[starlark(this)] _this: &BazelCppConfiguration,
+        heap: Heap<'v>,
+    ) -> starlark::Result<Value<'v>> {
+        Ok(bazel_empty_list(heap))
+    }
+
+    fn fdo_instrument<'v>(
+        #[starlark(this)] _this: &BazelCppConfiguration,
+    ) -> starlark::Result<Value<'v>> {
+        Ok(Value::new_none())
+    }
+
+    fn fdo_path<'v>(
+        #[starlark(this)] _this: &BazelCppConfiguration,
+    ) -> starlark::Result<Value<'v>> {
+        Ok(Value::new_none())
+    }
+
+    fn fission_active_for_current_compilation_mode(
+        #[starlark(this)] _this: &BazelCppConfiguration,
+    ) -> starlark::Result<bool> {
+        Ok(false)
+    }
+
+    fn force_layering_check_features(
+        #[starlark(this)] _this: &BazelCppConfiguration,
+    ) -> starlark::Result<bool> {
+        Ok(false)
+    }
+
+    fn force_pic(#[starlark(this)] _this: &BazelCppConfiguration) -> starlark::Result<bool> {
+        Ok(false)
+    }
+
+    fn generate_llvm_lcov(
+        #[starlark(this)] _this: &BazelCppConfiguration,
+    ) -> starlark::Result<bool> {
+        Ok(false)
+    }
+
+    fn grte_top<'v>(
+        #[starlark(this)] _this: &BazelCppConfiguration,
+    ) -> starlark::Result<Value<'v>> {
+        Ok(Value::new_none())
+    }
+
+    fn incompatible_remove_legacy_whole_archive(
+        #[starlark(this)] _this: &BazelCppConfiguration,
+    ) -> starlark::Result<bool> {
+        Ok(true)
+    }
+
+    fn incompatible_use_specific_tool_files(
+        #[starlark(this)] _this: &BazelCppConfiguration,
+    ) -> starlark::Result<bool> {
+        Ok(true)
+    }
+
+    fn interface_shared_objects(
+        #[starlark(this)] _this: &BazelCppConfiguration,
+    ) -> starlark::Result<bool> {
+        Ok(true)
+    }
+
+    fn legacy_whole_archive(
+        #[starlark(this)] _this: &BazelCppConfiguration,
+    ) -> starlark::Result<bool> {
+        Ok(true)
+    }
+
+    fn lto_index_options<'v>(
+        #[starlark(this)] _this: &BazelCppConfiguration,
+        heap: Heap<'v>,
+    ) -> starlark::Result<Value<'v>> {
+        Ok(bazel_empty_list(heap))
+    }
+
+    fn minimum_os_version<'v>(
+        #[starlark(this)] _this: &BazelCppConfiguration,
+    ) -> starlark::Result<Value<'v>> {
+        Ok(Value::new_none())
+    }
+
+    fn objc_should_generate_dotd_files(
+        #[starlark(this)] _this: &BazelCppConfiguration,
+    ) -> starlark::Result<bool> {
+        Ok(true)
+    }
+
+    fn process_headers_in_dependencies(
+        #[starlark(this)] _this: &BazelCppConfiguration,
+    ) -> starlark::Result<bool> {
+        Ok(false)
+    }
+
+    fn propeller_optimize_absolute_cc_profile<'v>(
+        #[starlark(this)] _this: &BazelCppConfiguration,
+    ) -> starlark::Result<Value<'v>> {
+        Ok(Value::new_none())
+    }
+
+    fn propeller_optimize_absolute_ld_profile<'v>(
+        #[starlark(this)] _this: &BazelCppConfiguration,
+    ) -> starlark::Result<Value<'v>> {
+        Ok(Value::new_none())
+    }
+
+    fn proto_profile(#[starlark(this)] _this: &BazelCppConfiguration) -> starlark::Result<bool> {
+        Ok(true)
+    }
+
+    fn save_feature_state(
+        #[starlark(this)] _this: &BazelCppConfiguration,
+    ) -> starlark::Result<bool> {
+        Ok(false)
+    }
+
+    fn save_temps(#[starlark(this)] _this: &BazelCppConfiguration) -> starlark::Result<bool> {
+        Ok(false)
+    }
+
+    fn share_native_deps(
+        #[starlark(this)] _this: &BazelCppConfiguration,
+    ) -> starlark::Result<bool> {
+        Ok(true)
+    }
+
+    fn should_generate_dotd_files(
+        #[starlark(this)] _this: &BazelCppConfiguration,
+    ) -> starlark::Result<bool> {
+        Ok(true)
+    }
+
+    fn should_strip_binaries(
+        #[starlark(this)] _this: &BazelCppConfiguration,
+    ) -> starlark::Result<bool> {
+        Ok(false)
+    }
+
+    fn start_end_lib(#[starlark(this)] _this: &BazelCppConfiguration) -> starlark::Result<bool> {
+        Ok(true)
+    }
+
+    fn strip_opts<'v>(
+        #[starlark(this)] _this: &BazelCppConfiguration,
+        heap: Heap<'v>,
+    ) -> starlark::Result<Value<'v>> {
+        Ok(bazel_empty_list(heap))
+    }
+
+    fn use_llvm_coverage_map_format(
+        #[starlark(this)] _this: &BazelCppConfiguration,
+    ) -> starlark::Result<bool> {
+        Ok(false)
+    }
+}
+
+fn bazel_fragments<'v>(heap: Heap<'v>) -> Value<'v> {
+    heap.alloc(AllocStruct([("cpp", heap.alloc(BazelCppConfiguration))]))
+}
+
+fn analysis_context_configuration<'v>(
+    ctx: &AnalysisContext<'v>,
+    heap: Heap<'v>,
+) -> ValueOfUnchecked<'v, StructRef<'static>> {
     let host_path_separator = if cfg!(windows) { ";" } else { ":" };
     let bin_dir = bazel_file_root(heap, "buck-out/bin");
     let genfiles_dir = bazel_file_root(heap, "buck-out/genfiles");
+    let is_tool_configuration = ctx
+        .label
+        .is_some_and(|label| label.label().target().cfg().is_marked_as_exec_platform());
     ValueOfUnchecked::new(heap.alloc(AllocStruct([
         ("bin_dir", bin_dir),
         ("genfiles_dir", genfiles_dir),
@@ -482,6 +898,26 @@ fn analysis_context_configuration<'v>(heap: Heap<'v>) -> ValueOfUnchecked<'v, St
         ("test_env", heap.alloc(AllocDict::EMPTY)),
         ("coverage_enabled", Value::new_bool(false)),
         ("short_id", heap.alloc_str("buck2").to_value()),
+        (
+            "has_separate_genfiles_directory",
+            bazel_configuration_bool_method(heap, "has_separate_genfiles_directory", false),
+        ),
+        (
+            "is_sibling_repository_layout",
+            bazel_configuration_bool_method(heap, "is_sibling_repository_layout", false),
+        ),
+        (
+            "is_tool_configuration",
+            bazel_configuration_bool_method(heap, "is_tool_configuration", is_tool_configuration),
+        ),
+        (
+            "runfiles_enabled",
+            bazel_configuration_bool_method(heap, "runfiles_enabled", !cfg!(windows)),
+        ),
+        (
+            "stamp_binaries",
+            bazel_configuration_bool_method(heap, "stamp_binaries", false),
+        ),
     ])))
 }
 
@@ -686,8 +1122,7 @@ fn analysis_context_methods(builder: &mut MethodsBuilder) {
         this: RefAnalysisContext<'v>,
         heap: Heap<'v>,
     ) -> starlark::Result<ValueOfUnchecked<'v, StructRef<'static>>> {
-        let _ = this;
-        Ok(analysis_context_configuration(heap))
+        Ok(analysis_context_configuration(this.0, heap))
     }
 
     /// Bazel root object for generated binary outputs.
@@ -707,6 +1142,13 @@ fn analysis_context_methods(builder: &mut MethodsBuilder) {
         Ok(bazel_file_root(heap, "buck-out/genfiles"))
     }
 
+    /// Bazel workspace/runfiles prefix. Under bzlmod, Bazel exposes this as `_main`.
+    #[starlark(attribute)]
+    fn workspace_name<'v>(this: RefAnalysisContext<'v>) -> starlark::Result<&'static str> {
+        let _ = this;
+        Ok("_main")
+    }
+
     /// Enabled Bazel features for this rule.
     #[starlark(attribute)]
     fn features<'v>(this: RefAnalysisContext<'v>, heap: Heap<'v>) -> starlark::Result<Value<'v>> {
@@ -722,6 +1164,13 @@ fn analysis_context_methods(builder: &mut MethodsBuilder) {
     ) -> starlark::Result<Value<'v>> {
         let _ = this;
         Ok(heap.alloc(AllocList::EMPTY))
+    }
+
+    /// Bazel configuration fragments available to Starlark rules.
+    #[starlark(attribute)]
+    fn fragments<'v>(this: RefAnalysisContext<'v>, heap: Heap<'v>) -> starlark::Result<Value<'v>> {
+        let _ = this;
+        Ok(bazel_fragments(heap))
     }
 
     /// Bazel stable workspace status file.

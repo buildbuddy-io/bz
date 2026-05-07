@@ -34,6 +34,7 @@ use crate::configuration::constraints::ConstraintKey;
 use crate::configuration::constraints::ConstraintValue;
 use crate::configuration::hash::ConfigurationHash;
 use crate::event::EVENT_DISPATCH;
+use crate::provider::label::ProvidersLabel;
 
 #[derive(Debug, buck2_error::Error)]
 #[buck2(input)]
@@ -366,6 +367,8 @@ impl ConfigurationPlatform {
 pub enum BazelBuildSettingValue {
     Bool(bool),
     Int(i64),
+    Label(ProvidersLabel),
+    LabelList(Vec<ProvidersLabel>),
     String(String),
     StringList(Vec<String>),
 }
@@ -381,6 +384,17 @@ impl BazelBuildSettingValue {
                 }
             }
             BazelBuildSettingValue::Int(value) => value.to_string(),
+            BazelBuildSettingValue::Label(value) => value.to_string(),
+            BazelBuildSettingValue::LabelList(values) => {
+                format!(
+                    "[{}]",
+                    values
+                        .iter()
+                        .map(|v| format!("{:?}", v.to_string()))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            }
             BazelBuildSettingValue::String(value) => value.clone(),
             BazelBuildSettingValue::StringList(values) => {
                 format!(

@@ -252,6 +252,10 @@ fn collect_default_deps(
         fn input(&mut self, _input: SourcePathRef) -> buck2_error::Result<()> {
             Ok(())
         }
+
+        fn inputs_require_package(&self) -> bool {
+            false
+        }
     }
 
     let mut default_deps = SmallSet::new();
@@ -263,4 +267,30 @@ fn collect_default_deps(
         },
     )?;
     Ok(default_deps)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use buck2_core::package::package_relative_path::PackageRelativePathBuf;
+
+    use crate::attrs::attr::Attribute;
+    use crate::attrs::attr_type::AttrType;
+    use crate::attrs::coerced_attr::CoercedAttr;
+    use crate::attrs::coerced_path::CoercedPath;
+
+    #[test]
+    fn source_file_defaults_do_not_need_package_to_collect_default_deps() -> buck2_error::Result<()>
+    {
+        let path = PackageRelativePathBuf::unchecked_new("LICENSE".to_owned());
+        let default = Arc::new(CoercedAttr::SourceFile(CoercedPath::File(
+            path.as_path().to_arc(),
+        )));
+
+        let attr = Attribute::new(Some(default), "", AttrType::source(false))?;
+
+        assert!(attr.default_allowed_deps().is_none());
+        Ok(())
+    }
 }

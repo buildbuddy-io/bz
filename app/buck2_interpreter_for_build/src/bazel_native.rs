@@ -11,6 +11,7 @@ use std::fmt;
 
 use allocative::Allocative;
 use buck2_core::cells::external::BZLMOD_BAZEL_COMPAT_VERSION;
+use buck2_core::cells::external::bzlmod_canonical_repo_name_for_cell;
 use buck2_interpreter::types::configured_providers_label::StarlarkProvidersLabel;
 use buck2_node::attrs::coercion_context::AttrCoercionContext;
 use starlark::any::ProvidesStaticType;
@@ -26,6 +27,7 @@ use starlark::values::dict::AllocDict;
 use starlark::values::list::ListRef;
 use starlark::values::none::NoneType;
 use starlark::values::starlark_value;
+use starlark::values::structs::StructRef;
 use starlark::values::tuple::UnpackTuple;
 
 use crate::interpreter::build_context::BuildContext;
@@ -34,11 +36,17 @@ use crate::interpreter::module_internals::ModuleInternals;
 #[derive(Debug, buck2_error::Error)]
 #[buck2(tag = Input)]
 enum BazelNativeError {
+    #[error(
+        "Bazel native rule `{0}` requires the `buck2_bazel_native_rules` prelude backing struct"
+    )]
+    MissingNativeRuleBacking(&'static str),
+    #[error("`buck2_bazel_native_rules` must be a struct, got `{0}`")]
+    InvalidNativeRuleBacking(String),
     #[error("`native.register_toolchains` expected a string target pattern, got `{0}`")]
     RegisterToolchainsNonString(String),
     #[error("Bazel label build setting requires the prelude `alias` rule to be loaded")]
     MissingAliasRule,
-    #[error("Bazel native rule `{0}` requires a loaded Buck rule with the same name")]
+    #[error("Bazel native rule `{0}` requires a Buck rule backing with the same name")]
     MissingNativeRule(&'static str),
     #[error("`native.package_relative_label` expected a string or label, got `{0}`")]
     PackageRelativeLabelInvalidInput(String),
@@ -51,7 +59,7 @@ struct NativeRuleCallable {
 
 impl fmt::Display for NativeRuleCallable {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "native.{}", self.name)
+        write!(f, "<built-in rule {}>", self.name)
     }
 }
 
@@ -65,9 +73,23 @@ impl<'v> StarlarkValue<'v> for NativeRuleCallable {
         args: &Arguments<'v, '_>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {
-        let rule = eval.module().get(self.name).ok_or_else(|| {
-            buck2_error::Error::from(BazelNativeError::MissingNativeRule(self.name))
+        let backing = eval
+            .module()
+            .get("buck2_bazel_native_rules")
+            .ok_or_else(|| {
+                buck2_error::Error::from(BazelNativeError::MissingNativeRuleBacking(self.name))
+            })?;
+        let backing = StructRef::from_value(backing).ok_or_else(|| {
+            buck2_error::Error::from(BazelNativeError::InvalidNativeRuleBacking(
+                backing.get_type().to_owned(),
+            ))
         })?;
+        let rule = backing
+            .iter()
+            .find_map(|(name, rule)| (name.as_str() == self.name).then_some(rule))
+            .ok_or_else(|| {
+                buck2_error::Error::from(BazelNativeError::MissingNativeRule(self.name))
+            })?;
         if self.name == "sh_binary" {
             return invoke_bazel_sh_binary(rule, args, eval);
         }
@@ -118,6 +140,15 @@ fn invoke_bazel_sh_binary<'v>(
     eval.eval_function(rule, &positions, &kwargs)
 }
 
+fn current_bazel_repo_name(eval: &mut Evaluator) -> buck2_error::Result<String> {
+    let cell_name = BuildContext::from_context(eval)?.cell_info().name().name();
+    let cell_name = cell_name.as_str();
+    if cell_name == "root" {
+        return Ok(String::new());
+    }
+    Ok(bzlmod_canonical_repo_name_for_cell(cell_name).unwrap_or_else(|| cell_name.to_owned()))
+}
+
 #[starlark_module]
 fn bazel_native_module(builder: &mut GlobalsBuilder) {
     fn existing_rule<'v>(
@@ -129,6 +160,21 @@ fn bazel_native_module(builder: &mut GlobalsBuilder) {
 
     fn existing_rules<'v>(eval: &mut Evaluator<'v, '_, '_>) -> starlark::Result<Value<'v>> {
         Ok(eval.heap().alloc(AllocDict::EMPTY))
+    }
+
+    fn repo_name(eval: &mut Evaluator) -> starlark::Result<String> {
+        Ok(current_bazel_repo_name(eval)?)
+    }
+
+    fn repository_name(eval: &mut Evaluator) -> starlark::Result<String> {
+        Ok(format!("@{}", current_bazel_repo_name(eval)?))
+    }
+
+    fn package_name(eval: &mut Evaluator) -> starlark::Result<String> {
+        Ok(BuildContext::from_context(eval)?
+            .base_path()?
+            .path()
+            .to_string())
     }
 
     fn register_toolchains<'v>(
@@ -223,13 +269,17 @@ pub(crate) fn register_bazel_native(builder: &mut GlobalsBuilder) {
             "cc_binary",
             "cc_import",
             "cc_library",
+            "cc_libc_top_alias",
             "cc_proto_library",
             "cc_shared_library",
             "cc_test",
             "cc_toolchain",
             "cc_toolchain_suite",
             "config_setting",
+            "constraint_setting",
+            "constraint_value",
             "filegroup",
+            "genquery",
             "genrule",
             "java_binary",
             "java_import",
@@ -242,9 +292,12 @@ pub(crate) fn register_bazel_native(builder: &mut GlobalsBuilder) {
             "java_test",
             "java_toolchain",
             "proto_library",
+            "package_group",
+            "platform",
             "sh_binary",
             "sh_library",
             "sh_test",
+            "starlark_doc_extract",
             "test_suite",
             "toolchain",
             "toolchain_type",

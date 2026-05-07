@@ -18,6 +18,7 @@ use buck2_core::cells::external::external_cell_origin_for_cell;
 use buck2_core::deferred::base_deferred_key::BaseDeferredKey;
 use buck2_core::fs::buck_out_path::BuckOutPathResolver;
 use buck2_core::fs::buck_out_path::current_bazel_artifact_buck_out_path;
+use buck2_core::provider::label::ProvidersLabel;
 use buck2_execute::path::artifact_path::ArtifactPath;
 use buck2_fs::paths::file_name::FileName;
 use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
@@ -49,7 +50,19 @@ pub trait StarlarkArtifactLike<'v>: Display {
 
     fn is_source(&'v self) -> buck2_error::Result<bool>;
 
+    fn is_directory(&'v self) -> buck2_error::Result<bool> {
+        Ok(false)
+    }
+
+    fn is_symlink(&'v self) -> buck2_error::Result<bool> {
+        Ok(false)
+    }
+
     fn owner(&'v self) -> buck2_error::Result<Option<BaseDeferredKey>>;
+
+    fn source_owner(&'v self) -> buck2_error::Result<Option<ProvidersLabel>> {
+        Ok(None)
+    }
 
     fn with_short_path(
         &self,

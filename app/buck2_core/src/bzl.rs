@@ -37,6 +37,9 @@ pub struct ImportPath {
     /// The path to the import as a 'CellPath', which contains the cell
     /// information and the cell relative path to the bzl file itself, including the bzl suffix
     path: CellPath,
+    /// Bazel package root for label-relative loads from this file. This differs
+    /// from `path.parent()` for labels like `//pkg:subdir/file.bzl`.
+    package_root: Option<CellPath>,
     /// The cell of the top-level build module that this is being loaded
     /// (perhaps transitively) into.
     build_file_cell: BuildFileCell,
@@ -51,9 +54,25 @@ impl ImportPath {
         Self::new_with_build_file_cells(path, build_file_cell)
     }
 
+    pub fn new_same_cell_with_package_root(
+        path: CellPath,
+        package_root: Option<CellPath>,
+    ) -> buck2_error::Result<Self> {
+        let build_file_cell = BuildFileCell::new(path.cell());
+        Self::new_with_build_file_cells_and_package_root(path, build_file_cell, package_root)
+    }
+
     pub fn new_with_build_file_cells(
         path: CellPath,
         build_file_cell: BuildFileCell,
+    ) -> buck2_error::Result<Self> {
+        Self::new_with_build_file_cells_and_package_root(path, build_file_cell, None)
+    }
+
+    pub fn new_with_build_file_cells_and_package_root(
+        path: CellPath,
+        build_file_cell: BuildFileCell,
+        package_root: Option<CellPath>,
     ) -> buck2_error::Result<Self> {
         if path.parent().is_none() {
             return Err(ImportPathError::Invalid(path).into());
@@ -69,6 +88,7 @@ impl ImportPath {
 
         Ok(Self {
             path,
+            package_root,
             build_file_cell,
         })
     }
@@ -88,6 +108,7 @@ impl ImportPath {
 
         Ok(Self {
             path,
+            package_root: None,
             build_file_cell,
         })
     }
@@ -126,6 +147,10 @@ impl ImportPath {
 
     pub fn path(&self) -> &CellPath {
         &self.path
+    }
+
+    pub fn package_root(&self) -> Option<&CellPath> {
+        self.package_root.as_ref()
     }
 
     /// Parent directory of the import path.

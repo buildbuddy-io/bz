@@ -14,6 +14,11 @@ use allocative::Allocative;
 use buck2_artifact::artifact::artifact_type::Artifact;
 use buck2_artifact::artifact::artifact_type::BaseArtifactKind;
 use buck2_core::deferred::base_deferred_key::BaseDeferredKey;
+use buck2_core::provider::label::ProvidersLabel;
+use buck2_core::provider::label::ProvidersName;
+use buck2_core::target::label::label::TargetLabel;
+use buck2_core::target::name::TargetNameRef;
+use buck2_execute::execute::request::OutputType;
 use buck2_execute::path::artifact_path::ArtifactPath;
 use buck2_fs::paths::file_name::FileName;
 use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
@@ -130,8 +135,26 @@ impl<'v> StarlarkArtifactLike<'v> for StarlarkArtifact {
         Ok(self.artifact.is_source())
     }
 
+    fn is_directory(&'v self) -> buck2_error::Result<bool> {
+        Ok(match self.artifact.as_parts().0 {
+            BaseArtifactKind::Source(_) => false,
+            BaseArtifactKind::Build(build) => build.output_type() == OutputType::Directory,
+        })
+    }
+
     fn owner(&'v self) -> buck2_error::Result<Option<BaseDeferredKey>> {
         Ok(self.artifact.owner().duped())
+    }
+
+    fn source_owner(&'v self) -> buck2_error::Result<Option<ProvidersLabel>> {
+        let (BaseArtifactKind::Source(source), projected_path) = self.artifact.as_parts() else {
+            return Ok(None);
+        };
+        let source_path = source.get_path();
+        let owner_path = source_path.path().join(projected_path);
+        let owner_name = TargetNameRef::new(owner_path.as_path().as_str())?;
+        let owner = TargetLabel::new(source_path.package(), owner_name);
+        Ok(Some(ProvidersLabel::new(owner, ProvidersName::Default)))
     }
 
     fn with_short_path(
@@ -313,6 +336,10 @@ impl<'v> StarlarkValue<'v> for StarlarkArtifact {
 
     fn write_hash(&self, hasher: &mut StarlarkHasher) -> starlark::Result<()> {
         StarlarkArtifactLike::write_hash(self, hasher)
+    }
+
+    fn is_in(&self, _other: Value<'v>) -> starlark::Result<bool> {
+        Ok(false)
     }
 
     fn provide(&'v self, demand: &mut Demand<'_, 'v>) {

@@ -60,8 +60,12 @@ use buck2_common::legacy_configs::dice::HasInjectedLegacyConfigs;
 use buck2_common::legacy_configs::file_ops::ConfigPath;
 use buck2_common::legacy_configs::key::BuckconfigKeyRef;
 use buck2_configured::cycle::ConfiguredGraphCycleDescriptor;
+use buck2_core::bzl::ImportPath;
+use buck2_core::cells::CellResolver;
+use buck2_core::cells::cell_path::CellPath;
 use buck2_core::cells::external::BzlmodModuleExtensionRepoSetup;
 use buck2_core::cells::external::bzlmod_cell_name;
+use buck2_core::cells::paths::CellRelativePathBuf;
 use buck2_core::execution_types::executor_config::CommandExecutorConfig;
 use buck2_core::execution_types::executor_config::RemoteExecutorUseCase;
 use buck2_core::facebook_only;
@@ -105,6 +109,7 @@ use buck2_interpreter::extra::InterpreterHostArchitecture;
 use buck2_interpreter::extra::InterpreterHostPlatform;
 use buck2_interpreter::extra::xcode::XcodeVersionInfo;
 use buck2_interpreter::factory::SetProfileEventListener;
+use buck2_interpreter::prelude_path::PreludePath;
 use buck2_interpreter::prelude_path::prelude_path;
 use buck2_interpreter_for_build::bazel_repository::evaluate_bzlmod_module_extension_repo;
 use buck2_interpreter_for_build::interpreter::configuror::BuildInterpreterConfiguror;
@@ -594,6 +599,34 @@ fn create_cycle_detector() -> Arc<dyn UserCycleDetector> {
     ))
 }
 
+fn configured_prelude_path(
+    cell_resolver: &CellResolver,
+    root_config: &LegacyBuckConfig,
+) -> buck2_error::Result<Option<PreludePath>> {
+    let bazel_compat = root_config.get(BuckconfigKeyRef {
+        section: "bazel",
+        property: "compatibility",
+    }) == Some("true")
+        || root_config.get(BuckconfigKeyRef {
+            section: "buildfile",
+            property: "includes",
+        }) == Some("prelude//bazel/prelude.bzl");
+    if !bazel_compat {
+        return prelude_path(cell_resolver);
+    }
+
+    let alias_resolver = cell_resolver.root_cell_cell_alias_resolver();
+    let Ok(prelude_cell) = alias_resolver.resolve("prelude") else {
+        return Ok(None);
+    };
+    Ok(Some(PreludePath::new(ImportPath::new_same_cell(
+        CellPath::new(
+            prelude_cell,
+            CellRelativePathBuf::unchecked_new("bazel/prelude.bzl".to_owned()),
+        ),
+    )?)))
+}
+
 #[async_trait]
 impl DiceUpdater for DiceCommandUpdater<'_, '_> {
     async fn update(
@@ -622,7 +655,7 @@ impl DiceUpdater for DiceCommandUpdater<'_, '_> {
         let cell_resolver = cells_and_configs.cell_resolver;
 
         let configuror = BuildInterpreterConfiguror::new(
-            prelude_path(&cell_resolver)?,
+            configured_prelude_path(&cell_resolver, &cells_and_configs.root_config)?,
             self.interpreter_platform,
             self.interpreter_architecture,
             self.interpreter_xcode_version.clone(),
@@ -707,7 +740,10 @@ impl DiceUpdater for DiceCommandUpdater<'_, '_> {
                     .await?;
                 let partial_cell_resolver = partial_cells_and_configs.cell_resolver;
                 let partial_configuror = BuildInterpreterConfiguror::new(
-                    prelude_path(&partial_cell_resolver)?,
+                    configured_prelude_path(
+                        &partial_cell_resolver,
+                        &partial_cells_and_configs.root_config,
+                    )?,
                     self.interpreter_platform,
                     self.interpreter_architecture,
                     self.interpreter_xcode_version.clone(),
@@ -731,11 +767,12 @@ impl DiceUpdater for DiceCommandUpdater<'_, '_> {
                 )?;
                 preliminary_dice = partial_ctx.commit().await;
             }
+
             let final_cells_and_configs =
                 BuckConfigBasedCells::parse_with_config_args_and_bzlmod_module_extension_results(
                     &self.cmd_ctx.base_context.project_root,
                     &self.cmd_ctx.config_overrides,
-                    true,
+                    false,
                     bzlmod_module_extension_results,
                 )
                 .await?;
@@ -744,7 +781,10 @@ impl DiceUpdater for DiceCommandUpdater<'_, '_> {
 
             let final_cell_resolver = final_cells_and_configs.cell_resolver;
             let final_configuror = BuildInterpreterConfiguror::new(
-                prelude_path(&final_cell_resolver)?,
+                configured_prelude_path(
+                    &final_cell_resolver,
+                    &final_cells_and_configs.root_config,
+                )?,
                 self.interpreter_platform,
                 self.interpreter_architecture,
                 self.interpreter_xcode_version.clone(),
@@ -773,6 +813,9 @@ impl DiceUpdater for DiceCommandUpdater<'_, '_> {
             return Ok((final_ctx, final_user_data));
         }
 
+        // Bazel can discover the complete repository set while evaluating a module extension.
+        // Buck2's cell graph is still finalized up front, so un-lockfiled module extension repos
+        // are evaluated above before we freeze the command cell resolver.
         Ok((ctx, user_data))
     }
 }
@@ -807,7 +850,7 @@ impl DiceCommandUpdater<'_, '_> {
                     Box::new(CleanOutputPaths {
                         paths: vec![working_dir_path],
                     }),
-                    &cancellations,
+                    cancellations,
                 )
                 .await?;
 
@@ -825,7 +868,7 @@ impl DiceCommandUpdater<'_, '_> {
                 },
                 &working_dir,
                 None,
-                &cancellations,
+                cancellations,
             )
             .await?;
 

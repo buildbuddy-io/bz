@@ -1,16 +1,155 @@
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+
 package(default_visibility = ["//visibility:public"])
+
+licenses(["notice"])
 
 filegroup(
     name = "pkg_sources",
-    srcs = glob(["**"]),
+    srcs = glob(["**"]) + [
+        "//bazel_tools/tools/cpp/modules_tools:pkg_sources",
+    ],
 )
 
-filegroup(
+# The toolchain type used to distinguish cc toolchains.
+toolchain_type(
     name = "toolchain_type",
-    srcs = [],
+)
+
+# The toolchain type used for cc runtimes.
+toolchain_type(
+    name = "cc_runtimes_toolchain_type",
+)
+
+# The toolchain type used for cc test runners.
+toolchain_type(
+    name = "test_runner_toolchain_type",
+)
+
+alias(
+    name = "cc_compiler",
+    actual = "@rules_cc//cc/private/toolchain:cc_compiler",
+)
+
+alias(
+    name = "clang",
+    actual = "@rules_cc//cc/private/toolchain:clang",
+)
+
+alias(
+    name = "gcc",
+    actual = "@rules_cc//cc/private/toolchain:gcc",
+)
+
+alias(
+    name = "msvc",
+    actual = "@rules_cc//cc/private/toolchain:msvc",
+)
+
+alias(
+    name = "clang-cl",
+    actual = "@rules_cc//cc/private/toolchain:clang-cl",
+)
+
+alias(
+    name = "mingw",
+    actual = "@rules_cc//cc/private/toolchain:mingw",
+)
+
+alias(
+    name = "msys",
+    actual = "@rules_cc//cc/private/toolchain:msys",
+)
+
+alias(
+    name = "grep-includes",
+    actual = "@rules_cc//cc/private/toolchain:grep-includes",
+)
+
+alias(
+    name = "interface_library_builder",
+    actual = "@rules_cc//cc/private/toolchain:interface_library_builder",
+)
+
+alias(
+    name = "link_dynamic_library",
+    actual = "@rules_cc//cc/private/toolchain:link_dynamic_library",
+)
+
+alias(
+    name = "lib_cc_configure",
+    actual = "@rules_cc//cc/private/toolchain:lib_cc_configure",
+)
+
+alias(
+    name = "compiler",
+    actual = "@rules_cc//cc/private/toolchain:compiler",
+)
+
+alias(
+    name = "cc_flags",
+    actual = "@rules_cc//cc/private/toolchain:cc_flags",
+)
+
+alias(
+    name = "current_cc_toolchain",
+    actual = "@rules_cc//cc:current_cc_toolchain",
+)
+
+alias(
+    name = "optional_current_cc_toolchain",
+    actual = "@rules_cc//cc:optional_current_cc_toolchain",
+)
+
+alias(
+    name = "current_libc_top",
+    actual = "@rules_cc//cc:current_libc_top",
+)
+
+cc_library(
+    name = "empty_lib",
+    tags = ["__DONT_DEPEND_ON_DEF_PARSER__"],
+)
+
+label_flag(
+    name = "link_extra_libs",
+    build_setting_default = ":empty_lib",
+)
+
+cc_library(
+    name = "link_extra_lib",
+    tags = ["__DONT_DEPEND_ON_DEF_PARSER__"],
+    deps = [
+        ":link_extra_libs",
+    ],
+)
+
+cc_library(
+    name = "malloc",
+    tags = ["__DONT_DEPEND_ON_DEF_PARSER__"],
 )
 
 filegroup(
-    name = "optional_current_cc_toolchain",
+    name = "aggregate-ddi",
+    srcs = ["@bazel_tools//tools/cpp/modules_tools:aggregate-ddi-bin"],
+)
+
+filegroup(
+    name = "generate-modmap",
+    srcs = ["@bazel_tools//tools/cpp/modules_tools:generate-modmap-bin"],
+)
+
+filegroup(
+    name = "empty",
     srcs = [],
+)
+
+alias(
+    name = "toolchain",
+    actual = "@local_config_cc//:toolchain",
+)
+
+alias(
+    name = "host_xcodes",
+    actual = "@local_config_xcode//:host_xcodes",
 )

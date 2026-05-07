@@ -10,6 +10,7 @@
 
 use std::sync::Arc;
 
+use buck2_core::build_file_path::BuildFilePath;
 use buck2_core::plugins::PluginKindSet;
 use buck2_core::provider::label::ProvidersLabel;
 use buck2_core::target::label::label::TargetLabel;
@@ -23,6 +24,7 @@ use buck2_node::attrs::display::AttrDisplayWithContextExt;
 use buck2_node::attrs::inspect_options::AttrInspectOptions;
 use buck2_node::attrs::spec::AttributeId;
 use buck2_node::attrs::spec::AttributeSpec;
+use buck2_node::attrs::spec::internal::VISIBILITY_ATTRIBUTE;
 use buck2_node::call_stack::StarlarkCallStack;
 use buck2_node::nodes::unconfigured::TargetNode;
 use buck2_node::package::Package;
@@ -33,6 +35,7 @@ use buck2_node::rule::BazelOutputAttrKind;
 use buck2_node::rule::Rule;
 use buck2_node::rule::RuleIncomingTransition;
 use buck2_node::rule_type::RuleType;
+use buck2_node::super_package::SuperPackage;
 use buck2_util::arc_str::ArcStr;
 use dupe::Dupe;
 use dupe::OptionDupedExt;
@@ -115,13 +118,28 @@ fn bazel_output_file_rule() -> buck2_error::Result<Arc<Rule>> {
     }))
 }
 
+fn bazel_input_file_rule() -> buck2_error::Result<Arc<Rule>> {
+    Ok(Arc::new(Rule {
+        attributes: AttributeSpec::from(Vec::new(), false, &RuleIncomingTransition::None, false)?,
+        rule_type: RuleType::BazelInputFile,
+        rule_kind: buck2_node::nodes::unconfigured::RuleKind::Normal,
+        cfg: RuleIncomingTransition::None,
+        uses_plugins: Vec::new(),
+        bazel_toolchains: Vec::new(),
+        bazel_output_attrs: Vec::new(),
+        bazel_implicit_outputs: Vec::new(),
+        is_bazel_rule: false,
+        is_bazel_build_setting: false,
+    }))
+}
+
 fn attr_as_output_names(attr_name: &str, attr: &CoercedAttr) -> buck2_error::Result<Vec<String>> {
     match attr {
-        CoercedAttr::String(value) => Ok(vec![value.0.to_string()]),
+        CoercedAttr::String(value) => Ok(vec![normalize_bazel_output_name(&value.0).to_owned()]),
         CoercedAttr::List(values) => values
             .iter()
             .map(|value| match value {
-                CoercedAttr::String(value) => Ok(value.0.to_string()),
+                CoercedAttr::String(value) => Ok(normalize_bazel_output_name(&value.0).to_owned()),
                 other => Err(BazelOutputFileTargetError::UnsupportedOutputAttrValue(
                     attr_name.to_owned(),
                     other.as_display_no_ctx().to_string(),
@@ -137,6 +155,13 @@ fn attr_as_output_names(attr_name: &str, attr: &CoercedAttr) -> buck2_error::Res
         )
         .into()),
     }
+}
+
+fn normalize_bazel_output_name(value: &str) -> &str {
+    value
+        .strip_prefix(':')
+        .filter(|output_name| !output_name.is_empty())
+        .unwrap_or(value)
 }
 
 fn implicit_output_attr_value(
@@ -222,20 +247,26 @@ fn attr_id(spec: &AttributeSpec, name: &str) -> buck2_error::Result<AttributeId>
 fn new_bazel_output_file_target(
     rule: Arc<Rule>,
     package: Arc<Package>,
-    generating_label: &TargetLabel,
+    generating_target: &TargetNode,
     output_name: &str,
     internals: &ModuleInternals,
 ) -> buck2_error::Result<TargetNode> {
     let name_id = attr_id(&rule.attributes, "name")?;
+    let visibility_id = attr_id(&rule.attributes, VISIBILITY_ATTRIBUTE.name)?;
     let generating_rule_id = attr_id(&rule.attributes, BAZEL_OUTPUT_FILE_GENERATING_RULE_ATTR)?;
     let output_id = attr_id(&rule.attributes, BAZEL_OUTPUT_FILE_OUTPUT_ATTR)?;
+    let generating_label = generating_target.label();
 
-    let mut attr_values = buck2_node::attrs::values::AttrValues::with_capacity(3);
+    let mut attr_values = buck2_node::attrs::values::AttrValues::with_capacity(4);
     attr_values.push_sorted(
         name_id,
         CoercedAttr::String(buck2_node::attrs::attr_type::string::StringLiteral(
             ArcStr::from(output_name),
         )),
+    );
+    attr_values.push_sorted(
+        visibility_id,
+        CoercedAttr::Visibility(generating_target.visibility()?.dupe()),
     );
     attr_values.push_sorted(
         generating_rule_id,
@@ -314,12 +345,52 @@ pub(crate) fn bazel_output_file_targets(
             new_bazel_output_file_target(
                 rule.dupe(),
                 package.dupe(),
-                target_node.label(),
+                target_node,
                 &output_name,
                 internals,
             )
         })
         .collect()
+}
+
+pub(crate) fn bazel_input_file_target(
+    package: Arc<Package>,
+    name: &TargetNameRef,
+    buildfile_path: &BuildFilePath,
+    super_package: &SuperPackage,
+) -> buck2_error::Result<TargetNode> {
+    let rule = bazel_input_file_rule()?;
+    let name_id = attr_id(&rule.attributes, "name")?;
+    let visibility_id = attr_id(&rule.attributes, VISIBILITY_ATTRIBUTE.name)?;
+
+    let mut attr_values = buck2_node::attrs::values::AttrValues::with_capacity(2);
+    attr_values.push_sorted(
+        name_id,
+        CoercedAttr::String(buck2_node::attrs::attr_type::string::StringLiteral(
+            ArcStr::from(name.as_str()),
+        )),
+    );
+    attr_values.push_sorted(
+        visibility_id,
+        CoercedAttr::Visibility(super_package.visibility().dupe()),
+    );
+    attr_values.shrink_to_fit();
+
+    let label = TargetLabel::new(buildfile_path.package().dupe(), name);
+
+    let package_cfg_modifiers = super_package.cfg_modifiers().duped();
+    let test_config_unification_rollout = super_package.test_config_unification_rollout();
+
+    Ok(TargetNode::new(
+        rule,
+        package,
+        label,
+        attr_values,
+        CoercedDeps::default(),
+        None,
+        package_cfg_modifiers,
+        test_config_unification_rollout,
+    ))
 }
 
 impl TargetNodeExt for TargetNode {

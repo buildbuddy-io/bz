@@ -24,6 +24,7 @@ use buck2_interpreter_for_build::attrs::coerce::ctx::BuildAttrCoercionContext;
 use buck2_interpreter_for_build::interpreter::testing::Tester;
 use buck2_interpreter_for_build::interpreter::testing::cells;
 use buck2_node::attrs::attr_type::AttrType;
+use buck2_node::attrs::coerced_attr::CoercedAttr;
 use buck2_node::attrs::coercion_context::AttrCoercionContext;
 use buck2_node::attrs::configurable::AttrIsConfigurable;
 use buck2_node::attrs::hacks::value_to_string;
@@ -128,6 +129,7 @@ fn attr_coercer_coerces() -> buck2_error::Result<()> {
             ),
         );
         let label_coercer = AttrType::dep(ProviderIdSet::EMPTY, PluginKindSet::EMPTY);
+        let bool_coercer = AttrType::bool();
         let string_coercer = AttrType::string();
         let enum_coercer = AttrType::enumeration(vec![
             "red".to_owned(),
@@ -197,6 +199,16 @@ fn attr_coercer_coerces() -> buck2_error::Result<()> {
         let string_value1 =
             string_coercer.coerce(AttrIsConfigurable::Yes, &coercer_ctx, heap.alloc("str"))?;
         assert_eq!("str", value_to_string(&string_value1, package.dupe())?);
+
+        let bool_value_false =
+            bool_coercer.coerce(AttrIsConfigurable::Yes, &coercer_ctx, heap.alloc(0))?;
+        let bool_value_true =
+            bool_coercer.coerce(AttrIsConfigurable::Yes, &coercer_ctx, heap.alloc(1))?;
+        let bool_invalid =
+            bool_coercer.coerce(AttrIsConfigurable::Yes, &coercer_ctx, heap.alloc(2));
+        assert_eq!("False", value_to_string(&bool_value_false, package.dupe())?);
+        assert_eq!("True", value_to_string(&bool_value_true, package.dupe())?);
+        assert!(bool_invalid.is_err());
 
         let enum_valid1 =
             enum_coercer.coerce(AttrIsConfigurable::Yes, &coercer_ctx, heap.alloc("red"))?;
@@ -337,4 +349,80 @@ fn coercing_src_to_path_works() -> buck2_error::Result<()> {
             .path()
     );
     Ok(())
+}
+
+#[test]
+fn bazel_label_allows_nested_assumed_source_file_labels() -> buck2_error::Result<()> {
+    Heap::temp(|heap| {
+        let cell_resolver = cells(None)?.1;
+        let cell_alias_resolver = cells(None)?.0;
+        let package = PackageLabel::new(
+            CellName::testing_new("root"),
+            CellRelativePath::unchecked_new("foo"),
+        )?;
+        let coercer_ctx = BuildAttrCoercionContext::new_with_package(
+            cell_resolver,
+            cell_alias_resolver,
+            (package.dupe(), PackageListing::testing_empty()),
+            false,
+            Arc::new(ConcurrentTargetLabelInterner::default()),
+            CellPathWithAllowedRelativeDir::backwards_relative_not_supported(
+                package.as_cell_path().to_owned(),
+            ),
+        );
+        let label_or_source = AttrType::bazel_label(
+            AttrType::dep(ProviderIdSet::EMPTY, PluginKindSet::EMPTY),
+            AttrType::source(false),
+        );
+
+        let value = label_or_source.coerce(
+            AttrIsConfigurable::Yes,
+            &coercer_ctx,
+            heap.alloc(":plugins/bazel-sandbox.js"),
+        )?;
+
+        match value {
+            CoercedAttr::SourceFile(path) => {
+                assert_eq!("plugins/bazel-sandbox.js", path.path().as_str());
+            }
+            value => panic!("expected source file, got {value:?}"),
+        }
+
+        Ok(())
+    })
+}
+
+#[test]
+fn bazel_visibility_allows_non_visible_repo_package_specs() -> buck2_error::Result<()> {
+    Heap::temp(|heap| {
+        let some_cells = cells(None)?;
+        let cell_resolver = some_cells.1;
+        let cell_alias_resolver = some_cells.0;
+        let package = PackageLabel::new(
+            CellName::testing_new("root"),
+            CellRelativePath::unchecked_new("foo"),
+        )?;
+        let coercer_ctx = BuildAttrCoercionContext::new_with_package(
+            cell_resolver,
+            cell_alias_resolver,
+            (package.dupe(), PackageListing::testing_empty()),
+            false,
+            Arc::new(ConcurrentTargetLabelInterner::default()),
+            CellPathWithAllowedRelativeDir::backwards_relative_not_supported(
+                package.as_cell_path().to_owned(),
+            ),
+        );
+
+        let visibility = AttrType::visibility().coerce(
+            AttrIsConfigurable::No,
+            &coercer_ctx,
+            heap.alloc(vec!["@upb//:__subpackages__", "//foo:__pkg__"]),
+        )?;
+
+        let visibility = visibility.to_string();
+        assert!(visibility.contains("bzlmod_unknown_root_upb//..."));
+        assert!(visibility.contains("root//foo:"));
+
+        Ok(())
+    })
 }
