@@ -14,6 +14,22 @@ def _collect_files(values):
 def _join_paths(files):
     return " ".join([file.path for file in files])
 
+def _normalize_output_name(name):
+    if name.startswith(":") and len(name) > 1:
+        return name[1:]
+    return name
+
+def _rule_output_dir(ctx, outs, output_names):
+    if outs and output_names:
+        output_name = _normalize_output_name(output_names[0])
+        suffix = "/" + output_name
+        if outs[0].path.endswith(suffix):
+            return outs[0].path[:-len(suffix)]
+
+    if ctx.label.package:
+        return ctx.bin_dir.path + "/" + ctx.label.package
+    return ctx.bin_dir.path
+
 def _label_keys(label):
     package = label.package
     name = label.name
@@ -78,7 +94,7 @@ def _expand_location_macros(command, location_paths):
 
     return command
 
-def _expand_make_variables(ctx, command, srcs, outs):
+def _expand_make_variables(ctx, command, srcs, outs, output_names):
     out_paths = _join_paths(outs)
     src_paths = _join_paths(srcs)
 
@@ -100,15 +116,24 @@ def _expand_make_variables(ctx, command, srcs, outs):
     if "$(@D)" in command or "$(RULEDIR)" in command:
         if len(outs) == 0:
             fail("genrule output directory expansion requires at least one output")
-        output_dir = outs[0].dirname
-        command = command.replace("$(@D)", output_dir)
-        command = command.replace("$(RULEDIR)", output_dir)
+        rule_dir = _rule_output_dir(ctx, outs, output_names)
+        at_d = outs[0].dirname if len(outs) == 1 else rule_dir
+        command = command.replace("$(@D)", at_d)
+        command = command.replace("$(RULEDIR)", rule_dir)
 
     if ctx.attr.stamp == 1:
         command = command.replace("bazel-out/stable-status.txt", ctx.info_file.path)
         command = command.replace("bazel-out/volatile-status.txt", ctx.version_file.path)
 
     return command
+
+def _dollar_escape_placeholder(command):
+    placeholder = "__BUCK_BAZEL_GENRULE_DOLLAR__"
+    for _ in range(100):
+        if placeholder not in command:
+            return placeholder
+        placeholder = "_" + placeholder
+    fail("could not find a genrule dollar escape placeholder that is absent from command")
 
 def _selected_command(ctx):
     if ctx.attr.cmd_bash:
@@ -138,8 +163,11 @@ def _bazel_genrule_impl(ctx):
         _record_location_paths(location_paths, value)
 
     command = _selected_command(ctx)
+    dollar_escape_placeholder = _dollar_escape_placeholder(command)
+    command = command.replace("$$", dollar_escape_placeholder)
     command = _expand_location_macros(command, location_paths)
-    command = _expand_make_variables(ctx, command, srcs, outs)
+    command = _expand_make_variables(ctx, command, srcs, outs, ctx.attr.outs)
+    command = command.replace(dollar_escape_placeholder, "$")
 
     inputs = srcs
     if ctx.attr.stamp == 1:

@@ -130,8 +130,11 @@ async fn configuration_matches(
 fn bazel_command_line_option_default(setting: &str) -> Option<&'static str> {
     match setting.strip_prefix("//command_line_option:")? {
         "compilation_mode" => Some("fastbuild"),
+        "experimental_proto_descriptor_sets_include_source_info" => Some("false"),
         "host_compilation_mode" => Some("opt"),
         "stamp" => Some("false"),
+        "strict_proto_deps" => Some("error"),
+        "strict_public_imports" => Some("off"),
         "strip" => Some("sometimes"),
         _ => None,
     }

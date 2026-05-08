@@ -16,6 +16,7 @@ use starlark::coerce::Coerce;
 use starlark::environment::GlobalsBuilder;
 use starlark::starlark_module;
 use starlark::values::Freeze;
+use starlark::values::FrozenValue;
 use starlark::values::Trace;
 use starlark::values::ValueLifetimeless;
 use starlark::values::ValueOf;
@@ -33,6 +34,12 @@ use crate::interpreter::rule_defs::provider::builtin::toolchain_info::register_t
 #[repr(C)]
 pub struct TemplateVariableInfoGen<V: ValueLifetimeless> {
     variables: ValueOfUncheckedGeneric<V, DictType<String, String>>,
+}
+
+impl FrozenTemplateVariableInfo {
+    pub fn variables_raw(&self) -> FrozenValue {
+        self.variables.get()
+    }
 }
 
 #[starlark_module]

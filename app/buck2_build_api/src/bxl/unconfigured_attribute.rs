@@ -23,6 +23,7 @@ use buck2_interpreter::types::select_fail::StarlarkSelectFail;
 use buck2_interpreter::types::select_incompatible::StarlarkSelectIncompatible;
 use buck2_interpreter::types::target_label::StarlarkTargetLabel;
 use buck2_node::attrs::coerced_attr::CoercedAttr;
+use buck2_node::attrs::coerced_path::CoercedPath;
 use buck2_node::attrs::display::AttrDisplayWithContext;
 use buck2_node::attrs::fmt_context::AttrFmtContext;
 use buck2_node::attrs::serialize::AttrSerializeWithContext;
@@ -194,9 +195,13 @@ impl CoercedAttrExt for CoercedAttr {
             CoercedAttr::Label(l) => heap.alloc(StarlarkProvidersLabel::new(l.dupe())),
             CoercedAttr::Arg(arg) => heap.alloc(arg.to_string()),
             CoercedAttr::Query(query) => heap.alloc(&query.query.query),
-            CoercedAttr::SourceFile(f) => heap.alloc(StarlarkArtifact::new(Artifact::from(
-                SourceArtifact::new(SourcePath::new(pkg.to_owned(), f.path().dupe())),
-            ))),
+            CoercedAttr::SourceFile(f) => heap.alloc(StarlarkArtifact::new_source(
+                Artifact::from(SourceArtifact::new(SourcePath::new(
+                    pkg.to_owned(),
+                    f.path().dupe(),
+                ))),
+                matches!(f, CoercedPath::Directory(_)),
+            )),
             CoercedAttr::Metadata(data) => heap.alloc(data.to_value()),
             CoercedAttr::TargetModifiers(data) => heap.alloc(data.to_value()),
             CoercedAttr::Selector(selector) => {

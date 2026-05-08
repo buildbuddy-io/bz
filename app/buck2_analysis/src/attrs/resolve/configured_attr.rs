@@ -174,6 +174,7 @@ impl ConfiguredAttrExt for ConfiguredAttr {
             ConfiguredAttr::SourceFile(s) => Ok(SourceAttrType::resolve_single_file(
                 ctx,
                 SourcePath::new(pkg, s.path().dupe()),
+                SourceAttrType::source_is_directory(s),
             )),
             ConfiguredAttr::Metadata(..) => Ok(ctx.heap().alloc(OpaqueMetadata)),
             ConfiguredAttr::TargetModifiers(..) => Ok(ctx.heap().alloc(OpaqueMetadata)),
@@ -302,11 +303,13 @@ fn configured_attr_to_value<'v>(
         ConfiguredAttr::Arg(arg) => heap.alloc(arg.to_string()),
         ConfiguredAttr::Query(query) => heap.alloc(&query.query.query),
         ConfiguredAttr::SourceFile(f) => match pkg {
-            PackageLabelOption::PackageLabel(pkg) => {
-                heap.alloc(StarlarkArtifact::new(Artifact::from(SourceArtifact::new(
-                    SourcePath::new(pkg.to_owned(), f.path().dupe()),
-                ))))
-            }
+            PackageLabelOption::PackageLabel(pkg) => heap.alloc(StarlarkArtifact::new_source(
+                Artifact::from(SourceArtifact::new(SourcePath::new(
+                    pkg.to_owned(),
+                    f.path().dupe(),
+                ))),
+                SourceAttrType::source_is_directory(f),
+            )),
             // We don't store package label in transition key for better caching of transition between packages.
             // (This is not inherent requirement,
             // but it was easier to implement this ways,

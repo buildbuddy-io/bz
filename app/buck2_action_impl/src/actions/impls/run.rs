@@ -34,6 +34,8 @@ use buck2_build_api::actions::impls::expanded_command_line::ExpandedCommandLineF
 use buck2_build_api::artifact_groups::ArtifactGroup;
 use buck2_build_api::artifact_groups::ArtifactGroupValues;
 use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact::StarlarkArtifact;
+use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::bazel_artifact_path;
+use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::bazel_normalize_buck_owned_exec_paths;
 use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_value::StarlarkArtifactValue;
 use buck2_build_api::interpreter::rule_defs::artifact::starlark_output_artifact::FrozenStarlarkOutputArtifact;
 use buck2_build_api::interpreter::rule_defs::artifact::starlark_output_artifact::StarlarkOutputArtifact;
@@ -44,6 +46,7 @@ use buck2_build_api::interpreter::rule_defs::cmd_args::CommandLineArgLike;
 use buck2_build_api::interpreter::rule_defs::cmd_args::CommandLineArtifactVisitor;
 use buck2_build_api::interpreter::rule_defs::cmd_args::CommandLineBuilder;
 use buck2_build_api::interpreter::rule_defs::cmd_args::CommandLineContext;
+use buck2_build_api::interpreter::rule_defs::cmd_args::CommandLineLocation;
 use buck2_build_api::interpreter::rule_defs::cmd_args::DefaultCommandLineContext;
 use buck2_build_api::interpreter::rule_defs::cmd_args::FrozenStarlarkCmdArgs;
 use buck2_build_api::interpreter::rule_defs::cmd_args::SimpleCommandLineArtifactVisitor;
@@ -66,6 +69,7 @@ use buck2_core::execution_types::executor_config::RemoteExecutorDependency;
 use buck2_core::fs::artifact_path_resolver::ArtifactFs;
 use buck2_core::fs::buck_out_path::BuckOutPathKind;
 use buck2_core::fs::buck_out_path::BuildArtifactPath;
+use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
 use buck2_error::BuckErrorContext;
 use buck2_error::buck2_error;
 use buck2_error::internal_error;
@@ -261,6 +265,7 @@ pub(crate) struct UnregisteredRunAction {
     pub(crate) meta_internal_extra_params: Arc<MetaInternalExtraParams>,
     pub(crate) expected_eligible_for_dedupe: Option<bool>,
     pub(crate) timeout: Option<Duration>,
+    pub(crate) bazel_use_default_shell_env: Option<bool>,
 }
 
 impl UnregisteredAction for UnregisteredRunAction {
@@ -282,6 +287,7 @@ impl UnregisteredAction for UnregisteredRunAction {
 pub(crate) struct StarlarkRunActionValues<'v> {
     pub(crate) exe: ValueTyped<'v, StarlarkCmdArgs<'v>>,
     pub(crate) args: ValueTyped<'v, StarlarkCmdArgs<'v>>,
+    pub(crate) bazel_inputs: Option<ValueTyped<'v, StarlarkCmdArgs<'v>>>,
     pub(crate) env: Option<ValueOfUnchecked<'v, DictType<String, ValueAsCommandLineLike<'static>>>>,
     pub(crate) worker: Option<ValueTypedComplex<'v, WorkerInfo<'v>>>,
     pub(crate) remote_worker: Option<ValueTypedComplex<'v, WorkerInfo<'v>>>,
@@ -303,6 +309,7 @@ pub(crate) struct StarlarkRunActionValues<'v> {
 pub(crate) struct FrozenStarlarkRunActionValues {
     pub(crate) exe: FrozenValueTyped<'static, FrozenStarlarkCmdArgs>,
     pub(crate) args: FrozenValueTyped<'static, FrozenStarlarkCmdArgs>,
+    pub(crate) bazel_inputs: Option<FrozenValueTyped<'static, FrozenStarlarkCmdArgs>>,
     pub(crate) env:
         Option<FrozenValueOfUnchecked<'static, DictType<String, ValueAsCommandLineLike<'static>>>>,
     pub(crate) worker: Option<FrozenValueTyped<'static, FrozenWorkerInfo>>,
@@ -327,6 +334,7 @@ impl<'v> Freeze for StarlarkRunActionValues<'v> {
         let StarlarkRunActionValues {
             exe,
             args,
+            bazel_inputs,
             env,
             worker,
             remote_worker,
@@ -337,6 +345,7 @@ impl<'v> Freeze for StarlarkRunActionValues<'v> {
         Ok(FrozenStarlarkRunActionValues {
             exe: exe.freeze(freezer)?,
             args: args.freeze(freezer)?,
+            bazel_inputs: bazel_inputs.freeze(freezer)?,
             env: env.freeze(freezer)?,
             worker: worker.freeze(freezer)?,
             remote_worker: remote_worker.freeze(freezer)?,
@@ -391,6 +400,7 @@ struct UnpackedWorkerValues<'v> {
 struct UnpackedRunActionValues<'v> {
     exe: &'v dyn CommandLineArgLike<'v>,
     args: &'v dyn CommandLineArgLike<'v>,
+    bazel_inputs: Option<&'v dyn CommandLineArgLike<'v>>,
     env: Vec<(&'v str, &'v dyn CommandLineArgLike<'v>)>,
     worker: Option<UnpackedWorkerValues<'v>>,
     remote_worker: Option<UnpackedWorkerValues<'v>>,
@@ -498,6 +508,131 @@ impl ArtifactPathMapper for RunActionOutputArtifactPathMapper<'_> {
     }
 }
 
+struct BazelCommandLineContext<'v> {
+    inner: DefaultCommandLineContext<'v>,
+}
+
+impl<'v> BazelCommandLineContext<'v> {
+    fn new(fs: &'v ExecutorFs<'v>) -> Self {
+        Self {
+            inner: DefaultCommandLineContext::new(fs),
+        }
+    }
+}
+
+impl CommandLineContext for BazelCommandLineContext<'_> {
+    fn resolve_project_path(
+        &self,
+        path: ProjectRelativePathBuf,
+    ) -> buck2_error::Result<CommandLineLocation<'_>> {
+        self.inner.resolve_project_path(path)
+    }
+
+    fn fs(&self) -> &ExecutorFs<'_> {
+        self.inner.fs()
+    }
+
+    fn resolve_artifact(
+        &self,
+        artifact: &Artifact,
+        _artifact_path_mapping: &dyn ArtifactPathMapper,
+    ) -> buck2_error::Result<CommandLineLocation<'_>> {
+        let path = ProjectRelativePathBuf::try_from(bazel_artifact_path(artifact.get_path()))
+            .buck_error_context("Invalid Bazel execroot artifact path")?;
+        self.resolve_project_path(path)
+            .with_buck_error_context(|| format!("Error resolving Bazel artifact: {artifact}"))
+    }
+
+    fn resolve_output_artifact(
+        &self,
+        artifact: &Artifact,
+    ) -> buck2_error::Result<CommandLineLocation<'_>> {
+        let path = ProjectRelativePathBuf::try_from(bazel_artifact_path(artifact.get_path()))
+            .buck_error_context("Invalid Bazel execroot output path")?;
+        self.resolve_project_path(path).with_buck_error_context(|| {
+            format!("Error resolving Bazel output artifact: {artifact}")
+        })
+    }
+
+    fn next_macro_file_path(&mut self) -> buck2_error::Result<buck2_fs::paths::RelativePathBuf> {
+        self.inner.next_macro_file_path()
+    }
+}
+
+enum RunActionCommandLineContext<'v> {
+    Default(DefaultCommandLineContext<'v>),
+    Bazel(BazelCommandLineContext<'v>),
+}
+
+impl<'v> RunActionCommandLineContext<'v> {
+    fn new(fs: &'v ExecutorFs<'v>, bazel_paths: bool) -> Self {
+        if bazel_paths {
+            Self::Bazel(BazelCommandLineContext::new(fs))
+        } else {
+            Self::Default(DefaultCommandLineContext::new(fs))
+        }
+    }
+}
+
+impl CommandLineContext for RunActionCommandLineContext<'_> {
+    fn resolve_project_path(
+        &self,
+        path: ProjectRelativePathBuf,
+    ) -> buck2_error::Result<CommandLineLocation<'_>> {
+        match self {
+            Self::Default(ctx) => ctx.resolve_project_path(path),
+            Self::Bazel(ctx) => ctx.resolve_project_path(path),
+        }
+    }
+
+    fn fs(&self) -> &ExecutorFs<'_> {
+        match self {
+            Self::Default(ctx) => ctx.fs(),
+            Self::Bazel(ctx) => ctx.fs(),
+        }
+    }
+
+    fn resolve_artifact(
+        &self,
+        artifact: &Artifact,
+        artifact_path_mapping: &dyn ArtifactPathMapper,
+    ) -> buck2_error::Result<CommandLineLocation<'_>> {
+        match self {
+            Self::Default(ctx) => ctx.resolve_artifact(artifact, artifact_path_mapping),
+            Self::Bazel(ctx) => ctx.resolve_artifact(artifact, artifact_path_mapping),
+        }
+    }
+
+    fn resolve_output_artifact(
+        &self,
+        artifact: &Artifact,
+    ) -> buck2_error::Result<CommandLineLocation<'_>> {
+        match self {
+            Self::Default(ctx) => ctx.resolve_output_artifact(artifact),
+            Self::Bazel(ctx) => ctx.resolve_output_artifact(artifact),
+        }
+    }
+
+    fn next_macro_file_path(&mut self) -> buck2_error::Result<buck2_fs::paths::RelativePathBuf> {
+        match self {
+            Self::Default(ctx) => ctx.next_macro_file_path(),
+            Self::Bazel(ctx) => ctx.next_macro_file_path(),
+        }
+    }
+}
+
+fn bazel_normalize_command_line(args: &mut [String]) {
+    for arg in args {
+        *arg = bazel_normalize_buck_owned_exec_paths(arg);
+    }
+}
+
+fn bazel_normalize_command_env(env: &mut SortedVectorMap<String, String>) {
+    for (_, value) in env.iter_mut() {
+        *value = bazel_normalize_buck_owned_exec_paths(value);
+    }
+}
+
 struct RunActionOutputFilteringArtifactVisitor<'a, 'v> {
     outputs: &'a BoxSliceSet<BuildArtifact>,
     inner: &'a mut dyn CommandLineArtifactVisitor<'v>,
@@ -589,6 +724,9 @@ impl RunAction {
         let values = Self::unpack(&self.starlark_values)?;
         visit_run_action_command_line_artifacts(&self.outputs, values.args, artifact_visitor)?;
         visit_run_action_command_line_artifacts(&self.outputs, values.exe, artifact_visitor)?;
+        if let Some(bazel_inputs) = values.bazel_inputs {
+            visit_run_action_command_line_artifacts(&self.outputs, bazel_inputs, artifact_visitor)?;
+        }
         if let Some(worker) = values.worker {
             visit_run_action_command_line_artifacts(&self.outputs, worker.exe, artifact_visitor)?;
         }
@@ -655,6 +793,10 @@ impl RunAction {
         Ok(UnpackedRunActionValues {
             exe,
             args,
+            bazel_inputs: values
+                .bazel_inputs
+                .as_ref()
+                .map(|bazel_inputs| &**bazel_inputs as &dyn CommandLineArgLike),
             env,
             worker,
             remote_worker,
@@ -673,7 +815,8 @@ impl RunAction {
         Option<RemoteWorkerSpec>,
     )> {
         let fs = &action_execution_ctx.executor_fs();
-        let mut cli_ctx = DefaultCommandLineContext::new(fs);
+        let bazel_paths = self.inner.bazel_use_default_shell_env.is_some();
+        let mut cli_ctx = RunActionCommandLineContext::new(fs, bazel_paths);
         let values = Self::unpack(&self.starlark_values)?;
 
         let mut command_line_digest_for_dep_files = ExpandedCommandLineFingerprinter::new();
@@ -733,7 +876,7 @@ impl RunAction {
                 .into_iter()
                 .map(|(k, v)| {
                     let mut env = String::new();
-                    let mut ctx = DefaultCommandLineContext::new(fs);
+                    let mut ctx = RunActionCommandLineContext::new(fs, bazel_paths);
                     v.add_to_command_line(
                         &mut SpaceSeparatedCommandLineBuilder::wrap_string(&mut env),
                         &mut ctx,
@@ -842,7 +985,7 @@ impl RunAction {
                 .into_iter()
                 .map(|(k, v)| {
                     let mut env = String::new();
-                    let mut ctx = DefaultCommandLineContext::new(fs);
+                    let mut ctx = RunActionCommandLineContext::new(fs, bazel_paths);
                     v.add_to_command_line(
                         &mut SpaceSeparatedCommandLineBuilder::wrap_string(&mut env),
                         &mut ctx,
@@ -908,13 +1051,17 @@ impl RunAction {
         visit_run_action_command_line_artifacts(&self.outputs, values.args, artifact_visitor)?;
         command_line_digest_for_dep_files.push_count();
 
+        if let Some(bazel_inputs) = values.bazel_inputs {
+            visit_run_action_command_line_artifacts(&self.outputs, bazel_inputs, artifact_visitor)?;
+        }
+
         let env_len = values.env.len();
         let cli_env: buck2_error::Result<SortedVectorMap<_, _>> = values
             .env
             .into_iter()
             .map(|(k, v)| {
                 let mut env = String::new();
-                let mut ctx = DefaultCommandLineContext::new(fs);
+                let mut ctx = RunActionCommandLineContext::new(fs, bazel_paths);
                 v.add_to_command_line(
                     &mut SpaceSeparatedCommandLineBuilder::wrap_string(&mut env),
                     &mut ctx,
@@ -936,11 +1083,28 @@ impl RunAction {
         command_line_digest_for_dep_files.push_arg(env_len.to_string());
         command_line_digest_for_dep_files.push_count();
 
+        let mut cli_env = cli_env?;
+        let mut worker = worker;
+        let mut remote_worker = remote_worker;
+        if bazel_paths {
+            bazel_normalize_command_line(&mut exe_rendered);
+            bazel_normalize_command_line(&mut args_rendered);
+            bazel_normalize_command_env(&mut cli_env);
+            if let Some(worker) = &mut worker {
+                bazel_normalize_command_line(&mut worker.exe);
+                bazel_normalize_command_env(&mut worker.env);
+            }
+            if let Some(remote_worker) = &mut remote_worker {
+                bazel_normalize_command_line(&mut remote_worker.init);
+                bazel_normalize_command_env(&mut remote_worker.env);
+            }
+        }
+
         Ok((
             ExpandedCommandLine {
                 exe: exe_rendered,
                 args: args_rendered,
-                env: cli_env?,
+                env: cli_env,
             },
             command_line_digest_for_dep_files.finalize(),
             worker,
@@ -973,6 +1137,50 @@ impl RunAction {
         })
     }
 
+    fn add_bazel_execroot_path_aliases(
+        &self,
+        inputs: &mut Vec<CommandExecutionInput>,
+        artifact_inputs: &[&ArtifactGroupValues],
+        artifact_fs: &ArtifactFs,
+    ) -> buck2_error::Result<()> {
+        if self.inner.bazel_use_default_shell_env.is_none() {
+            return Ok(());
+        }
+
+        let mut aliases = BuckIndexSet::new();
+        for artifact_group_values in artifact_inputs {
+            for (artifact, value) in artifact_group_values.iter() {
+                let bazel_path = bazel_artifact_path(artifact.get_path());
+                let alias = ProjectRelativePathBuf::try_from(bazel_path)
+                    .buck_error_context("Invalid Bazel execroot input path")?;
+                if aliases.insert(alias.clone()) {
+                    let source_path = artifact
+                        .get_path()
+                        .resolve(
+                            artifact_fs,
+                            if artifact.path_resolution_requires_artifact_value() {
+                                Some(value.content_based_path_hash())
+                            } else {
+                                None
+                            }
+                            .as_ref(),
+                        )
+                        .buck_error_context("Invalid Bazel execroot source path")?;
+                    if source_path == alias {
+                        continue;
+                    }
+                    inputs.push(CommandExecutionInput::ArtifactPathAlias {
+                        source_path,
+                        path: alias,
+                        value: value.dupe(),
+                    });
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     async fn prepare<'v>(
         &'v self,
         visitor: &mut RunActionVisitor<'v>,
@@ -997,6 +1205,7 @@ impl RunAction {
 
         let mut inputs: Vec<CommandExecutionInput> =
             artifact_inputs[..].map(|&i| CommandExecutionInput::Artifact(Box::new(i.dupe())));
+        self.add_bazel_execroot_path_aliases(&mut inputs, &artifact_inputs, fs)?;
 
         let mut extra_env = Vec::new();
         let cli_ctx = DefaultCommandLineContext::new(&executor_fs);
@@ -1035,15 +1244,30 @@ impl RunAction {
             HostSharingRequirements::Shared(self.inner.weight)
         };
 
-        let paths = CommandExecutionPaths::new(
-            inputs,
-            self.outputs
-                .iter()
-                .map(|b| CommandExecutionOutput::BuildArtifact {
+        let outputs = self
+            .outputs
+            .iter()
+            .map(|b| {
+                let produced_path = if self.inner.bazel_use_default_shell_env.is_some() {
+                    let artifact = Artifact::from(b.dupe());
+                    Some(
+                        ProjectRelativePathBuf::try_from(bazel_artifact_path(artifact.get_path()))
+                            .buck_error_context("Invalid Bazel execroot output path")?,
+                    )
+                } else {
+                    None
+                };
+                Ok(CommandExecutionOutput::BuildArtifact {
                     path: b.get_path().dupe(),
                     output_type: b.output_type(),
+                    produced_path,
                 })
-                .collect(),
+            })
+            .collect::<buck2_error::Result<BuckIndexSet<_>>>()?;
+
+        let paths = CommandExecutionPaths::new(
+            inputs,
+            outputs,
             ctx.fs(),
             ctx.digest_config(),
             ctx.run_action_knobs().action_paths_interner.as_ref(),
@@ -1376,6 +1600,10 @@ impl RunAction {
         host_sharing_requirements: HostSharingRequirements,
     ) -> buck2_error::Result<CommandExecutionRequest> {
         let outputs_for_error_handler = self.outputs_for_error_handler()?;
+        let local_environment_inheritance = match self.inner.bazel_use_default_shell_env {
+            None | Some(true) => EnvironmentInheritance::local_command_exclusions(),
+            Some(false) => EnvironmentInheritance::empty(),
+        };
         let mut req = prepared_run_action
             .into_command_execution_request()
             .with_prefetch_lossy_stderr(true)
@@ -1383,7 +1611,7 @@ impl RunAction {
             .with_host_sharing_requirements(host_sharing_requirements.into())
             .with_low_pass_filter(self.inner.low_pass_filter)
             .with_outputs_cleanup(!self.inner.no_outputs_cleanup)
-            .with_local_environment_inheritance(EnvironmentInheritance::local_command_exclusions())
+            .with_local_environment_inheritance(local_environment_inheritance)
             .with_force_full_hybrid_if_capable(self.inner.force_full_hybrid_if_capable)
             .with_unique_input_inodes(self.inner.unique_input_inodes)
             .with_remote_execution_dependencies(self.inner.remote_execution_dependencies.to_vec())
@@ -1590,7 +1818,8 @@ impl Action for RunAction {
         artifact_path_mapping: &dyn ArtifactPathMapper,
     ) -> BuckIndexMap<String, String> {
         let mut cli_rendered = Vec::<String>::new();
-        let mut ctx = DefaultCommandLineContext::new(fs);
+        let mut ctx =
+            RunActionCommandLineContext::new(fs, self.inner.bazel_use_default_shell_env.is_some());
         let values = Self::unpack(&self.starlark_values).unwrap();
         values
             .exe

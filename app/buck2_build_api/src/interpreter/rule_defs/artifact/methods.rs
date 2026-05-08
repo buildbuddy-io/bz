@@ -38,9 +38,38 @@ fn bazel_root_path(path: &str, short_path: &str) -> String {
     if short_path.is_empty() {
         return path.trim_end_matches('/').to_owned();
     }
-    path.strip_suffix(short_path)
+
+    let external_short_path;
+    let suffix = if let Some(sibling_path) = short_path.strip_prefix("../") {
+        external_short_path = format!("external/{sibling_path}");
+        external_short_path.as_str()
+    } else {
+        short_path
+    };
+
+    path.strip_suffix(suffix)
         .map(|root| root.trim_end_matches('/').to_owned())
         .unwrap_or_default()
+}
+
+fn artifact_owner_label<'v>(
+    this: &'v dyn StarlarkArtifactLike<'v>,
+    heap: Heap<'v>,
+) -> starlark::Result<Value<'v>> {
+    if let Some(owner) = this.source_owner()? {
+        return Ok(heap.alloc(StarlarkProvidersLabel::new(owner)));
+    }
+    match this.owner()? {
+        None => Ok(Value::new_none()),
+        Some(BaseDeferredKey::TargetLabel(target)) => {
+            Ok(heap.alloc(StarlarkConfiguredProvidersLabel::new(
+                ConfiguredProvidersLabel::new(target.dupe(), ProvidersName::Default),
+            )))
+        }
+        Some(BaseDeferredKey::AnonTarget(_) | BaseDeferredKey::BxlLabel(_)) => {
+            Ok(Value::new_none())
+        }
+    }
 }
 
 #[derive(StarlarkTypeRepr, AllocValue)]
@@ -93,21 +122,22 @@ pub(crate) fn any_artifact_methods(builder: &mut MethodsBuilder) {
         heap: Heap<'v>,
     ) -> starlark::Result<Value<'v>> {
         let path = this.with_bazel_path(&|path| heap.alloc_str(path))?;
-        let short_path = this.with_short_path(&|short_path| heap.alloc_str(short_path.as_str()))?;
+        let short_path = this.with_bazel_short_path(&|short_path| heap.alloc_str(short_path))?;
         let root = bazel_root_path(path.as_str(), short_path.as_str());
         Ok(heap.alloc(AllocStruct([("path", heap.alloc_str(&root).to_value())])))
     }
 
     /// The file extension of this artifact. e.g. for an artifact at foo/bar.sh,
-    /// this is `.sh`. If no extension is present, `""` is returned.
+    /// this is `sh`. If no extension is present, `""` is returned.
     #[starlark(attribute)]
     fn extension<'v>(
         this: &'v dyn StarlarkArtifactLike<'v>,
         heap: Heap<'v>,
     ) -> starlark::Result<StringValue<'v>> {
-        Ok(this.with_filename(&|filename| match filename.extension() {
-            None => heap.alloc_str(""),
-            Some(x) => heap.alloc_str_concat(".", x),
+        Ok(this.with_filename(&|filename| {
+            filename
+                .extension()
+                .map_or_else(|| heap.alloc_str(""), |x| heap.alloc_str(x))
         })?)
     }
 
@@ -137,30 +167,25 @@ pub(crate) fn any_artifact_methods(builder: &mut MethodsBuilder) {
         this: &'v dyn StarlarkArtifactLike<'v>,
         heap: Heap<'v>,
     ) -> starlark::Result<Value<'v>> {
-        if let Some(owner) = this.source_owner()? {
-            return Ok(heap.alloc(StarlarkProvidersLabel::new(owner)));
-        }
-        match this.owner()? {
-            None => Ok(Value::new_none()),
-            Some(BaseDeferredKey::TargetLabel(target)) => {
-                Ok(heap.alloc(StarlarkConfiguredProvidersLabel::new(
-                    ConfiguredProvidersLabel::new(target.dupe(), ProvidersName::Default),
-                )))
-            }
-            Some(BaseDeferredKey::AnonTarget(_) | BaseDeferredKey::BxlLabel(_)) => {
-                Ok(Value::new_none())
-            }
-        }
+        artifact_owner_label(this, heap)
     }
 
-    /// The interesting part of the path, relative to somewhere in the output directory.
-    /// For an artifact declared as `foo/bar`, this is `foo/bar`.
+    /// The Bazel `File.label` of the source-file target or generating rule.
+    #[starlark(attribute)]
+    fn label<'v>(
+        this: &'v dyn StarlarkArtifactLike<'v>,
+        heap: Heap<'v>,
+    ) -> starlark::Result<Value<'v>> {
+        artifact_owner_label(this, heap)
+    }
+
+    /// The Bazel runfiles path for this artifact.
     #[starlark(attribute)]
     fn short_path<'v>(
         this: &'v dyn StarlarkArtifactLike<'v>,
         heap: Heap<'_>,
     ) -> starlark::Result<StringValue<'v>> {
-        Ok(this.with_short_path(&|short_path| heap.alloc_str(short_path.as_str()))?)
+        Ok(this.with_bazel_short_path(&|short_path| heap.alloc_str(short_path))?)
     }
 }
 

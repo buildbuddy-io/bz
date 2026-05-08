@@ -98,6 +98,7 @@ pub struct AnalysisRegistry<'v> {
     pub actions: ActionsRegistry<'v>,
     pub anon_targets: Box<DynStarlark<'v, dyn AnonTargetsRegistryDyn<'v>>>,
     pub analysis_value_storage: AnalysisValueStorage<'v>,
+    bazel_predeclared_outputs: SmallMap<String, DeclaredArtifact<'v>>,
     pub short_path_assertions: HashMap<PromiseArtifactId, ForwardRelativePathBuf>,
     pub content_based_path_assertions: HashSet<PromiseArtifactId>,
 }
@@ -129,6 +130,7 @@ impl<'v> AnalysisRegistry<'v> {
             actions: ActionsRegistry::new(self_key.dupe(), execution_platform.dupe()),
             anon_targets: (ANON_TARGET_REGISTRY_NEW.get()?)(PhantomData, execution_platform),
             analysis_value_storage: AnalysisValueStorage::new(self_key),
+            bazel_predeclared_outputs: SmallMap::new(),
             short_path_assertions: HashMap::new(),
             content_based_path_assertions: HashSet::new(),
         })
@@ -174,6 +176,15 @@ impl<'v> AnalysisRegistry<'v> {
             None => None,
             Some(x) => Some(ForwardRelativePath::new(x)?.to_owned()),
         };
+        let full_path = match &prefix {
+            Some(prefix) => prefix.join(&path),
+            None => path.clone(),
+        };
+        if let Some(artifact) = self.bazel_predeclared_outputs.get(full_path.as_str()) {
+            if artifact.output_type() == output_type {
+                return Ok(artifact.dupe());
+            }
+        }
         self.actions.declare_artifact(
             prefix,
             path,
@@ -182,6 +193,29 @@ impl<'v> AnalysisRegistry<'v> {
             path_resolution_method,
             heap,
         )
+    }
+
+    pub fn declare_bazel_predeclared_output(
+        &mut self,
+        filename: &str,
+        output_type: OutputType,
+        declaration_location: Option<FileSpan>,
+        path_resolution_method: BuckOutPathKind,
+        heap: Heap<'v>,
+    ) -> buck2_error::Result<DeclaredArtifact<'v>> {
+        let artifact = self.declare_output(
+            None,
+            filename,
+            output_type,
+            declaration_location,
+            path_resolution_method,
+            heap,
+        )?;
+        self.bazel_predeclared_outputs.insert(
+            ForwardRelativePath::new(filename)?.as_str().to_owned(),
+            artifact.dupe(),
+        );
+        Ok(artifact)
     }
 
     /// Takes a string or artifact/output artifact and converts it into an output artifact
@@ -346,6 +380,7 @@ impl<'v> AnalysisRegistry<'v> {
             actions,
             anon_targets: _,
             analysis_value_storage,
+            bazel_predeclared_outputs: _,
             short_path_assertions: _,
             content_based_path_assertions: _,
         } = self;

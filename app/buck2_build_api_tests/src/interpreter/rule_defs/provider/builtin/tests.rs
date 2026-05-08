@@ -62,6 +62,30 @@ fn test_builtin_provider_callables_are_hashable() -> buck2_error::Result<()> {
 }
 
 #[test]
+fn test_output_group_info_supports_group_indexing() -> buck2_error::Result<()> {
+    let mut tester = Tester::new()?;
+
+    tester.additional_globals(register_builtin_providers);
+
+    tester.run_starlark_bzl_test(indoc!(
+        r#"
+            def test():
+                groups = OutputGroupInfo(
+                    _hidden_top_level_INTERNAL_ = ["force"],
+                    files = ["out"],
+                )
+
+                assert_eq(True, "_hidden_top_level_INTERNAL_" in groups)
+                assert_eq(False, "missing" in groups)
+                assert_eq(["force"], groups["_hidden_top_level_INTERNAL_"])
+                assert_eq(["out"], groups["files"])
+        "#
+    ))?;
+
+    Ok(())
+}
+
+#[test]
 fn test_run_environment_info() -> buck2_error::Result<()> {
     let mut tester = Tester::new()?;
 

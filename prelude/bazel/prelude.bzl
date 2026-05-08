@@ -79,6 +79,7 @@ def exports_files(srcs, visibility = None, **_kwargs):
     for src in srcs:
         buck2_bazel_native_rules.export_file(
             name = src,
+            mode = "reference",
             src = src,
             visibility = visibility,
         )

@@ -39,6 +39,7 @@ use buck2_build_api::deferred::calculation::DeferredHolder;
 use buck2_build_api::deferred::calculation::EVAL_ANON_TARGET;
 use buck2_build_api::deferred::calculation::GET_PROMISED_ARTIFACT;
 use buck2_build_api::interpreter::rule_defs::context::AnalysisContext;
+use buck2_build_api::interpreter::rule_defs::context::BazelCppOptions;
 use buck2_build_api::interpreter::rule_defs::plugins::AnalysisPlugins;
 use buck2_build_api::interpreter::rule_defs::provider::collection::ProviderCollection;
 use buck2_build_signals::env::WaitingData;
@@ -534,7 +535,10 @@ impl AnonTargetKey {
                     ),
                     Vec::new(),
                     SmallMap::new(),
+                    BazelCppOptions::default(),
                     false,
+                    None,
+                    None,
                     registry,
                     dice.global_data().get_digest_config(),
                 );

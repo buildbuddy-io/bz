@@ -92,7 +92,7 @@ pub(crate) trait AttributeExt {
         default: Option<Value<'v>>,
         doc: &str,
         coercer: AttrType,
-    ) -> buck2_error::Result<StarlarkAttribute>;
+    ) -> buck2_error::Result<StarlarkAttribute<'v>>;
 }
 
 impl AttributeExt for Attribute {
@@ -102,7 +102,7 @@ impl AttributeExt for Attribute {
         default: Option<Value<'v>>,
         doc: &str,
         coercer: AttrType,
-    ) -> buck2_error::Result<StarlarkAttribute> {
+    ) -> buck2_error::Result<StarlarkAttribute<'v>> {
         let default = match default {
             None => None,
             Some(x) => Some(Arc::new(
@@ -152,7 +152,7 @@ fn bazel_attr<'v>(
     doc: &str,
     coercer: AttrType,
     configurable: Option<bool>,
-) -> buck2_error::Result<StarlarkAttribute> {
+) -> buck2_error::Result<StarlarkAttribute<'v>> {
     bazel_attr_with_allowed_values(
         eval,
         default,
@@ -174,7 +174,31 @@ fn bazel_attr_with_allowed_values<'v>(
     coercer: AttrType,
     configurable: Option<bool>,
     allowed_values: Option<AttributeAllowedValues>,
-) -> buck2_error::Result<StarlarkAttribute> {
+) -> buck2_error::Result<StarlarkAttribute<'v>> {
+    bazel_attr_with_allowed_values_and_aspects(
+        eval,
+        default,
+        fallback,
+        mandatory,
+        doc,
+        coercer,
+        configurable,
+        allowed_values,
+        Vec::new(),
+    )
+}
+
+fn bazel_attr_with_allowed_values_and_aspects<'v>(
+    eval: &mut Evaluator<'v, '_, '_>,
+    default: Option<Value<'v>>,
+    fallback: Value<'v>,
+    mandatory: bool,
+    doc: &str,
+    coercer: AttrType,
+    configurable: Option<bool>,
+    allowed_values: Option<AttributeAllowedValues>,
+    bazel_aspects: Vec<Value<'v>>,
+) -> buck2_error::Result<StarlarkAttribute<'v>> {
     let default = if mandatory {
         None
     } else {
@@ -196,8 +220,9 @@ fn bazel_attr_with_allowed_values<'v>(
                 .buck_error_context("Error coercing Bazel attribute default")?,
         )),
     };
-    Ok(StarlarkAttribute::new_bazel(
+    Ok(StarlarkAttribute::new_bazel_with_aspects(
         Attribute::new_with_allowed_values(default, doc, coercer, allowed_values)?,
+        bazel_aspects,
     ))
 }
 
@@ -246,7 +271,7 @@ fn bazel_attr_required<'v>(
     _eval: &mut Evaluator<'v, '_, '_>,
     doc: &str,
     coercer: AttrType,
-) -> buck2_error::Result<StarlarkAttribute> {
+) -> buck2_error::Result<StarlarkAttribute<'v>> {
     Ok(StarlarkAttribute::new_bazel(Attribute::new(
         None, doc, coercer,
     )?))
@@ -420,18 +445,18 @@ fn attr_module(registry: &mut GlobalsBuilder) {
         #[starlark(require = named)] validate: Option<Value<'v>>,
         #[starlark(require = named, default = "")] doc: &str,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<StarlarkAttribute> {
+    ) -> starlark::Result<StarlarkAttribute<'v>> {
         let _unused = validate;
         Ok(Attribute::attr(eval, default, doc, AttrType::string())?)
     }
 
     /// Takes a list from the user, supplies a list to the rule.
     fn list<'v>(
-        #[starlark(require = pos)] inner: &StarlarkAttribute,
+        #[starlark(require = pos)] inner: &StarlarkAttribute<'_>,
         #[starlark(require = named)] default: Option<Value<'v>>,
         #[starlark(require = named, default = "")] doc: &str,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<StarlarkAttribute> {
+    ) -> starlark::Result<StarlarkAttribute<'v>> {
         let coercer = AttrType::list(inner.coercer_for_inner()?);
         Ok(Attribute::attr(eval, default, doc, coercer)?)
     }
@@ -445,7 +470,7 @@ fn attr_module(registry: &mut GlobalsBuilder) {
         #[starlark(require = named)] default: Option<Value<'v>>,
         #[starlark(require = named, default = "")] doc: &str,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<StarlarkAttribute> {
+    ) -> starlark::Result<StarlarkAttribute<'v>> {
         let required_providers = dep_like_attr_handle_providers_arg(providers.items)?;
         let coercer = AttrType::exec_dep(required_providers);
         Ok(Attribute::attr(eval, default, doc, coercer)?)
@@ -460,7 +485,7 @@ fn attr_module(registry: &mut GlobalsBuilder) {
         #[starlark(require = named)] default: Option<Value<'v>>,
         #[starlark(require = named, default = "")] doc: &str,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<StarlarkAttribute> {
+    ) -> starlark::Result<StarlarkAttribute<'v>> {
         let required_providers = dep_like_attr_handle_providers_arg(providers.items)?;
         let coercer = AttrType::toolchain_dep(required_providers);
         Ok(Attribute::attr(eval, default, doc, coercer)?)
@@ -473,7 +498,7 @@ fn attr_module(registry: &mut GlobalsBuilder) {
         #[starlark(require = named)] default: Option<Value<'v>>,
         #[starlark(require = named, default = "")] doc: &str,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<StarlarkAttribute> {
+    ) -> starlark::Result<StarlarkAttribute<'v>> {
         let required_providers = dep_like_attr_handle_providers_arg(providers.items)?;
         let label_coercion_ctx = attr_coercion_context_for_bzl(eval)?;
 
@@ -510,7 +535,7 @@ fn attr_module(registry: &mut GlobalsBuilder) {
         #[starlark(require = named)] default: Option<Value<'v>>,
         #[starlark(require = named, default = "")] doc: &str,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<StarlarkAttribute> {
+    ) -> starlark::Result<StarlarkAttribute<'v>> {
         let required_providers = dep_like_attr_handle_providers_arg(providers.items)?;
         let coercer = AttrType::configured_dep(required_providers);
         Ok(Attribute::attr(eval, default, doc, coercer)?)
@@ -523,7 +548,7 @@ fn attr_module(registry: &mut GlobalsBuilder) {
         #[starlark(require = named)] default: Option<Value<'v>>,
         #[starlark(require = named, default = "")] doc: &str,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<StarlarkAttribute> {
+    ) -> starlark::Result<StarlarkAttribute<'v>> {
         let required_providers = dep_like_attr_handle_providers_arg(providers.items)?;
         let transition_id = transition_id_from_value(cfg)?;
         let coercer = AttrType::split_transition_dep(required_providers, transition_id);
@@ -556,7 +581,7 @@ fn attr_module(registry: &mut GlobalsBuilder) {
         #[starlark(require = named)] default: Option<Value<'v>>,
         #[starlark(require = named, default = "")] doc: &str,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<StarlarkAttribute> {
+    ) -> starlark::Result<StarlarkAttribute<'v>> {
         Ok(Attribute::attr(
             eval,
             default,
@@ -584,7 +609,7 @@ fn attr_module(registry: &mut GlobalsBuilder) {
         #[starlark(require = named)] default: Option<Value<'v>>,
         #[starlark(require = named, default = "")] doc: &str,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<StarlarkAttribute> {
+    ) -> starlark::Result<StarlarkAttribute<'v>> {
         let required_providers = dep_like_attr_handle_providers_arg(providers.items)?;
         let plugin_kinds = match pulls_and_pushes_plugins {
             Either::Right(_) => PluginKindSet::ALL,
@@ -613,7 +638,7 @@ fn attr_module(registry: &mut GlobalsBuilder) {
         #[starlark(require = named, default = "")] doc: &str,
         #[starlark(require = named)] default: Option<Value<'v>>,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<StarlarkAttribute> {
+    ) -> starlark::Result<StarlarkAttribute<'v>> {
         Ok(Attribute::attr(eval, default, doc, AttrType::any())?)
     }
 
@@ -622,7 +647,7 @@ fn attr_module(registry: &mut GlobalsBuilder) {
         #[starlark(require = named)] default: Option<Value<'v>>,
         #[starlark(require = named, default = "")] doc: &str,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<StarlarkAttribute> {
+    ) -> starlark::Result<StarlarkAttribute<'v>> {
         Ok(Attribute::attr(eval, default, doc, AttrType::bool())?)
     }
 
@@ -633,11 +658,11 @@ fn attr_module(registry: &mut GlobalsBuilder) {
     /// attrs.option(attr.string(), default = None)
     /// ```
     fn option<'v>(
-        #[starlark(require = pos)] inner: &StarlarkAttribute,
+        #[starlark(require = pos)] inner: &StarlarkAttribute<'_>,
         #[starlark(require = named)] default: Option<Value<'v>>,
         #[starlark(require = named, default = "")] doc: &str,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<StarlarkAttribute> {
+    ) -> starlark::Result<StarlarkAttribute<'v>> {
         let coercer = AttrType::option(inner.coercer_for_inner()?);
         let attr = Attribute::attr(eval, default, doc, coercer)?;
 
@@ -657,9 +682,9 @@ fn attr_module(registry: &mut GlobalsBuilder) {
     /// attrs.default_only(attrs.dep(default = "foo//my_package:my_target"))
     /// ```
     fn default_only<'v>(
-        #[starlark(require = pos)] inner: &StarlarkAttribute,
+        #[starlark(require = pos)] inner: &StarlarkAttribute<'_>,
         #[starlark(require = named, default = "")] doc: &str,
-    ) -> starlark::Result<StarlarkAttribute> {
+    ) -> starlark::Result<StarlarkAttribute<'v>> {
         let Some(default) = inner.default().duped() else {
             return Err(buck2_error::Error::from(AttrError::DefaultOnlyMustHaveDefault).into());
         };
@@ -676,20 +701,20 @@ fn attr_module(registry: &mut GlobalsBuilder) {
         #[starlark(require = named)] default: Option<Value<'v>>,
         #[starlark(require = named, default = "")] doc: &str,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<StarlarkAttribute> {
+    ) -> starlark::Result<StarlarkAttribute<'v>> {
         Ok(Attribute::attr(eval, default, doc, AttrType::label())?)
     }
 
     /// Takes a dict from the user, supplies a dict to the rule.
     fn dict<'v>(
         // TODO(nga): require positional only for key and value.
-        key: &StarlarkAttribute,
-        value: &StarlarkAttribute,
+        key: &StarlarkAttribute<'_>,
+        value: &StarlarkAttribute<'_>,
         #[starlark(require = named, default = false)] sorted: bool,
         #[starlark(require = named)] default: Option<Value<'v>>,
         #[starlark(require = named, default = "")] doc: &str,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<StarlarkAttribute> {
+    ) -> starlark::Result<StarlarkAttribute<'v>> {
         let coercer = AttrType::dict(key.coercer_for_inner()?, value.coercer_for_inner()?, sorted);
         Ok(Attribute::attr(eval, default, doc, coercer)?)
     }
@@ -705,7 +730,7 @@ fn attr_module(registry: &mut GlobalsBuilder) {
         #[starlark(require = named, default = "")] doc: &str,
         #[starlark(require = named, default = false)] anon_target_compatible: bool,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<StarlarkAttribute> {
+    ) -> starlark::Result<StarlarkAttribute<'v>> {
         let _unused = json;
         Ok(Attribute::attr(
             eval,
@@ -724,7 +749,7 @@ fn attr_module(registry: &mut GlobalsBuilder) {
         >,
         #[starlark(require = named, default = "")] doc: &str,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<StarlarkAttribute> {
+    ) -> starlark::Result<StarlarkAttribute<'v>> {
         // Value seems to usually be a `[String]`, listing the possible values of the
         // enumeration. Unfortunately, for things like `exported_lang_preprocessor_flags`
         // it ends up being `Type` which doesn't match the data we see.
@@ -739,7 +764,7 @@ fn attr_module(registry: &mut GlobalsBuilder) {
     fn configuration_label<'v>(
         #[starlark(require = named, default = "")] doc: &str,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<StarlarkAttribute> {
+    ) -> starlark::Result<StarlarkAttribute<'v>> {
         // TODO(nga): explain how this is different from `dep`.
         //   This probably meant to be similar to `label`, but not configurable.
         Ok(Attribute::attr(
@@ -755,29 +780,29 @@ fn attr_module(registry: &mut GlobalsBuilder) {
         #[starlark(require = named)] default: Option<Value<'v>>,
         #[starlark(require = named, default = "")] doc: &str,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<StarlarkAttribute> {
+    ) -> starlark::Result<StarlarkAttribute<'v>> {
         Ok(Attribute::attr(eval, default, doc, AttrType::string())?)
     }
 
     fn set<'v>(
-        #[starlark(require = pos)] value_type: &StarlarkAttribute,
+        #[starlark(require = pos)] value_type: &StarlarkAttribute<'_>,
         #[starlark(require = named, default = false)] sorted: bool,
         #[starlark(require = named)] default: Option<Value<'v>>,
         #[starlark(require = named, default = "")] doc: &str,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<StarlarkAttribute> {
+    ) -> starlark::Result<StarlarkAttribute<'v>> {
         let _unused = sorted;
         let coercer = AttrType::list(value_type.coercer_for_inner()?);
         Ok(Attribute::attr(eval, default, doc, coercer)?)
     }
 
     fn named_set<'v>(
-        #[starlark(require = pos)] value_type: &StarlarkAttribute,
+        #[starlark(require = pos)] value_type: &StarlarkAttribute<'_>,
         #[starlark(require = named, default = false)] sorted: bool,
         #[starlark(require = named)] default: Option<Value<'v>>,
         #[starlark(require = named, default = "")] doc: &str,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<StarlarkAttribute> {
+    ) -> starlark::Result<StarlarkAttribute<'v>> {
         let value_coercer = value_type.coercer_for_inner()?;
         let coercer = AttrType::one_of(vec![
             AttrType::dict(AttrType::string(), value_coercer.dupe(), sorted),
@@ -788,22 +813,22 @@ fn attr_module(registry: &mut GlobalsBuilder) {
 
     /// Given a list of alternative attributes, selects the first that matches and gives that to the rule.
     fn one_of<'v>(
-        #[starlark(args)] args: UnpackTuple<&StarlarkAttribute>,
+        #[starlark(args)] args: UnpackTuple<&StarlarkAttribute<'_>>,
         #[starlark(require = named)] default: Option<Value<'v>>,
         #[starlark(require = named, default = "")] doc: &str,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<StarlarkAttribute> {
+    ) -> starlark::Result<StarlarkAttribute<'v>> {
         let coercer = AttrType::one_of(args.items.into_try_map(|arg| arg.coercer_for_inner())?);
         Ok(Attribute::attr(eval, default, doc, coercer)?)
     }
 
     /// Takes a tuple of values and gives a tuple to the rule.
     fn tuple<'v>(
-        #[starlark(args)] args: UnpackTuple<&StarlarkAttribute>,
+        #[starlark(args)] args: UnpackTuple<&StarlarkAttribute<'_>>,
         #[starlark(require = named)] default: Option<Value<'v>>,
         #[starlark(require = named, default = "")] doc: &str,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<StarlarkAttribute> {
+    ) -> starlark::Result<StarlarkAttribute<'v>> {
         let coercer = AttrType::tuple(args.items.into_try_map(|arg| arg.coercer_for_inner())?);
         Ok(Attribute::attr(eval, default, doc, coercer)?)
     }
@@ -813,21 +838,21 @@ fn attr_module(registry: &mut GlobalsBuilder) {
         #[starlark(require = named)] default: Option<Value<'v>>,
         #[starlark(require = named, default = "")] doc: &str,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<StarlarkAttribute> {
+    ) -> starlark::Result<StarlarkAttribute<'v>> {
         Ok(Attribute::attr(eval, default, doc, AttrType::int())?)
     }
 
     fn query<'v>(
         #[starlark(require = named, default = "")] doc: &str,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<StarlarkAttribute> {
+    ) -> starlark::Result<StarlarkAttribute<'v>> {
         Ok(Attribute::attr(eval, None, doc, AttrType::query())?)
     }
 
     fn versioned<'v>(
-        value_type: &StarlarkAttribute,
+        value_type: &StarlarkAttribute<'_>,
         #[starlark(require = named, default = "")] doc: &str,
-    ) -> starlark::Result<StarlarkAttribute> {
+    ) -> starlark::Result<StarlarkAttribute<'v>> {
         // A versioned field looks like:
         // [ ({"key":"value1"}, arg), ({"key":"value2"}, arg) ]
         let element_type = AttrType::tuple(vec![
@@ -852,7 +877,7 @@ fn attr_module(registry: &mut GlobalsBuilder) {
         #[starlark(require = named)] default: Option<Value<'v>>,
         #[starlark(require = named, default = "")] doc: &str,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<StarlarkAttribute> {
+    ) -> starlark::Result<StarlarkAttribute<'v>> {
         Ok(Attribute::attr(
             eval,
             default,
@@ -872,7 +897,7 @@ fn bazel_attr_module(registry: &mut GlobalsBuilder) {
         #[starlark(require = named, default = UnpackListOrTuple::default())]
         values: UnpackListOrTuple<Value<'v>>,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<StarlarkAttribute> {
+    ) -> starlark::Result<StarlarkAttribute<'v>> {
         let coercer = AttrType::string();
         let allowed_values = bazel_allowed_values(eval, values.items, &coercer)?;
         let fallback = eval.heap().alloc("");
@@ -896,7 +921,7 @@ fn bazel_attr_module(registry: &mut GlobalsBuilder) {
         #[starlark(require = named, default = UnpackListOrTuple::default())]
         values: UnpackListOrTuple<Value<'v>>,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<StarlarkAttribute> {
+    ) -> starlark::Result<StarlarkAttribute<'v>> {
         let coercer = AttrType::int();
         let allowed_values = bazel_allowed_values(eval, values.items, &coercer)?;
         let fallback = eval.heap().alloc(0);
@@ -918,7 +943,7 @@ fn bazel_attr_module(registry: &mut GlobalsBuilder) {
         #[starlark(require = named, default = NoneOr::None)] doc: NoneOr<&str>,
         #[starlark(require = named)] configurable: Option<bool>,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<StarlarkAttribute> {
+    ) -> starlark::Result<StarlarkAttribute<'v>> {
         Ok(bazel_attr(
             eval,
             default,
@@ -937,7 +962,7 @@ fn bazel_attr_module(registry: &mut GlobalsBuilder) {
         #[starlark(require = named, default = NoneOr::None)] doc: NoneOr<&str>,
         #[starlark(require = named)] configurable: Option<bool>,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<StarlarkAttribute> {
+    ) -> starlark::Result<StarlarkAttribute<'v>> {
         let _unused = allow_empty;
         let fallback = eval.heap().alloc(AllocList::EMPTY);
         Ok(bazel_attr(
@@ -958,7 +983,7 @@ fn bazel_attr_module(registry: &mut GlobalsBuilder) {
         #[starlark(require = named, default = NoneOr::None)] doc: NoneOr<&str>,
         #[starlark(require = named)] configurable: Option<bool>,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<StarlarkAttribute> {
+    ) -> starlark::Result<StarlarkAttribute<'v>> {
         let _unused = allow_empty;
         let fallback = eval.heap().alloc(AllocList::EMPTY);
         Ok(bazel_attr(
@@ -992,10 +1017,9 @@ fn bazel_attr_module(registry: &mut GlobalsBuilder) {
         #[starlark(require = named)] for_dependency_resolution: Option<Value<'v>>,
         #[starlark(require = named)] materializer: Option<Value<'v>>,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<StarlarkAttribute> {
+    ) -> starlark::Result<StarlarkAttribute<'v>> {
         let _unused = (
             executable,
-            aspects,
             flags,
             allow_rules,
             skip_validations,
@@ -1010,7 +1034,7 @@ fn bazel_attr_module(registry: &mut GlobalsBuilder) {
             AttrType::option(inner)
         };
         let default = bazel_label_default(eval, default)?;
-        Ok(bazel_attr(
+        Ok(bazel_attr_with_allowed_values_and_aspects(
             eval,
             default,
             Value::new_none(),
@@ -1018,6 +1042,8 @@ fn bazel_attr_module(registry: &mut GlobalsBuilder) {
             bazel_doc(doc),
             coercer,
             configurable,
+            None,
+            aspects.items,
         )?)
     }
 
@@ -1040,11 +1066,10 @@ fn bazel_attr_module(registry: &mut GlobalsBuilder) {
         #[starlark(require = named)] for_dependency_resolution: Option<Value<'v>>,
         #[starlark(require = named)] materializer: Option<Value<'v>>,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<StarlarkAttribute> {
+    ) -> starlark::Result<StarlarkAttribute<'v>> {
         let _unused = (
             allow_empty,
             allow_rules,
-            aspects,
             flags,
             skip_validations,
             for_dependency_resolution,
@@ -1052,7 +1077,7 @@ fn bazel_attr_module(registry: &mut GlobalsBuilder) {
         );
         let coercer = bazel_label_attr_type(providers, allow_files, None, cfg, true, eval)?;
         let fallback = eval.heap().alloc(AllocList::EMPTY);
-        Ok(bazel_attr(
+        Ok(bazel_attr_with_allowed_values_and_aspects(
             eval,
             default,
             fallback,
@@ -1060,6 +1085,8 @@ fn bazel_attr_module(registry: &mut GlobalsBuilder) {
             bazel_doc(doc),
             coercer,
             configurable,
+            None,
+            aspects.items,
         )?)
     }
 
@@ -1067,7 +1094,7 @@ fn bazel_attr_module(registry: &mut GlobalsBuilder) {
         #[starlark(require = named, default = false)] mandatory: bool,
         #[starlark(require = named, default = NoneOr::None)] doc: NoneOr<&str>,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<StarlarkAttribute> {
+    ) -> starlark::Result<StarlarkAttribute<'v>> {
         if mandatory {
             Ok(StarlarkAttribute::new_bazel_output(
                 Attribute::new(None, bazel_doc(doc), AttrType::string())?,
@@ -1095,7 +1122,7 @@ fn bazel_attr_module(registry: &mut GlobalsBuilder) {
         #[starlark(require = named, default = true)] allow_empty: bool,
         #[starlark(require = named, default = NoneOr::None)] doc: NoneOr<&str>,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<StarlarkAttribute> {
+    ) -> starlark::Result<StarlarkAttribute<'v>> {
         let _unused = allow_empty;
         let fallback = eval.heap().alloc(AllocList::EMPTY);
         Ok(StarlarkAttribute::new_bazel_output(
@@ -1120,7 +1147,7 @@ fn bazel_attr_module(registry: &mut GlobalsBuilder) {
         #[starlark(require = named, default = NoneOr::None)] doc: NoneOr<&str>,
         #[starlark(require = named)] configurable: Option<bool>,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<StarlarkAttribute> {
+    ) -> starlark::Result<StarlarkAttribute<'v>> {
         let _unused = allow_empty;
         let fallback = eval.heap().alloc(AllocDict::EMPTY);
         Ok(bazel_attr(
@@ -1141,7 +1168,7 @@ fn bazel_attr_module(registry: &mut GlobalsBuilder) {
         #[starlark(require = named, default = NoneOr::None)] doc: NoneOr<&str>,
         #[starlark(require = named)] configurable: Option<bool>,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<StarlarkAttribute> {
+    ) -> starlark::Result<StarlarkAttribute<'v>> {
         let _unused = allow_empty;
         let fallback = eval.heap().alloc(AllocDict::EMPTY);
         Ok(bazel_attr(
@@ -1176,7 +1203,7 @@ fn bazel_attr_module(registry: &mut GlobalsBuilder) {
         flags: UnpackListOrTuple<Value<'v>>,
         #[starlark(require = named)] for_dependency_resolution: Option<Value<'v>>,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<StarlarkAttribute> {
+    ) -> starlark::Result<StarlarkAttribute<'v>> {
         let _unused = (
             allow_empty,
             allow_rules,
@@ -1215,7 +1242,7 @@ fn bazel_attr_module(registry: &mut GlobalsBuilder) {
         #[starlark(require = named, default = false)] skip_validations: bool,
         #[starlark(require = named)] for_dependency_resolution: Option<Value<'v>>,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<StarlarkAttribute> {
+    ) -> starlark::Result<StarlarkAttribute<'v>> {
         let _unused = (
             allow_empty,
             allow_rules,
@@ -1242,7 +1269,7 @@ fn bazel_attr_module(registry: &mut GlobalsBuilder) {
         #[starlark(require = named, default = false)] mandatory: bool,
         #[starlark(require = named, default = NoneOr::None)] doc: NoneOr<&str>,
         eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<StarlarkAttribute> {
+    ) -> starlark::Result<StarlarkAttribute<'v>> {
         let fallback = eval.heap().alloc(AllocList::EMPTY);
         Ok(bazel_attr(
             eval,

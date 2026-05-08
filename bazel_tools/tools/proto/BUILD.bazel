@@ -5,22 +5,22 @@ filegroup(
     srcs = ["BUILD.bazel"],
 )
 
-filegroup(
+alias(
     name = "protoc",
-    srcs = [],
+    actual = "@com_google_protobuf//:protoc",
 )
 
-filegroup(
+alias(
     name = "java_toolchain",
-    srcs = [],
+    actual = "@com_google_protobuf//:java_toolchain",
 )
 
-filegroup(
+alias(
     name = "javalite_toolchain",
-    srcs = [],
+    actual = "@com_google_protobuf//:javalite_toolchain",
 )
 
-filegroup(
+alias(
     name = "cc_toolchain",
-    srcs = [],
+    actual = "@com_google_protobuf//:cc_toolchain",
 )

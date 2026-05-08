@@ -30,6 +30,7 @@ use buck2_build_api::interpreter::rule_defs::artifact::starlark_output_artifact:
 use buck2_build_api::interpreter::rule_defs::artifact::starlark_output_artifact::StarlarkOutputArtifact;
 use buck2_build_api::interpreter::rule_defs::context::AnalysisActions;
 use buck2_build_api::interpreter::rule_defs::context::AnalysisContext;
+use buck2_build_api::interpreter::rule_defs::context::BazelCppOptions;
 use buck2_build_api::interpreter::rule_defs::provider::collection::FrozenProviderCollectionValue;
 use buck2_build_api::interpreter::rule_defs::provider::collection::ProviderCollection;
 use buck2_build_signals::env::WaitingCategory;
@@ -206,7 +207,10 @@ fn execute_lambda_inner<'v>(
             dynamic_lambda_ctx_data.lambda.plugins()?,
             Vec::new(),
             SmallMap::new(),
+            BazelCppOptions::default(),
             false,
+            None,
+            None,
             dynamic_lambda_ctx_data.registry,
             dynamic_lambda_ctx_data.digest_config,
         );

@@ -43,7 +43,8 @@ use starlark::values::none::NoneOr;
 use starlark::values::starlark_value;
 use starlark_map::StarlarkHasher;
 
-use crate::interpreter::rule_defs::depset::bazel_depset_from_direct;
+use crate::interpreter::rule_defs::provider::builtin::default_info::BazelRunfiles;
+use crate::interpreter::rule_defs::provider::builtin::template_variable_info::FrozenTemplateVariableInfo;
 use crate::interpreter::rule_defs::provider::collection::FrozenProviderCollection;
 use crate::interpreter::rule_defs::provider::execution_platform::StarlarkExecutionPlatformResolution;
 use crate::interpreter::rule_defs::provider::ty::abstract_provider::AbstractProvider;
@@ -137,6 +138,34 @@ impl<'v> Dependency<'v> {
         })?;
         Ok(files.iter().collect())
     }
+
+    pub fn template_variable_info(
+        &self,
+    ) -> Option<FrozenValueTyped<'_, FrozenTemplateVariableInfo>> {
+        self.provider_collection.builtin_provider()
+    }
+
+    pub fn data_runfiles(&'v self) -> buck2_error::Result<&'v BazelRunfiles<'v>> {
+        let value = self
+            .provider_collection
+            .default_info()?
+            .data_runfiles_raw()
+            .to_value();
+        BazelRunfiles::from_value(value).ok_or_else(|| {
+            buck2_error::internal_error!("DefaultInfo.data_runfiles should be a runfiles object")
+        })
+    }
+
+    pub fn default_runfiles(&'v self) -> buck2_error::Result<&'v BazelRunfiles<'v>> {
+        let value = self
+            .provider_collection
+            .default_info()?
+            .default_runfiles_raw()
+            .to_value();
+        BazelRunfiles::from_value(value).ok_or_else(|| {
+            buck2_error::internal_error!("DefaultInfo.default_runfiles should be a runfiles object")
+        })
+    }
 }
 
 #[starlark_value(type = "Dependency")]
@@ -226,9 +255,42 @@ fn dependency_methods(builder: &mut MethodsBuilder) {
 
     /// Bazel target-style shortcut for `dep[DefaultInfo].files`.
     #[starlark(attribute)]
-    fn files<'v>(this: &Dependency<'v>, heap: Heap<'v>) -> starlark::Result<Value<'v>> {
-        let files = this.default_output_values()?;
-        Ok(heap.alloc(bazel_depset_from_direct(files)?))
+    fn files<'v>(this: &Dependency<'v>) -> starlark::Result<Value<'v>> {
+        Ok(this
+            .provider_collection
+            .default_info()?
+            .files_raw()
+            .to_value())
+    }
+
+    /// Bazel target-style shortcut for `dep[DefaultInfo].files_to_run`.
+    #[starlark(attribute)]
+    fn files_to_run<'v>(this: &Dependency<'v>) -> starlark::Result<Value<'v>> {
+        Ok(this
+            .provider_collection
+            .default_info()?
+            .files_to_run_raw()
+            .to_value())
+    }
+
+    /// Bazel target-style shortcut for `dep[DefaultInfo].data_runfiles`.
+    #[starlark(attribute)]
+    fn data_runfiles<'v>(this: &Dependency<'v>) -> starlark::Result<Value<'v>> {
+        Ok(this
+            .provider_collection
+            .default_info()?
+            .data_runfiles_raw()
+            .to_value())
+    }
+
+    /// Bazel target-style shortcut for `dep[DefaultInfo].default_runfiles`.
+    #[starlark(attribute)]
+    fn default_runfiles<'v>(this: &Dependency<'v>) -> starlark::Result<Value<'v>> {
+        Ok(this
+            .provider_collection
+            .default_info()?
+            .default_runfiles_raw()
+            .to_value())
     }
 
     /// Returns a list of all providers available from this dependency.

@@ -8,11 +8,16 @@
  */
 
 use std::fmt;
+use std::hash::Hash;
 use std::marker::PhantomData;
 
 use allocative::Allocative;
 use starlark::any::ProvidesStaticType;
 use starlark::coerce::Coerce;
+use starlark::collections::Hashed;
+use starlark::collections::SmallSet;
+use starlark::collections::StarlarkHashValue;
+use starlark::collections::StarlarkHasher;
 use starlark::environment::GlobalsBuilder;
 use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
@@ -26,9 +31,15 @@ use starlark::values::StarlarkValue;
 use starlark::values::Trace;
 use starlark::values::Value;
 use starlark::values::ValueLike;
+use starlark::values::dict::DictRef;
+use starlark::values::list::ListRef;
 use starlark::values::list_or_tuple::UnpackListOrTuple;
 use starlark::values::none::NoneOr;
 use starlark::values::starlark_value;
+use starlark::values::structs::StructRef;
+use starlark::values::tuple::TupleRef;
+
+use crate::interpreter::rule_defs::provider::ValueAsProviderLike;
 
 #[derive(Debug, buck2_error::Error)]
 #[buck2(tag = Input)]
@@ -111,32 +122,63 @@ impl<'v, V: ValueLike<'v>> BazelDepsetGen<'v, V> {
         self.element_type.as_deref()
     }
 
-    fn collect_to_list(&self, values: &mut Vec<Value<'v>>) -> starlark::Result<()> {
+    fn collect_to_list(
+        &self,
+        values: &mut Vec<Value<'v>>,
+        seen_values: &mut SmallSet<Value<'v>>,
+        seen_depsets: &mut SmallSet<Value<'v>>,
+    ) -> starlark::Result<()> {
         match self.order {
             BazelDepsetOrder::Default | BazelDepsetOrder::Postorder => {
-                self.collect_transitive(values)?;
-                self.collect_direct(values)?;
+                self.collect_transitive(values, seen_values, seen_depsets)?;
+                self.collect_direct(values, seen_values)?;
             }
             BazelDepsetOrder::Preorder | BazelDepsetOrder::Topological => {
-                self.collect_direct(values)?;
-                self.collect_transitive(values)?;
+                self.collect_direct(values, seen_values)?;
+                self.collect_transitive(values, seen_values, seen_depsets)?;
             }
         }
         Ok(())
     }
 
-    fn collect_transitive(&self, values: &mut Vec<Value<'v>>) -> starlark::Result<()> {
+    fn collect_transitive(
+        &self,
+        values: &mut Vec<Value<'v>>,
+        seen_values: &mut SmallSet<Value<'v>>,
+        seen_depsets: &mut SmallSet<Value<'v>>,
+    ) -> starlark::Result<()> {
         for transitive in &self.transitive {
-            depset_from_value(transitive.to_value())?.collect_to_list(values)?;
+            let transitive = transitive.to_value();
+            if seen_depsets.insert_hashed(bazel_depset_identity_hash(transitive)) {
+                depset_from_value(transitive)?.collect_to_list(
+                    values,
+                    seen_values,
+                    seen_depsets,
+                )?;
+            }
         }
         Ok(())
     }
 
-    fn collect_direct(&self, values: &mut Vec<Value<'v>>) -> starlark::Result<()> {
+    fn collect_direct(
+        &self,
+        values: &mut Vec<Value<'v>>,
+        seen: &mut SmallSet<Value<'v>>,
+    ) -> starlark::Result<()> {
         for value in &self.direct {
-            push_unique(values, value.to_value())?;
+            let value = value.to_value();
+            if seen.insert_hashed(Hashed::new_unchecked(bazel_depset_hash(value)?, value)) {
+                values.push(value);
+            }
         }
         Ok(())
+    }
+
+    fn is_empty(&self) -> bool {
+        self.direct.is_empty()
+            && self.transitive.iter().all(|transitive| {
+                depset_from_value(transitive.to_value()).map_or(false, BazelDepsetGen::is_empty)
+            })
     }
 }
 
@@ -164,6 +206,10 @@ where
         static RES: MethodsStatic = MethodsStatic::new();
         RES.methods_for_type::<Self::Canonical>(bazel_depset_methods)
     }
+
+    fn to_bool(&self) -> bool {
+        !self.is_empty()
+    }
 }
 
 fn depset_from_value<'v>(value: Value<'v>) -> starlark::Result<&'v BazelDepset<'v>> {
@@ -178,20 +224,94 @@ fn depset_from_value<'v>(value: Value<'v>) -> starlark::Result<&'v BazelDepset<'
     )
 }
 
-pub(crate) fn bazel_depset_to_list<'v>(value: Value<'v>) -> starlark::Result<Vec<Value<'v>>> {
-    let mut values = Vec::new();
-    depset_from_value(value)?.collect_to_list(&mut values)?;
-    Ok(values)
+fn bazel_depset_identity_hash<'v>(value: Value<'v>) -> Hashed<Value<'v>> {
+    Hashed::new_unchecked(StarlarkHashValue::new(&value.identity()), value)
 }
 
-fn push_unique<'v>(values: &mut Vec<Value<'v>>, value: Value<'v>) -> starlark::Result<()> {
-    for existing in values.iter().copied() {
-        if existing.equals(value)? {
-            return Ok(());
-        }
+fn bazel_depset_hash<'v>(value: Value<'v>) -> starlark::Result<StarlarkHashValue> {
+    if let Ok(hash) = value.get_hashed() {
+        return Ok(hash.hash());
     }
-    values.push(value);
+
+    let mut hasher = StarlarkHasher::new();
+    bazel_depset_write_hash(value, &mut hasher)?;
+    Ok(hasher.finish_small())
+}
+
+fn bazel_depset_write_hash<'v>(
+    value: Value<'v>,
+    hasher: &mut StarlarkHasher,
+) -> starlark::Result<()> {
+    if let Some(list) = ListRef::from_value(value) {
+        "bazel_depset_list".hash(hasher);
+        list.content().len().hash(hasher);
+        for item in list.iter() {
+            bazel_depset_hash(item)?.get().hash(hasher);
+        }
+        return Ok(());
+    }
+
+    if let Some(tuple) = TupleRef::from_value(value) {
+        "bazel_depset_tuple".hash(hasher);
+        tuple.content().len().hash(hasher);
+        for item in tuple.iter() {
+            bazel_depset_hash(item)?.get().hash(hasher);
+        }
+        return Ok(());
+    }
+
+    if let Some(dict) = DictRef::from_value(value) {
+        "bazel_depset_dict".hash(hasher);
+        let mut entries = Vec::new();
+        for (key, value) in dict.iter() {
+            entries.push((
+                bazel_depset_hash(key)?.get(),
+                bazel_depset_hash(value)?.get(),
+            ));
+        }
+        entries.sort_unstable();
+        entries.len().hash(hasher);
+        entries.hash(hasher);
+        return Ok(());
+    }
+
+    if let Some(st) = StructRef::from_value(value) {
+        "bazel_depset_struct".hash(hasher);
+        let mut entries = Vec::new();
+        for (name, value) in st.iter() {
+            entries.push((name.as_str(), bazel_depset_hash(value)?.get()));
+        }
+        entries.sort_unstable();
+        entries.len().hash(hasher);
+        entries.hash(hasher);
+        return Ok(());
+    }
+
+    if let Some(provider) = ValueAsProviderLike::unpack(value) {
+        "bazel_depset_provider".hash(hasher);
+        provider.0.id().hash(hasher);
+        let mut entries = Vec::new();
+        for (name, value) in provider.0.items() {
+            entries.push((name, bazel_depset_hash(value)?.get()));
+        }
+        entries.sort_unstable();
+        entries.len().hash(hasher);
+        entries.hash(hasher);
+        return Ok(());
+    }
+
+    "bazel_depset_identity".hash(hasher);
+    value.identity().hash(hasher);
     Ok(())
+}
+
+pub fn bazel_depset_to_list<'v>(value: Value<'v>) -> starlark::Result<Vec<Value<'v>>> {
+    let mut values = Vec::new();
+    let mut seen_values = SmallSet::new();
+    let mut seen_depsets = SmallSet::new();
+    seen_depsets.insert_hashed(bazel_depset_identity_hash(value));
+    depset_from_value(value)?.collect_to_list(&mut values, &mut seen_values, &mut seen_depsets)?;
+    Ok(values)
 }
 
 fn check_element_type(element_type: &mut Option<String>, value: Value) -> buck2_error::Result<()> {
@@ -253,7 +373,9 @@ pub(crate) fn bazel_depset_empty_frozen(heap: &FrozenHeap) -> FrozenValue {
 fn bazel_depset_methods(builder: &mut MethodsBuilder) {
     fn to_list<'v>(this: &BazelDepset<'v>, heap: Heap<'v>) -> starlark::Result<Value<'v>> {
         let mut values = Vec::new();
-        this.collect_to_list(&mut values)?;
+        let mut seen_values = SmallSet::new();
+        let mut seen_depsets = SmallSet::new();
+        this.collect_to_list(&mut values, &mut seen_values, &mut seen_depsets)?;
         Ok(heap.alloc(values))
     }
 }

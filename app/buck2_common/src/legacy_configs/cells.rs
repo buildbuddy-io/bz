@@ -91,6 +91,7 @@ use crate::legacy_configs::aggregator::CellsAggregator;
 use crate::legacy_configs::args::ResolvedLegacyConfigArg;
 use crate::legacy_configs::args::resolve_config_args;
 use crate::legacy_configs::args::to_proto_config_args;
+use crate::legacy_configs::configs::BazelCompatBazelrcOptions;
 use crate::legacy_configs::configs::BazelCompatCellAlias;
 use crate::legacy_configs::configs::BazelCompatExternalModule;
 use crate::legacy_configs::configs::BazelCompatGeneratedModule;
@@ -360,16 +361,25 @@ impl BuckConfigBasedCells {
             follow_includes,
         )
         .await?;
+        let apply_bazel_project_defaults = !is_bzlmod_cell
+            && cell_name.as_str() != "bazel_tools"
+            && should_apply_bazel_compat_defaults(cell_path, file_ops).await?;
         let config = if is_bzlmod_cell
             || cell_name.as_str() == "bazel_tools"
-            || should_apply_bazel_compat_defaults(cell_path, file_ops).await?
+            || apply_bazel_project_defaults
         {
             let module_aliases =
                 get_bazel_module_resolution_for_external_data(file_ops, &self.external_data)
                     .await?;
+            let bazelrc_options = if apply_bazel_project_defaults {
+                get_bazelrc_options(cell_path, file_ops).await?
+            } else {
+                BazelCompatBazelrcOptions::default()
+            };
             config.with_bazel_compat_cell_defaults(
                 module_aliases.aliases_for_cell(cell_name.as_str()),
                 &module_aliases.registered_toolchains,
+                &bazelrc_options,
             )
         } else {
             config
@@ -530,12 +540,14 @@ impl BuckConfigBasedCells {
                 )
                 .await?,
             );
+            let bazelrc_options = get_bazelrc_options(&root_path, &mut file_ops).await?;
             bzlmod_module_extension_evaluation_requests =
                 module_aliases.module_extension_evaluation_requests.clone();
             let root_config = root_config.with_bazel_compat_defaults(
                 module_aliases.aliases_for_cell("root"),
                 &module_aliases.external_modules,
                 &module_aliases.registered_toolchains,
+                &bazelrc_options,
             );
             bzlmod_module_aliases = Some(module_aliases);
             root_config
@@ -723,15 +735,21 @@ impl BuckConfigBasedCells {
         )
         .await?;
 
-        if is_bzlmod_cell
-            || cell_name == "bazel_tools"
-            || should_apply_bazel_compat_defaults(cell_path, file_ops).await?
-        {
+        let apply_bazel_project_defaults = !is_bzlmod_cell
+            && cell_name != "bazel_tools"
+            && should_apply_bazel_compat_defaults(cell_path, file_ops).await?;
+        if is_bzlmod_cell || cell_name == "bazel_tools" || apply_bazel_project_defaults {
             let module_aliases =
                 get_bazel_module_resolution_for_external_data(file_ops, external_data).await?;
+            let bazelrc_options = if apply_bazel_project_defaults {
+                get_bazelrc_options(cell_path, file_ops).await?
+            } else {
+                BazelCompatBazelrcOptions::default()
+            };
             Ok(config.with_bazel_compat_cell_defaults(
                 module_aliases.aliases_for_cell(cell_name),
                 &module_aliases.registered_toolchains,
+                &bazelrc_options,
             ))
         } else {
             Ok(config)
@@ -973,6 +991,280 @@ async fn should_apply_bazel_compat_defaults(
     }
 
     Ok(false)
+}
+
+#[derive(Debug)]
+struct BazelrcRecord {
+    command: String,
+    args: Vec<String>,
+}
+
+fn bazelrc_tokenize(line: &str) -> Vec<String> {
+    let mut words = Vec::new();
+    let mut word = String::new();
+    let mut quote = None;
+    let mut escaped = false;
+    for c in line.chars() {
+        if escaped {
+            word.push(c);
+            escaped = false;
+            continue;
+        }
+        if c == '\\' {
+            escaped = true;
+            continue;
+        }
+        if let Some(quote_char) = quote {
+            if c == quote_char {
+                quote = None;
+            } else {
+                word.push(c);
+            }
+            continue;
+        }
+        match c {
+            '#' => break,
+            '\'' | '"' => quote = Some(c),
+            c if c.is_whitespace() => {
+                if !word.is_empty() {
+                    words.push(std::mem::take(&mut word));
+                }
+            }
+            _ => word.push(c),
+        }
+    }
+    if !word.is_empty() {
+        words.push(word);
+    }
+    words
+}
+
+fn bazelrc_import_path(
+    root_path: &CellRootPath,
+    current_path: &ConfigPath,
+    import_path: &str,
+) -> buck2_error::Result<ConfigPath> {
+    if let Some(path) = import_path.strip_prefix("%workspace%/") {
+        return Ok(ConfigPath::Project(
+            root_path
+                .as_project_relative_path()
+                .join(ForwardRelativePath::new(path)?),
+        ));
+    }
+    if import_path == "%workspace%" {
+        return Ok(ConfigPath::Project(
+            root_path.as_project_relative_path().to_buf(),
+        ));
+    }
+    current_path.join_to_parent_normalized(RelativePath::new(import_path))
+}
+
+fn collect_bazelrc_records<'a>(
+    root_path: &'a CellRootPath,
+    file_ops: &'a mut dyn ConfigParserFileOps,
+    path: ConfigPath,
+    required: bool,
+    visited: &'a mut BTreeSet<String>,
+    records: &'a mut Vec<BazelrcRecord>,
+) -> BoxFuture<'a, buck2_error::Result<()>> {
+    async move {
+        let key = path.to_string();
+        if !visited.insert(key) {
+            return Ok(());
+        }
+        let Some(lines) = file_ops.read_file_lines_if_exists(&path).await? else {
+            if required {
+                return Err(buck2_error!(
+                    buck2_error::ErrorTag::Input,
+                    "Bazel rc file `{}` does not exist",
+                    path
+                ));
+            }
+            return Ok(());
+        };
+        for line in lines {
+            let words = bazelrc_tokenize(&line);
+            let Some((directive, args)) = words.split_first() else {
+                continue;
+            };
+            match directive.as_str() {
+                "import" | "try-import" => {
+                    let Some(import_path) = args.first() else {
+                        continue;
+                    };
+                    let import_path = bazelrc_import_path(root_path, &path, import_path)?;
+                    collect_bazelrc_records(
+                        root_path,
+                        file_ops,
+                        import_path,
+                        directive == "import",
+                        visited,
+                        records,
+                    )
+                    .await?;
+                }
+                _ => records.push(BazelrcRecord {
+                    command: directive.clone(),
+                    args: args.to_vec(),
+                }),
+            }
+        }
+        Ok(())
+    }
+    .boxed()
+}
+
+fn bazelrc_host_config() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "macos"
+    } else if cfg!(target_os = "linux") {
+        "linux"
+    } else if cfg!(target_os = "windows") {
+        "windows"
+    } else {
+        ""
+    }
+}
+
+fn bazelrc_record_applies(record: &BazelrcRecord, active_configs: &BTreeSet<String>) -> bool {
+    let (command, config) = record
+        .command
+        .split_once(':')
+        .map_or((record.command.as_str(), ""), |(command, config)| {
+            (command, config)
+        });
+    if command != "common" && command != "build" {
+        return false;
+    }
+    config.is_empty() || active_configs.contains(config)
+}
+
+fn bazelrc_arg_value(args: &[String], index: &mut usize, name: &str) -> Option<String> {
+    let arg = &args[*index];
+    let prefix = format!("{name}=");
+    if let Some(value) = arg.strip_prefix(&prefix) {
+        return Some(value.to_owned());
+    }
+    if arg == name {
+        *index += 1;
+        return args.get(*index).cloned();
+    }
+    None
+}
+
+fn bazelrc_add_options(
+    options: &mut BazelCompatBazelrcOptions,
+    args: &[String],
+    collect_options: bool,
+    active_configs: &mut BTreeSet<String>,
+) -> bool {
+    let mut changed = false;
+    let mut index = 0;
+    while index < args.len() {
+        if let Some(config) = bazelrc_arg_value(args, &mut index, "--config") {
+            changed |= active_configs.insert(config);
+        } else if collect_options {
+            if let Some(value) = bazelrc_arg_value(args, &mut index, "--copt") {
+                options.copt.push(value);
+            } else if let Some(value) = bazelrc_arg_value(args, &mut index, "--conlyopt") {
+                options.conlyopt.push(value);
+            } else if let Some(value) = bazelrc_arg_value(args, &mut index, "--cxxopt") {
+                options.cxxopt.push(value);
+            } else if let Some(value) = bazelrc_arg_value(args, &mut index, "--host_copt") {
+                options.host_copt.push(value);
+            } else if let Some(value) = bazelrc_arg_value(args, &mut index, "--host_conlyopt") {
+                options.host_conlyopt.push(value);
+            } else if let Some(value) = bazelrc_arg_value(args, &mut index, "--host_cxxopt") {
+                options.host_cxxopt.push(value);
+            } else if let Some(value) = bazelrc_arg_value(args, &mut index, "--per_file_copt") {
+                options.per_file_copt.push(value);
+            }
+        }
+        index += 1;
+    }
+    changed
+}
+
+fn bazelrc_options_from_records(records: &[BazelrcRecord]) -> BazelCompatBazelrcOptions {
+    let mut enable_platform_specific_config = false;
+    for record in records {
+        let (command, config) = record
+            .command
+            .split_once(':')
+            .map_or((record.command.as_str(), ""), |(command, config)| {
+                (command, config)
+            });
+        if (command == "common" || command == "build") && config.is_empty() {
+            for arg in &record.args {
+                if arg == "--enable_platform_specific_config"
+                    || arg == "--enable_platform_specific_config=true"
+                {
+                    enable_platform_specific_config = true;
+                } else if arg == "--noenable_platform_specific_config"
+                    || arg == "--enable_platform_specific_config=false"
+                {
+                    enable_platform_specific_config = false;
+                }
+            }
+        }
+    }
+
+    let mut active_configs = BTreeSet::new();
+    if enable_platform_specific_config {
+        let host_config = bazelrc_host_config();
+        if !host_config.is_empty() {
+            active_configs.insert(host_config.to_owned());
+        }
+    }
+
+    loop {
+        let mut changed = false;
+        let mut ignored_options = BazelCompatBazelrcOptions::default();
+        for record in records {
+            if bazelrc_record_applies(record, &active_configs) {
+                changed |= bazelrc_add_options(
+                    &mut ignored_options,
+                    &record.args,
+                    false,
+                    &mut active_configs,
+                );
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+
+    let mut options = BazelCompatBazelrcOptions::default();
+    for record in records {
+        if bazelrc_record_applies(record, &active_configs) {
+            bazelrc_add_options(&mut options, &record.args, true, &mut active_configs);
+        }
+    }
+    options
+}
+
+async fn get_bazelrc_options(
+    cell_path: &CellRootPath,
+    file_ops: &mut dyn ConfigParserFileOps,
+) -> buck2_error::Result<BazelCompatBazelrcOptions> {
+    let root_bazelrc = ConfigPath::Project(
+        cell_path
+            .as_project_relative_path()
+            .join(ForwardRelativePath::new(".bazelrc")?),
+    );
+    let mut visited = BTreeSet::new();
+    let mut records = Vec::new();
+    collect_bazelrc_records(
+        cell_path,
+        file_ops,
+        root_bazelrc,
+        false,
+        &mut visited,
+        &mut records,
+    )
+    .await?;
+    Ok(bazelrc_options_from_records(&records))
 }
 
 async fn get_bazel_module_resolution_for_external_data(

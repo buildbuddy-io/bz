@@ -11,6 +11,7 @@
 use std::ffi::OsStr;
 use std::ffi::OsString;
 use std::ops::ControlFlow;
+use std::path::Path;
 use std::process::Command;
 use std::sync::Arc;
 use std::time::Duration;
@@ -895,12 +896,19 @@ impl LocalExecutor {
         let mut total_hashing_time = Duration::ZERO;
         let mut total_hashed_outputs = 0;
         for output in request.outputs() {
+            let produced_path = output
+                .resolve_for_execution(
+                    &self.artifact_fs,
+                    Some(&ContentBasedPathHash::for_output_artifact()),
+                )?
+                .into_path();
             let path = output
                 .resolve(
                     &self.artifact_fs,
                     Some(&ContentBasedPathHash::for_output_artifact()),
                 )?
                 .into_path();
+            promote_produced_output_path(&self.artifact_fs, &produced_path, &path)?;
             let abspath = self.root.join(&path);
             let (entry, hashing_info) = build_entry_from_disk(
                 abspath,
@@ -1335,6 +1343,101 @@ pub struct MaterializedInputPaths {
     pub paths: Vec<ProjectRelativePathBuf>,
 }
 
+fn materialize_artifact_path_alias(
+    artifact_fs: &ArtifactFs,
+    source_path: &ProjectRelativePath,
+    path: &ProjectRelativePath,
+) -> buck2_error::Result<()> {
+    let fs = artifact_fs.fs();
+    let source = fs.resolve(source_path);
+    let dest = fs.resolve(path);
+    if artifact_path_alias_is_current(&dest, &source) {
+        return Ok(());
+    }
+
+    if let Some(parent) = dest.parent() {
+        fs_util::create_dir_all(parent).with_buck_error_context(|| {
+            format!("Error creating parent directory for artifact path alias `{path}`")
+        })?;
+    }
+
+    match fs_util::symlink(&source, &dest).categorize_internal() {
+        Ok(()) => Ok(()),
+        Err(e) if artifact_path_alias_is_current(&dest, &source) => Ok(()),
+        Err(_) => {
+            CleanOutputPaths::clean(std::iter::once(path), fs)?;
+            match fs_util::symlink(&source, &dest).categorize_internal() {
+                Ok(()) => Ok(()),
+                Err(e) if artifact_path_alias_is_current(&dest, &source) => Ok(()),
+                Err(e) => Err(e).with_buck_error_context(|| {
+                    format!("Error creating artifact path alias `{path}` -> `{source_path}`")
+                }),
+            }
+        }
+    }
+}
+
+fn artifact_path_alias_is_current(dest: &AbsNormPathBuf, source: &AbsNormPathBuf) -> bool {
+    fs_util::read_link(dest)
+        .map(|target| artifact_path_alias_target_matches(dest, source, &target))
+        .unwrap_or(false)
+}
+
+fn artifact_path_alias_target_matches(
+    dest: &AbsNormPathBuf,
+    source: &AbsNormPathBuf,
+    target: &Path,
+) -> bool {
+    if target == source.as_path() {
+        return true;
+    }
+
+    if target.is_absolute() {
+        return AbsNormPathBuf::new(target.to_owned())
+            .map(|target| target.as_path() == source.as_path())
+            .unwrap_or(false);
+    }
+
+    let Some(parent) = dest.parent() else {
+        return false;
+    };
+    fs_util::relative_path_from_system(target)
+        .and_then(|target| parent.join_normalized(target.as_ref()))
+        .map(|target| target.as_path() == source.as_path())
+        .unwrap_or(false)
+}
+
+fn promote_produced_output_path(
+    artifact_fs: &ArtifactFs,
+    produced_path: &ProjectRelativePath,
+    output_path: &ProjectRelativePath,
+) -> buck2_error::Result<()> {
+    if produced_path == output_path {
+        return Ok(());
+    }
+
+    let fs = artifact_fs.fs();
+    let produced = fs.resolve(produced_path);
+    if !fs_util::try_exists(&produced)? {
+        return Ok(());
+    }
+
+    CleanOutputPaths::clean(std::iter::once(output_path), fs)?;
+    let output = fs.resolve(output_path);
+    if let Some(parent) = output.parent() {
+        fs_util::create_dir_all(parent).with_buck_error_context(|| {
+            format!("Error creating parent directory for output path `{output_path}`")
+        })?;
+    }
+    fs_util::rename(&produced, &output)
+        .categorize_internal()
+        .with_buck_error_context(|| {
+            format!("Error moving produced output `{produced_path}` to `{output_path}`")
+        })?;
+
+    Ok(())
+}
+
 /// Materialize all inputs artifact for CommandExecutionRequest so the command can be executed
 /// locally.
 ///
@@ -1349,6 +1452,7 @@ pub async fn materialize_inputs(
     let mut paths = vec![];
     let mut scratch = ScratchPath(None);
     let mut configuration_path_to_content_based_path_symlinks = vec![];
+    let mut artifact_path_aliases = vec![];
 
     for input in request.inputs().iter().chain(
         request
@@ -1392,6 +1496,11 @@ pub async fn materialize_inputs(
                     }
                 }
             }
+            CommandExecutionInput::ArtifactPathAlias {
+                source_path, path, ..
+            } => {
+                artifact_path_aliases.push((source_path.clone(), path.clone()));
+            }
             CommandExecutionInput::ActionMetadata(metadata) => {
                 let path = artifact_fs
                     .buck_out_path_resolver()
@@ -1420,7 +1529,6 @@ pub async fn materialize_inputs(
             .map(|(path, value)| materializer.declare_copy(path, value, vec![], None)),
     )
     .await?;
-
     let mut stream = materializer.materialize_many(paths.clone()).await?;
     while let Some(res) = stream.next().await {
         match res {
@@ -1441,6 +1549,10 @@ pub async fn materialize_inputs(
                 return Err(e.into());
             }
         }
+    }
+
+    for (source_path, path) in artifact_path_aliases {
+        materialize_artifact_path_alias(artifact_fs, source_path.as_ref(), path.as_ref())?;
     }
 
     Ok(MaterializedInputPaths { scratch, paths })
@@ -1493,6 +1605,20 @@ async fn check_inputs(
                                 );
                             }
                         }
+                    }
+                    CommandExecutionInput::ArtifactPathAlias { path, .. } => {
+                        let abs_path = artifact_fs.fs().resolve(path);
+
+                        // We ignore the result here because while we want to tag it, we'd
+                        // prefer to just show the normal error to the user, so we don't
+                        // want to propagate it.
+                        let _ignored = tag_result!(
+                            "missing_local_inputs",
+                            fs_util::symlink_metadata(&abs_path).categorize_internal().buck_error_context("Missing input"),
+                            quiet: true,
+                            task: false,
+                            daemon_materializer_state_is_corrupted: true
+                        );
                     }
                     CommandExecutionInput::ActionMetadata(..) => {
                         // Ignore those here.
@@ -1566,10 +1692,15 @@ pub async fn create_output_dirs(
     let outputs: Vec<_> = request
         .outputs()
         .map(|output| {
-            output.resolve(
+            let produced = output.resolve_for_execution(
                 artifact_fs,
                 Some(&ContentBasedPathHash::for_output_artifact()),
-            )
+            )?;
+            let declared = output.resolve(
+                artifact_fs,
+                Some(&ContentBasedPathHash::for_output_artifact()),
+            )?;
+            Ok((produced, declared))
         })
         .collect::<buck2_error::Result<Vec<_>>>()?;
 
@@ -1578,7 +1709,13 @@ pub async fn create_output_dirs(
     // different outputs with a different materialization method that will become invalid
     // now. However, nothing should reference those stale outputs, so while this does not
     // do a good job of cleaning up garbage, it prevents using invalid artifacts.
-    let output_paths = outputs.map(|output| output.path.to_owned());
+    let mut output_paths = Vec::new();
+    for (produced, declared) in &outputs {
+        output_paths.push(produced.path().to_owned());
+        if produced.path() != declared.path() {
+            output_paths.push(declared.path().to_owned());
+        }
+    }
     materializer.invalidate_many(output_paths.clone()).await?;
 
     if request.outputs_cleanup {
@@ -1595,8 +1732,13 @@ pub async fn create_output_dirs(
     }
 
     let project_fs = artifact_fs.fs();
-    for output in outputs {
-        if let Some(path) = output.path_to_create() {
+    for (produced, declared) in outputs {
+        if let Some(path) = produced.path_to_create() {
+            fs_util::create_dir_all(project_fs.resolve(path))?;
+        }
+        if produced.path() != declared.path()
+            && let Some(path) = declared.path_to_create()
+        {
             fs_util::create_dir_all(project_fs.resolve(path))?;
         }
     }

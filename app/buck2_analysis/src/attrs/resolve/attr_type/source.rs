@@ -13,6 +13,7 @@ use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact::Starla
 use buck2_core::package::source_path::SourcePath;
 use buck2_core::provider::label::ConfiguredProvidersLabel;
 use buck2_node::attrs::attr_type::source::SourceAttrType;
+use buck2_node::attrs::coerced_path::CoercedPath;
 use starlark::values::Value;
 use starlark::values::list::ListRef;
 
@@ -29,9 +30,16 @@ pub(crate) trait SourceAttrTypeExt {
     fn resolve_single_file<'v>(
         ctx: &mut dyn AttrResolutionContext<'v>,
         path: SourcePath,
+        source_is_directory: bool,
     ) -> Value<'v> {
-        ctx.heap()
-            .alloc(StarlarkArtifact::new(SourceArtifact::new(path).into()))
+        ctx.heap().alloc(StarlarkArtifact::new_source(
+            SourceArtifact::new(path).into(),
+            source_is_directory,
+        ))
+    }
+
+    fn source_is_directory(path: &CoercedPath) -> bool {
+        matches!(path, CoercedPath::Directory(_))
     }
 
     fn resolve_label<'v>(

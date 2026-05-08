@@ -20,6 +20,7 @@ use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact::Starla
 use buck2_build_api::interpreter::rule_defs::artifact::starlark_declared_artifact::StarlarkDeclaredArtifact;
 use buck2_build_api::interpreter::rule_defs::cmd_args::value::FrozenCommandLineArg;
 use buck2_build_api::interpreter::rule_defs::context::AnalysisContext;
+use buck2_build_api::interpreter::rule_defs::context::BazelCppOptions;
 use buck2_build_api::interpreter::rule_defs::provider::builtin::bazel_output_file_info::FrozenBazelOutputFileInfo;
 use buck2_build_api::interpreter::rule_defs::provider::builtin::bazel_output_file_info::new_bazel_output_file_info;
 use buck2_build_api::interpreter::rule_defs::provider::builtin::default_info::DefaultInfo;
@@ -32,6 +33,10 @@ use buck2_build_api::interpreter::rule_defs::provider::collection::FrozenProvide
 use buck2_build_api::interpreter::rule_defs::provider::collection::ProviderCollection;
 use buck2_build_api::validation::transitive_validations::TransitiveValidations;
 use buck2_build_api::validation::transitive_validations::TransitiveValidationsData;
+use buck2_common::legacy_configs::dice::HasLegacyConfigs;
+use buck2_common::legacy_configs::key::BuckconfigKeyRef;
+use buck2_common::legacy_configs::view::LegacyBuckConfigView;
+use buck2_common::package_listing::dice::DicePackageListingResolver;
 use buck2_core::deferred::base_deferred_key::BaseDeferredKey;
 use buck2_core::execution_types::execution::ExecutionPlatformResolution;
 use buck2_core::fs::buck_out_path::BuckOutPathKind;
@@ -52,6 +57,7 @@ use buck2_interpreter::factory::BuckStarlarkModule;
 use buck2_interpreter::factory::StarlarkEvaluatorProvider;
 use buck2_interpreter::print_handler::EventDispatcherPrintHandler;
 use buck2_interpreter::soft_error::Buck2StarlarkSoftErrorHandler;
+use buck2_interpreter::types::rule::FROZEN_BAZEL_ASPECTS_GET_IMPL;
 use buck2_interpreter::types::rule::FROZEN_PROMISE_ARTIFACT_MAPPINGS_GET_IMPL;
 use buck2_interpreter::types::rule::FROZEN_RULE_GET_IMPL;
 use buck2_node::attrs::configured_attr::ConfiguredAttr;
@@ -203,6 +209,11 @@ pub trait RuleSpec: Sync {
         &self,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> buck2_error::Result<SmallMap<String, Value<'v>>>;
+
+    fn bazel_aspects<'v>(
+        &self,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> buck2_error::Result<Vec<Value<'v>>>;
 }
 
 /// Container for the environment that analysis implementation functions should run in
@@ -300,6 +311,11 @@ async fn run_bazel_input_file_analysis_underlying(
             BaseDeferredKey::TargetLabel(label.dupe()),
             execution_platform.dupe(),
         )?;
+        let path = PackageRelativePath::new(label.unconfigured().name().as_str())?.to_arc();
+        let package_listing = DicePackageListingResolver(dice)
+            .resolve_package_listing(label.unconfigured().pkg().dupe())
+            .await?;
+        let source_is_directory = package_listing.get_dir(&path).is_some();
 
         let eval_kind = StarlarkEvalKind::Analysis(label.dupe());
         let eval_provider = StarlarkEvaluatorProvider::new(dice, eval_kind).await?;
@@ -310,10 +326,12 @@ async fn run_bazel_input_file_analysis_underlying(
             eval.set_print_handler(&print);
             eval.set_soft_error_handler(&Buck2StarlarkSoftErrorHandler);
 
-            let path = PackageRelativePath::new(label.unconfigured().name().as_str())?.to_arc();
             let source =
                 SourceArtifact::new(SourcePath::new(label.unconfigured().pkg().dupe(), path));
-            let source = eval.heap().alloc(StarlarkArtifact::new(source.into()));
+            let source = eval.heap().alloc(StarlarkArtifact::new_source(
+                source.into(),
+                source_is_directory,
+            ));
             let default_info = eval
                 .heap()
                 .alloc(DefaultInfo::with_default_outputs(eval.heap(), [source]));
@@ -486,8 +504,7 @@ fn declare_bazel_output_artifact<'v>(
     output_path: &str,
 ) -> buck2_error::Result<Value<'v>> {
     let output_path = normalize_bazel_output_path(output_path);
-    let artifact = registry.declare_output(
-        None,
+    let artifact = registry.declare_bazel_predeclared_output(
         output_path,
         OutputType::File,
         None,
@@ -669,11 +686,62 @@ fn run_analysis_with_env<'a, 'd: 'a>(
     unsafe { UnsafeSendFuture::new_encapsulates_starlark(fut) }
 }
 
+fn bazel_config_list(value: Option<Arc<str>>) -> Vec<String> {
+    value
+        .as_deref()
+        .map(|value| {
+            value
+                .split('\n')
+                .filter(|value| !value.is_empty())
+                .map(|value| value.to_owned())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+async fn bazel_cpp_options(
+    dice: &mut DiceComputations<'_>,
+) -> buck2_error::Result<BazelCppOptions> {
+    let root_config = dice.get_legacy_root_config_on_dice().await?;
+    let mut config = root_config.view(dice);
+    Ok(BazelCppOptions {
+        copt: bazel_config_list(config.get(BuckconfigKeyRef {
+            section: "bazel",
+            property: "copt",
+        })?),
+        conlyopt: bazel_config_list(config.get(BuckconfigKeyRef {
+            section: "bazel",
+            property: "conlyopt",
+        })?),
+        cxxopt: bazel_config_list(config.get(BuckconfigKeyRef {
+            section: "bazel",
+            property: "cxxopt",
+        })?),
+        host_copt: bazel_config_list(config.get(BuckconfigKeyRef {
+            section: "bazel",
+            property: "host_copt",
+        })?),
+        host_conlyopt: bazel_config_list(config.get(BuckconfigKeyRef {
+            section: "bazel",
+            property: "host_conlyopt",
+        })?),
+        host_cxxopt: bazel_config_list(config.get(BuckconfigKeyRef {
+            section: "bazel",
+            property: "host_cxxopt",
+        })?),
+        per_file_copt: bazel_config_list(config.get(BuckconfigKeyRef {
+            section: "bazel",
+            property: "per_file_copt",
+        })?),
+    })
+}
+
 async fn run_analysis_with_env_underlying(
     dice: &mut DiceComputations<'_>,
     analysis_env: AnalysisEnv<'_>,
     node: ConfiguredTargetNodeRef<'_>,
 ) -> buck2_error::Result<(AnalysisResult, Option<AnalysisSplitInstants>)> {
+    let bazel_cpp_options = bazel_cpp_options(dice).await?;
     BuckStarlarkModule::with_profiling_async(async move |env| {
         let print = EventDispatcherPrintHandler(get_dispatcher());
 
@@ -731,6 +799,13 @@ async fn run_analysis_with_env_underlying(
             let mut registry = registry;
             let (outputs, output_file_info) =
                 declare_bazel_predeclared_outputs(eval, &mut registry, attributes, node)?;
+            let package = node.buildfile_path().package();
+            let package = package.cell_relative_path().as_str();
+            let build_file_path = if package.is_empty() {
+                node.buildfile_path().filename().as_str().to_owned()
+            } else {
+                format!("{}/{}", package, node.buildfile_path().filename().as_str())
+            };
 
             let ctx = AnalysisContext::prepare(
                 eval.heap(),
@@ -740,7 +815,10 @@ async fn run_analysis_with_env_underlying(
                 Some(plugins.into()),
                 node.bazel_toolchains().to_vec(),
                 resolved_toolchains,
+                bazel_cpp_options,
                 node.is_bazel_build_setting(),
+                Some(build_file_path),
+                Some(node.rule_type().name().to_owned()),
                 registry,
                 dice.global_data().get_digest_config(),
             );
@@ -766,15 +844,28 @@ async fn run_analysis_with_env_underlying(
             None
         };
 
-        // Pull the ctx object back out, and steal ctx.action's state back
+        // TODO: Convert the ValueError from `try_from_value` better than just printing its Debug
+        let mut res_typed = reentrant_eval.with_evaluator(|eval| {
+            let mut res_typed = if node.is_bazel_rule() {
+                ProviderCollection::try_from_value_bazel_rule(list_res, eval.heap())?
+            } else {
+                ProviderCollection::try_from_value(list_res)?
+            };
+            if node.is_bazel_rule() {
+                let target = eval.heap().alloc(res_typed.shallow_clone());
+                for aspect in analysis_env.rule_spec.bazel_aspects(eval)? {
+                    let aspect_res = eval.eval_function(aspect, &[target, ctx.to_value()], &[])?;
+                    let aspect_providers =
+                        ProviderCollection::try_from_value_bazel_aspect(aspect_res)?;
+                    res_typed.extend_from(aspect_providers)?;
+                }
+            }
+            buck2_error::Ok(res_typed)
+        })?;
+
+        // Pull the ctx object back out, and steal ctx.action's state back.
         let analysis_registry = ctx.take_state();
 
-        // TODO: Convert the ValueError from `try_from_value` better than just printing its Debug
-        let mut res_typed = if node.is_bazel_rule() {
-            ProviderCollection::try_from_value_bazel_rule(list_res, env.heap())?
-        } else {
-            ProviderCollection::try_from_value(list_res)?
-        };
         if let Some(output_file_info) = output_file_info {
             res_typed.insert_provider(output_file_info)?;
         }
@@ -905,6 +996,18 @@ pub fn get_user_defined_rule_spec(
             eval: &mut Evaluator<'v, '_, '_>,
         ) -> buck2_error::Result<SmallMap<String, Value<'v>>> {
             promise_artifact_mappings(eval, &self.module, &self.name)
+        }
+
+        fn bazel_aspects<'v>(
+            &self,
+            eval: &mut Evaluator<'v, '_, '_>,
+        ) -> buck2_error::Result<Vec<Value<'v>>> {
+            let rule_callable = get_rule_callable(eval, &self.module, &self.name)?;
+            let aspects = (FROZEN_BAZEL_ASPECTS_GET_IMPL.get()?)(rule_callable)?;
+            Ok(aspects
+                .into_iter()
+                .map(|aspect| aspect.to_value())
+                .collect())
         }
     }
 

@@ -19,6 +19,8 @@ use allocative::Allocative;
 use buck2_build_api::actions::artifact::get_artifact_fs::GetArtifactFs;
 use buck2_build_api::analysis::registry::AnalysisRegistry;
 use buck2_build_api::interpreter::rule_defs::context::AnalysisActions;
+use buck2_build_api::interpreter::rule_defs::context::AnalysisToolchains;
+use buck2_build_api::interpreter::rule_defs::context::BazelCppOptions;
 use buck2_common::dice::cells::HasCellResolver;
 use buck2_common::dice::data::HasIoProvider;
 use buck2_common::target_aliases::BuckConfigTargetAliasResolver;
@@ -357,8 +359,12 @@ impl<'v> BxlContext<'v> {
         Ok(Self {
             state: heap.alloc_typed(AnalysisActions {
                 state: RefCell::new(None),
+                label: None,
+                toolchains: AnalysisToolchains::empty(heap),
+                bazel_cpp_options: BazelCppOptions::default(),
                 attributes: None,
                 plugins: None,
+                build_file_path: None,
                 digest_config,
             }),
             context_type,
@@ -376,8 +382,12 @@ impl<'v> BxlContext<'v> {
         Ok(Self {
             state: heap.alloc_typed(AnalysisActions {
                 state: RefCell::new(Some(analysis_registry)),
+                label: None,
+                toolchains: AnalysisToolchains::empty(heap),
+                bazel_cpp_options: BazelCppOptions::default(),
                 attributes: None,
                 plugins: None,
+                build_file_path: None,
                 digest_config,
             }),
             context_type: BxlContextType::Dynamic(dynamic_data),
@@ -395,8 +405,12 @@ impl<'v> BxlContext<'v> {
         Ok(Self {
             state: heap.alloc_typed(AnalysisActions {
                 state: RefCell::new(Some(analysis_registry)),
+                label: None,
+                toolchains: AnalysisToolchains::empty(heap),
+                bazel_cpp_options: BazelCppOptions::default(),
                 attributes: Some(attributes),
                 plugins: None,
+                build_file_path: None,
                 digest_config,
             }),
             context_type: BxlContextType::AnonTarget,

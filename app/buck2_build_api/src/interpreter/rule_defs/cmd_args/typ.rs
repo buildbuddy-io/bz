@@ -63,6 +63,8 @@ use starlark::values::list::ListRef;
 use starlark::values::list::UnpackList;
 use starlark::values::none::NoneOr;
 use starlark::values::starlark_value;
+use starlark::values::structs::StructRef;
+use starlark::values::tuple::TupleRef;
 use starlark::values::tuple::UnpackTuple;
 use starlark::values::type_repr::StarlarkTypeRepr;
 use starlark::values::typing::StarlarkCallable;
@@ -740,8 +742,27 @@ impl<'v> StarlarkCmdArgs<'v> {
             return Ok(());
         }
 
+        if let Some(executable) = bazel_files_to_run_executable(value) {
+            self.add_bazel_hidden_value(executable, heap)?;
+            return Ok(());
+        }
+
         if BazelDepset::from_value(value).is_some() {
             for item in bazel_depset_to_list(value)? {
+                self.add_bazel_hidden_value(item, heap)?;
+            }
+            return Ok(());
+        }
+
+        if let Some(values) = ListRef::from_value(value) {
+            for item in values.iter() {
+                self.add_bazel_hidden_value(item, heap)?;
+            }
+            return Ok(());
+        }
+
+        if let Some(values) = TupleRef::from_value(value) {
+            for item in values.iter() {
                 self.add_bazel_hidden_value(item, heap)?;
             }
             return Ok(());
@@ -776,6 +797,14 @@ impl<'v> StarlarkCmdArgs<'v> {
         builder.0.get_mut().add_value_typed(value)?;
         Ok(builder)
     }
+}
+
+fn bazel_files_to_run_executable<'v>(value: Value<'v>) -> Option<Value<'v>> {
+    StructRef::from_value(value).and_then(|st| {
+        st.iter().find_map(|(name, value)| {
+            (name.as_str() == "executable" && !value.is_none()).then_some(value)
+        })
+    })
 }
 
 #[derive(UnpackValue, StarlarkTypeRepr)]
@@ -848,9 +877,62 @@ fn bazel_args_format_string<'v>(
     let Some(value) = value.into_option() else {
         return Ok(None);
     };
-    let format = value.as_str();
-    let count = format.match_indices("%s").count();
-    if count != 1 {
+    Ok(Some(bazel_args_format_literal(
+        value.as_str(),
+        heap,
+        parameter,
+    )?))
+}
+
+fn bazel_args_format_literal<'v>(
+    format: &str,
+    heap: Heap<'v>,
+    parameter: &str,
+) -> starlark::Result<StringValue<'v>> {
+    let mut converted = String::with_capacity(format.len());
+    let mut idx = 0;
+    let mut found = false;
+    while let Some(next) = format[idx..].find('%') {
+        let next = idx + next;
+        converted.push_str(&format[idx..next]);
+        let Some(escaped) = format[next + 1..].chars().next() else {
+            return Err(buck2_error::buck2_error!(
+                buck2_error::ErrorTag::Input,
+                "Invalid value for parameter `{}`: expected string with a single `%s`, got `{}`",
+                parameter,
+                format
+            )
+            .into());
+        };
+        match escaped {
+            's' if !found => {
+                converted.push_str("{}");
+                found = true;
+            }
+            's' => {
+                return Err(buck2_error::buck2_error!(
+                    buck2_error::ErrorTag::Input,
+                    "Invalid value for parameter `{}`: expected string with a single `%s`, got `{}`",
+                    parameter,
+                    format
+                )
+                .into());
+            }
+            '%' => converted.push('%'),
+            _ => {
+                return Err(buck2_error::buck2_error!(
+                    buck2_error::ErrorTag::Input,
+                    "Invalid value for parameter `{}`: expected string with a single `%s`, got `{}`",
+                    parameter,
+                    format
+                )
+                .into());
+            }
+        }
+        idx = next + 1 + escaped.len_utf8();
+    }
+    converted.push_str(&format[idx..]);
+    if !found {
         return Err(buck2_error::buck2_error!(
             buck2_error::ErrorTag::Input,
             "Invalid value for parameter `{}`: expected string with a single `%s`, got `{}`",
@@ -859,7 +941,7 @@ fn bazel_args_format_string<'v>(
         )
         .into());
     }
-    Ok(Some(heap.alloc_str(&format.replace("%s", "{}"))))
+    Ok(heap.alloc_str(&converted))
 }
 
 fn bazel_args_values<'v>(value: Value<'v>, heap: Heap<'v>) -> starlark::Result<Vec<Value<'v>>> {
@@ -993,9 +1075,37 @@ fn cmd_args_methods(builder: &mut MethodsBuilder) {
         heap: Heap<'v>,
         args: &Arguments<'v, '_>,
     ) -> starlark::Result<StarlarkCommandLineMut<'v>> {
-        args.no_named_args()?;
-        let values = args.positions(heap)?;
-        this.borrow.add_from_iterator(values)?;
+        let mut format = None;
+        for (name, value) in args.names_map()? {
+            match name.as_str() {
+                "format" => {
+                    let Some(value) = value.unpack_str() else {
+                        return Err(buck2_error::buck2_error!(
+                            buck2_error::ErrorTag::Input,
+                            "expected `format` to be a string, got `{}`",
+                            value.get_type()
+                        )
+                        .into());
+                    };
+                    format = Some(bazel_args_format_literal(value, heap, "format")?);
+                }
+                _ => {
+                    return Err(buck2_error::buck2_error!(
+                        buck2_error::ErrorTag::Input,
+                        "unexpected named argument `{}` for Args.add",
+                        name.as_str()
+                    )
+                    .into());
+                }
+            }
+        }
+        let values = args.positions(heap)?.collect::<Vec<_>>();
+        if let Some(format) = format {
+            let nested = bazel_args_nested(values, Some(format), None, None, false)?;
+            this.borrow.add_value(heap.alloc_typed(nested).to_value())?;
+        } else {
+            this.borrow.add_from_iterator(values.into_iter())?;
+        }
         Ok(this)
     }
 
@@ -1141,7 +1251,7 @@ fn cmd_args_methods(builder: &mut MethodsBuilder) {
     /// until a native param-file action shape is available here.
     fn use_param_file<'v>(
         this: StarlarkCommandLineMut<'v>,
-        #[starlark(require = pos)] param_file_arg: &str,
+        #[starlark(default = "@%s")] param_file_arg: &str,
         #[starlark(require = named, default = false)] use_always: bool,
     ) -> starlark::Result<StarlarkCommandLineMut<'v>> {
         let _unused = (param_file_arg, use_always);

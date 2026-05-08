@@ -2328,7 +2328,7 @@ struct BazelAttributeSpec {
 
 impl BazelAttributeSpec {
     fn from_entries<'v>(
-        attrs: Option<UnpackDictEntries<&'v str, &'v StarlarkAttribute>>,
+        attrs: Option<UnpackDictEntries<&'v str, &'v StarlarkAttribute<'v>>>,
         allow_name: bool,
     ) -> buck2_error::Result<Self> {
         let attrs = attrs.unwrap_or_default();
@@ -2401,7 +2401,7 @@ pub(crate) struct StarlarkRepositoryRule<'v> {
 impl<'v> StarlarkRepositoryRule<'v> {
     fn new(
         implementation: StarlarkCallable<'v, (Value<'v>,), Value<'v>>,
-        attrs: Option<UnpackDictEntries<&'v str, &'v StarlarkAttribute>>,
+        attrs: Option<UnpackDictEntries<&'v str, &'v StarlarkAttribute<'v>>>,
         local: bool,
         configure: bool,
         remotable: bool,
@@ -2594,7 +2594,7 @@ pub(crate) struct StarlarkTagClass {
 
 impl<'v> StarlarkTagClass {
     fn new(
-        attrs: Option<UnpackDictEntries<&'v str, &'v StarlarkAttribute>>,
+        attrs: Option<UnpackDictEntries<&'v str, &'v StarlarkAttribute<'v>>>,
         doc: NoneOr<&str>,
     ) -> buck2_error::Result<Self> {
         Ok(Self {
@@ -6118,7 +6118,7 @@ pub(crate) fn register_bazel_repository_globals(builder: &mut GlobalsBuilder) {
     fn repository_rule<'v>(
         implementation: Option<StarlarkCallable<'v, (Value<'v>,), Value<'v>>>,
         #[starlark(require = named)] attrs: Option<
-            UnpackDictEntries<&'v str, &'v StarlarkAttribute>,
+            UnpackDictEntries<&'v str, &'v StarlarkAttribute<'v>>,
         >,
         #[starlark(require = named, default = false)] local: bool,
         #[starlark(require = named, default = UnpackListOrTuple::default())]
@@ -6145,7 +6145,7 @@ pub(crate) fn register_bazel_repository_globals(builder: &mut GlobalsBuilder) {
 
     fn tag_class<'v>(
         #[starlark(require = named)] attrs: Option<
-            UnpackDictEntries<&'v str, &'v StarlarkAttribute>,
+            UnpackDictEntries<&'v str, &'v StarlarkAttribute<'v>>,
         >,
         #[starlark(require = named, default = NoneOr::None)] doc: NoneOr<&str>,
     ) -> starlark::Result<StarlarkTagClass> {

@@ -16,11 +16,13 @@ use std::fmt::Formatter;
 use std::sync::OnceLock;
 
 use allocative::Allocative;
+use buck2_core::cells::external::bzlmod_canonical_repo_name_for_cell;
 use buck2_core::configuration::data::BazelBuildSettingValue;
 use buck2_core::fs::buck_out_path::BuckOutPathKind;
 use buck2_core::provider::label::ConfiguredProvidersLabel;
 use buck2_core::provider::label::ProvidersName;
 use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
+use buck2_core::target::label::label::TargetLabel;
 use buck2_error::BuckErrorContext;
 use buck2_error::conversion::from_any_with_tag;
 use buck2_error::internal_error;
@@ -56,6 +58,9 @@ use starlark::values::ValueOfUnchecked;
 use starlark::values::ValueTyped;
 use starlark::values::ValueTypedComplex;
 use starlark::values::dict::AllocDict;
+use starlark::values::dict::DictRef;
+use starlark::values::dict::FrozenDictRef;
+use starlark::values::dict::UnpackDictEntries;
 use starlark::values::list::AllocList;
 use starlark::values::list::ListRef;
 use starlark::values::list_or_tuple::UnpackListOrTuple;
@@ -63,6 +68,7 @@ use starlark::values::none::NoneOr;
 use starlark::values::starlark_value;
 use starlark::values::structs::AllocStruct;
 use starlark::values::structs::StructRef;
+use starlark::values::tuple::TupleRef;
 use starlark::values::type_repr::StarlarkTypeRepr;
 
 use crate::actions::impls::workspace_status::UnregisteredWorkspaceStatusAction;
@@ -72,11 +78,14 @@ use crate::analysis::registry::AnalysisRegistry;
 use crate::deferred::calculation::GET_PROMISED_ARTIFACT;
 use crate::interpreter::rule_defs::artifact::associated::AssociatedArtifacts;
 use crate::interpreter::rule_defs::artifact::starlark_artifact::StarlarkArtifact;
+use crate::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkArtifactLike;
 use crate::interpreter::rule_defs::artifact::starlark_declared_artifact::StarlarkDeclaredArtifact;
 use crate::interpreter::rule_defs::plugins::AnalysisPlugins;
 use crate::interpreter::rule_defs::provider::builtin::constraint_value_info::ConstraintValueInfo;
 use crate::interpreter::rule_defs::provider::builtin::default_info::BazelRunfiles;
 use crate::interpreter::rule_defs::provider::builtin::default_info::bazel_runfiles_from_files;
+use crate::interpreter::rule_defs::provider::builtin::default_info::bazel_runfiles_from_runfiles;
+use crate::interpreter::rule_defs::provider::builtin::template_variable_info::FrozenTemplateVariableInfo;
 use crate::interpreter::rule_defs::provider::dependency::Dependency;
 use buck2_hash::BuckIndexSet;
 
@@ -87,6 +96,8 @@ enum AnalysisContextError {
     NonBuildSetting(String),
     #[error("ctx.runfiles argument `{0}` is not supported yet")]
     UnsupportedRunfilesArgument(&'static str),
+    #[error("{0}")]
+    MakeVariableExpansion(String),
 }
 
 /// Whether `declare_output` defaults `has_content_based_path` to `true`.
@@ -136,9 +147,13 @@ pub struct AnalysisActions<'v> {
     /// Use a RefCell/Option so when we are done with it, without obtaining exclusive access,
     /// we can take the internal state without having to clone it.
     pub state: RefCell<Option<AnalysisRegistry<'v>>>,
+    pub label: Option<ValueTyped<'v, StarlarkConfiguredProvidersLabel>>,
+    pub toolchains: ValueTyped<'v, AnalysisToolchains<'v>>,
+    pub bazel_cpp_options: BazelCppOptions,
     /// Copies from the ctx, so we can capture them for `dynamic`.
     pub attributes: Option<ValueOfUnchecked<'v, StructRef<'static>>>,
     pub plugins: Option<ValueTypedComplex<'v, AnalysisPlugins<'v>>>,
+    pub build_file_path: Option<String>,
     /// Digest configuration to use when interpreting digests passed in analysis.
     pub digest_config: DigestConfig,
 }
@@ -147,6 +162,40 @@ pub struct AnalysisActions<'v> {
 pub struct AnalysisToolchains<'v> {
     toolchains: Vec<String>,
     resolved: SmallMap<String, Value<'v>>,
+}
+
+#[derive(Clone, Debug, Default, Trace, Allocative)]
+pub struct BazelCppOptions {
+    pub copt: Vec<String>,
+    pub conlyopt: Vec<String>,
+    pub cxxopt: Vec<String>,
+    pub host_copt: Vec<String>,
+    pub host_conlyopt: Vec<String>,
+    pub host_cxxopt: Vec<String>,
+    pub per_file_copt: Vec<String>,
+}
+
+impl BazelCppOptions {
+    fn opts_for<'a>(
+        &'a self,
+        is_exec: bool,
+        target: &'a [String],
+        host: &'a [String],
+    ) -> &'a [String] {
+        if is_exec { host } else { target }
+    }
+
+    fn copt(&self, is_exec: bool) -> &[String] {
+        self.opts_for(is_exec, &self.copt, &self.host_copt)
+    }
+
+    fn conlyopt(&self, is_exec: bool) -> &[String] {
+        self.opts_for(is_exec, &self.conlyopt, &self.host_conlyopt)
+    }
+
+    fn cxxopt(&self, is_exec: bool) -> &[String] {
+        self.opts_for(is_exec, &self.cxxopt, &self.host_cxxopt)
+    }
 }
 
 impl Display for AnalysisToolchains<'_> {
@@ -161,6 +210,10 @@ impl<'v> AnalysisToolchains<'v> {
             toolchains,
             resolved,
         }
+    }
+
+    pub fn empty(heap: Heap<'v>) -> ValueTyped<'v, AnalysisToolchains<'v>> {
+        heap.alloc_typed(Self::new(Vec::new(), SmallMap::new()))
     }
 
     fn normalize_key(key: &str) -> String {
@@ -305,6 +358,7 @@ impl<'v> StarlarkValue<'v> for AnalysisActions<'v> {
     fn get_methods() -> Option<&'static Methods> {
         static RES: MethodsStatic = MethodsStatic::new();
         RES.methods_for_type::<Self::Canonical>(|builder| {
+            analysis_actions_methods_context(builder);
             (ANALYSIS_ACTIONS_METHODS_ACTIONS.get().unwrap())(builder);
             (ANALYSIS_ACTIONS_METHODS_ANON_TARGET.get().unwrap())(builder);
         })
@@ -339,6 +393,151 @@ impl<'v> UnpackValue<'v> for RefAnalysisAction<'v> {
     }
 }
 
+fn bazel_build_file_path_from_label(
+    label: Option<ValueTyped<'_, StarlarkConfiguredProvidersLabel>>,
+) -> String {
+    let Some(label) = label else {
+        return "BUILD.bazel".to_owned();
+    };
+    let package = label.label().target().pkg();
+    let package = package.cell_relative_path().as_str();
+    if package.is_empty() {
+        "BUILD.bazel".to_owned()
+    } else {
+        format!("{package}/BUILD.bazel")
+    }
+}
+
+pub fn bazel_workspace_name_for_cell(cell: &str) -> String {
+    if cell == "root" {
+        "_main".to_owned()
+    } else {
+        bzlmod_canonical_repo_name_for_cell(cell).unwrap_or_else(|| cell.to_owned())
+    }
+}
+
+pub fn bazel_workspace_name_for_label(
+    label: Option<ValueTyped<'_, StarlarkConfiguredProvidersLabel>>,
+) -> String {
+    let Some(label) = label else {
+        return "_main".to_owned();
+    };
+    let cell = label.label().target().pkg().cell_name();
+    bazel_workspace_name_for_cell(cell.as_str())
+}
+
+#[starlark_module]
+fn analysis_actions_methods_context(builder: &mut MethodsBuilder) {
+    /// Bazel-internal context recovery support for `cc_internal.actions2ctx_cheat`.
+    #[starlark(attribute)]
+    fn attr<'v>(this: &AnalysisActions<'v>, heap: Heap<'v>) -> starlark::Result<Value<'v>> {
+        Ok(this
+            .attributes
+            .map(|attrs| attrs.get())
+            .unwrap_or_else(|| heap.alloc(AllocStruct(Vec::<(&str, Value<'v>)>::new()))))
+    }
+
+    /// Alias for `attr` for Buck naming compatibility.
+    #[starlark(attribute)]
+    fn attrs<'v>(this: &AnalysisActions<'v>, heap: Heap<'v>) -> starlark::Result<Value<'v>> {
+        Ok(this
+            .attributes
+            .map(|attrs| attrs.get())
+            .unwrap_or_else(|| heap.alloc(AllocStruct(Vec::<(&str, Value<'v>)>::new()))))
+    }
+
+    #[starlark(attribute)]
+    fn bin_dir<'v>(this: &AnalysisActions<'v>, heap: Heap<'v>) -> starlark::Result<Value<'v>> {
+        Ok(bazel_file_root_for_label(heap, "buck-out/bin", this.label))
+    }
+
+    #[starlark(attribute)]
+    fn build_file_path<'v>(this: &AnalysisActions<'v>) -> starlark::Result<String> {
+        Ok(this
+            .build_file_path
+            .clone()
+            .unwrap_or_else(|| bazel_build_file_path_from_label(this.label)))
+    }
+
+    #[starlark(attribute)]
+    fn configuration<'v>(
+        this: &AnalysisActions<'v>,
+        heap: Heap<'v>,
+    ) -> starlark::Result<Value<'v>> {
+        Ok(analysis_configuration(this.label, heap).get())
+    }
+
+    #[starlark(attribute)]
+    fn disabled_features<'v>(
+        this: &AnalysisActions<'v>,
+        heap: Heap<'v>,
+    ) -> starlark::Result<Value<'v>> {
+        let _ = this;
+        Ok(heap.alloc(AllocList::EMPTY))
+    }
+
+    #[starlark(attribute)]
+    fn exec_groups<'v>(this: &AnalysisActions<'v>, heap: Heap<'v>) -> starlark::Result<Value<'v>> {
+        let _ = this;
+        Ok(heap.alloc(AllocDict::EMPTY))
+    }
+
+    #[starlark(attribute)]
+    fn features<'v>(this: &AnalysisActions<'v>, heap: Heap<'v>) -> starlark::Result<Value<'v>> {
+        let _ = this;
+        Ok(heap.alloc(AllocList::EMPTY))
+    }
+
+    #[starlark(attribute)]
+    fn fragments<'v>(this: &AnalysisActions<'v>, heap: Heap<'v>) -> starlark::Result<Value<'v>> {
+        Ok(bazel_fragments(
+            heap,
+            this.label,
+            this.bazel_cpp_options.clone(),
+        ))
+    }
+
+    #[starlark(attribute)]
+    fn genfiles_dir<'v>(this: &AnalysisActions<'v>, heap: Heap<'v>) -> starlark::Result<Value<'v>> {
+        Ok(bazel_file_root_for_label(
+            heap,
+            "buck-out/genfiles",
+            this.label,
+        ))
+    }
+
+    #[starlark(attribute)]
+    fn label<'v>(
+        this: &AnalysisActions<'v>,
+    ) -> starlark::Result<NoneOr<ValueTyped<'v, StarlarkConfiguredProvidersLabel>>> {
+        Ok(NoneOr::from_option(this.label))
+    }
+
+    #[starlark(attribute)]
+    fn toolchains<'v>(
+        this: &AnalysisActions<'v>,
+    ) -> starlark::Result<ValueTyped<'v, AnalysisToolchains<'v>>> {
+        Ok(this.toolchains)
+    }
+
+    #[starlark(attribute)]
+    fn workspace_name<'v>(this: &AnalysisActions<'v>) -> starlark::Result<String> {
+        Ok(bazel_workspace_name_for_label(this.label))
+    }
+
+    #[starlark(attribute)]
+    fn info_file<'v>(this: &AnalysisActions<'v>) -> starlark::Result<Value<'v>> {
+        let _ = this;
+        Ok(Value::new_none())
+    }
+
+    #[starlark(attribute)]
+    fn version_file<'v>(this: &AnalysisActions<'v>) -> starlark::Result<Value<'v>> {
+        let _ = this;
+        Ok(Value::new_none())
+    }
+}
+
 #[derive(ProvidesStaticType, Debug, Trace, NoSerialize, Allocative)]
 pub struct AnalysisContext<'v> {
     attrs: Option<ValueOfUnchecked<'v, StructRef<'static>>>,
@@ -348,7 +547,10 @@ pub struct AnalysisContext<'v> {
     label: Option<ValueTyped<'v, StarlarkConfiguredProvidersLabel>>,
     plugins: Option<ValueTypedComplex<'v, AnalysisPlugins<'v>>>,
     toolchains: ValueTyped<'v, AnalysisToolchains<'v>>,
+    bazel_cpp_options: BazelCppOptions,
     is_bazel_build_setting: bool,
+    build_file_path: Option<String>,
+    rule_kind_name: Option<String>,
     bazel_info_file: RefCell<Option<ValueTyped<'v, StarlarkDeclaredArtifact<'v>>>>,
     bazel_version_file: RefCell<Option<ValueTyped<'v, StarlarkDeclaredArtifact<'v>>>>,
 }
@@ -376,23 +578,35 @@ impl<'v> AnalysisContext<'v> {
         plugins: Option<ValueTypedComplex<'v, AnalysisPlugins<'v>>>,
         toolchains: Vec<String>,
         resolved_toolchains: SmallMap<String, Value<'v>>,
+        bazel_cpp_options: BazelCppOptions,
         is_bazel_build_setting: bool,
+        build_file_path: Option<String>,
+        rule_kind_name: Option<String>,
         registry: AnalysisRegistry<'v>,
         digest_config: DigestConfig,
     ) -> Self {
+        let toolchains = heap.alloc_typed(AnalysisToolchains::new(toolchains, resolved_toolchains));
+        let actions = heap.alloc_typed(AnalysisActions {
+            state: RefCell::new(Some(registry)),
+            label,
+            toolchains,
+            bazel_cpp_options: bazel_cpp_options.clone(),
+            attributes: attrs,
+            plugins,
+            build_file_path: build_file_path.clone(),
+            digest_config,
+        });
         Self {
             attrs,
             outputs,
-            actions: heap.alloc_typed(AnalysisActions {
-                state: RefCell::new(Some(registry)),
-                attributes: attrs,
-                plugins,
-                digest_config,
-            }),
+            actions,
             label,
             plugins,
-            toolchains: heap.alloc_typed(AnalysisToolchains::new(toolchains, resolved_toolchains)),
+            toolchains,
+            bazel_cpp_options,
             is_bazel_build_setting,
+            build_file_path,
+            rule_kind_name,
             bazel_info_file: RefCell::new(None),
             bazel_version_file: RefCell::new(None),
         }
@@ -406,7 +620,10 @@ impl<'v> AnalysisContext<'v> {
         plugins: Option<ValueTypedComplex<'v, AnalysisPlugins<'v>>>,
         toolchains: Vec<String>,
         resolved_toolchains: SmallMap<String, Value<'v>>,
+        bazel_cpp_options: BazelCppOptions,
         is_bazel_build_setting: bool,
+        build_file_path: Option<String>,
+        rule_kind_name: Option<String>,
         registry: AnalysisRegistry<'v>,
         digest_config: DigestConfig,
     ) -> ValueTyped<'v, AnalysisContext<'v>> {
@@ -423,7 +640,10 @@ impl<'v> AnalysisContext<'v> {
             plugins,
             toolchains,
             resolved_toolchains,
+            bazel_cpp_options,
             is_bazel_build_setting,
+            build_file_path,
+            rule_kind_name,
             registry,
             digest_config,
         );
@@ -491,8 +711,55 @@ fn analysis_context_outputs<'v>(
         .ok_or_else(|| internal_error!("`outputs` is not available for `dynamic_output` or BXL"))
 }
 
+fn analysis_context_rule<'v>(
+    ctx: &AnalysisContext<'v>,
+    heap: Heap<'v>,
+) -> buck2_error::Result<Value<'v>> {
+    let attrs = analysis_context_attrs(ctx)?.get();
+    let kind = ctx.rule_kind_name.as_deref().unwrap_or("");
+    Ok(heap.alloc(AllocStruct([
+        ("attr", attrs),
+        ("kind", heap.alloc_str(kind).to_value()),
+    ])))
+}
+
 fn bazel_file_root<'v>(heap: Heap<'v>, path: &str) -> Value<'v> {
     heap.alloc(AllocStruct([("path", heap.alloc_str(path).to_value())]))
+}
+
+fn bazel_configuration_exec_path(label: &ConfiguredTargetLabel) -> String {
+    let mut path = label.cfg().output_hash().as_str().to_owned();
+    if let Some(exec_cfg) = label.exec_cfg() {
+        path.push('-');
+        path.push_str(exec_cfg.output_hash().as_str());
+    }
+    path
+}
+
+fn bazel_output_root_for_configured_label(root: &str, label: &ConfiguredTargetLabel) -> String {
+    let mut path = root.to_owned();
+    path.push('/');
+    path.push_str(&bazel_configuration_exec_path(label));
+    path
+}
+
+fn bazel_output_root_for_label(
+    root: &str,
+    label: Option<ValueTyped<'_, StarlarkConfiguredProvidersLabel>>,
+) -> String {
+    label.map_or_else(
+        || root.to_owned(),
+        |label| bazel_output_root_for_configured_label(root, label.label().target()),
+    )
+}
+
+fn bazel_file_root_for_label<'v>(
+    heap: Heap<'v>,
+    root: &str,
+    label: Option<ValueTyped<'_, StarlarkConfiguredProvidersLabel>>,
+) -> Value<'v> {
+    let path = bazel_output_root_for_label(root, label);
+    bazel_file_root(heap, &path)
 }
 
 #[derive(Debug, ProvidesStaticType, NoSerialize, Allocative)]
@@ -531,7 +798,10 @@ fn bazel_configuration_bool_method<'v>(
 }
 
 #[derive(Debug, ProvidesStaticType, NoSerialize, Allocative)]
-struct BazelCppConfiguration;
+struct BazelCppConfiguration {
+    options: BazelCppOptions,
+    is_exec: bool,
+}
 
 impl fmt::Display for BazelCppConfiguration {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -551,6 +821,12 @@ impl<'v> StarlarkValue<'v> for BazelCppConfiguration {
 
 fn bazel_empty_list<'v>(heap: Heap<'v>) -> Value<'v> {
     heap.alloc(AllocList::EMPTY)
+}
+
+fn bazel_string_list<'v>(heap: Heap<'v>, values: &[String]) -> Value<'v> {
+    heap.alloc(AllocList(
+        values.iter().map(|value| heap.alloc_str(value).to_value()),
+    ))
 }
 
 #[starlark_module]
@@ -584,8 +860,7 @@ fn bazel_cpp_configuration_methods(builder: &mut MethodsBuilder) {
         #[starlark(this)] this: &BazelCppConfiguration,
         heap: Heap<'v>,
     ) -> starlark::Result<Value<'v>> {
-        let _ = this;
-        Ok(bazel_empty_list(heap))
+        Ok(bazel_string_list(heap, this.options.conlyopt(this.is_exec)))
     }
 
     #[starlark(attribute)]
@@ -593,8 +868,7 @@ fn bazel_cpp_configuration_methods(builder: &mut MethodsBuilder) {
         #[starlark(this)] this: &BazelCppConfiguration,
         heap: Heap<'v>,
     ) -> starlark::Result<Value<'v>> {
-        let _ = this;
-        Ok(bazel_empty_list(heap))
+        Ok(bazel_string_list(heap, this.options.copt(this.is_exec)))
     }
 
     #[starlark(attribute)]
@@ -610,8 +884,7 @@ fn bazel_cpp_configuration_methods(builder: &mut MethodsBuilder) {
         #[starlark(this)] this: &BazelCppConfiguration,
         heap: Heap<'v>,
     ) -> starlark::Result<Value<'v>> {
-        let _ = this;
-        Ok(bazel_empty_list(heap))
+        Ok(bazel_string_list(heap, this.options.cxxopt(this.is_exec)))
     }
 
     #[starlark(attribute)]
@@ -873,20 +1146,100 @@ fn bazel_cpp_configuration_methods(builder: &mut MethodsBuilder) {
     }
 }
 
-fn bazel_fragments<'v>(heap: Heap<'v>) -> Value<'v> {
-    heap.alloc(AllocStruct([("cpp", heap.alloc(BazelCppConfiguration))]))
+#[derive(Debug, ProvidesStaticType, NoSerialize, Allocative)]
+struct BazelProtoConfiguration;
+
+impl fmt::Display for BazelProtoConfiguration {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("<proto fragment>")
+    }
 }
 
-fn analysis_context_configuration<'v>(
-    ctx: &AnalysisContext<'v>,
+starlark::starlark_simple_value!(BazelProtoConfiguration);
+
+#[starlark_value(type = "proto")]
+impl<'v> StarlarkValue<'v> for BazelProtoConfiguration {
+    fn get_methods() -> Option<&'static Methods> {
+        static RES: MethodsStatic = MethodsStatic::new();
+        RES.methods_for_type::<Self::Canonical>(bazel_proto_configuration_methods)
+    }
+}
+
+#[starlark_module]
+fn bazel_proto_configuration_methods(builder: &mut MethodsBuilder) {
+    #[starlark(attribute)]
+    fn experimental_protoc_opts<'v>(
+        #[starlark(this)] this: &BazelProtoConfiguration,
+        heap: Heap<'v>,
+    ) -> starlark::Result<Value<'v>> {
+        let _ = this;
+        Ok(bazel_empty_list(heap))
+    }
+
+    #[starlark(attribute)]
+    fn cc_proto_library_header_suffixes<'v>(
+        #[starlark(this)] this: &BazelProtoConfiguration,
+        heap: Heap<'v>,
+    ) -> starlark::Result<Value<'v>> {
+        let _ = this;
+        Ok(heap.alloc(AllocList([heap.alloc_str(".pb.h").to_value()])))
+    }
+
+    #[starlark(attribute)]
+    fn cc_proto_library_source_suffixes<'v>(
+        #[starlark(this)] this: &BazelProtoConfiguration,
+        heap: Heap<'v>,
+    ) -> starlark::Result<Value<'v>> {
+        let _ = this;
+        Ok(heap.alloc(AllocList([heap.alloc_str(".pb.cc").to_value()])))
+    }
+
+    fn strict_proto_deps(
+        #[starlark(this)] this: &BazelProtoConfiguration,
+    ) -> starlark::Result<&'static str> {
+        let _ = this;
+        Ok("ERROR")
+    }
+
+    fn strict_public_imports(
+        #[starlark(this)] this: &BazelProtoConfiguration,
+    ) -> starlark::Result<&'static str> {
+        let _ = this;
+        Ok("OFF")
+    }
+}
+
+fn bazel_is_exec_configuration(
+    label: Option<ValueTyped<'_, StarlarkConfiguredProvidersLabel>>,
+) -> bool {
+    label.is_some_and(|label| label.label().target().cfg().is_marked_as_exec_platform())
+}
+
+fn bazel_fragments<'v>(
+    heap: Heap<'v>,
+    label: Option<ValueTyped<'v, StarlarkConfiguredProvidersLabel>>,
+    bazel_cpp_options: BazelCppOptions,
+) -> Value<'v> {
+    heap.alloc(AllocStruct([
+        (
+            "cpp",
+            heap.alloc(BazelCppConfiguration {
+                options: bazel_cpp_options,
+                is_exec: bazel_is_exec_configuration(label),
+            }),
+        ),
+        ("proto", heap.alloc(BazelProtoConfiguration)),
+    ]))
+}
+
+fn analysis_configuration<'v>(
+    label: Option<ValueTyped<'v, StarlarkConfiguredProvidersLabel>>,
     heap: Heap<'v>,
 ) -> ValueOfUnchecked<'v, StructRef<'static>> {
     let host_path_separator = if cfg!(windows) { ";" } else { ":" };
-    let bin_dir = bazel_file_root(heap, "buck-out/bin");
-    let genfiles_dir = bazel_file_root(heap, "buck-out/genfiles");
-    let is_tool_configuration = ctx
-        .label
-        .is_some_and(|label| label.label().target().cfg().is_marked_as_exec_platform());
+    let bin_dir = bazel_file_root_for_label(heap, "buck-out/bin", label);
+    let genfiles_dir = bazel_file_root_for_label(heap, "buck-out/genfiles", label);
+    let is_tool_configuration = bazel_is_exec_configuration(label);
     ValueOfUnchecked::new(heap.alloc(AllocStruct([
         ("bin_dir", bin_dir),
         ("genfiles_dir", genfiles_dir),
@@ -919,6 +1272,74 @@ fn analysis_context_configuration<'v>(
             bazel_configuration_bool_method(heap, "stamp_binaries", false),
         ),
     ])))
+}
+
+fn analysis_context_configuration<'v>(
+    ctx: &AnalysisContext<'v>,
+    heap: Heap<'v>,
+) -> ValueOfUnchecked<'v, StructRef<'static>> {
+    analysis_configuration(ctx.label, heap)
+}
+
+pub fn analysis_actions_to_bazel_ctx<'v>(
+    actions: ValueTyped<'v, AnalysisActions<'v>>,
+    heap: Heap<'v>,
+) -> Value<'v> {
+    let this = actions.as_ref();
+    let empty_struct = heap.alloc(AllocStruct(Vec::<(&str, Value<'v>)>::new()));
+    let attr = this
+        .attributes
+        .map(|attrs| attrs.get())
+        .unwrap_or(empty_struct);
+    let label = this
+        .label
+        .map(|label| label.to_value())
+        .unwrap_or_else(Value::new_none);
+    let build_file_path = this
+        .build_file_path
+        .clone()
+        .unwrap_or_else(|| bazel_build_file_path_from_label(this.label));
+    heap.alloc(AllocStruct([
+        ("actions", actions.to_value()),
+        ("attr", attr),
+        ("attrs", attr),
+        (
+            "bin_dir",
+            bazel_file_root_for_label(heap, "buck-out/bin", this.label),
+        ),
+        (
+            "build_file_path",
+            heap.alloc_str(build_file_path.as_str()).to_value(),
+        ),
+        (
+            "configuration",
+            analysis_configuration(this.label, heap).get(),
+        ),
+        ("disabled_features", heap.alloc(AllocList::EMPTY)),
+        ("exec_groups", heap.alloc(AllocDict::EMPTY)),
+        ("executable", empty_struct),
+        ("features", heap.alloc(AllocList::EMPTY)),
+        ("file", empty_struct),
+        ("files", empty_struct),
+        (
+            "fragments",
+            bazel_fragments(heap, this.label, this.bazel_cpp_options.clone()),
+        ),
+        (
+            "genfiles_dir",
+            bazel_file_root_for_label(heap, "buck-out/genfiles", this.label),
+        ),
+        ("info_file", Value::new_none()),
+        ("label", label),
+        ("outputs", empty_struct),
+        ("toolchains", this.toolchains.to_value()),
+        ("version_file", Value::new_none()),
+        (
+            "workspace_name",
+            heap.alloc_str(&bazel_workspace_name_for_label(this.label))
+                .to_value(),
+        ),
+    ]))
 }
 
 fn collect_bazel_files_from_value<'v>(
@@ -982,6 +1403,337 @@ fn analysis_context_bazel_file_structs<'v>(
     ))
 }
 
+fn bazel_collect_runfiles_from_attr_value<'v>(
+    value: Value<'v>,
+    collect_data: bool,
+    collect_default: bool,
+    runfiles: &mut Vec<&'v BazelRunfiles<'v>>,
+) -> starlark::Result<()> {
+    if value.is_none() {
+        return Ok(());
+    }
+    if let Some(dep) = Dependency::from_value(value) {
+        if collect_data {
+            runfiles.push(dep.data_runfiles()?);
+        }
+        if collect_default {
+            runfiles.push(dep.default_runfiles()?);
+        }
+        return Ok(());
+    }
+    if let Some(list) = ListRef::from_value(value) {
+        for item in list.iter() {
+            bazel_collect_runfiles_from_attr_value(item, collect_data, collect_default, runfiles)?;
+        }
+        return Ok(());
+    }
+    if let Some(tuple) = TupleRef::from_value(value) {
+        for item in tuple.iter() {
+            bazel_collect_runfiles_from_attr_value(item, collect_data, collect_default, runfiles)?;
+        }
+        return Ok(());
+    }
+    if let Some(dict) = DictRef::from_value(value) {
+        for (key, value) in dict.iter() {
+            bazel_collect_runfiles_from_attr_value(key, collect_data, collect_default, runfiles)?;
+            bazel_collect_runfiles_from_attr_value(value, collect_data, collect_default, runfiles)?;
+        }
+    }
+    Ok(())
+}
+
+fn bazel_collect_runfiles_from_attrs<'v>(
+    attrs: Option<ValueOfUnchecked<'v, StructRef<'static>>>,
+    collect_data: bool,
+    collect_default: bool,
+    runfiles: &mut Vec<&'v BazelRunfiles<'v>>,
+) -> starlark::Result<()> {
+    let Some(attrs) = attrs else {
+        return Ok(());
+    };
+    let Some(attrs) = StructRef::from_value(attrs.get()) else {
+        return Ok(());
+    };
+    for (name, value) in attrs.iter() {
+        if matches!(name.as_str(), "srcs" | "data" | "deps") {
+            bazel_collect_runfiles_from_attr_value(value, collect_data, collect_default, runfiles)?;
+        }
+    }
+    Ok(())
+}
+
+#[derive(Clone)]
+struct BazelLocationTarget {
+    exec_paths: Vec<String>,
+    rlocation_paths: Vec<String>,
+}
+
+fn bazel_location_label_keys_for_target<'v>(
+    ctx: &AnalysisContext<'v>,
+    target: &TargetLabel,
+) -> Vec<String> {
+    let package = target.pkg();
+    let package_path = package.cell_relative_path().as_str();
+    let cell = package.cell_name().as_str();
+    let name = target.name().as_str();
+
+    let mut keys = Vec::new();
+    let full = target.to_string();
+    keys.push(full.clone());
+    if let Some(root_relative) = full.strip_prefix("root") {
+        if root_relative.starts_with("//") {
+            keys.push(root_relative.to_owned());
+        }
+    }
+    if cell != "root" {
+        if package_path.is_empty() {
+            keys.push(format!("@{}//:{name}", bazel_workspace_name_for_cell(cell)));
+        } else {
+            keys.push(format!(
+                "@{}//{}:{name}",
+                bazel_workspace_name_for_cell(cell),
+                package_path
+            ));
+        }
+    }
+
+    if ctx.label.is_some_and(|label| {
+        let package = label.label().target().pkg();
+        package.cell_name().as_str() == cell
+            && package.cell_relative_path().as_str() == package_path
+    }) {
+        keys.push(format!(":{name}"));
+        keys.push(name.to_owned());
+    }
+
+    keys
+}
+
+fn bazel_rlocation_path_for_artifact<'v>(
+    artifact: &'v dyn StarlarkArtifactLike<'v>,
+    short_paths: bool,
+    heap: Heap<'v>,
+) -> buck2_error::Result<String> {
+    if short_paths {
+        return Ok(artifact
+            .with_bazel_short_path(&|path| heap.alloc_str(path))?
+            .as_str()
+            .to_owned());
+    }
+    let path = artifact
+        .with_bazel_path(&|path| heap.alloc_str(path))?
+        .as_str()
+        .to_owned();
+    if let Some(external_path) = path.strip_prefix("external/") {
+        Ok(external_path.to_owned())
+    } else {
+        Ok(format!("{}/{}", bazel_workspace_name_for_label(None), path))
+    }
+}
+
+fn bazel_location_target_for_artifact<'v>(
+    artifact: &'v dyn StarlarkArtifactLike<'v>,
+    short_paths: bool,
+    heap: Heap<'v>,
+) -> buck2_error::Result<BazelLocationTarget> {
+    let exec_path = if short_paths {
+        artifact
+            .with_bazel_short_path(&|path| heap.alloc_str(path))?
+            .as_str()
+            .to_owned()
+    } else {
+        artifact
+            .with_bazel_path(&|path| heap.alloc_str(path))?
+            .as_str()
+            .to_owned()
+    };
+    Ok(BazelLocationTarget {
+        exec_paths: vec![exec_path],
+        rlocation_paths: vec![bazel_rlocation_path_for_artifact(
+            artifact,
+            short_paths,
+            heap,
+        )?],
+    })
+}
+
+fn bazel_location_target_for_dep<'v>(
+    dep: &Dependency<'v>,
+    short_paths: bool,
+    heap: Heap<'v>,
+) -> starlark::Result<BazelLocationTarget> {
+    let mut exec_paths = Vec::new();
+    let mut rlocation_paths = Vec::new();
+    for output in dep.default_output_values()? {
+        let Some(artifact) = <&dyn StarlarkArtifactLike<'v>>::unpack_value(output)? else {
+            continue;
+        };
+        let target = bazel_location_target_for_artifact(artifact, short_paths, heap)?;
+        exec_paths.extend(target.exec_paths);
+        rlocation_paths.extend(target.rlocation_paths);
+    }
+    Ok(BazelLocationTarget {
+        exec_paths,
+        rlocation_paths,
+    })
+}
+
+fn bazel_collect_location_targets<'v>(
+    ctx: &AnalysisContext<'v>,
+    value: Value<'v>,
+    short_paths: bool,
+    heap: Heap<'v>,
+    targets: &mut SmallMap<String, BazelLocationTarget>,
+) -> starlark::Result<()> {
+    if value.is_none() {
+        return Ok(());
+    }
+    if let Some(dep) = Dependency::from_value(value) {
+        let target = bazel_location_target_for_dep(dep, short_paths, heap)?;
+        for key in
+            bazel_location_label_keys_for_target(ctx, dep.label().inner().target().unconfigured())
+        {
+            if !targets.contains_key(&key) {
+                targets.insert(key, target.clone());
+            }
+        }
+        return Ok(());
+    }
+    if let Some(artifact) = <&dyn StarlarkArtifactLike<'v>>::unpack_value(value)? {
+        let target = bazel_location_target_for_artifact(artifact, short_paths, heap)?;
+        if let Some(owner) = artifact.source_owner()? {
+            for key in bazel_location_label_keys_for_target(ctx, owner.target()) {
+                if !targets.contains_key(&key) {
+                    targets.insert(key, target.clone());
+                }
+            }
+        } else if let Some(owner) = artifact.owner()? {
+            if let Some(owner) = owner.configured_label() {
+                for key in bazel_location_label_keys_for_target(ctx, owner.unconfigured()) {
+                    if !targets.contains_key(&key) {
+                        targets.insert(key, target.clone());
+                    }
+                }
+            }
+        }
+        return Ok(());
+    }
+    if let Some(list) = ListRef::from_value(value) {
+        for item in list.iter() {
+            bazel_collect_location_targets(ctx, item, short_paths, heap, targets)?;
+        }
+        return Ok(());
+    }
+    if let Some(tuple) = TupleRef::from_value(value) {
+        for item in tuple.iter() {
+            bazel_collect_location_targets(ctx, item, short_paths, heap, targets)?;
+        }
+        return Ok(());
+    }
+    if let Some(dict) = DictRef::from_value(value) {
+        for (key, value) in dict.iter() {
+            bazel_collect_location_targets(ctx, key, short_paths, heap, targets)?;
+            bazel_collect_location_targets(ctx, value, short_paths, heap, targets)?;
+        }
+    }
+    Ok(())
+}
+
+fn bazel_collect_location_targets_from_attrs<'v>(
+    ctx: &AnalysisContext<'v>,
+    short_paths: bool,
+    heap: Heap<'v>,
+    targets: &mut SmallMap<String, BazelLocationTarget>,
+) -> starlark::Result<()> {
+    let Some(attrs) = ctx.attrs else {
+        return Ok(());
+    };
+    let Some(attrs) = StructRef::from_value(attrs.get()) else {
+        return Ok(());
+    };
+    for (_, value) in attrs.iter() {
+        bazel_collect_location_targets(ctx, value, short_paths, heap, targets)?;
+    }
+    Ok(())
+}
+
+fn bazel_expand_location_macro(
+    body: &str,
+    targets: &SmallMap<String, BazelLocationTarget>,
+) -> starlark::Result<Option<String>> {
+    let body = body.trim();
+    let mut parts = body.splitn(2, char::is_whitespace);
+    let Some(function) = parts.next() else {
+        return Ok(None);
+    };
+    let (plural, use_rlocation) = match function {
+        "location" | "execpath" | "rootpath" => (false, false),
+        "locations" | "execpaths" | "rootpaths" => (true, false),
+        "rlocationpath" => (false, true),
+        "rlocationpaths" => (true, true),
+        _ => return Ok(None),
+    };
+    let label = parts.next().map(str::trim).unwrap_or("");
+    if label.is_empty() {
+        return Err(buck2_error::buck2_error!(
+            buck2_error::ErrorTag::Input,
+            "`$({function})` requires a label"
+        )
+        .into());
+    }
+    let Some(target) = targets.get(label) else {
+        return Err(buck2_error::buck2_error!(
+            buck2_error::ErrorTag::Input,
+            "label `{label}` in `$({function})` was not listed in ctx.expand_location targets"
+        )
+        .into());
+    };
+    let paths = if use_rlocation {
+        &target.rlocation_paths
+    } else {
+        &target.exec_paths
+    };
+    if plural {
+        return Ok(Some(paths.join(" ")));
+    }
+    match paths.as_slice() {
+        [path] => Ok(Some(path.clone())),
+        _ => Err(buck2_error::buck2_error!(
+            buck2_error::ErrorTag::Input,
+            "`$({function} {label})` expected exactly one file, got {}",
+            paths.len()
+        )
+        .into()),
+    }
+}
+
+fn bazel_expand_location(
+    input: &str,
+    targets: &SmallMap<String, BazelLocationTarget>,
+) -> starlark::Result<String> {
+    let mut result = String::with_capacity(input.len());
+    let mut cursor = 0;
+    while let Some(relative_start) = input[cursor..].find("$(") {
+        let start = cursor + relative_start;
+        result.push_str(&input[cursor..start]);
+        let body_start = start + 2;
+        let Some(relative_end) = input[body_start..].find(')') else {
+            result.push_str(&input[start..]);
+            return Ok(result);
+        };
+        let end = body_start + relative_end;
+        let body = &input[body_start..end];
+        if let Some(expanded) = bazel_expand_location_macro(body, targets)? {
+            result.push_str(&expanded);
+        } else {
+            result.push_str(&input[start..=end]);
+        }
+        cursor = end + 1;
+    }
+    result.push_str(&input[cursor..]);
+    Ok(result)
+}
+
 fn analysis_context_workspace_status_file<'v>(
     this: &AnalysisContext<'v>,
     kind: WorkspaceStatusKind,
@@ -1018,6 +1770,268 @@ fn analysis_context_workspace_status_file<'v>(
     )?;
     *slot.borrow_mut() = Some(artifact);
     Ok(artifact)
+}
+
+const BAZEL_DEFAULT_MAKE_VARIABLE_ATTRIBUTES: &[&str] = &[
+    "toolchains",
+    ":cc_toolchain",
+    "$toolchains",
+    "$cc_toolchain",
+];
+
+fn make_variable_expansion_error(message: impl Into<String>) -> buck2_error::Error {
+    buck2_error::Error::from(AnalysisContextError::MakeVariableExpansion(message.into()))
+}
+
+fn bazel_target_cpu(this: &AnalysisContext<'_>) -> Option<String> {
+    let label = this.label?;
+    let data = label.label().target().cfg().data().ok()?;
+    data.constraints.iter().find_map(|(key, value)| {
+        let key = key.to_string();
+        if key.ends_with("//cpu:cpu") || key.contains("//cpu:cpu ") {
+            let value = value.to_string();
+            Some(
+                value
+                    .rsplit(':')
+                    .next()
+                    .unwrap_or(value.as_str())
+                    .to_owned(),
+            )
+        } else {
+            None
+        }
+    })
+}
+
+fn bazel_global_make_variables(this: &AnalysisContext<'_>) -> Vec<(String, String)> {
+    let bin_dir = this.label.map_or_else(
+        || "buck-out/bin".to_owned(),
+        |label| bazel_output_root_for_configured_label("buck-out/bin", label.label().target()),
+    );
+    let gen_dir = this.label.map_or_else(
+        || "buck-out/genfiles".to_owned(),
+        |label| bazel_output_root_for_configured_label("buck-out/genfiles", label.label().target()),
+    );
+    vec![
+        (
+            "TARGET_CPU".to_owned(),
+            bazel_target_cpu(this).unwrap_or_else(|| {
+                if cfg!(target_arch = "aarch64") {
+                    "arm64".to_owned()
+                } else {
+                    "k8".to_owned()
+                }
+            }),
+        ),
+        ("COMPILATION_MODE".to_owned(), "fastbuild".to_owned()),
+        ("BINDIR".to_owned(), bin_dir),
+        ("GENDIR".to_owned(), gen_dir),
+    ]
+}
+
+fn collect_template_variables_from_info(
+    info: &FrozenTemplateVariableInfo,
+    variables: &mut Vec<(String, String)>,
+) -> buck2_error::Result<()> {
+    let dict = FrozenDictRef::from_frozen_value(info.variables_raw()).ok_or_else(|| {
+        buck2_error::internal_error!("TemplateVariableInfo.variables is not a dict")
+    })?;
+    for (key, value) in dict.iter() {
+        let key = key.to_value().unpack_str().ok_or_else(|| {
+            buck2_error::internal_error!("TemplateVariableInfo variable key is not a string")
+        })?;
+        let value = value.to_value().unpack_str().ok_or_else(|| {
+            buck2_error::internal_error!("TemplateVariableInfo variable value is not a string")
+        })?;
+        variables.push((key.to_owned(), value.to_owned()));
+    }
+    Ok(())
+}
+
+fn collect_template_variables_from_value<'v>(
+    value: Value<'v>,
+    variables: &mut Vec<(String, String)>,
+) -> buck2_error::Result<()> {
+    if value.is_none() {
+        return Ok(());
+    }
+    if let Some(dep) = value.downcast_ref::<Dependency<'v>>() {
+        if let Some(info) = dep.template_variable_info() {
+            collect_template_variables_from_info(info.as_ref(), variables)?;
+        }
+        return Ok(());
+    }
+    if let Some(list) = ListRef::from_value(value) {
+        for item in list.iter() {
+            collect_template_variables_from_value(item, variables)?;
+        }
+        return Ok(());
+    }
+    if let Some(tuple) = TupleRef::from_value(value) {
+        for item in tuple.iter() {
+            collect_template_variables_from_value(item, variables)?;
+        }
+    }
+    Ok(())
+}
+
+fn analysis_context_template_make_variables<'v>(
+    this: &AnalysisContext<'v>,
+) -> buck2_error::Result<Vec<(String, String)>> {
+    let mut variables = Vec::new();
+    let Some(attrs) = this.attrs else {
+        return Ok(variables);
+    };
+    for attr in BAZEL_DEFAULT_MAKE_VARIABLE_ATTRIBUTES {
+        if let Some(value) = struct_field(attrs, attr) {
+            collect_template_variables_from_value(value, &mut variables)?;
+        }
+    }
+    Ok(variables)
+}
+
+fn analysis_context_make_variable_entries<'v>(
+    this: &AnalysisContext<'v>,
+) -> buck2_error::Result<Vec<(String, String)>> {
+    let mut variables = bazel_global_make_variables(this);
+    variables.extend(analysis_context_template_make_variables(this)?);
+    Ok(variables)
+}
+
+fn is_java_identifier_part(c: char) -> bool {
+    c == '_' || c == '$' || c.is_alphanumeric()
+}
+
+fn scan_bazel_make_variable(chars: &[char], offset: &mut usize) -> buck2_error::Result<String> {
+    let c = chars[*offset];
+    match c {
+        '(' => {
+            *offset += 1;
+            let start = *offset;
+            while *offset < chars.len() && chars[*offset] != ')' {
+                *offset += 1;
+            }
+            if *offset >= chars.len() {
+                return Err(make_variable_expansion_error(
+                    "unterminated variable reference",
+                ));
+            }
+            let variable = chars[start..*offset].iter().collect();
+            *offset += 1;
+            Ok(variable)
+        }
+        '{' => {
+            *offset += 1;
+            let start = *offset;
+            while *offset < chars.len() && chars[*offset] != '}' {
+                *offset += 1;
+            }
+            if *offset >= chars.len() {
+                return Err(make_variable_expansion_error(
+                    "unterminated variable reference",
+                ));
+            }
+            let expression: String = chars[start..*offset].iter().collect();
+            Err(make_variable_expansion_error(format!(
+                "'${{{expression}}}' syntax is not supported; use '$({expression})' instead for \
+                 \"Make\" variables, or escape the '$' as '$$' if you intended this for the shell"
+            )))
+        }
+        '@' | '<' | '^' => {
+            *offset += 1;
+            Ok(c.to_string())
+        }
+        _ => {
+            let start = *offset;
+            while *offset + 1 < chars.len() && is_java_identifier_part(chars[*offset + 1]) {
+                *offset += 1;
+            }
+            let expression: String = chars[start..=*offset].iter().collect();
+            *offset += 1;
+            Err(make_variable_expansion_error(format!(
+                "'${expression}' syntax is not supported; use '$({expression})' instead for \
+                 \"Make\" variables, or escape the '$' as '$$' if you intended this for the shell"
+            )))
+        }
+    }
+}
+
+fn expand_bazel_make_variables_with_lookup<F>(
+    expression: &str,
+    lookup: &F,
+    depth: usize,
+) -> buck2_error::Result<String>
+where
+    F: Fn(&str) -> Option<String>,
+{
+    if !expression.contains('$') {
+        return Ok(expression.to_owned());
+    }
+    if depth > 10 {
+        return Err(make_variable_expansion_error(format!(
+            "potentially unbounded recursion during expansion of '{expression}'"
+        )));
+    }
+
+    let chars = expression.chars().collect::<Vec<_>>();
+    let mut result = String::new();
+    let mut offset = 0;
+    while offset < chars.len() {
+        let c = chars[offset];
+        if c != '$' {
+            result.push(c);
+            offset += 1;
+            continue;
+        }
+
+        offset += 1;
+        if offset >= chars.len() {
+            return Err(make_variable_expansion_error("unterminated $"));
+        }
+        if chars[offset] == '$' {
+            result.push('$');
+            offset += 1;
+            continue;
+        }
+
+        let variable = scan_bazel_make_variable(&chars, &mut offset)?;
+        let Some(mut value) = lookup(&variable) else {
+            let name = variable
+                .split_once(' ')
+                .map_or(variable.as_str(), |(name, _)| name);
+            return Err(make_variable_expansion_error(format!(
+                "$({name}) not defined"
+            )));
+        };
+        if value != variable {
+            value = expand_bazel_make_variables_with_lookup(&value, lookup, depth + 1)?;
+        }
+        result.push_str(&value);
+    }
+    Ok(result)
+}
+
+fn expand_bazel_make_variables<'v>(
+    command: &str,
+    additional_substitutions: &UnpackDictEntries<&'v str, &'v str>,
+    variables: &[(String, String)],
+) -> buck2_error::Result<String> {
+    expand_bazel_make_variables_with_lookup(
+        command,
+        &|name| {
+            additional_substitutions
+                .entries
+                .iter()
+                .find_map(|(key, value)| (*key == name).then(|| (*value).to_owned()))
+                .or_else(|| {
+                    variables
+                        .iter()
+                        .rev()
+                        .find_map(|(key, value)| (key == name).then(|| value.clone()))
+                })
+        },
+        0,
+    )
 }
 
 #[starlark_value(type = "AnalysisContext")]
@@ -1083,6 +2097,12 @@ fn analysis_context_methods(builder: &mut MethodsBuilder) {
         Ok(analysis_context_attrs(this.0)?)
     }
 
+    /// Bazel rule metadata visible to aspect implementations.
+    #[starlark(attribute)]
+    fn rule<'v>(this: RefAnalysisContext<'v>, heap: Heap<'v>) -> starlark::Result<Value<'v>> {
+        Ok(analysis_context_rule(this.0, heap)?)
+    }
+
     /// Bazel single-file view of label attributes marked with `allow_single_file`.
     #[starlark(attribute)]
     fn file<'v>(
@@ -1128,8 +2148,21 @@ fn analysis_context_methods(builder: &mut MethodsBuilder) {
     /// Bazel root object for generated binary outputs.
     #[starlark(attribute)]
     fn bin_dir<'v>(this: RefAnalysisContext<'v>, heap: Heap<'v>) -> starlark::Result<Value<'v>> {
-        let _ = this;
-        Ok(bazel_file_root(heap, "buck-out/bin"))
+        Ok(bazel_file_root_for_label(
+            heap,
+            "buck-out/bin",
+            this.0.label,
+        ))
+    }
+
+    /// Deprecated Bazel path to the BUILD file for this rule, relative to the repository root.
+    #[starlark(attribute)]
+    fn build_file_path<'v>(this: RefAnalysisContext<'v>) -> starlark::Result<String> {
+        Ok(this
+            .0
+            .build_file_path
+            .clone()
+            .unwrap_or_else(|| bazel_build_file_path_from_label(this.0.label)))
     }
 
     /// Bazel root object for generated files.
@@ -1138,15 +2171,17 @@ fn analysis_context_methods(builder: &mut MethodsBuilder) {
         this: RefAnalysisContext<'v>,
         heap: Heap<'v>,
     ) -> starlark::Result<Value<'v>> {
-        let _ = this;
-        Ok(bazel_file_root(heap, "buck-out/genfiles"))
+        Ok(bazel_file_root_for_label(
+            heap,
+            "buck-out/genfiles",
+            this.0.label,
+        ))
     }
 
-    /// Bazel workspace/runfiles prefix. Under bzlmod, Bazel exposes this as `_main`.
+    /// Bazel workspace/runfiles prefix.
     #[starlark(attribute)]
-    fn workspace_name<'v>(this: RefAnalysisContext<'v>) -> starlark::Result<&'static str> {
-        let _ = this;
-        Ok("_main")
+    fn workspace_name<'v>(this: RefAnalysisContext<'v>) -> starlark::Result<String> {
+        Ok(bazel_workspace_name_for_label(this.0.label))
     }
 
     /// Enabled Bazel features for this rule.
@@ -1169,8 +2204,11 @@ fn analysis_context_methods(builder: &mut MethodsBuilder) {
     /// Bazel configuration fragments available to Starlark rules.
     #[starlark(attribute)]
     fn fragments<'v>(this: RefAnalysisContext<'v>, heap: Heap<'v>) -> starlark::Result<Value<'v>> {
-        let _ = this;
-        Ok(bazel_fragments(heap))
+        Ok(bazel_fragments(
+            heap,
+            this.0.label,
+            this.0.bazel_cpp_options.clone(),
+        ))
     }
 
     /// Bazel stable workspace status file.
@@ -1233,19 +2271,6 @@ fn analysis_context_methods(builder: &mut MethodsBuilder) {
         #[starlark(require = named, default = false)] skip_conflict_checking: bool,
         heap: Heap<'v>,
     ) -> starlark::Result<BazelRunfiles<'v>> {
-        let _ctx = this;
-        if collect_data {
-            return Err(buck2_error::Error::from(
-                AnalysisContextError::UnsupportedRunfilesArgument("collect_data"),
-            )
-            .into());
-        }
-        if collect_default {
-            return Err(buck2_error::Error::from(
-                AnalysisContextError::UnsupportedRunfilesArgument("collect_default"),
-            )
-            .into());
-        }
         if symlinks.into_option().is_some() {
             return Err(buck2_error::Error::from(
                 AnalysisContextError::UnsupportedRunfilesArgument("symlinks"),
@@ -1264,11 +2289,30 @@ fn analysis_context_methods(builder: &mut MethodsBuilder) {
             )
             .into());
         }
-        bazel_runfiles_from_files(
+        let explicit = bazel_runfiles_from_files(
             heap,
             files.into_option().unwrap_or_default().items,
             transitive_files.into_option(),
-        )
+        )?;
+        if !collect_data && !collect_default {
+            return Ok(explicit);
+        }
+
+        let mut collected = Vec::new();
+        bazel_collect_runfiles_from_attrs(
+            this.0.attrs,
+            collect_data,
+            collect_default,
+            &mut collected,
+        )?;
+        if collected.is_empty() {
+            return Ok(explicit);
+        }
+
+        let mut runfiles = Vec::with_capacity(collected.len() + 1);
+        runfiles.push(&explicit);
+        runfiles.extend(collected);
+        bazel_runfiles_from_runfiles(heap, runfiles)
     }
 
     /// Returns the Bazel predeclared output artifacts for this rule.
@@ -1353,11 +2397,47 @@ fn analysis_context_methods(builder: &mut MethodsBuilder) {
         })
     }
 
+    /// Expands Bazel "Make" variable references in a string.
+    fn expand_make_variables<'v>(
+        this: RefAnalysisContext<'v>,
+        #[starlark(require = pos)] attribute_name: &str,
+        #[starlark(require = pos)] command: &str,
+        #[starlark(require = pos)] additional_substitutions: UnpackDictEntries<&'v str, &'v str>,
+    ) -> starlark::Result<String> {
+        let _ = attribute_name;
+        let variables = analysis_context_make_variable_entries(this.0)?;
+        Ok(expand_bazel_make_variables(
+            command,
+            &additional_substitutions,
+            &variables,
+        )?)
+    }
+
+    /// Expands Bazel location macro references in a string.
+    fn expand_location<'v>(
+        this: RefAnalysisContext<'v>,
+        #[starlark(require = pos)] input: &str,
+        #[starlark(require = pos, default = UnpackListOrTuple::default())]
+        targets: UnpackListOrTuple<Value<'v>>,
+        #[starlark(require = named, default = false)] short_paths: bool,
+        heap: Heap<'v>,
+    ) -> starlark::Result<String> {
+        let mut target_map = SmallMap::new();
+        bazel_collect_location_targets_from_attrs(this.0, short_paths, heap, &mut target_map)?;
+        for target in targets.items {
+            bazel_collect_location_targets(this.0, target, short_paths, heap, &mut target_map)?;
+        }
+        bazel_expand_location(input, &target_map)
+    }
+
     /// Bazel make-variable map for this rule.
     #[starlark(attribute)]
     fn var<'v>(this: RefAnalysisContext<'v>, heap: Heap<'v>) -> starlark::Result<Value<'v>> {
-        let _unused = this;
-        Ok(heap.alloc(AllocDict::EMPTY))
+        let mut variables = SmallMap::new();
+        for (key, value) in analysis_context_make_variable_entries(this.0)? {
+            variables.insert(key, value);
+        }
+        Ok(heap.alloc(AllocDict(variables)))
     }
 }
 

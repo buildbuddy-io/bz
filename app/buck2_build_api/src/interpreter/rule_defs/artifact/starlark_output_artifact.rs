@@ -53,6 +53,7 @@ use crate::interpreter::rule_defs::artifact::starlark_artifact::StarlarkArtifact
 use crate::interpreter::rule_defs::artifact::starlark_artifact_like::ArtifactFingerprint;
 use crate::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkArtifactLike;
 use crate::interpreter::rule_defs::artifact::starlark_artifact_like::bazel_artifact_path;
+use crate::interpreter::rule_defs::artifact::starlark_artifact_like::bazel_artifact_short_path;
 use crate::interpreter::rule_defs::artifact::starlark_declared_artifact::StarlarkDeclaredArtifact;
 use crate::interpreter::rule_defs::cmd_args::ArtifactPathMapper;
 use crate::interpreter::rule_defs::cmd_args::CommandLineArgLike;
@@ -200,6 +201,13 @@ impl<'v, V: ValueLike<'v>> StarlarkArtifactLike<'v> for StarlarkOutputArtifactGe
         })
     }
 
+    fn is_symlink(&'v self) -> buck2_error::Result<bool> {
+        Ok(match self.unpack() {
+            Either::Left(v) => v.artifact.output_type() == OutputType::Symlink,
+            Either::Right(v) => v.is_symlink()?,
+        })
+    }
+
     fn owner(&'v self) -> buck2_error::Result<Option<BaseDeferredKey>> {
         Ok(match self.unpack() {
             Either::Left(v) => v.artifact.owner(),
@@ -212,6 +220,14 @@ impl<'v, V: ValueLike<'v>> StarlarkArtifactLike<'v> for StarlarkOutputArtifactGe
         f: &dyn for<'b> Fn(&'b ForwardRelativePath) -> StringValue<'v>,
     ) -> buck2_error::Result<StringValue<'v>> {
         Ok(self.get_path().with_short_path(f))
+    }
+
+    fn with_bazel_short_path(
+        &self,
+        f: &dyn Fn(&str) -> StringValue<'v>,
+    ) -> buck2_error::Result<StringValue<'v>> {
+        let path = bazel_artifact_short_path(self.get_path());
+        Ok(f(&path))
     }
 
     fn with_bazel_path(

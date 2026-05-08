@@ -344,7 +344,7 @@ fn re_create_action(
                         command.output_files.push(path.clone());
                         command.output_directories.push(path);
                     }
-                    OutputType::File => command.output_files.push(path),
+                    OutputType::File | OutputType::Symlink => command.output_files.push(path),
                     OutputType::Directory => command.output_directories.push(path),
                 }
             }
@@ -358,7 +358,7 @@ fn re_create_action(
                     OutputType::FileOrDirectory => {
                         command.output_files.push(path);
                     }
-                    OutputType::File => command.output_files.push(path),
+                    OutputType::File | OutputType::Symlink => command.output_files.push(path),
                     OutputType::Directory => command.output_directories.push(path),
                 }
             }

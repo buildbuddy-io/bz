@@ -290,6 +290,17 @@ impl<'a> LegacyBuckConfigValue<'a> {
     }
 }
 
+#[derive(Default)]
+pub(crate) struct BazelCompatBazelrcOptions {
+    pub(crate) copt: Vec<String>,
+    pub(crate) conlyopt: Vec<String>,
+    pub(crate) cxxopt: Vec<String>,
+    pub(crate) host_copt: Vec<String>,
+    pub(crate) host_conlyopt: Vec<String>,
+    pub(crate) host_cxxopt: Vec<String>,
+    pub(crate) per_file_copt: Vec<String>,
+}
+
 impl LegacyBuckConfig {
     pub fn empty() -> Self {
         Self(Arc::new(ConfigData {
@@ -302,6 +313,7 @@ impl LegacyBuckConfig {
         current_cell_aliases: &[BazelCompatCellAlias],
         external_modules: &[BazelCompatExternalModule],
         registered_toolchains: &[String],
+        bazelrc_options: &BazelCompatBazelrcOptions,
     ) -> Self {
         for module in external_modules {
             register_bzlmod_cell_canonical_repo_name_for_cell(
@@ -314,6 +326,7 @@ impl LegacyBuckConfig {
             current_cell_aliases,
             external_modules,
             registered_toolchains,
+            bazelrc_options,
         )
     }
 
@@ -321,8 +334,14 @@ impl LegacyBuckConfig {
         &self,
         current_cell_aliases: &[BazelCompatCellAlias],
         registered_toolchains: &[String],
+        bazelrc_options: &BazelCompatBazelrcOptions,
     ) -> Self {
-        self.with_bazel_compat_defaults_inner(current_cell_aliases, &[], registered_toolchains)
+        self.with_bazel_compat_defaults_inner(
+            current_cell_aliases,
+            &[],
+            registered_toolchains,
+            bazelrc_options,
+        )
     }
 
     fn with_bazel_compat_defaults_inner(
@@ -330,6 +349,7 @@ impl LegacyBuckConfig {
         current_cell_aliases: &[BazelCompatCellAlias],
         external_modules: &[BazelCompatExternalModule],
         registered_toolchains: &[String],
+        bazelrc_options: &BazelCompatBazelrcOptions,
     ) -> Self {
         const BAZEL_COMPAT_DEFAULTS: &[(&str, &[(&str, &str)])] = &[
             (
@@ -449,6 +469,35 @@ impl LegacyBuckConfig {
             section_values
                 .entry("registered_toolchains".to_owned())
                 .or_insert_with(|| synthetic_config_value(&registered_toolchains.join(",")));
+            section.values = SortedMap::from_iter(section_values);
+        }
+
+        let bazelrc_option_values = [
+            ("copt", &bazelrc_options.copt),
+            ("conlyopt", &bazelrc_options.conlyopt),
+            ("cxxopt", &bazelrc_options.cxxopt),
+            ("host_copt", &bazelrc_options.host_copt),
+            ("host_conlyopt", &bazelrc_options.host_conlyopt),
+            ("host_cxxopt", &bazelrc_options.host_cxxopt),
+            ("per_file_copt", &bazelrc_options.per_file_copt),
+        ];
+        if bazelrc_option_values
+            .iter()
+            .any(|(_, values)| !values.is_empty())
+        {
+            let section = values.entry("bazel".to_owned()).or_default();
+            let mut section_values: BTreeMap<String, ConfigValue> = section
+                .values
+                .iter()
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect();
+            for (key, values) in bazelrc_option_values {
+                if !values.is_empty() {
+                    section_values
+                        .entry(key.to_owned())
+                        .or_insert_with(|| synthetic_config_value(&values.join("\n")));
+                }
+            }
             section.values = SortedMap::from_iter(section_values);
         }
 

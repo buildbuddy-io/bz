@@ -46,6 +46,7 @@ use starlark_map::sorted_set::SortedSet;
 
 use super::dep_file_digest::DepFileDigest;
 use crate::artifact::group::artifact_group_values_dyn::ArtifactGroupValuesDyn;
+use crate::artifact_value::ArtifactValue;
 use crate::digest_config::DigestConfig;
 use crate::directory::ActionDirectoryEntry;
 use crate::directory::ActionDirectoryMember;
@@ -86,6 +87,11 @@ pub struct ActionMetadataBlob {
 
 pub enum CommandExecutionInput {
     Artifact(Box<dyn ArtifactGroupValuesDyn>),
+    ArtifactPathAlias {
+        source_path: ProjectRelativePathBuf,
+        path: ProjectRelativePathBuf,
+        value: ArtifactValue,
+    },
     ActionMetadata(ActionMetadataBlob),
     ScratchPath(BuckOutScratchPath),
     IncrementalRemoteOutput(
@@ -236,7 +242,7 @@ impl CommandExecutionPaths {
             .sorted_by_key(|e| {
                 let resolved = e
                     .as_ref()
-                    .resolve(fs, Some(&ContentBasedPathHash::for_output_artifact()))
+                    .resolve_for_execution(fs, Some(&ContentBasedPathHash::for_output_artifact()))
                     .expect("Failed to resolve output path");
                 resolved.into_path()
             })
@@ -245,9 +251,10 @@ impl CommandExecutionPaths {
         let output_paths = outputs
             .iter()
             .map(|o| {
-                let resolved = o
-                    .as_ref()
-                    .resolve(fs, Some(&ContentBasedPathHash::for_output_artifact()))?;
+                let resolved = o.as_ref().resolve_for_execution(
+                    fs,
+                    Some(&ContentBasedPathHash::for_output_artifact()),
+                )?;
                 if let Some(dir) = resolved.path_to_create() {
                     builder.mkdir(dir)?;
                 }
@@ -766,6 +773,7 @@ pub enum OutputType {
     FileOrDirectory,
     File,
     Directory,
+    Symlink,
 }
 
 #[derive(Debug, buck2_error::Error)]
@@ -800,7 +808,7 @@ impl OutputType {
             Ok(())
         } else if self == output_type
             || self == OutputType::FileOrDirectory
-            || output_type == OutputType::FileOrDirectory
+            || (output_type == OutputType::FileOrDirectory && self != OutputType::Symlink)
         {
             Ok(())
         } else {
@@ -817,6 +825,7 @@ pub enum CommandExecutionOutputRef<'a> {
     BuildArtifact {
         path: &'a BuildArtifactPath,
         output_type: OutputType,
+        produced_path: Option<&'a ProjectRelativePath>,
     },
     TestPath {
         path: &'a BuckOutTestPath,
@@ -833,7 +842,9 @@ impl CommandExecutionOutputRef<'_> {
         content_hash: Option<&ContentBasedPathHash>,
     ) -> buck2_error::Result<ResolvedCommandExecutionOutput> {
         match self {
-            Self::BuildArtifact { path, output_type } => Ok(ResolvedCommandExecutionOutput {
+            Self::BuildArtifact {
+                path, output_type, ..
+            } => Ok(ResolvedCommandExecutionOutput {
                 path: fs.resolve_build(path, content_hash)?,
                 create: OutputCreationBehavior::Parent,
                 output_type: *output_type,
@@ -846,6 +857,34 @@ impl CommandExecutionOutputRef<'_> {
         }
     }
 
+    /// Resolve the path where the command is expected to produce this output.
+    ///
+    /// For native Buck actions this is the same as `resolve`. Bazel-compatible actions may use a
+    /// Bazel exec path on the command line while still declaring the canonical Buck artifact path.
+    pub fn resolve_for_execution(
+        &self,
+        fs: &ArtifactFs,
+        content_hash: Option<&ContentBasedPathHash>,
+    ) -> buck2_error::Result<ResolvedCommandExecutionOutput> {
+        match self {
+            Self::BuildArtifact {
+                produced_path: Some(path),
+                output_type,
+                ..
+            } => Ok(ResolvedCommandExecutionOutput {
+                path: path.to_buf(),
+                create: match output_type {
+                    OutputType::Directory => OutputCreationBehavior::Create,
+                    OutputType::File | OutputType::FileOrDirectory | OutputType::Symlink => {
+                        OutputCreationBehavior::Parent
+                    }
+                },
+                output_type: *output_type,
+            }),
+            _ => self.resolve(fs, content_hash),
+        }
+    }
+
     /// Same as `resolve`, but the underlying output path that is returned uses the
     /// configuration hash regardless of whether the output is content-based or not.
     pub fn resolve_configuration_hash_path(
@@ -853,7 +892,9 @@ impl CommandExecutionOutputRef<'_> {
         fs: &ArtifactFs,
     ) -> buck2_error::Result<ResolvedCommandExecutionOutput> {
         match self {
-            Self::BuildArtifact { path, output_type } => Ok(ResolvedCommandExecutionOutput {
+            Self::BuildArtifact {
+                path, output_type, ..
+            } => Ok(ResolvedCommandExecutionOutput {
                 path: fs.resolve_build_configuration_hash_path(path)?,
                 create: OutputCreationBehavior::Parent,
                 output_type: *output_type,
@@ -868,9 +909,14 @@ impl CommandExecutionOutputRef<'_> {
 
     pub fn cloned(&self) -> CommandExecutionOutput {
         match self {
-            Self::BuildArtifact { path, output_type } => CommandExecutionOutput::BuildArtifact {
+            Self::BuildArtifact {
+                path,
+                output_type,
+                produced_path,
+            } => CommandExecutionOutput::BuildArtifact {
                 path: (*path).dupe(),
                 output_type: *output_type,
+                produced_path: produced_path.map(|path| path.to_buf()),
             },
             Self::TestPath { path, create } => CommandExecutionOutput::TestPath {
                 path: (*path).clone(),
@@ -892,6 +938,7 @@ pub enum CommandExecutionOutput {
     BuildArtifact {
         path: BuildArtifactPath,
         output_type: OutputType,
+        produced_path: Option<ProjectRelativePathBuf>,
     },
     TestPath {
         path: BuckOutTestPath,
@@ -902,9 +949,14 @@ pub enum CommandExecutionOutput {
 impl CommandExecutionOutput {
     pub fn as_ref(&self) -> CommandExecutionOutputRef<'_> {
         match self {
-            Self::BuildArtifact { path, output_type } => CommandExecutionOutputRef::BuildArtifact {
+            Self::BuildArtifact {
+                path,
+                output_type,
+                produced_path,
+            } => CommandExecutionOutputRef::BuildArtifact {
                 path,
                 output_type: *output_type,
+                produced_path: produced_path.as_ref().map(|path| path.as_ref()),
             },
             Self::TestPath { path, create } => CommandExecutionOutputRef::TestPath {
                 path,

@@ -36,9 +36,11 @@ use buck2_common::file_ops::metadata::TrackedFileDigest;
 use buck2_core::category::CategoryRef;
 use buck2_core::content_hash::ContentBasedPathHash;
 use buck2_error::internal_error;
+use buck2_execute::artifact::artifact_dyn::ArtifactDyn;
 use buck2_execute::artifact::fs::ExecutorFs;
 use buck2_execute::execute::command_executor::ActionExecutionTimingData;
 use buck2_execute::materialize::materializer::WriteRequest;
+use buck2_fs::fs_util::uncategorized as fs_util;
 use buck2_hash::BuckIndexMap;
 use buck2_hash::BuckIndexSet;
 use buck2_hash::buck_indexmap;
@@ -109,6 +111,27 @@ pub(crate) struct UnregisteredWriteAction {
     pub(crate) use_dep_files_placeholder_for_content_based_paths: bool,
 }
 
+#[derive(Allocative)]
+pub(crate) struct UnregisteredTemplateExpansionAction {
+    template: ArtifactGroup,
+    substitutions: Vec<(String, String)>,
+    is_executable: bool,
+}
+
+impl UnregisteredTemplateExpansionAction {
+    pub(crate) fn new(
+        template: ArtifactGroup,
+        substitutions: Vec<(String, String)>,
+        is_executable: bool,
+    ) -> Self {
+        Self {
+            template,
+            substitutions,
+            is_executable,
+        }
+    }
+}
+
 impl UnregisteredAction for UnregisteredWriteAction {
     fn register(
         self: Box<Self>,
@@ -123,11 +146,41 @@ impl UnregisteredAction for UnregisteredWriteAction {
     }
 }
 
+impl UnregisteredAction for UnregisteredTemplateExpansionAction {
+    fn register(
+        self: Box<Self>,
+        outputs: BuckIndexSet<BuildArtifact>,
+        _starlark_data: Option<OwnedFrozenValue>,
+        _error_handler: Option<OwnedFrozenValue>,
+    ) -> buck2_error::Result<Box<dyn Action>> {
+        let mut outputs = outputs.into_iter();
+        let output = match (outputs.next(), outputs.next()) {
+            (Some(o), None) => o,
+            (None, ..) => return Err(WriteActionValidationError::NoOutputs.into()),
+            (Some(..), Some(..)) => return Err(WriteActionValidationError::TooManyOutputs.into()),
+        };
+        Ok(Box::new(TemplateExpansionAction {
+            template: self.template,
+            substitutions: self.substitutions,
+            is_executable: self.is_executable,
+            output,
+        }))
+    }
+}
+
 #[derive(Debug, Allocative, Pagable)]
 struct WriteAction {
     contents: OwnedFrozenValue, // StarlarkCmdArgs
     output: BuildArtifact,
     inner: UnregisteredWriteAction,
+}
+
+#[derive(Debug, Allocative, Pagable)]
+struct TemplateExpansionAction {
+    template: ArtifactGroup,
+    substitutions: Vec<(String, String)>,
+    is_executable: bool,
+    output: BuildArtifact,
 }
 
 impl WriteAction {
@@ -302,6 +355,133 @@ impl Action for WriteAction {
             .into_iter()
             .next()
             .ok_or_else(|| internal_error!("Write did not execute"))?;
+
+        let wall_time = Instant::now()
+            - execution_start
+                .ok_or_else(|| internal_error!("Action did not set execution_start"))?;
+
+        Ok((
+            ActionOutputs::new(buck_indexmap![self.output.get_path().dupe() => value]),
+            ActionExecutionMetadata {
+                execution_kind: ActionExecutionKind::Simple,
+                timing: ActionExecutionTimingData { wall_time },
+                input_files_bytes: None,
+                waiting_data,
+            },
+        ))
+    }
+}
+
+#[async_trait]
+impl Action for TemplateExpansionAction {
+    fn kind(&self) -> buck2_data::ActionKind {
+        buck2_data::ActionKind::Write
+    }
+
+    fn inputs(&self) -> buck2_error::Result<Cow<'_, [ArtifactGroup]>> {
+        Ok(Cow::Borrowed(slice::from_ref(&self.template)))
+    }
+
+    fn outputs(&self) -> Cow<'_, [BuildArtifact]> {
+        Cow::Borrowed(slice::from_ref(&self.output))
+    }
+
+    fn first_output(&self) -> &BuildArtifact {
+        &self.output
+    }
+
+    fn category(&self) -> CategoryRef<'_> {
+        CategoryRef::unchecked_new("expand_template")
+    }
+
+    fn identifier(&self) -> Option<&str> {
+        Some(self.output.get_path().path().as_str())
+    }
+
+    fn aquery_attributes(
+        &self,
+        _fs: &ExecutorFs,
+        _artifact_path_mapping: &dyn ArtifactPathMapper,
+    ) -> BuckIndexMap<String, String> {
+        buck_indexmap! {
+            "substitutions".to_owned() => self.substitutions
+                .iter()
+                .map(|(key, value)| format!("{key}={value}"))
+                .collect::<Vec<_>>()
+                .join(","),
+            "is_executable".to_owned() => self.is_executable.to_string(),
+        }
+    }
+
+    async fn execute(
+        &self,
+        ctx: &mut dyn ActionExecutionCtx,
+        waiting_data: WaitingData,
+    ) -> Result<(ActionOutputs, ActionExecutionMetadata), ExecuteError> {
+        let (input, input_value) = {
+            let values = ctx.artifact_values(&self.template);
+            let mut iter = values.iter();
+            let Some((input, input_value)) = iter.next() else {
+                return Err(internal_error!("Template did not dereference to an artifact").into());
+            };
+            if iter.next().is_some() {
+                return Err(
+                    internal_error!("Template dereferenced to more than one artifact").into(),
+                );
+            }
+            (input.dupe(), input_value.dupe())
+        };
+
+        let artifact_fs = ctx.fs();
+        let template_path = input.resolve_path(
+            artifact_fs,
+            if input.path_resolution_requires_artifact_value() {
+                Some(input_value.content_based_path_hash())
+            } else {
+                None
+            }
+            .as_ref(),
+        )?;
+        let template_path = artifact_fs.fs().resolve(template_path);
+        let fs = ctx.fs();
+
+        let mut execution_start = None;
+        let value = ctx
+            .materializer()
+            .declare_write(Box::new(|| {
+                execution_start = Some(Instant::now());
+                let mut content = fs_util::read_to_string(&template_path)?;
+                for (key, value) in &self.substitutions {
+                    content = content.replace(key, value);
+                }
+                let content = content.into_bytes();
+                let path = fs.resolve_build(
+                    self.output.get_path(),
+                    if self.output.get_path().is_content_based_path() {
+                        let digest = TrackedFileDigest::from_content(
+                            &content,
+                            ctx.digest_config().cas_digest_config(),
+                        );
+                        Some(ContentBasedPathHash::new(digest.raw_digest().as_bytes())?)
+                    } else {
+                        None
+                    }
+                    .as_ref(),
+                )?;
+                let configuration_path = ctx
+                    .materializer()
+                    .maybe_eager_configuration_path(fs, self.output.get_path())?;
+                Ok(vec![WriteRequest {
+                    path,
+                    content,
+                    is_executable: self.is_executable,
+                    configuration_path,
+                }])
+            }))
+            .await?
+            .into_iter()
+            .next()
+            .ok_or_else(|| internal_error!("Template expansion did not execute"))?;
 
         let wall_time = Instant::now()
             - execution_start

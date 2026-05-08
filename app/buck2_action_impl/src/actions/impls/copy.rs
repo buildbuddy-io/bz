@@ -28,6 +28,9 @@ use buck2_core::content_hash::ContentBasedPathHash;
 use buck2_error::internal_error;
 use buck2_execute::artifact::artifact_dyn::ArtifactDyn;
 use buck2_execute::artifact_utils::ArtifactValueBuilder;
+use buck2_execute::artifact_value::ArtifactValue;
+use buck2_execute::directory::ActionDirectoryEntry;
+use buck2_execute::directory::new_symlink;
 use buck2_execute::execute::command_executor::ActionExecutionTimingData;
 use buck2_execute::materialize::materializer::CopiedArtifact;
 use buck2_hash::BuckIndexSet;
@@ -78,6 +81,28 @@ impl UnregisteredAction for UnregisteredCopyAction {
     }
 }
 
+#[derive(Allocative)]
+pub(crate) struct UnregisteredSymlinkAction {
+    target_path: String,
+}
+
+impl UnregisteredSymlinkAction {
+    pub(crate) fn new(target_path: String) -> Self {
+        Self { target_path }
+    }
+}
+
+impl UnregisteredAction for UnregisteredSymlinkAction {
+    fn register(
+        self: Box<Self>,
+        outputs: BuckIndexSet<BuildArtifact>,
+        _starlark_data: Option<OwnedFrozenValue>,
+        _error_handler: Option<OwnedFrozenValue>,
+    ) -> buck2_error::Result<Box<dyn Action>> {
+        Ok(Box::new(SymlinkAction::new(self.target_path, outputs)?))
+    }
+}
+
 #[derive(Debug, Allocative, Pagable)]
 struct CopyAction {
     copy: CopyMode,
@@ -115,6 +140,32 @@ impl CopyAction {
             .iter()
             .next()
             .expect("a single input by construction")
+    }
+
+    fn output(&self) -> &BuildArtifact {
+        self.outputs
+            .iter()
+            .next()
+            .expect("a single artifact by construction")
+    }
+}
+
+#[derive(Debug, Allocative, Pagable)]
+struct SymlinkAction {
+    target_path: String,
+    outputs: BoxSliceSet<BuildArtifact>,
+}
+
+impl SymlinkAction {
+    fn new(target_path: String, outputs: BuckIndexSet<BuildArtifact>) -> buck2_error::Result<Self> {
+        if outputs.len() != 1 {
+            Err(CopyActionValidationError::WrongNumberOfOutputs(outputs.len()).into())
+        } else {
+            Ok(SymlinkAction {
+                target_path,
+                outputs: BoxSliceSet::from(outputs),
+            })
+        }
     }
 
     fn output(&self) -> &BuildArtifact {
@@ -232,6 +283,77 @@ impl Action for CopyAction {
                 )],
                 configuration_path,
             )
+            .await?;
+
+        Ok((
+            ActionOutputs::from_single(self.output().get_path().dupe(), value),
+            ActionExecutionMetadata {
+                execution_kind: ActionExecutionKind::Simple,
+                timing: ActionExecutionTimingData::default(),
+                input_files_bytes: None,
+                waiting_data,
+            },
+        ))
+    }
+}
+
+#[async_trait]
+impl Action for SymlinkAction {
+    fn kind(&self) -> buck2_data::ActionKind {
+        buck2_data::ActionKind::Copy
+    }
+
+    fn inputs(&self) -> buck2_error::Result<Cow<'_, [ArtifactGroup]>> {
+        Ok(Cow::Borrowed(&[]))
+    }
+
+    fn outputs(&self) -> Cow<'_, [BuildArtifact]> {
+        Cow::Borrowed(self.outputs.as_slice())
+    }
+
+    fn first_output(&self) -> &BuildArtifact {
+        self.output()
+    }
+
+    fn category(&self) -> CategoryRef<'_> {
+        CategoryRef::unchecked_new("symlink")
+    }
+
+    fn identifier(&self) -> Option<&str> {
+        Some(self.output().get_path().path().as_str())
+    }
+
+    async fn execute(
+        &self,
+        ctx: &mut dyn ActionExecutionCtx,
+        waiting_data: WaitingData,
+    ) -> Result<(ActionOutputs, ActionExecutionMetadata), ExecuteError> {
+        let artifact_fs = ctx.fs();
+        let tmp_dest = artifact_fs.resolve_build(
+            self.output().get_path(),
+            Some(&ContentBasedPathHash::for_output_artifact()),
+        )?;
+
+        let value = ArtifactValue::new(
+            ActionDirectoryEntry::Leaf(new_symlink(&self.target_path)?),
+            None,
+        );
+
+        let dest = if self.output().get_path().is_content_based_path() {
+            artifact_fs.resolve_build(
+                self.output().get_path(),
+                Some(&value.content_based_path_hash()),
+            )?
+        } else {
+            tmp_dest
+        };
+
+        let configuration_path = ctx
+            .materializer()
+            .maybe_eager_configuration_path(ctx.fs(), self.output().get_path())?;
+
+        ctx.materializer()
+            .declare_copy(dest.clone(), value.dupe(), Vec::new(), configuration_path)
             .await?;
 
         Ok((

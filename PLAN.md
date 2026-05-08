@@ -156,12 +156,29 @@ Completed:
 - External-cell load-file reads no longer declare source artifacts. Reading BUILD and `.bzl` content now stays separate from source-artifact materialization; labels and action inputs still declare artifacts through metadata lookup.
 - The in-process BCR discovery cache now stores the discovered module graph behind an `Arc`, so repeated two-phase bzlmod resolution reuses the graph without deep-cloning every discovered module.
 - The MODULE.bazel call scanner now uses a non-allocating prefix fast path for non-matching lines, avoiding repeated comment-stripping of every line for every scanned function name.
+- Bazel execroot artifact-path alias materialization is idempotent and repairs stale/conflicting aliases before retrying, matching Bazel action execution's expectation that generated-path aliases can be reused across actions.
+- Generated bzlmod `local_config_cc` wrappers choose the host C or C++ driver from the actual source/command language instead of assuming C++, so downloaded rules_go cgo actions compile C inputs the same way Bazel does.
+- Bazel-compatible run actions render command-line artifacts with Bazel exec paths and normalize Buck-owned external/generated/root artifact paths back into Bazel-shaped `external/...` and `buck-out/bin/...` paths before execution.
+- Produced directory/tree outputs are precreated at the declared output root, matching Bazel tree-artifact execution behavior for actions that expect an empty declared directory to exist.
+- Bazel `attr.label` and `attr.label_list` preserve downloaded aspect declarations, and analysis now runs downloaded no-required-provider aspect implementations against the owning target. This lets rules_go produce `GoProtoImports` from its real `_go_proto_aspect` without a rules_go-specific shim. Full dependency-aspect propagation for aspects with `required_providers` remains future work.
+- BuildBuddy's current server target now builds with Buck2 actions:
+
+```sh
+BUCK2_TEST_SKIP_DEFAULT_EXTERNAL_CONFIG=true \
+BUCK2_HARD_ERROR=false \
+/Users/siggi/Code/buck2/bazel-bin/app/buck2/buck2_bin \
+  --isolation-dir buildbuddy-fileresolver-debug build //server:server
+```
+
+The successful run executed 2357 local commands and did not call `bazel build`.
 
 Latest smoke:
 
 ```sh
+BUCK2_TEST_SKIP_DEFAULT_EXTERNAL_CONFIG=true \
+BUCK2_HARD_ERROR=false \
 /Users/siggi/Code/buck2/bazel-bin/app/buck2/buck2_bin \
-  build --isolation-dir bazelisk-runtime-inputs-2 //:bazelisk
+  --isolation-dir buildbuddy-fileresolver-debug build //server:server
 ```
 
 Bazelisk now builds `//:bazelisk` end to end in a fresh isolation after loading downloaded rules_go/Gazelle/protobuf modules, invoking real module extensions and generated repository rules, materializing the downloaded Go SDK from runtime repository-rule inputs, analyzing rules_go targets, and running Buck2 actions. An earlier `bazelisk-runtime-inputs-1` rerun reached the same rules_go action phase but failed because the machine had only 699 MiB free; after clearing stale generated `buck-out` isolation directories, `bazelisk-runtime-inputs-2` succeeded.
@@ -193,6 +210,8 @@ The `buildbuddy-unlockfiled-ext-1` smoke confirmed that a fully lazy module-exte
 The `buildbuddy-server-cutover-2` smoke passed the previous generated NodeJS input-file boundary and the Bazel 9 `@bazel_tools//src/conditions:host_windows` boundary. The next blocker was a Bazel module-extension repo mapping mismatch: `aspect_bazel_lib++toolchains+coreutils_toolchains` referenced sibling repos such as `@coreutils_darwin_arm64`, but Buck had not evaluated the non-root `aspect_bazel_lib` toolchains extension and therefore only mapped the imported `coreutils_toolchains` repo. Buck now evaluates un-lockfiled non-root extension usages before final cell graph construction, matching Bazel's rule that extension-generated repos see all repos emitted by the same extension.
 
 The `buildbuddy-server-cutover-3` smoke cleared that same-extension repo mapping blocker and reached aspect_rules_js npm package import materialization. The next failure was `repository_ctx.execute([Label("@bsd_tar_toolchains_darwin_arm64//:tar"), ...])` passing the label string to `execve`; Buck now resolves direct Label command arguments to materialized external-cell paths.
+
+The `buildbuddy-fileresolver-debug` smoke cleared the remaining server action boundaries: stale execroot alias conflicts in protobuf C++ actions, C-vs-C++ host wrapper selection for rules_go cgo, Bazel exec-path rendering for generated/root artifacts in run actions, Bazel-style precreation of produced tree outputs, and rules_go `GoProtoImports` production through the downloaded `_go_proto_aspect`. The current `//server:server` target now builds successfully with Buck2 actions.
 
 ## Constraints
 
@@ -245,13 +264,13 @@ Implement:
 
 Immediate target:
 
-- Use the successful Bazelisk build as a regression check while expanding the same generic bzlmod/module-extension machinery to BuildBuddy's larger module graph.
+- Use the successful Bazelisk and BuildBuddy server builds as regression checks while expanding the same generic bzlmod/module-extension machinery to more Bazel repos and targets.
 - Resume from the `buildbuddy-path-label-retry-1` boundary: BCR discovery is no longer the hot path during cell graph rebuilds, hardlink-first materialization avoids duplicated `.repository_ctx` file contents, bundled prelude files are lazy, and dynamic repository-rule label inputs are pulled on demand from repository_ctx usage instead of same-extension expansion.
 - Continue tightening source-driven, load-driven, and execution-observed generated repo materialization. `evaluate_bzlmod_module_extension_repo` no longer forces `MODULE.bazel` metadata for every input module and visible generated alias before loading an extension, and repository-rule retries now use concrete labels observed while executing downloaded code rather than forcing whole extension groups.
 - Keep module-extension `.bzl` resolution tied to the bzlmod resolver's resolved cell/path data. The evaluator should not reinterpret raw `MODULE.bazel` labels as normal Starlark `load()` imports or add extension-specific label fallbacks.
 - Keep `.bazelignore` support wired through `CellFileIgnores`; BuildBuddy's root ignores `buck-out`, `node_modules`, and website output trees, which matters for recursive package discovery and globs in the large-repo smoke.
 - Preserve Bazel's external `.bazelignore` semantics while making them lazy: Bazel's `PackageLookupFunction` checks the main repo ignore file before package lookup and checks an external repository's ignore file after fetching that repository, so Buck should not fetch unrelated generated repos solely to compute ignores during global cell setup.
-- Continue from the new BuildBuddy sync boundary: generated repository realization, full-tree source declaration, load-file materializer writes, BCR graph cloning, repeated MODULE call comment scanning, registry archive download/hash/extract for cached modules, bundled delegate-wide content hashing, whole-repo cache copy/link materialization, and Buck/Starlark static typechecking of Bazel prelude loads are no longer intended to be the main cost. The next investigation should focus on ordinary Starlark parse/eval with the low generated-repo footprint preserved.
+- Keep the low generated-repo footprint and cache-backed module materialization behavior while hardening the successful BuildBuddy server path. Generated repository realization, full-tree source declaration, load-file materializer writes, BCR graph cloning, repeated MODULE call comment scanning, registry archive download/hash/extract for cached modules, bundled delegate-wide content hashing, whole-repo cache copy/link materialization, and Buck/Starlark static typechecking of Bazel prelude loads are no longer intended to be the main cost.
 - Retire any remaining module-specific generated-repo materializers as their extensions become executable.
 
 Current validation boundary:
@@ -259,7 +278,7 @@ Current validation boundary:
 - The simple rules_go smoke resolves root and downloaded-module aliases separately, loads rules_go through downloaded bzlmod module cells, evaluates downloaded module extensions before final cell graph injection, rebuilds generated bzlmod cells from emitted repo names, materializes generated repos from downloaded repository-rule implementations, and runs Buck2 actions.
 - Bazelisk builds `//:bazelisk` end to end in a fresh isolation, including downloaded rules_go/Gazelle/module-extension loading, module-root-relative `use_extension(":...")` labels, generated Go SDK materialization from runtime repository-rule inputs, rules_go analysis, and Buck2 local actions.
 - The older smoke fixture's root-level `@rules_proto` load is intentionally not root-visible without a direct `bazel_dep`, matching Bazel 9.1.0 behavior.
-- BuildBuddy reaches post-extension sync after clearing the current concrete missing-API, generated-alias, repository patch, SRI checksum, BCR rediscovery, duplicated repository-output copy, broad generated-repo pre-materialization, alias-registration map rebuild, bundled prelude declaration, aspect_rules_js templated label, rules_python dynamic host runtime, repository_ctx watch, eager generated-repo delegate construction, eager full-tree source declaration, external load-file materializer-write, BCR graph clone, repeated MODULE call-scan, bzlmod registry archive re-download/re-hash, bundled delegate-wide digest, whole cached-repo materialization, and Bazel-prelude static typecheck boundaries. The active validation boundary is the remaining long synchronization phase after those concrete failures are cleared, with the latest smoke no longer expanding unrelated rules_python platform repos, hashing whole generated external-cell trees up front, writing bundled load files as source artifacts, spending warmed sync samples in bzlmod archive download/hash or bundled delegate-wide content hashing, copying/linking complete cached registry repos into external-cell roots, or typechecking Buck prelude modules imported by the Bazel prelude.
+- BuildBuddy builds `//server:server` after clearing the concrete missing-API, generated-alias, repository patch, SRI checksum, BCR rediscovery, duplicated repository-output copy, broad generated-repo pre-materialization, alias-registration map rebuild, bundled prelude declaration, aspect_rules_js templated label, rules_python dynamic host runtime, repository_ctx watch, eager generated-repo delegate construction, eager full-tree source declaration, external load-file materializer-write, BCR graph clone, repeated MODULE call-scan, bzlmod registry archive re-download/re-hash, bundled delegate-wide digest, whole cached-repo materialization, Bazel-prelude static typecheck, execroot alias, C wrapper language selection, Bazel exec-path rendering, produced tree-output precreation, and rules_go proto aspect boundaries.
 
 Acceptance:
 
@@ -419,7 +438,16 @@ Acceptance:
 
 ## Phase 7: BuildBuddy Server
 
-Run BuildBuddy after Bazelisk passes.
+Status: accepted for the current top-level server target.
+
+BuildBuddy now builds successfully with:
+
+```sh
+BUCK2_TEST_SKIP_DEFAULT_EXTERNAL_CONFIG=true \
+BUCK2_HARD_ERROR=false \
+/Users/siggi/Code/buck2/bazel-bin/app/buck2/buck2_bin \
+  --isolation-dir buildbuddy-fileresolver-debug build //server:server
+```
 
 Work failures in this order:
 
@@ -432,7 +460,7 @@ Work failures in this order:
 
 Acceptance:
 
-- `buck2 build //server/cmd/buildbuddy:buildbuddy` succeeds.
+- `buck2 build //server:server` succeeds.
 - The build does not call `bazel build`.
 - The build does not depend on rules_go/proto/container/npm prelude shims.
 
@@ -462,7 +490,7 @@ bazel-bin/app/buck2/buck2_bin --isolation-dir bazelisk-smoke \
 BUCK2_TEST_SKIP_DEFAULT_EXTERNAL_CONFIG=true \
 BUCK2_HARD_ERROR=false \
 bazel-bin/app/buck2/buck2_bin --isolation-dir buildbuddy-smoke \
-  build //server/cmd/buildbuddy:buildbuddy
+  build //server:server
 ```
 
 ## Done Definition

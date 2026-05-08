@@ -20,3 +20,7 @@ pub static FROZEN_RULE_GET_IMPL: LateBinding<fn(FrozenValue) -> buck2_error::Res
 pub static FROZEN_PROMISE_ARTIFACT_MAPPINGS_GET_IMPL: LateBinding<
     fn(FrozenValue) -> buck2_error::Result<SmallMap<FrozenStringValue, FrozenValue>>,
 > = LateBinding::new("FROZEN_PROMISE_ARTIFACT_MAPPINGS_GET_IMPL");
+
+pub static FROZEN_BAZEL_ASPECTS_GET_IMPL: LateBinding<
+    fn(FrozenValue) -> buck2_error::Result<Vec<FrozenValue>>,
+> = LateBinding::new("FROZEN_BAZEL_ASPECTS_GET_IMPL");

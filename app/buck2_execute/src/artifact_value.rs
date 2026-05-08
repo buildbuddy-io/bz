@@ -87,6 +87,15 @@ impl ArtifactValue {
         matches!(self.entry, ActionDirectoryEntry::Dir(_))
     }
 
+    pub fn is_symlink(&self) -> bool {
+        matches!(
+            self.entry,
+            ActionDirectoryEntry::Leaf(
+                ActionDirectoryMember::Symlink(_) | ActionDirectoryMember::ExternalSymlink(_)
+            )
+        )
+    }
+
     pub fn external_symlink(symlink: Arc<ExternalSymlink>) -> Self {
         Self {
             entry: ActionDirectoryEntry::Leaf(ActionDirectoryMember::ExternalSymlink(symlink)),

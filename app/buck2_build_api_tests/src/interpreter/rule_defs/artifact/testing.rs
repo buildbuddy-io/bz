@@ -92,6 +92,23 @@ pub(crate) fn artifactory(builder: &mut GlobalsBuilder) {
         Ok(StarlarkArtifact::new(SourceArtifact::new(path).into()))
     }
 
+    fn source_dir_artifact(
+        package: &str,
+        path: &str,
+        eval: &mut Evaluator,
+    ) -> starlark::Result<StarlarkArtifact> {
+        let ctx = BuildContext::from_context(eval)?;
+        let package = PackageLabel::new(
+            ctx.build_file_cell().name(),
+            CellRelativePath::from_path(package).unwrap(),
+        )?;
+        let path = SourcePath::new(package, ArcS::from(PackageRelativePath::new(path)?));
+        Ok(StarlarkArtifact::new_source(
+            SourceArtifact::new(path).into(),
+            true,
+        ))
+    }
+
     fn bound_artifact(
         target: &str,
         path: &str,

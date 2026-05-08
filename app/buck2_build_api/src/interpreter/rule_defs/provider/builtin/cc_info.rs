@@ -17,8 +17,13 @@ use buck2_core::cells::cell_path::CellPath;
 use buck2_core::cells::external::bzlmod_cell_name;
 use buck2_core::cells::name::CellName;
 use buck2_core::cells::paths::CellRelativePathBuf;
+use buck2_core::fs::buck_out_path::BuckOutPathKind;
 use buck2_core::provider::id::ProviderId;
+use buck2_execute::execute::request::OutputType;
+use buck2_interpreter::types::configured_providers_label::StarlarkConfiguredProvidersLabel;
+use buck2_interpreter::types::configured_providers_label::StarlarkProvidersLabel;
 use buck2_interpreter::types::provider::callable::ProviderCallableLike;
+use buck2_util::late_binding::LateBinding;
 use dupe::Dupe;
 use serde::Serializer;
 use starlark::any::ProvidesStaticType;
@@ -36,22 +41,34 @@ use starlark::values::FrozenValue;
 use starlark::values::Heap;
 use starlark::values::NoSerialize;
 use starlark::values::StarlarkValue;
+use starlark::values::StringValue;
 use starlark::values::Trace;
 use starlark::values::Value;
 use starlark::values::ValueLifetimeless;
 use starlark::values::ValueLike;
 use starlark::values::ValueOfUnchecked;
 use starlark::values::ValueOfUncheckedGeneric;
+use starlark::values::ValueTyped;
 use starlark::values::dict::AllocDict;
+use starlark::values::dict::DictRef;
 use starlark::values::list::AllocList;
+use starlark::values::list::ListRef;
 use starlark::values::list::UnpackList;
 use starlark::values::none::NoneType;
 use starlark::values::starlark_value;
 use starlark::values::structs::AllocStruct;
+use starlark::values::tuple::AllocTuple;
+use starlark::values::tuple::TupleRef;
 use starlark::values::tuple::UnpackTuple;
 use starlark_map::StarlarkHasher;
 
 use crate as buck2_build_api;
+use crate::interpreter::rule_defs::artifact::associated::AssociatedArtifacts;
+use crate::interpreter::rule_defs::artifact::starlark_declared_artifact::StarlarkDeclaredArtifact;
+use crate::interpreter::rule_defs::context::AnalysisActions;
+use crate::interpreter::rule_defs::context::analysis_actions_to_bazel_ctx;
+use crate::interpreter::rule_defs::depset::BazelDepset;
+use crate::interpreter::rule_defs::depset::bazel_depset_to_list;
 use crate::interpreter::rule_defs::provider::ProviderLike;
 use crate::interpreter::rule_defs::provider::callable::provider_callable_equals;
 use crate::interpreter::rule_defs::provider::callable::provider_callable_write_hash;
@@ -288,8 +305,31 @@ impl fmt::Display for BazelCcInternal {
 
 starlark::starlark_simple_value!(BazelCcInternal);
 
+pub struct BazelCcCompileAction<'v> {
+    pub actions: ValueTyped<'v, AnalysisActions<'v>>,
+    pub executable: Value<'v>,
+    pub arguments: Vec<Value<'v>>,
+    pub inputs: Vec<Value<'v>>,
+    pub outputs: Vec<ValueTyped<'v, StarlarkDeclaredArtifact<'v>>>,
+    pub mnemonic: StringValue<'v>,
+}
+
+pub static BAZEL_CC_CREATE_COMPILE_ACTION: LateBinding<
+    for<'v, 'a, 'b, 'c> fn(
+        BazelCcCompileAction<'v>,
+        &'a mut Evaluator<'v, 'b, 'c>,
+    ) -> starlark::Result<NoneType>,
+> = LateBinding::new("BAZEL_CC_CREATE_COMPILE_ACTION");
+
 #[derive(Debug, ProvidesStaticType, NoSerialize, Allocative)]
-struct BazelCcToolchainFeatures;
+struct BazelCcToolchainFeatures {
+    selectables: Vec<BazelSelectable>,
+    default_selectables: Vec<String>,
+    action_tools: Vec<BazelActionTool>,
+    flag_sets: Vec<BazelFlagSet>,
+    artifact_name_patterns: Vec<BazelArtifactNamePattern>,
+    tools_directory: String,
+}
 
 impl fmt::Display for BazelCcToolchainFeatures {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -310,6 +350,10 @@ impl<'v> StarlarkValue<'v> for BazelCcToolchainFeatures {
 #[derive(Debug, ProvidesStaticType, NoSerialize, Allocative)]
 struct BazelFeatureConfiguration {
     requested_features: Vec<String>,
+    enabled_selectables: Vec<String>,
+    action_tools: Vec<BazelActionTool>,
+    flag_sets: Vec<BazelFlagSet>,
+    tools_directory: String,
 }
 
 impl fmt::Display for BazelFeatureConfiguration {
@@ -323,6 +367,1523 @@ impl fmt::Display for BazelFeatureConfiguration {
 }
 
 starlark::starlark_simple_value!(BazelFeatureConfiguration);
+
+#[derive(Debug, Clone, Allocative)]
+struct BazelSelectable {
+    name: String,
+    enabled: bool,
+    implies: Vec<String>,
+}
+
+#[derive(Debug, Clone, Allocative)]
+struct BazelActionTool {
+    action_name: String,
+    path: String,
+    path_origin: BazelToolPathOrigin,
+    with_features: Vec<BazelWithFeatureSet>,
+    execution_requirements: Vec<String>,
+}
+
+#[derive(Debug, Clone, Allocative)]
+enum BazelToolPathOrigin {
+    CrosstoolPackage,
+    FilesystemRoot,
+    WorkspaceRoot,
+}
+
+#[derive(Debug, Clone, Allocative)]
+struct BazelWithFeatureSet {
+    features: Vec<String>,
+    not_features: Vec<String>,
+}
+
+#[derive(Debug, Clone, Allocative)]
+struct BazelArtifactNamePattern {
+    category: String,
+    prefix: String,
+    extension: String,
+}
+
+#[derive(Debug, Clone, Allocative)]
+struct BazelFlagSet {
+    owner_selectable: String,
+    owner_is_action_config: bool,
+    actions: Vec<String>,
+    with_features: Vec<BazelWithFeatureSet>,
+    flag_groups: Vec<BazelFlagGroup>,
+}
+
+#[derive(Debug, Clone, Allocative)]
+struct BazelFlagGroup {
+    flags: Vec<String>,
+    flag_groups: Vec<BazelFlagGroup>,
+    iterate_over: Option<String>,
+    expand_if_available: Option<String>,
+    expand_if_not_available: Option<String>,
+    expand_if_true: Option<String>,
+    expand_if_false: Option<String>,
+    expand_if_equal: Option<(String, String)>,
+}
+
+#[derive(Debug)]
+struct BazelArtifactCategory {
+    name: &'static str,
+    default_prefix: &'static str,
+    default_extension: &'static str,
+    allowed_extensions: &'static [&'static str],
+}
+
+const BAZEL_CC_ARTIFACT_CATEGORIES: &[BazelArtifactCategory] = &[
+    BazelArtifactCategory {
+        name: "static_library",
+        default_prefix: "lib",
+        default_extension: ".a",
+        allowed_extensions: &[".a", ".lib"],
+    },
+    BazelArtifactCategory {
+        name: "alwayslink_static_library",
+        default_prefix: "lib",
+        default_extension: ".lo",
+        allowed_extensions: &[".lo", ".lo.lib"],
+    },
+    BazelArtifactCategory {
+        name: "dynamic_library",
+        default_prefix: "lib",
+        default_extension: ".so",
+        allowed_extensions: &[".so", ".dylib", ".dll", ".pyd", ".wasm"],
+    },
+    BazelArtifactCategory {
+        name: "executable",
+        default_prefix: "",
+        default_extension: "",
+        allowed_extensions: &["", ".exe", ".wasm"],
+    },
+    BazelArtifactCategory {
+        name: "interface_library",
+        default_prefix: "lib",
+        default_extension: ".ifso",
+        allowed_extensions: &[".ifso", ".tbd", ".if.lib", ".lib"],
+    },
+    BazelArtifactCategory {
+        name: "pic_file",
+        default_prefix: "",
+        default_extension: ".pic",
+        allowed_extensions: &[".pic"],
+    },
+    BazelArtifactCategory {
+        name: "included_file_list",
+        default_prefix: "",
+        default_extension: ".d",
+        allowed_extensions: &[".d"],
+    },
+    BazelArtifactCategory {
+        name: "serialized_diagnostics_file",
+        default_prefix: "",
+        default_extension: ".dia",
+        allowed_extensions: &[".dia"],
+    },
+    BazelArtifactCategory {
+        name: "object_file",
+        default_prefix: "",
+        default_extension: ".o",
+        allowed_extensions: &[".o", ".obj"],
+    },
+    BazelArtifactCategory {
+        name: "pic_object_file",
+        default_prefix: "",
+        default_extension: ".pic.o",
+        allowed_extensions: &[".pic.o"],
+    },
+    BazelArtifactCategory {
+        name: "cpp_module",
+        default_prefix: "",
+        default_extension: ".pcm",
+        allowed_extensions: &[".pcm", ".gcm", ".ifc"],
+    },
+    BazelArtifactCategory {
+        name: "cpp_modules_info",
+        default_prefix: "",
+        default_extension: ".CXXModules.json",
+        allowed_extensions: &[".CXXModules.json"],
+    },
+    BazelArtifactCategory {
+        name: "cpp_modules_ddi",
+        default_prefix: "",
+        default_extension: ".ddi",
+        allowed_extensions: &[".ddi"],
+    },
+    BazelArtifactCategory {
+        name: "cpp_modules_modmap",
+        default_prefix: "",
+        default_extension: ".modmap",
+        allowed_extensions: &[".modmap"],
+    },
+    BazelArtifactCategory {
+        name: "cpp_modules_modmap_input",
+        default_prefix: "",
+        default_extension: ".modmap.input",
+        allowed_extensions: &[".modmap.input"],
+    },
+    BazelArtifactCategory {
+        name: "generated_assembly",
+        default_prefix: "",
+        default_extension: ".s",
+        allowed_extensions: &[".s", ".asm"],
+    },
+    BazelArtifactCategory {
+        name: "processed_header",
+        default_prefix: "",
+        default_extension: ".processed",
+        allowed_extensions: &[".processed"],
+    },
+    BazelArtifactCategory {
+        name: "generated_header",
+        default_prefix: "",
+        default_extension: ".h",
+        allowed_extensions: &[".h"],
+    },
+    BazelArtifactCategory {
+        name: "preprocessed_c_source",
+        default_prefix: "",
+        default_extension: ".i",
+        allowed_extensions: &[".i"],
+    },
+    BazelArtifactCategory {
+        name: "preprocessed_cpp_source",
+        default_prefix: "",
+        default_extension: ".ii",
+        allowed_extensions: &[".ii"],
+    },
+    BazelArtifactCategory {
+        name: "coverage_data_file",
+        default_prefix: "",
+        default_extension: ".gcno",
+        allowed_extensions: &[".gcno"],
+    },
+    BazelArtifactCategory {
+        name: "clif_output_proto",
+        default_prefix: "",
+        default_extension: ".opb",
+        allowed_extensions: &[".opb"],
+    },
+];
+
+fn bazel_cc_error(message: impl Into<String>) -> starlark::Error {
+    starlark::Error::new_other(std::io::Error::other(message.into()))
+}
+
+fn bazel_cc_sequence_values<'v>(value: Value<'v>, field: &str) -> starlark::Result<Vec<Value<'v>>> {
+    if value.is_none() {
+        return Ok(Vec::new());
+    }
+    if let Some(list) = ListRef::from_value(value) {
+        return Ok(list.iter().collect());
+    }
+    if let Some(tuple) = TupleRef::from_value(value) {
+        return Ok(tuple.iter().collect());
+    }
+    Err(bazel_cc_error(format!(
+        "Expected `{field}` to be a list or tuple, got `{}`",
+        value.get_type()
+    )))
+}
+
+fn bazel_cc_attr<'v>(
+    value: Value<'v>,
+    name: &str,
+    heap: Heap<'v>,
+) -> starlark::Result<Option<Value<'v>>> {
+    value.get_attr(name, heap)
+}
+
+fn bazel_cc_string_attr<'v>(
+    value: Value<'v>,
+    name: &str,
+    heap: Heap<'v>,
+) -> starlark::Result<Option<String>> {
+    let Some(attr) = bazel_cc_attr(value, name, heap)? else {
+        return Ok(None);
+    };
+    if attr.is_none() {
+        return Ok(None);
+    }
+    attr.unpack_str()
+        .map(|value| Some(value.to_owned()))
+        .ok_or_else(|| {
+            bazel_cc_error(format!(
+                "Expected `{name}` to be a string, got `{}`",
+                attr.get_type()
+            ))
+        })
+}
+
+fn bazel_cc_bool_attr<'v>(value: Value<'v>, name: &str, heap: Heap<'v>) -> starlark::Result<bool> {
+    let Some(attr) = bazel_cc_attr(value, name, heap)? else {
+        return Ok(false);
+    };
+    if attr.is_none() {
+        return Ok(false);
+    }
+    attr.unpack_bool().ok_or_else(|| {
+        bazel_cc_error(format!(
+            "Expected `{name}` to be a bool, got `{}`",
+            attr.get_type()
+        ))
+    })
+}
+
+fn bazel_cc_string_sequence<'v>(value: Value<'v>, field: &str) -> starlark::Result<Vec<String>> {
+    bazel_cc_sequence_values(value, field)?
+        .into_iter()
+        .map(|value| {
+            value
+                .unpack_str()
+                .map(|value| value.to_owned())
+                .ok_or_else(|| {
+                    bazel_cc_error(format!(
+                        "Expected `{field}` entries to be strings, got `{}`",
+                        value.get_type()
+                    ))
+                })
+        })
+        .collect()
+}
+
+fn bazel_cc_string_sequence_attr<'v>(
+    value: Value<'v>,
+    name: &str,
+    heap: Heap<'v>,
+) -> starlark::Result<Vec<String>> {
+    let Some(attr) = bazel_cc_attr(value, name, heap)? else {
+        return Ok(Vec::new());
+    };
+    bazel_cc_string_sequence(attr, name)
+}
+
+fn bazel_cc_push_unique(values: &mut Vec<String>, value: String) -> bool {
+    if values.iter().any(|existing| existing == &value) {
+        false
+    } else {
+        values.push(value);
+        true
+    }
+}
+
+fn bazel_cc_parse_with_feature_set<'v>(
+    value: Value<'v>,
+    heap: Heap<'v>,
+) -> starlark::Result<BazelWithFeatureSet> {
+    Ok(BazelWithFeatureSet {
+        features: bazel_cc_string_sequence_attr(value, "features", heap)?,
+        not_features: bazel_cc_string_sequence_attr(value, "not_features", heap)?,
+    })
+}
+
+fn bazel_cc_parse_expand_if_equal<'v>(
+    value: Value<'v>,
+    heap: Heap<'v>,
+) -> starlark::Result<Option<(String, String)>> {
+    let Some(name) = bazel_cc_string_attr(value, "name", heap)? else {
+        return Ok(None);
+    };
+    let value = bazel_cc_string_attr(value, "value", heap)?.ok_or_else(|| {
+        bazel_cc_error("Expected variable_with_value to expose a `value` attribute")
+    })?;
+    Ok(Some((name, value)))
+}
+
+fn bazel_cc_parse_optional_string_attr<'v>(
+    value: Value<'v>,
+    name: &str,
+    heap: Heap<'v>,
+) -> starlark::Result<Option<String>> {
+    bazel_cc_string_attr(value, name, heap)
+}
+
+fn bazel_cc_parse_flag_group<'v>(
+    value: Value<'v>,
+    heap: Heap<'v>,
+) -> starlark::Result<BazelFlagGroup> {
+    let flag_groups = if let Some(flag_groups) = bazel_cc_attr(value, "flag_groups", heap)? {
+        bazel_cc_sequence_values(flag_groups, "flag_groups")?
+            .into_iter()
+            .map(|value| bazel_cc_parse_flag_group(value, heap))
+            .collect::<starlark::Result<Vec<_>>>()?
+    } else {
+        Vec::new()
+    };
+    let expand_if_equal = if let Some(value) = bazel_cc_attr(value, "expand_if_equal", heap)? {
+        if value.is_none() {
+            None
+        } else {
+            bazel_cc_parse_expand_if_equal(value, heap)?
+        }
+    } else {
+        None
+    };
+    Ok(BazelFlagGroup {
+        flags: bazel_cc_string_sequence_attr(value, "flags", heap)?,
+        flag_groups,
+        iterate_over: bazel_cc_parse_optional_string_attr(value, "iterate_over", heap)?,
+        expand_if_available: bazel_cc_parse_optional_string_attr(
+            value,
+            "expand_if_available",
+            heap,
+        )?,
+        expand_if_not_available: bazel_cc_parse_optional_string_attr(
+            value,
+            "expand_if_not_available",
+            heap,
+        )?,
+        expand_if_true: bazel_cc_parse_optional_string_attr(value, "expand_if_true", heap)?,
+        expand_if_false: bazel_cc_parse_optional_string_attr(value, "expand_if_false", heap)?,
+        expand_if_equal,
+    })
+}
+
+fn bazel_cc_parse_flag_set<'v>(
+    owner_selectable: &str,
+    owner_is_action_config: bool,
+    action_name: Option<&str>,
+    value: Value<'v>,
+    heap: Heap<'v>,
+) -> starlark::Result<BazelFlagSet> {
+    let mut actions = bazel_cc_string_sequence_attr(value, "actions", heap)?;
+    if actions.is_empty() {
+        if let Some(action_name) = action_name {
+            actions.push(action_name.to_owned());
+        }
+    }
+    let with_features = if let Some(value) = bazel_cc_attr(value, "with_features", heap)? {
+        bazel_cc_sequence_values(value, "with_features")?
+            .into_iter()
+            .map(|value| bazel_cc_parse_with_feature_set(value, heap))
+            .collect::<starlark::Result<Vec<_>>>()?
+    } else {
+        Vec::new()
+    };
+    let flag_groups = if let Some(value) = bazel_cc_attr(value, "flag_groups", heap)? {
+        bazel_cc_sequence_values(value, "flag_groups")?
+            .into_iter()
+            .map(|value| bazel_cc_parse_flag_group(value, heap))
+            .collect::<starlark::Result<Vec<_>>>()?
+    } else {
+        Vec::new()
+    };
+    Ok(BazelFlagSet {
+        owner_selectable: owner_selectable.to_owned(),
+        owner_is_action_config,
+        actions,
+        with_features,
+        flag_groups,
+    })
+}
+
+fn bazel_cc_parse_tool<'v>(
+    action_name: &str,
+    tool: Value<'v>,
+    heap: Heap<'v>,
+) -> starlark::Result<BazelActionTool> {
+    let (path, path_origin) = if let Some(path) = bazel_cc_string_attr(tool, "path", heap)? {
+        let path_origin = if path.starts_with('/') {
+            BazelToolPathOrigin::FilesystemRoot
+        } else {
+            BazelToolPathOrigin::CrosstoolPackage
+        };
+        (path, path_origin)
+    } else if let Some(tool_artifact) = bazel_cc_attr(tool, "tool", heap)? {
+        let path = bazel_cc_string_attr(tool_artifact, "path", heap)?.ok_or_else(|| {
+            bazel_cc_error("Expected action_config tool artifact to expose a `path` attribute")
+        })?;
+        (path, BazelToolPathOrigin::WorkspaceRoot)
+    } else {
+        return Err(bazel_cc_error(
+            "Expected action_config tool to provide exactly one of `path` or `tool`",
+        ));
+    };
+
+    let with_features = if let Some(value) = bazel_cc_attr(tool, "with_features", heap)? {
+        bazel_cc_sequence_values(value, "with_features")?
+            .into_iter()
+            .map(|value| bazel_cc_parse_with_feature_set(value, heap))
+            .collect::<starlark::Result<Vec<_>>>()?
+    } else {
+        Vec::new()
+    };
+
+    Ok(BazelActionTool {
+        action_name: action_name.to_owned(),
+        path,
+        path_origin,
+        with_features,
+        execution_requirements: bazel_cc_string_sequence_attr(
+            tool,
+            "execution_requirements",
+            heap,
+        )?,
+    })
+}
+
+fn bazel_cc_parse_tool_paths<'v>(
+    toolchain_config_info: Value<'v>,
+    heap: Heap<'v>,
+) -> starlark::Result<Vec<(String, String)>> {
+    let Some(tool_paths) = bazel_cc_attr(toolchain_config_info, "tool_paths", heap)? else {
+        return Ok(Vec::new());
+    };
+    let mut parsed = Vec::new();
+    for tool_path in bazel_cc_sequence_values(tool_paths, "tool_paths")? {
+        let Some(name) = bazel_cc_string_attr(tool_path, "name", heap)? else {
+            continue;
+        };
+        let Some(path) = bazel_cc_string_attr(tool_path, "path", heap)? else {
+            continue;
+        };
+        parsed.push((name, path));
+    }
+    Ok(parsed)
+}
+
+fn bazel_cc_artifact_category(category: &str) -> starlark::Result<&'static BazelArtifactCategory> {
+    let category = category.to_ascii_lowercase();
+    BAZEL_CC_ARTIFACT_CATEGORIES
+        .iter()
+        .find(|candidate| candidate.name == category)
+        .ok_or_else(|| bazel_cc_error(format!("Artifact category {category} not recognized.")))
+}
+
+fn bazel_cc_parse_artifact_name_patterns<'v>(
+    toolchain_config_info: Value<'v>,
+    heap: Heap<'v>,
+) -> starlark::Result<Vec<BazelArtifactNamePattern>> {
+    let Some(patterns) = bazel_cc_attr(
+        toolchain_config_info,
+        "_artifact_name_patterns_DO_NOT_USE",
+        heap,
+    )?
+    else {
+        return Ok(Vec::new());
+    };
+
+    let mut parsed = Vec::new();
+    for pattern in bazel_cc_sequence_values(patterns, "_artifact_name_patterns_DO_NOT_USE")? {
+        let category_name =
+            bazel_cc_string_attr(pattern, "category_name", heap)?.ok_or_else(|| {
+                bazel_cc_error(
+                    "The `category_name` field of artifact_name_pattern must be a string.",
+                )
+            })?;
+        if category_name.is_empty() {
+            return Err(bazel_cc_error(
+                "The `category_name` field of artifact_name_pattern must be a nonempty string.",
+            ));
+        }
+        let category = bazel_cc_artifact_category(&category_name)?;
+        let prefix = bazel_cc_string_attr(pattern, "prefix", heap)?.unwrap_or_default();
+        let extension = bazel_cc_string_attr(pattern, "extension", heap)?.unwrap_or_default();
+        if !category.allowed_extensions.contains(&extension.as_str()) {
+            return Err(bazel_cc_error(format!(
+                "Unrecognized file extension `{extension}` for artifact category `{}`.",
+                category.name
+            )));
+        }
+        if parsed
+            .iter()
+            .any(|existing: &BazelArtifactNamePattern| existing.category == category.name)
+        {
+            return Err(bazel_cc_error(format!(
+                "Duplicate artifact_name_pattern for category `{}`.",
+                category.name
+            )));
+        }
+        if prefix != category.default_prefix || extension != category.default_extension {
+            parsed.push(BazelArtifactNamePattern {
+                category: category.name.to_owned(),
+                prefix,
+                extension,
+            });
+        }
+    }
+
+    Ok(parsed)
+}
+
+fn bazel_cc_tool_path_origin(path: &str) -> BazelToolPathOrigin {
+    if path.starts_with('/') {
+        BazelToolPathOrigin::FilesystemRoot
+    } else {
+        BazelToolPathOrigin::CrosstoolPackage
+    }
+}
+
+fn bazel_cc_legacy_action_tool(action_name: &str, path: &str) -> BazelActionTool {
+    BazelActionTool {
+        action_name: action_name.to_owned(),
+        path: path.to_owned(),
+        path_origin: bazel_cc_tool_path_origin(path),
+        with_features: Vec::new(),
+        execution_requirements: Vec::new(),
+    }
+}
+
+fn bazel_cc_add_legacy_action_config(
+    selectables: &mut Vec<BazelSelectable>,
+    action_tools: &mut Vec<BazelActionTool>,
+    existing_action_config_names: &[String],
+    action_name: &str,
+    tool_path: Option<&str>,
+    implies: &[&str],
+) {
+    if existing_action_config_names
+        .iter()
+        .any(|existing| existing == action_name)
+    {
+        return;
+    }
+    let Some(tool_path) = tool_path else {
+        return;
+    };
+    selectables.push(BazelSelectable {
+        name: action_name.to_owned(),
+        enabled: false,
+        implies: implies.iter().map(|value| (*value).to_owned()).collect(),
+    });
+    action_tools.push(bazel_cc_legacy_action_tool(action_name, tool_path));
+}
+
+fn bazel_cc_add_legacy_action_configs(
+    selectables: &mut Vec<BazelSelectable>,
+    action_tools: &mut Vec<BazelActionTool>,
+    tool_paths: &[(String, String)],
+    existing_action_config_names: &[String],
+    add_legacy_feature_implies: bool,
+) {
+    let tool_path = |name: &str| {
+        tool_paths
+            .iter()
+            .find_map(|(tool_name, path)| (tool_name == name).then_some(path.as_str()))
+    };
+
+    let compile_implies: &[&str] = &[];
+    let link_implies: &[&str] = if add_legacy_feature_implies {
+        &[
+            "shared_flag",
+            "output_execpath_flags",
+            "runtime_library_search_directories",
+            "library_search_directories",
+            "libraries_to_link",
+            "user_link_flags",
+        ]
+    } else {
+        &[]
+    };
+    let archive_implies: &[&str] = if add_legacy_feature_implies {
+        &["archiver_flags"]
+    } else {
+        &[]
+    };
+
+    let gcc = tool_path("gcc");
+    for action_name in [
+        "assemble",
+        "preprocess-assemble",
+        "linkstamp-compile",
+        "lto-backend",
+        "c-compile",
+        "c++-compile",
+        "c++-header-parsing",
+        "c++-module-compile",
+        "c++-module-codegen",
+    ] {
+        bazel_cc_add_legacy_action_config(
+            selectables,
+            action_tools,
+            existing_action_config_names,
+            action_name,
+            gcc,
+            compile_implies,
+        );
+    }
+    for action_name in [
+        "c++-link-executable",
+        "lto-index-for-executable",
+        "c++-link-nodeps-dynamic-library",
+        "lto-index-for-nodeps-dynamic-library",
+        "c++-link-dynamic-library",
+        "lto-index-for-dynamic-library",
+    ] {
+        bazel_cc_add_legacy_action_config(
+            selectables,
+            action_tools,
+            existing_action_config_names,
+            action_name,
+            gcc,
+            link_implies,
+        );
+    }
+    bazel_cc_add_legacy_action_config(
+        selectables,
+        action_tools,
+        existing_action_config_names,
+        "c++-link-static-library",
+        tool_path("ar"),
+        archive_implies,
+    );
+    bazel_cc_add_legacy_action_config(
+        selectables,
+        action_tools,
+        existing_action_config_names,
+        "strip",
+        tool_path("strip"),
+        &[],
+    );
+}
+
+fn bazel_cc_strings(values: &[&str]) -> Vec<String> {
+    values.iter().map(|value| (*value).to_owned()).collect()
+}
+
+fn bazel_cc_flag_group(flags: &[&str]) -> BazelFlagGroup {
+    BazelFlagGroup {
+        flags: bazel_cc_strings(flags),
+        flag_groups: Vec::new(),
+        iterate_over: None,
+        expand_if_available: None,
+        expand_if_not_available: None,
+        expand_if_true: None,
+        expand_if_false: None,
+        expand_if_equal: None,
+    }
+}
+
+fn bazel_cc_nested_flag_group(flag_groups: Vec<BazelFlagGroup>) -> BazelFlagGroup {
+    BazelFlagGroup {
+        flags: Vec::new(),
+        flag_groups,
+        iterate_over: None,
+        expand_if_available: None,
+        expand_if_not_available: None,
+        expand_if_true: None,
+        expand_if_false: None,
+        expand_if_equal: None,
+    }
+}
+
+fn bazel_cc_feature_flag_set(
+    owner_selectable: &str,
+    actions: &[&str],
+    flag_groups: Vec<BazelFlagGroup>,
+) -> BazelFlagSet {
+    BazelFlagSet {
+        owner_selectable: owner_selectable.to_owned(),
+        owner_is_action_config: false,
+        actions: bazel_cc_strings(actions),
+        with_features: Vec::new(),
+        flag_groups,
+    }
+}
+
+fn bazel_cc_legacy_link_actions() -> &'static [&'static str] {
+    &[
+        "c++-link-dynamic-library",
+        "c++-link-executable",
+        "c++-link-nodeps-dynamic-library",
+        "lto-index-for-dynamic-library",
+        "lto-index-for-executable",
+        "lto-index-for-nodeps-dynamic-library",
+    ]
+}
+
+fn bazel_cc_legacy_dynamic_link_actions() -> &'static [&'static str] {
+    &[
+        "c++-link-dynamic-library",
+        "c++-link-nodeps-dynamic-library",
+        "lto-index-for-dynamic-library",
+        "lto-index-for-nodeps-dynamic-library",
+    ]
+}
+
+fn bazel_cc_legacy_archiver_flag_sets(platform: &str) -> Vec<BazelFlagSet> {
+    let mut flag_groups = Vec::new();
+    flag_groups.push(bazel_cc_flag_group(&[if platform == "mac" {
+        "-static"
+    } else {
+        "rcsD"
+    }]));
+    let mut output_group = if platform == "mac" {
+        bazel_cc_flag_group(&["-o", "%{output_execpath}"])
+    } else {
+        bazel_cc_flag_group(&["%{output_execpath}"])
+    };
+    output_group.expand_if_available = Some("output_execpath".to_owned());
+    flag_groups.push(output_group);
+
+    let mut object_file_group = bazel_cc_flag_group(&["%{libraries_to_link.name}"]);
+    object_file_group.expand_if_equal = Some((
+        "libraries_to_link.type".to_owned(),
+        "object_file".to_owned(),
+    ));
+    let mut object_file_group_files = bazel_cc_flag_group(&["%{libraries_to_link.object_files}"]);
+    object_file_group_files.iterate_over = Some("libraries_to_link.object_files".to_owned());
+    object_file_group_files.expand_if_equal = Some((
+        "libraries_to_link.type".to_owned(),
+        "object_file_group".to_owned(),
+    ));
+    let mut libraries =
+        bazel_cc_nested_flag_group(vec![object_file_group, object_file_group_files]);
+    libraries.iterate_over = Some("libraries_to_link".to_owned());
+    libraries.expand_if_available = Some("libraries_to_link".to_owned());
+    flag_groups.push(libraries);
+
+    vec![bazel_cc_feature_flag_set(
+        "archiver_flags",
+        &["c++-link-static-library"],
+        flag_groups,
+    )]
+}
+
+fn bazel_cc_legacy_output_execpath_flag_sets() -> Vec<BazelFlagSet> {
+    let mut group = bazel_cc_flag_group(&["-o", "%{output_execpath}"]);
+    group.expand_if_available = Some("output_execpath".to_owned());
+    vec![bazel_cc_feature_flag_set(
+        "output_execpath_flags",
+        bazel_cc_legacy_link_actions(),
+        vec![group],
+    )]
+}
+
+fn bazel_cc_legacy_library_search_directories_flag_sets() -> Vec<BazelFlagSet> {
+    let mut group = bazel_cc_flag_group(&["-L%{library_search_directories}"]);
+    group.iterate_over = Some("library_search_directories".to_owned());
+    group.expand_if_available = Some("library_search_directories".to_owned());
+    vec![bazel_cc_feature_flag_set(
+        "library_search_directories",
+        bazel_cc_legacy_link_actions(),
+        vec![group],
+    )]
+}
+
+fn bazel_cc_legacy_runtime_library_search_directories_flag_sets(
+    platform: &str,
+) -> Vec<BazelFlagSet> {
+    let origin = if platform == "mac" {
+        "@loader_path"
+    } else {
+        "$ORIGIN"
+    };
+    let mut group = bazel_cc_flag_group(&[
+        "-Xlinker",
+        "-rpath",
+        "-Xlinker",
+        &format!("{origin}/%{{runtime_library_search_directories}}"),
+    ]);
+    group.iterate_over = Some("runtime_library_search_directories".to_owned());
+    group.expand_if_available = Some("runtime_library_search_directories".to_owned());
+    vec![bazel_cc_feature_flag_set(
+        "runtime_library_search_directories",
+        bazel_cc_legacy_link_actions(),
+        vec![group],
+    )]
+}
+
+fn bazel_cc_legacy_user_link_flags_flag_sets() -> Vec<BazelFlagSet> {
+    let mut group = bazel_cc_flag_group(&["%{user_link_flags}"]);
+    group.iterate_over = Some("user_link_flags".to_owned());
+    group.expand_if_available = Some("user_link_flags".to_owned());
+    vec![bazel_cc_feature_flag_set(
+        "user_link_flags",
+        bazel_cc_legacy_link_actions(),
+        vec![group],
+    )]
+}
+
+fn bazel_cc_legacy_shared_flag_sets() -> Vec<BazelFlagSet> {
+    vec![bazel_cc_feature_flag_set(
+        "shared_flag",
+        bazel_cc_legacy_dynamic_link_actions(),
+        vec![bazel_cc_flag_group(&["-shared"])],
+    )]
+}
+
+fn bazel_cc_library_type_flag_group(library_type: &str, flags: &[&str]) -> BazelFlagGroup {
+    let mut group = bazel_cc_flag_group(flags);
+    group.expand_if_equal = Some(("libraries_to_link.type".to_owned(), library_type.to_owned()));
+    group
+}
+
+fn bazel_cc_legacy_libraries_to_link_flag_sets(platform: &str) -> Vec<BazelFlagSet> {
+    let mut groups = Vec::new();
+    let mut start_lib = bazel_cc_library_type_flag_group("object_file_group", &["-Wl,--start-lib"]);
+    start_lib.expand_if_false = Some("libraries_to_link.is_whole_archive".to_owned());
+    groups.push(start_lib);
+
+    if platform == "mac" {
+        let mut object_file_group = bazel_cc_library_type_flag_group("object_file_group", &[]);
+        object_file_group.iterate_over = Some("libraries_to_link.object_files".to_owned());
+        object_file_group.flag_groups = vec![
+            {
+                let mut group = bazel_cc_flag_group(&["%{libraries_to_link.object_files}"]);
+                group.expand_if_false = Some("libraries_to_link.is_whole_archive".to_owned());
+                group
+            },
+            {
+                let mut group =
+                    bazel_cc_flag_group(&["-Wl,-force_load,%{libraries_to_link.object_files}"]);
+                group.expand_if_true = Some("libraries_to_link.is_whole_archive".to_owned());
+                group
+            },
+        ];
+        groups.push(object_file_group);
+
+        for library_type in ["object_file", "interface_library", "static_library"] {
+            let mut group = bazel_cc_library_type_flag_group(library_type, &[]);
+            group.flag_groups = vec![
+                {
+                    let mut group = bazel_cc_flag_group(&["%{libraries_to_link.name}"]);
+                    group.expand_if_false = Some("libraries_to_link.is_whole_archive".to_owned());
+                    group
+                },
+                {
+                    let mut group =
+                        bazel_cc_flag_group(&["-Wl,-force_load,%{libraries_to_link.name}"]);
+                    group.expand_if_true = Some("libraries_to_link.is_whole_archive".to_owned());
+                    group
+                },
+            ];
+            groups.push(group);
+        }
+        groups.push(bazel_cc_library_type_flag_group(
+            "dynamic_library",
+            &["-l%{libraries_to_link.name}"],
+        ));
+        groups.push(bazel_cc_library_type_flag_group(
+            "versioned_dynamic_library",
+            &["%{libraries_to_link.path}"],
+        ));
+    } else {
+        let mut whole_archive =
+            bazel_cc_library_type_flag_group("static_library", &["-Wl,-whole-archive"]);
+        whole_archive.expand_if_true = Some("libraries_to_link.is_whole_archive".to_owned());
+        groups.push(whole_archive);
+        let mut object_file_group = bazel_cc_library_type_flag_group(
+            "object_file_group",
+            &["%{libraries_to_link.object_files}"],
+        );
+        object_file_group.iterate_over = Some("libraries_to_link.object_files".to_owned());
+        groups.push(object_file_group);
+        for library_type in ["object_file", "interface_library", "static_library"] {
+            groups.push(bazel_cc_library_type_flag_group(
+                library_type,
+                &["%{libraries_to_link.name}"],
+            ));
+        }
+        groups.push(bazel_cc_library_type_flag_group(
+            "dynamic_library",
+            &["-l%{libraries_to_link.name}"],
+        ));
+        groups.push(bazel_cc_library_type_flag_group(
+            "versioned_dynamic_library",
+            &["-l:%{libraries_to_link.name}"],
+        ));
+        let mut no_whole_archive =
+            bazel_cc_library_type_flag_group("static_library", &["-Wl,-no-whole-archive"]);
+        no_whole_archive.expand_if_true = Some("libraries_to_link.is_whole_archive".to_owned());
+        groups.push(no_whole_archive);
+    }
+
+    let mut end_lib = bazel_cc_library_type_flag_group("object_file_group", &["-Wl,--end-lib"]);
+    end_lib.expand_if_false = Some("libraries_to_link.is_whole_archive".to_owned());
+    groups.push(end_lib);
+
+    let mut libraries = bazel_cc_nested_flag_group(groups);
+    libraries.iterate_over = Some("libraries_to_link".to_owned());
+    libraries.expand_if_available = Some("libraries_to_link".to_owned());
+
+    vec![bazel_cc_feature_flag_set(
+        "libraries_to_link",
+        bazel_cc_legacy_link_actions(),
+        vec![libraries],
+    )]
+}
+
+fn bazel_cc_add_legacy_feature(
+    selectables: &mut Vec<BazelSelectable>,
+    flag_sets: &mut Vec<BazelFlagSet>,
+    existing_feature_names: &[String],
+    name: &str,
+    feature_flag_sets: Vec<BazelFlagSet>,
+) {
+    if existing_feature_names
+        .iter()
+        .any(|existing| existing == name)
+    {
+        return;
+    }
+    selectables.push(BazelSelectable {
+        name: name.to_owned(),
+        enabled: false,
+        implies: Vec::new(),
+    });
+    flag_sets.extend(feature_flag_sets);
+}
+
+fn bazel_cc_add_legacy_features(
+    selectables: &mut Vec<BazelSelectable>,
+    flag_sets: &mut Vec<BazelFlagSet>,
+    existing_feature_names: &[String],
+    platform: &str,
+) {
+    bazel_cc_add_legacy_feature(
+        selectables,
+        flag_sets,
+        existing_feature_names,
+        "shared_flag",
+        bazel_cc_legacy_shared_flag_sets(),
+    );
+    bazel_cc_add_legacy_feature(
+        selectables,
+        flag_sets,
+        existing_feature_names,
+        "output_execpath_flags",
+        bazel_cc_legacy_output_execpath_flag_sets(),
+    );
+    bazel_cc_add_legacy_feature(
+        selectables,
+        flag_sets,
+        existing_feature_names,
+        "runtime_library_search_directories",
+        bazel_cc_legacy_runtime_library_search_directories_flag_sets(platform),
+    );
+    bazel_cc_add_legacy_feature(
+        selectables,
+        flag_sets,
+        existing_feature_names,
+        "library_search_directories",
+        bazel_cc_legacy_library_search_directories_flag_sets(),
+    );
+    bazel_cc_add_legacy_feature(
+        selectables,
+        flag_sets,
+        existing_feature_names,
+        "archiver_flags",
+        bazel_cc_legacy_archiver_flag_sets(platform),
+    );
+    bazel_cc_add_legacy_feature(
+        selectables,
+        flag_sets,
+        existing_feature_names,
+        "libraries_to_link",
+        bazel_cc_legacy_libraries_to_link_flag_sets(platform),
+    );
+    bazel_cc_add_legacy_feature(
+        selectables,
+        flag_sets,
+        existing_feature_names,
+        "user_link_flags",
+        bazel_cc_legacy_user_link_flags_flag_sets(),
+    );
+}
+
+fn bazel_cc_parse_toolchain_features<'v>(
+    toolchain_config_info: Value<'v>,
+    tools_directory: String,
+    heap: Heap<'v>,
+) -> starlark::Result<BazelCcToolchainFeatures> {
+    let mut selectables = Vec::new();
+    let mut default_selectables = Vec::new();
+    let mut action_tools = Vec::new();
+    let mut flag_sets = Vec::new();
+    let mut feature_names = Vec::new();
+    let mut action_config_names = Vec::new();
+
+    if let Some(features) = bazel_cc_attr(toolchain_config_info, "_features_DO_NOT_USE", heap)? {
+        for feature in bazel_cc_sequence_values(features, "_features_DO_NOT_USE")? {
+            let Some(name) = bazel_cc_string_attr(feature, "name", heap)? else {
+                continue;
+            };
+            feature_names.push(name.clone());
+            let enabled = bazel_cc_bool_attr(feature, "enabled", heap)?;
+            if enabled {
+                bazel_cc_push_unique(&mut default_selectables, name.clone());
+            }
+            if let Some(feature_flag_sets) = bazel_cc_attr(feature, "flag_sets", heap)? {
+                for flag_set in bazel_cc_sequence_values(feature_flag_sets, "flag_sets")? {
+                    flag_sets.push(bazel_cc_parse_flag_set(&name, false, None, flag_set, heap)?);
+                }
+            }
+            selectables.push(BazelSelectable {
+                name,
+                enabled,
+                implies: bazel_cc_string_sequence_attr(feature, "implies", heap)?,
+            });
+        }
+    }
+
+    if let Some(action_configs) =
+        bazel_cc_attr(toolchain_config_info, "_action_configs_DO_NOT_USE", heap)?
+    {
+        for action_config in bazel_cc_sequence_values(action_configs, "_action_configs_DO_NOT_USE")?
+        {
+            let Some(action_name) = bazel_cc_string_attr(action_config, "action_name", heap)?
+            else {
+                continue;
+            };
+            action_config_names.push(action_name.clone());
+            let enabled = bazel_cc_bool_attr(action_config, "enabled", heap)?;
+            if enabled {
+                bazel_cc_push_unique(&mut default_selectables, action_name.clone());
+            }
+            selectables.push(BazelSelectable {
+                name: action_name.clone(),
+                enabled,
+                implies: bazel_cc_string_sequence_attr(action_config, "implies", heap)?,
+            });
+
+            if let Some(tools) = bazel_cc_attr(action_config, "tools", heap)? {
+                for tool in bazel_cc_sequence_values(tools, "tools")? {
+                    action_tools.push(bazel_cc_parse_tool(&action_name, tool, heap)?);
+                }
+            }
+            if let Some(action_flag_sets) = bazel_cc_attr(action_config, "flag_sets", heap)? {
+                for flag_set in bazel_cc_sequence_values(action_flag_sets, "flag_sets")? {
+                    flag_sets.push(bazel_cc_parse_flag_set(
+                        &action_name,
+                        true,
+                        Some(&action_name),
+                        flag_set,
+                        heap,
+                    )?);
+                }
+            }
+        }
+    }
+
+    let add_legacy_features = !feature_names
+        .iter()
+        .any(|name| name == "no_legacy_features");
+    let platform = if bazel_cc_string_attr(toolchain_config_info, "target_libc", heap)?.as_deref()
+        == Some("macosx")
+    {
+        "mac"
+    } else {
+        "linux"
+    };
+    if add_legacy_features {
+        bazel_cc_add_legacy_features(&mut selectables, &mut flag_sets, &feature_names, platform);
+    }
+
+    if add_legacy_features {
+        let tool_paths = bazel_cc_parse_tool_paths(toolchain_config_info, heap)?;
+        bazel_cc_add_legacy_action_configs(
+            &mut selectables,
+            &mut action_tools,
+            &tool_paths,
+            &action_config_names,
+            add_legacy_features,
+        );
+    }
+
+    let artifact_name_patterns =
+        bazel_cc_parse_artifact_name_patterns(toolchain_config_info, heap)?;
+
+    Ok(BazelCcToolchainFeatures {
+        selectables,
+        default_selectables,
+        action_tools,
+        flag_sets,
+        artifact_name_patterns,
+        tools_directory,
+    })
+}
+
+fn bazel_cc_enabled_selectables(
+    selectables: &[BazelSelectable],
+    defaults: &[String],
+    requested_features: &[String],
+) -> Vec<String> {
+    let mut enabled = Vec::new();
+    for selectable in selectables {
+        if selectable.enabled {
+            bazel_cc_push_unique(&mut enabled, selectable.name.clone());
+        }
+    }
+    for selectable in defaults {
+        bazel_cc_push_unique(&mut enabled, selectable.clone());
+    }
+    for requested in requested_features {
+        bazel_cc_push_unique(&mut enabled, requested.clone());
+    }
+
+    loop {
+        let mut changed = false;
+        for selectable in selectables {
+            if enabled.iter().any(|enabled| enabled == &selectable.name) {
+                for implied in &selectable.implies {
+                    changed |= bazel_cc_push_unique(&mut enabled, implied.clone());
+                }
+            }
+        }
+        if !changed {
+            return enabled;
+        }
+    }
+}
+
+impl BazelWithFeatureSet {
+    fn matches(&self, enabled: &[String]) -> bool {
+        self.features
+            .iter()
+            .all(|feature| enabled.iter().any(|enabled| enabled == feature))
+            && self
+                .not_features
+                .iter()
+                .all(|feature| !enabled.iter().any(|enabled| enabled == feature))
+    }
+}
+
+impl BazelActionTool {
+    fn matches(&self, enabled: &[String]) -> bool {
+        self.with_features.is_empty()
+            || self
+                .with_features
+                .iter()
+                .any(|with_features| with_features.matches(enabled))
+    }
+
+    fn tool_path(&self, tools_directory: &str) -> String {
+        match self.path_origin {
+            BazelToolPathOrigin::FilesystemRoot | BazelToolPathOrigin::WorkspaceRoot => {
+                self.path.clone()
+            }
+            BazelToolPathOrigin::CrosstoolPackage => {
+                if tools_directory.is_empty() || self.path.starts_with('/') {
+                    self.path.clone()
+                } else {
+                    format!(
+                        "{}/{}",
+                        tools_directory.trim_end_matches('/'),
+                        self.path.trim_start_matches('/')
+                    )
+                }
+            }
+        }
+    }
+}
+
+fn bazel_cc_toolchain_features_from_toolchain<'v>(
+    cc_toolchain: Value<'v>,
+    heap: Heap<'v>,
+) -> starlark::Result<&'v BazelCcToolchainFeatures> {
+    let Some(toolchain_features) = bazel_cc_attr(cc_toolchain, "_toolchain_features", heap)? else {
+        return Err(bazel_cc_error(
+            "Expected cc_toolchain to expose a `_toolchain_features` attribute",
+        ));
+    };
+    toolchain_features
+        .downcast_ref::<BazelCcToolchainFeatures>()
+        .ok_or_else(|| {
+            bazel_cc_error(format!(
+                "Expected cc_toolchain._toolchain_features to be CcToolchainFeatures, got `{}`",
+                toolchain_features.get_type()
+            ))
+        })
+}
+
+fn bazel_cc_artifact_name_pattern<'a>(
+    features: &'a BazelCcToolchainFeatures,
+    category: &'static BazelArtifactCategory,
+) -> (&'a str, &'a str) {
+    features
+        .artifact_name_patterns
+        .iter()
+        .find(|pattern| pattern.category == category.name)
+        .map(|pattern| (pattern.prefix.as_str(), pattern.extension.as_str()))
+        .unwrap_or((category.default_prefix, category.default_extension))
+}
+
+fn bazel_cc_artifact_name(output_name: &str, prefix: &str, extension: &str) -> String {
+    let artifact_basename = match output_name.rsplit_once('/') {
+        Some((parent, basename)) => {
+            return format!("{parent}/{prefix}{basename}{extension}");
+        }
+        None => output_name,
+    };
+    format!("{prefix}{artifact_basename}{extension}")
+}
+
+impl BazelFeatureConfiguration {
+    fn is_enabled_selectable(&self, name: &str) -> bool {
+        self.enabled_selectables
+            .iter()
+            .any(|selectable| selectable == name)
+    }
+
+    fn selected_tool(&self, action_name: &str) -> starlark::Result<&BazelActionTool> {
+        if !self.is_enabled_selectable(action_name) {
+            return Err(bazel_cc_error(format!(
+                "Action {action_name} does not have an enabled configuration in the toolchain."
+            )));
+        }
+        let candidate_count = self
+            .action_tools
+            .iter()
+            .filter(|tool| tool.action_name == action_name)
+            .count();
+        let known_actions = self
+            .action_tools
+            .iter()
+            .map(|tool| tool.action_name.as_str())
+            .take(20)
+            .collect::<Vec<_>>()
+            .join(", ");
+        self.action_tools
+            .iter()
+            .filter(|tool| tool.action_name == action_name)
+            .find(|tool| tool.matches(&self.enabled_selectables))
+            .ok_or_else(|| {
+                bazel_cc_error(format!(
+                    "Matching tool for action {action_name} not found for given feature configuration; candidate tools: {candidate_count}; known action tools: [{known_actions}]"
+                ))
+            })
+    }
+}
+
+fn bazel_cc_flag_set_matches(
+    feature_configuration: &BazelFeatureConfiguration,
+    flag_set: &BazelFlagSet,
+    action_name: &str,
+) -> bool {
+    feature_configuration.is_enabled_selectable(&flag_set.owner_selectable)
+        && flag_set.actions.iter().any(|action| action == action_name)
+        && (flag_set.with_features.is_empty()
+            || flag_set.with_features.iter().any(|with_features| {
+                with_features.matches(&feature_configuration.enabled_selectables)
+            }))
+}
+
+fn bazel_cc_feature_variable<'v>(
+    variables: Value<'v>,
+    locals: &[(String, Value<'v>)],
+    name: &str,
+    heap: Heap<'v>,
+) -> starlark::Result<Option<Value<'v>>> {
+    if let Some((_, value)) = locals
+        .iter()
+        .rev()
+        .find(|(local_name, _)| local_name == name)
+    {
+        return Ok(Some(*value));
+    }
+
+    let Some((root, rest)) = name.split_once('.') else {
+        return Ok(bazel_cc_build_variable(variables, name));
+    };
+
+    let mut value = if let Some((_, value)) = locals
+        .iter()
+        .rev()
+        .find(|(local_name, _)| local_name == root)
+    {
+        *value
+    } else {
+        let Some(value) = bazel_cc_build_variable(variables, root) else {
+            return Ok(None);
+        };
+        value
+    };
+
+    for field in rest.split('.') {
+        if let Some(attr) = value.get_attr(field, heap)? {
+            value = attr;
+            continue;
+        }
+        if let Some(dict) = DictRef::from_value(value)
+            && let Some((_, dict_value)) =
+                dict.iter().find(|(key, _)| key.unpack_str() == Some(field))
+        {
+            value = dict_value;
+            continue;
+        }
+        return Ok(None);
+    }
+
+    Ok(Some(value))
+}
+
+fn bazel_cc_feature_variable_available<'v>(
+    variables: Value<'v>,
+    locals: &[(String, Value<'v>)],
+    name: &str,
+    heap: Heap<'v>,
+) -> starlark::Result<bool> {
+    Ok(bazel_cc_feature_variable(variables, locals, name, heap)?
+        .is_some_and(|value| !value.is_none()))
+}
+
+fn bazel_cc_feature_string<'v>(value: Value<'v>, heap: Heap<'v>) -> starlark::Result<String> {
+    if let Some(value) = value.unpack_str() {
+        return Ok(value.to_owned());
+    }
+    if let Some(value) = value.unpack_bool() {
+        return Ok(if value { "1" } else { "0" }.to_owned());
+    }
+    if let Some(value) = value.unpack_i32() {
+        return Ok(value.to_string());
+    }
+    bazel_cc_link_string(value, heap)
+}
+
+fn bazel_cc_expand_feature_flag<'v>(
+    flag: &str,
+    variables: Value<'v>,
+    locals: &[(String, Value<'v>)],
+    heap: Heap<'v>,
+) -> starlark::Result<String> {
+    let Some(mut start) = flag.find("%{") else {
+        return Ok(flag.to_owned());
+    };
+    let mut expanded = String::with_capacity(flag.len());
+    let mut rest = flag;
+    loop {
+        expanded.push_str(&rest[..start]);
+        let after_start = &rest[start + 2..];
+        let Some(end) = after_start.find('}') else {
+            return Err(bazel_cc_error(format!(
+                "Unterminated C++ toolchain variable in flag `{flag}`"
+            )));
+        };
+        let variable_name = &after_start[..end];
+        let value = bazel_cc_feature_variable(variables, locals, variable_name, heap)?.ok_or_else(
+            || {
+                bazel_cc_error(format!(
+                    "C++ toolchain flag `{flag}` references unavailable variable `{variable_name}`"
+                ))
+            },
+        )?;
+        expanded.push_str(&bazel_cc_feature_string(value, heap)?);
+        rest = &after_start[end + 1..];
+        let Some(next_start) = rest.find("%{") else {
+            expanded.push_str(rest);
+            return Ok(expanded);
+        };
+        start = next_start;
+    }
+}
+
+fn bazel_cc_flag_group_conditions_match<'v>(
+    flag_group: &BazelFlagGroup,
+    variables: Value<'v>,
+    locals: &[(String, Value<'v>)],
+    heap: Heap<'v>,
+) -> starlark::Result<bool> {
+    if let Some(variable) = &flag_group.expand_if_available
+        && !bazel_cc_feature_variable_available(variables, locals, variable, heap)?
+    {
+        return Ok(false);
+    }
+    if let Some(variable) = &flag_group.expand_if_not_available
+        && bazel_cc_feature_variable_available(variables, locals, variable, heap)?
+    {
+        return Ok(false);
+    }
+    if let Some(variable) = &flag_group.expand_if_true {
+        let Some(value) = bazel_cc_feature_variable(variables, locals, variable, heap)? else {
+            return Ok(false);
+        };
+        if !value.to_bool() {
+            return Ok(false);
+        }
+    }
+    if let Some(variable) = &flag_group.expand_if_false {
+        let Some(value) = bazel_cc_feature_variable(variables, locals, variable, heap)? else {
+            return Ok(false);
+        };
+        if value.to_bool() {
+            return Ok(false);
+        }
+    }
+    if let Some((variable, expected)) = &flag_group.expand_if_equal {
+        let Some(value) = bazel_cc_feature_variable(variables, locals, variable, heap)? else {
+            return Ok(false);
+        };
+        if bazel_cc_feature_string(value, heap)? != *expected {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+fn bazel_cc_expand_feature_flag_group<'v>(
+    args: &mut Vec<Value<'v>>,
+    flag_group: &BazelFlagGroup,
+    variables: Value<'v>,
+    locals: &mut Vec<(String, Value<'v>)>,
+    heap: Heap<'v>,
+) -> starlark::Result<()> {
+    if !bazel_cc_flag_group_conditions_match(flag_group, variables, locals, heap)? {
+        return Ok(());
+    }
+
+    if let Some(iterate_over) = &flag_group.iterate_over {
+        let value =
+            bazel_cc_feature_variable(variables, locals, iterate_over, heap)?.ok_or_else(|| {
+                bazel_cc_error(format!(
+                    "C++ toolchain flag_group iterates over unavailable variable `{iterate_over}`"
+                ))
+            })?;
+        for item in bazel_cc_link_sequence_values(value, iterate_over)? {
+            locals.push((iterate_over.clone(), item));
+            for nested in &flag_group.flag_groups {
+                bazel_cc_expand_feature_flag_group(args, nested, variables, locals, heap)?;
+            }
+            for flag in &flag_group.flags {
+                let flag = bazel_cc_expand_feature_flag(flag, variables, locals, heap)?;
+                bazel_cc_push_link_arg(args, heap, flag);
+            }
+            locals.pop();
+        }
+    } else {
+        for nested in &flag_group.flag_groups {
+            bazel_cc_expand_feature_flag_group(args, nested, variables, locals, heap)?;
+        }
+        for flag in &flag_group.flags {
+            let flag = bazel_cc_expand_feature_flag(flag, variables, locals, heap)?;
+            bazel_cc_push_link_arg(args, heap, flag);
+        }
+    }
+    Ok(())
+}
+
+fn bazel_cc_feature_command_line<'v>(
+    feature_configuration: &BazelFeatureConfiguration,
+    action_name: &str,
+    variables: Value<'v>,
+    heap: Heap<'v>,
+) -> starlark::Result<Vec<Value<'v>>> {
+    let mut args = Vec::new();
+    let mut locals = Vec::new();
+
+    for owner_is_action_config in [true, false] {
+        for flag_set in &feature_configuration.flag_sets {
+            if flag_set.owner_is_action_config != owner_is_action_config
+                || !bazel_cc_flag_set_matches(feature_configuration, flag_set, action_name)
+            {
+                continue;
+            }
+            for flag_group in &flag_set.flag_groups {
+                bazel_cc_expand_feature_flag_group(
+                    &mut args,
+                    flag_group,
+                    variables,
+                    &mut locals,
+                    heap,
+                )?;
+            }
+        }
+    }
+
+    Ok(args)
+}
 
 #[starlark_value(type = "FeatureConfiguration")]
 impl<'v> StarlarkValue<'v> for BazelFeatureConfiguration {
@@ -345,12 +1906,334 @@ impl<'v> StarlarkValue<'v> for BazelCcInternal {
             "cc_toolchain_features".to_owned(),
             "cc_toolchain_variables".to_owned(),
             "combine_cc_toolchain_variables".to_owned(),
+            "actions2ctx_cheat".to_owned(),
+            "compute_output_name_prefix_dir".to_owned(),
+            "create_cc_compile_action".to_owned(),
             "create_header_info".to_owned(),
             "create_header_info_with_deps".to_owned(),
+            "declare_compile_output_file".to_owned(),
+            "dynamic_library_soname".to_owned(),
             "exec_os".to_owned(),
             "freeze".to_owned(),
+            "get_artifact_name_extension_for_category".to_owned(),
+            "get_artifact_name_for_category".to_owned(),
+            "get_link_args".to_owned(),
+            "intern_seq".to_owned(),
+            "intern_string_sequence_variable_value".to_owned(),
+            "is_tree_artifact".to_owned(),
+            "per_file_copts".to_owned(),
+            "wrap_link_actions".to_owned(),
         ]
     }
+}
+
+fn bazel_cc_escape_path(path: &str) -> String {
+    let mut escaped = String::with_capacity(path.len());
+    for c in path.chars() {
+        match c {
+            '_' => escaped.push_str("_U"),
+            '/' => escaped.push_str("_S"),
+            '\\' => escaped.push_str("_B"),
+            ':' => escaped.push_str("_C"),
+            '@' => escaped.push_str("_A"),
+            _ => escaped.push(c),
+        }
+    }
+    escaped
+}
+
+fn bazel_cc_dynamic_library_soname(path: &str, preserve_name: bool, mnemonic: &str) -> String {
+    if preserve_name {
+        return path.rsplit('/').next().unwrap_or(path).to_owned();
+    }
+
+    let mnemonic_mangling = mnemonic
+        .find("ST-")
+        .map(|idx| format!("{}_", &mnemonic[idx..]))
+        .unwrap_or_default();
+    format!("lib{}{}", mnemonic_mangling, bazel_cc_escape_path(path))
+}
+
+fn bazel_cc_build_variable<'v>(variables: Value<'v>, name: &str) -> Option<Value<'v>> {
+    let dict = DictRef::from_value(variables)?;
+    dict.iter()
+        .find_map(|(key, value)| (key.unpack_str() == Some(name)).then_some(value))
+}
+
+fn bazel_cc_link_sequence_values<'v>(
+    value: Value<'v>,
+    field: &str,
+) -> starlark::Result<Vec<Value<'v>>> {
+    if value.is_none() {
+        return Ok(Vec::new());
+    }
+    if BazelDepset::from_value(value).is_some() {
+        return bazel_depset_to_list(value);
+    }
+    bazel_cc_sequence_values(value, field)
+}
+
+fn bazel_cc_link_string<'v>(value: Value<'v>, heap: Heap<'v>) -> starlark::Result<String> {
+    if let Some(value) = value.unpack_str() {
+        return Ok(value.to_owned());
+    }
+    for attr in ["path", "short_path"] {
+        if let Some(value) = value.get_attr(attr, heap)?
+            && let Some(value) = value.unpack_str()
+        {
+            return Ok(value.to_owned());
+        }
+    }
+    Err(bazel_cc_error(format!(
+        "Expected link argument value to be a string or artifact-like value, got `{}`",
+        value.get_type()
+    )))
+}
+
+fn bazel_cc_push_link_arg<'v>(args: &mut Vec<Value<'v>>, heap: Heap<'v>, arg: String) {
+    args.push(heap.alloc_str(&arg).to_value());
+}
+
+fn bazel_cc_collect_values<'v>(
+    value: Value<'v>,
+    values: &mut Vec<Value<'v>>,
+) -> starlark::Result<()> {
+    if value.is_none() {
+        return Ok(());
+    }
+    if BazelDepset::from_value(value).is_some() {
+        for item in bazel_depset_to_list(value)? {
+            bazel_cc_collect_values(item, values)?;
+        }
+        return Ok(());
+    }
+    if let Some(list) = ListRef::from_value(value) {
+        for item in list.iter() {
+            bazel_cc_collect_values(item, values)?;
+        }
+        return Ok(());
+    }
+    if let Some(tuple) = TupleRef::from_value(value) {
+        for item in tuple.iter() {
+            bazel_cc_collect_values(item, values)?;
+        }
+        return Ok(());
+    }
+    values.push(value);
+    Ok(())
+}
+
+fn bazel_cc_collect_attr_values<'v>(
+    owner: Value<'v>,
+    attr: &str,
+    values: &mut Vec<Value<'v>>,
+    heap: Heap<'v>,
+) -> starlark::Result<()> {
+    if owner.is_none() {
+        return Ok(());
+    }
+    let Some(value) = owner.get_attr(attr, heap)? else {
+        return Ok(());
+    };
+    bazel_cc_collect_values(value, values)
+}
+
+fn bazel_cc_collect_output<'v>(
+    value: Value<'v>,
+    outputs: &mut Vec<ValueTyped<'v, StarlarkDeclaredArtifact<'v>>>,
+) -> starlark::Result<()> {
+    if value.is_none() {
+        return Ok(());
+    }
+    if BazelDepset::from_value(value).is_some() {
+        for item in bazel_depset_to_list(value)? {
+            bazel_cc_collect_output(item, outputs)?;
+        }
+        return Ok(());
+    }
+    if let Some(list) = ListRef::from_value(value) {
+        for item in list.iter() {
+            bazel_cc_collect_output(item, outputs)?;
+        }
+        return Ok(());
+    }
+    if let Some(tuple) = TupleRef::from_value(value) {
+        for item in tuple.iter() {
+            bazel_cc_collect_output(item, outputs)?;
+        }
+        return Ok(());
+    }
+    outputs.push(ValueTyped::<StarlarkDeclaredArtifact>::new_err(value)?);
+    Ok(())
+}
+
+fn bazel_cc_push_compile_arg<'v>(args: &mut Vec<Value<'v>>, heap: Heap<'v>, arg: &str) {
+    args.push(heap.alloc_str(arg).to_value());
+}
+
+fn bazel_cc_push_compile_joined_arg<'v>(
+    args: &mut Vec<Value<'v>>,
+    heap: Heap<'v>,
+    prefix: &str,
+    value: Value<'v>,
+) -> starlark::Result<()> {
+    let value = bazel_cc_link_string(value, heap)?;
+    bazel_cc_push_compile_arg(args, heap, &format!("{prefix}{value}"));
+    Ok(())
+}
+
+fn bazel_cc_push_compile_path_sequence<'v>(
+    args: &mut Vec<Value<'v>>,
+    heap: Heap<'v>,
+    variables: Value<'v>,
+    variable: &str,
+    flag: &str,
+    joined: bool,
+) -> starlark::Result<()> {
+    let Some(values) = bazel_cc_build_variable(variables, variable) else {
+        return Ok(());
+    };
+    for value in bazel_cc_link_sequence_values(values, variable)? {
+        if joined {
+            bazel_cc_push_compile_joined_arg(args, heap, flag, value)?;
+        } else {
+            bazel_cc_push_compile_arg(args, heap, flag);
+            args.push(value);
+        }
+    }
+    Ok(())
+}
+
+fn bazel_cc_push_compile_string_sequence<'v>(
+    args: &mut Vec<Value<'v>>,
+    heap: Heap<'v>,
+    variables: Value<'v>,
+    variable: &str,
+) -> starlark::Result<()> {
+    let Some(values) = bazel_cc_build_variable(variables, variable) else {
+        return Ok(());
+    };
+    for value in bazel_cc_link_sequence_values(values, variable)? {
+        let value = bazel_cc_link_string(value, heap)?;
+        bazel_cc_push_compile_arg(args, heap, &value);
+    }
+    Ok(())
+}
+
+fn bazel_cc_compile_args_from_variables<'v>(
+    variables: Value<'v>,
+    heap: Heap<'v>,
+) -> starlark::Result<Vec<Value<'v>>> {
+    let mut args = Vec::new();
+
+    bazel_cc_push_compile_string_sequence(&mut args, heap, variables, "user_compile_flags")?;
+
+    if let Some(defines) = bazel_cc_build_variable(variables, "preprocessor_defines") {
+        for define in bazel_cc_link_sequence_values(defines, "preprocessor_defines")? {
+            bazel_cc_push_compile_joined_arg(&mut args, heap, "-D", define)?;
+        }
+    }
+
+    bazel_cc_push_compile_path_sequence(&mut args, heap, variables, "include_paths", "-I", true)?;
+    bazel_cc_push_compile_path_sequence(
+        &mut args,
+        heap,
+        variables,
+        "quote_include_paths",
+        "-iquote",
+        false,
+    )?;
+    bazel_cc_push_compile_path_sequence(
+        &mut args,
+        heap,
+        variables,
+        "system_include_paths",
+        "-isystem",
+        false,
+    )?;
+    bazel_cc_push_compile_path_sequence(
+        &mut args,
+        heap,
+        variables,
+        "external_include_paths",
+        "-isystem",
+        false,
+    )?;
+    bazel_cc_push_compile_path_sequence(
+        &mut args,
+        heap,
+        variables,
+        "framework_include_paths",
+        "-F",
+        true,
+    )?;
+    bazel_cc_push_compile_path_sequence(&mut args, heap, variables, "includes", "-include", false)?;
+
+    if bazel_cc_build_variable(variables, "pic").is_some() {
+        bazel_cc_push_compile_arg(&mut args, heap, "-fPIC");
+    }
+    if let Some(dependency_file) = bazel_cc_build_variable(variables, "dependency_file") {
+        bazel_cc_push_compile_arg(&mut args, heap, "-MD");
+        bazel_cc_push_compile_arg(&mut args, heap, "-MF");
+        args.push(dependency_file);
+    }
+    if let Some(diagnostics_file) =
+        bazel_cc_build_variable(variables, "serialized_diagnostics_file")
+    {
+        bazel_cc_push_compile_arg(&mut args, heap, "-serialize-diagnostics");
+        args.push(diagnostics_file);
+    }
+    if let Some(source_file) = bazel_cc_build_variable(variables, "source_file") {
+        bazel_cc_push_compile_arg(&mut args, heap, "-c");
+        args.push(source_file);
+    }
+    if let Some(output_file) = bazel_cc_build_variable(variables, "output_file") {
+        bazel_cc_push_compile_arg(&mut args, heap, "-o");
+        args.push(output_file);
+    }
+
+    Ok(args)
+}
+
+fn bazel_cc_compile_output_path<'v>(
+    label: Value<'v>,
+    output_name: &str,
+) -> starlark::Result<String> {
+    let (package, target_name) = if let Some(label) = StarlarkProvidersLabel::from_value(label) {
+        let target = label.label().target();
+        (
+            target.pkg().cell_relative_path().as_str(),
+            target.name().as_str(),
+        )
+    } else if let Some(label) = StarlarkConfiguredProvidersLabel::from_value(label) {
+        let target = label.label().target();
+        (
+            target.pkg().cell_relative_path().as_str(),
+            target.name().as_str(),
+        )
+    } else {
+        return Err(bazel_cc_error(format!(
+            "Expected `label` to be a Label, got `{}`",
+            label.get_type()
+        )));
+    };
+    if package.is_empty() {
+        Ok(format!("_objs/{target_name}/{output_name}"))
+    } else {
+        Ok(format!("{package}/_objs/{target_name}/{output_name}"))
+    }
+}
+
+fn bazel_cc_action_context_actions<'v>(
+    action_construction_context: Value<'v>,
+    heap: Heap<'v>,
+) -> starlark::Result<ValueTyped<'v, AnalysisActions<'v>>> {
+    let Some(actions) = action_construction_context.get_attr("actions", heap)? else {
+        return Err(bazel_cc_error(
+            "Expected action_construction_context to expose an `actions` attribute",
+        ));
+    };
+    ValueTyped::<AnalysisActions>::new_err(actions)
 }
 
 fn bazel_cc_exec_os() -> &'static str {
@@ -496,19 +2379,34 @@ fn cc_internal_alloc_header_info_with_deps<'v>(
 #[starlark_module]
 fn bazel_cc_toolchain_features_methods(builder: &mut MethodsBuilder) {
     fn default_features_and_action_configs<'v>(
-        #[starlark(this)] _this: &BazelCcToolchainFeatures,
+        #[starlark(this)] this: &BazelCcToolchainFeatures,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {
-        Ok(eval.heap().alloc(AllocList::EMPTY))
+        let heap = eval.heap();
+        Ok(heap.alloc(AllocList(
+            this.default_selectables
+                .iter()
+                .map(|value| heap.alloc_str(value).to_value()),
+        )))
     }
 
     fn configure_features(
-        #[starlark(this)] _this: &BazelCcToolchainFeatures,
+        #[starlark(this)] this: &BazelCcToolchainFeatures,
         #[starlark(require = named, default = UnpackList::default())]
         requested_features: UnpackList<String>,
     ) -> starlark::Result<BazelFeatureConfiguration> {
+        let requested_features = requested_features.into_iter().collect::<Vec<_>>();
+        let enabled_selectables = bazel_cc_enabled_selectables(
+            &this.selectables,
+            &this.default_selectables,
+            &requested_features,
+        );
         Ok(BazelFeatureConfiguration {
-            requested_features: requested_features.into_iter().collect(),
+            requested_features,
+            enabled_selectables,
+            action_tools: this.action_tools.clone(),
+            flag_sets: this.flag_sets.clone(),
+            tools_directory: this.tools_directory.clone(),
         })
     }
 }
@@ -519,10 +2417,7 @@ fn bazel_feature_configuration_methods(builder: &mut MethodsBuilder) {
         #[starlark(this)] this: &BazelFeatureConfiguration,
         feature: &str,
     ) -> starlark::Result<bool> {
-        Ok(this
-            .requested_features
-            .iter()
-            .any(|requested| requested == feature))
+        Ok(this.is_enabled_selectable(feature))
     }
 
     fn is_requested(
@@ -540,9 +2435,17 @@ fn bazel_feature_configuration_methods(builder: &mut MethodsBuilder) {
 fn bazel_cc_internal_methods(builder: &mut MethodsBuilder) {
     fn cc_toolchain_features<'v>(
         #[starlark(this)] _this: &BazelCcInternal,
-        #[starlark(kwargs)] _kwargs: SmallMap<String, Value<'v>>,
+        #[starlark(kwargs)] kwargs: SmallMap<String, Value<'v>>,
+        eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<BazelCcToolchainFeatures> {
-        Ok(BazelCcToolchainFeatures)
+        let heap = eval.heap();
+        let toolchain_config_info =
+            cc_internal_kw_value(&kwargs, "toolchain_config_info", Value::new_none());
+        let tools_directory = cc_internal_kw_value(&kwargs, "tools_directory", Value::new_none())
+            .unpack_str()
+            .unwrap_or("")
+            .to_owned();
+        bazel_cc_parse_toolchain_features(toolchain_config_info, tools_directory, heap)
     }
 
     fn cc_toolchain_variables<'v>(
@@ -555,14 +2458,157 @@ fn bazel_cc_internal_methods(builder: &mut MethodsBuilder) {
     fn combine_cc_toolchain_variables<'v>(
         #[starlark(this)] _this: &BazelCcInternal,
         parent: Value<'v>,
-        #[starlark(args)] _variables: UnpackTuple<Value<'v>>,
+        #[starlark(args)] variables: UnpackTuple<Value<'v>>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {
-        if parent.is_none() {
-            Ok(eval.heap().alloc(AllocDict::EMPTY))
-        } else {
-            Ok(parent)
+        let mut result = SmallMap::new();
+        for variables in std::iter::once(parent).chain(variables.items.into_iter()) {
+            if variables.is_none() {
+                continue;
+            }
+            let Some(dict) = DictRef::from_value(variables) else {
+                return Err(bazel_cc_error(format!(
+                    "Expected CcToolchainVariables to be a dict, got `{}`",
+                    variables.get_type()
+                )));
+            };
+            for (key, value) in dict.iter() {
+                let Some(key) = key.unpack_str() else {
+                    return Err(bazel_cc_error(format!(
+                        "Expected CcToolchainVariables key to be a string, got `{}`",
+                        key.get_type()
+                    )));
+                };
+                result.insert(key.to_owned(), value);
+            }
         }
+        Ok(eval.heap().alloc(AllocDict(result)))
+    }
+
+    fn intern_string_sequence_variable_value<'v>(
+        #[starlark(this)] _this: &BazelCcInternal,
+        string_sequence: UnpackList<String>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<Value<'v>> {
+        let heap = eval.heap();
+        let values = string_sequence
+            .into_iter()
+            .map(|value| heap.alloc_str(&value))
+            .collect::<Vec<_>>();
+        Ok(heap.alloc(AllocTuple(values)))
+    }
+
+    fn intern_seq<'v>(
+        #[starlark(this)] _this: &BazelCcInternal,
+        seq: Value<'v>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<Value<'v>> {
+        Ok(eval
+            .heap()
+            .alloc(AllocTuple(bazel_cc_sequence_values(seq, "seq")?)))
+    }
+
+    fn compute_output_name_prefix_dir<'v>(
+        #[starlark(this)] _this: &BazelCcInternal,
+        #[starlark(require = named)] configuration: Value<'v>,
+        #[starlark(require = named, default = NoneType)] purpose: Value<'v>,
+    ) -> starlark::Result<&'static str> {
+        let _unused = configuration;
+        let mnemonic = purpose.unpack_str().unwrap_or("");
+        if mnemonic.ends_with("_objc_arc") {
+            if mnemonic.ends_with("_non_objc_arc") {
+                Ok("non_arc")
+            } else {
+                Ok("arc")
+            }
+        } else {
+            Ok("")
+        }
+    }
+
+    fn is_tree_artifact<'v>(
+        #[starlark(this)] _this: &BazelCcInternal,
+        artifact: Value<'v>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<bool> {
+        let Some(is_directory) = artifact.get_attr("is_directory", eval.heap())? else {
+            return Ok(false);
+        };
+        is_directory.unpack_bool().ok_or_else(|| {
+            bazel_cc_error(format!(
+                "Expected artifact.is_directory to be a bool, got `{}`",
+                is_directory.get_type()
+            ))
+        })
+    }
+
+    fn get_artifact_name_for_category<'v>(
+        #[starlark(this)] _this: &BazelCcInternal,
+        #[starlark(require = named)] cc_toolchain: Value<'v>,
+        #[starlark(require = named)] category: &str,
+        #[starlark(require = named)] output_name: &str,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<String> {
+        let category = bazel_cc_artifact_category(category)?;
+        let features = bazel_cc_toolchain_features_from_toolchain(cc_toolchain, eval.heap())?;
+        let (prefix, extension) = bazel_cc_artifact_name_pattern(features, category);
+        Ok(bazel_cc_artifact_name(output_name, prefix, extension))
+    }
+
+    fn get_artifact_name_extension_for_category<'v>(
+        #[starlark(this)] _this: &BazelCcInternal,
+        #[starlark(require = named)] cc_toolchain: Value<'v>,
+        #[starlark(require = named)] category: &str,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<String> {
+        let category = bazel_cc_artifact_category(category)?;
+        let features = bazel_cc_toolchain_features_from_toolchain(cc_toolchain, eval.heap())?;
+        let (_, extension) = bazel_cc_artifact_name_pattern(features, category);
+        Ok(extension.to_owned())
+    }
+
+    fn wrap_link_actions<'v>(
+        #[starlark(this)] _this: &BazelCcInternal,
+        actions: Value<'v>,
+        #[starlark(default = NoneType)] build_configuration: Value<'v>,
+        #[starlark(default = false)] sharable_artifacts: bool,
+    ) -> starlark::Result<Value<'v>> {
+        let _unused = (build_configuration, sharable_artifacts);
+        Ok(actions)
+    }
+
+    fn actions2ctx_cheat<'v>(
+        #[starlark(this)] _this: &BazelCcInternal,
+        actions: ValueTyped<'v, AnalysisActions<'v>>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<Value<'v>> {
+        Ok(analysis_actions_to_bazel_ctx(actions, eval.heap()))
+    }
+
+    fn declare_compile_output_file<'v>(
+        #[starlark(this)] _this: &BazelCcInternal,
+        #[starlark(require = named)] ctx: Value<'v>,
+        #[starlark(require = named)] label: Value<'v>,
+        #[starlark(require = named)] output_name: &str,
+        #[starlark(require = named)] configuration: Value<'v>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<StarlarkDeclaredArtifact<'v>> {
+        let _unused = configuration;
+        let actions = bazel_cc_action_context_actions(ctx, eval.heap())?;
+        let path = bazel_cc_compile_output_path(label, output_name)?;
+        let artifact = actions.as_ref().state()?.declare_output(
+            None,
+            &path,
+            OutputType::File,
+            eval.call_stack_top_location(),
+            BuckOutPathKind::Configuration,
+            eval.heap(),
+        )?;
+        Ok(StarlarkDeclaredArtifact::new(
+            eval.call_stack_top_location(),
+            artifact,
+            AssociatedArtifacts::new(),
+        ))
     }
 
     fn create_header_info<'v>(
@@ -579,6 +2625,163 @@ fn bazel_cc_internal_methods(builder: &mut MethodsBuilder) {
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {
         cc_internal_alloc_header_info_with_deps(&kwargs, eval)
+    }
+
+    fn dynamic_library_soname<'v>(
+        #[starlark(this)] _this: &BazelCcInternal,
+        actions: Value<'v>,
+        path: &str,
+        preserve_name: bool,
+    ) -> starlark::Result<String> {
+        let _unused = actions;
+        Ok(bazel_cc_dynamic_library_soname(path, preserve_name, ""))
+    }
+
+    fn get_link_args<'v>(
+        #[starlark(this)] _this: &BazelCcInternal,
+        #[starlark(require = named)] feature_configuration: ValueTyped<
+            'v,
+            BazelFeatureConfiguration,
+        >,
+        #[starlark(require = named)] action_name: &str,
+        #[starlark(require = named)] build_variables: Value<'v>,
+        #[starlark(require = named, default = NoneType)] parameter_file_type: Value<'v>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<Value<'v>> {
+        let _unused = parameter_file_type;
+        Ok(eval.heap().alloc(AllocList(bazel_cc_feature_command_line(
+            feature_configuration.as_ref(),
+            action_name,
+            build_variables,
+            eval.heap(),
+        )?)))
+    }
+
+    fn per_file_copts<'v>(
+        #[starlark(this)] _this: &BazelCcInternal,
+        cpp_configuration: Value<'v>,
+        source_file: Value<'v>,
+        label: Value<'v>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<Value<'v>> {
+        let _unused = (cpp_configuration, source_file, label);
+        Ok(eval.heap().alloc(AllocList::EMPTY))
+    }
+
+    fn create_cc_compile_action<'v>(
+        #[starlark(this)] _this: &BazelCcInternal,
+        #[starlark(kwargs)] kwargs: SmallMap<String, Value<'v>>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<NoneType> {
+        let none = Value::new_none();
+        let heap = eval.heap();
+        let action_construction_context =
+            cc_internal_kw_value(&kwargs, "action_construction_context", none);
+        let actions = bazel_cc_action_context_actions(action_construction_context, heap)?;
+        let feature_configuration = cc_internal_kw_value(&kwargs, "feature_configuration", none)
+            .downcast_ref::<BazelFeatureConfiguration>()
+            .ok_or_else(|| {
+                bazel_cc_error("Expected feature_configuration to be a FeatureConfiguration")
+            })?;
+        let compile_build_variables =
+            cc_internal_kw_value(&kwargs, "compile_build_variables", none);
+        let action_name = cc_internal_kw_value(&kwargs, "action_name", none)
+            .unpack_str()
+            .unwrap_or("c++-compile");
+        let tool_path = feature_configuration
+            .selected_tool(action_name)?
+            .tool_path(&feature_configuration.tools_directory);
+        let executable = heap.alloc_str(&tool_path).to_value();
+        let mut arguments = Vec::new();
+        arguments.extend(bazel_cc_compile_args_from_variables(
+            compile_build_variables,
+            heap,
+        )?);
+
+        let mut inputs = Vec::new();
+        bazel_cc_collect_values(cc_internal_kw_value(&kwargs, "source", none), &mut inputs)?;
+        bazel_cc_collect_values(
+            cc_internal_kw_value(&kwargs, "additional_compilation_inputs", none),
+            &mut inputs,
+        )?;
+        bazel_cc_collect_values(
+            cc_internal_kw_value(&kwargs, "additional_compilation_inputs_set", none),
+            &mut inputs,
+        )?;
+        bazel_cc_collect_values(
+            cc_internal_kw_value(&kwargs, "additional_include_scanning_roots", none),
+            &mut inputs,
+        )?;
+        let cc_compilation_context = cc_internal_kw_value(&kwargs, "cc_compilation_context", none);
+        for attr in [
+            "headers",
+            "direct_headers",
+            "direct_public_headers",
+            "direct_private_headers",
+            "direct_textual_headers",
+            "_non_code_inputs",
+            "_exporting_module_map_files",
+        ] {
+            bazel_cc_collect_attr_values(cc_compilation_context, attr, &mut inputs, heap)?;
+        }
+        if let Some(module_map) = cc_compilation_context.get_attr("_module_map", heap)? {
+            bazel_cc_collect_attr_values(module_map, "file", &mut inputs, heap)?;
+        }
+        if let Some(module_maps) = cc_compilation_context.get_attr("_direct_module_maps", heap)? {
+            let mut module_maps_list = Vec::new();
+            bazel_cc_collect_values(module_maps, &mut module_maps_list)?;
+            for module_map in module_maps_list {
+                bazel_cc_collect_attr_values(module_map, "file", &mut inputs, heap)?;
+            }
+        }
+        let cc_toolchain = cc_internal_kw_value(&kwargs, "cc_toolchain", none);
+        for attr in [
+            "_compiler_files",
+            "_builtin_include_files",
+            "_compiler_files_without_includes",
+        ] {
+            bazel_cc_collect_attr_values(cc_toolchain, attr, &mut inputs, heap)?;
+        }
+        for variable in [
+            "module_map_file",
+            "dependent_module_map_files",
+            "thinlto_index",
+            "thinlto_input_bitcode_file",
+            "input_file",
+        ] {
+            if let Some(value) = bazel_cc_build_variable(compile_build_variables, variable) {
+                bazel_cc_collect_values(value, &mut inputs)?;
+            }
+        }
+
+        let mut outputs = Vec::new();
+        for name in [
+            "output_file",
+            "dotd_file",
+            "diagnostics_file",
+            "gcno_file",
+            "dwo_file",
+            "lto_indexing_file",
+            "additional_outputs",
+            "module_files",
+            "modmap_file",
+            "modmap_input_file",
+        ] {
+            bazel_cc_collect_output(cc_internal_kw_value(&kwargs, name, none), &mut outputs)?;
+        }
+
+        let mnemonic = heap.alloc_str("CppCompile");
+        (BAZEL_CC_CREATE_COMPILE_ACTION.get()?)(
+            BazelCcCompileAction {
+                actions,
+                executable,
+                arguments,
+                inputs,
+                outputs,
+                mnemonic,
+            },
+            eval,
+        )
     }
 
     fn exec_os<'v>(
@@ -619,29 +2822,65 @@ fn bazel_cc_common_module(builder: &mut GlobalsBuilder) {
     }
 
     fn get_tool_for_action<'v>(
-        #[starlark(kwargs)] _kwargs: SmallMap<String, Value<'v>>,
-    ) -> starlark::Result<NoneType> {
-        Ok(NoneType)
+        #[starlark(require = named)] feature_configuration: ValueTyped<
+            'v,
+            BazelFeatureConfiguration,
+        >,
+        #[starlark(require = named)] action_name: &str,
+    ) -> starlark::Result<String> {
+        Ok(feature_configuration
+            .selected_tool(action_name)?
+            .tool_path(&feature_configuration.tools_directory))
     }
 
     fn get_execution_requirements<'v>(
-        #[starlark(kwargs)] _kwargs: SmallMap<String, Value<'v>>,
+        #[starlark(require = named)] feature_configuration: ValueTyped<
+            'v,
+            BazelFeatureConfiguration,
+        >,
+        #[starlark(require = named)] action_name: &str,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {
-        Ok(eval.heap().alloc(AllocDict::EMPTY))
+        let heap = eval.heap();
+        Ok(heap.alloc(AllocList(
+            feature_configuration
+                .selected_tool(action_name)?
+                .execution_requirements
+                .iter()
+                .map(|value| heap.alloc_str(value).to_value()),
+        )))
     }
 
     fn action_is_enabled<'v>(
-        #[starlark(kwargs)] _kwargs: SmallMap<String, Value<'v>>,
+        #[starlark(require = named)] feature_configuration: ValueTyped<
+            'v,
+            BazelFeatureConfiguration,
+        >,
+        #[starlark(require = named)] action_name: &str,
     ) -> starlark::Result<bool> {
-        Ok(false)
+        Ok(feature_configuration.is_enabled_selectable(action_name))
     }
 
     fn get_memory_inefficient_command_line<'v>(
-        #[starlark(kwargs)] _kwargs: SmallMap<String, Value<'v>>,
+        #[starlark(kwargs)] kwargs: SmallMap<String, Value<'v>>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {
-        Ok(eval.heap().alloc(AllocList::EMPTY))
+        let none = Value::new_none();
+        let feature_configuration = cc_internal_kw_value(&kwargs, "feature_configuration", none)
+            .downcast_ref::<BazelFeatureConfiguration>()
+            .ok_or_else(|| {
+                bazel_cc_error("Expected feature_configuration to be a FeatureConfiguration")
+            })?;
+        let action_name = cc_internal_kw_value(&kwargs, "action_name", none)
+            .unpack_str()
+            .ok_or_else(|| bazel_cc_error("Expected action_name to be a string"))?;
+        let variables = cc_internal_kw_value(&kwargs, "variables", none);
+        Ok(eval.heap().alloc(AllocList(bazel_cc_feature_command_line(
+            feature_configuration,
+            action_name,
+            variables,
+            eval.heap(),
+        )?)))
     }
 
     fn get_environment_variables<'v>(
@@ -677,9 +2916,21 @@ fn bazel_cc_common_module(builder: &mut GlobalsBuilder) {
     }
 
     fn get_tool_requirement_for_action<'v>(
-        #[starlark(kwargs)] _kwargs: SmallMap<String, Value<'v>>,
-    ) -> starlark::Result<NoneType> {
-        Ok(NoneType)
+        #[starlark(require = named)] feature_configuration: ValueTyped<
+            'v,
+            BazelFeatureConfiguration,
+        >,
+        #[starlark(require = named)] action_name: &str,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<Value<'v>> {
+        let heap = eval.heap();
+        Ok(heap.alloc(AllocList(
+            feature_configuration
+                .selected_tool(action_name)?
+                .execution_requirements
+                .iter()
+                .map(|value| heap.alloc_str(value).to_value()),
+        )))
     }
 
     fn implementation_deps_allowed_by_allowlist<'v>(

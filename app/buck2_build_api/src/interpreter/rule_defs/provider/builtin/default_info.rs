@@ -143,7 +143,7 @@ fn push_unique_value<'v>(values: &mut Vec<Value<'v>>, value: Value<'v>) -> starl
     Ok(())
 }
 
-fn bazel_runfiles_from_runfiles<'v, 'a>(
+pub(crate) fn bazel_runfiles_from_runfiles<'v, 'a>(
     heap: Heap<'v>,
     runfiles: impl IntoIterator<Item = &'a BazelRunfiles<'v>>,
 ) -> starlark::Result<BazelRunfiles<'v>>
@@ -413,6 +413,30 @@ impl<'v> DefaultInfo<'v> {
             default_runfiles,
         }
     }
+
+    pub fn for_file_target(heap: Heap<'v>, artifact: Value<'v>) -> Self {
+        let sub_targets = ValueOfUnchecked::<DictType<_, _>>::new(heap.alloc(AllocDict::EMPTY));
+        let default_outputs =
+            ValueOfUnchecked::<ListType<_>>::new(heap.alloc(AllocList([artifact])));
+        let other_outputs = ValueOfUnchecked::<ListType<_>>::new(heap.alloc(AllocList::EMPTY));
+        let files = ValueOfUnchecked::<FrozenBazelDepset>::new(
+            bazel_depset_from_values(heap, vec![artifact]).unwrap(),
+        );
+        let files_to_run = ValueOfUnchecked::<StructRef>::new(bazel_files_to_run(heap, artifact));
+        let data_runfiles =
+            ValueOfUnchecked::<FrozenBazelRunfiles>::new(bazel_runfiles_empty_value(heap));
+        let default_runfiles =
+            ValueOfUnchecked::<FrozenBazelRunfiles>::new(bazel_runfiles_empty_value(heap));
+        DefaultInfo {
+            sub_targets,
+            default_outputs,
+            other_outputs,
+            files,
+            files_to_run,
+            data_runfiles,
+            default_runfiles,
+        }
+    }
 }
 
 impl FrozenDefaultInfo {
@@ -505,6 +529,22 @@ impl FrozenDefaultInfo {
 
     pub fn default_outputs_raw(&self) -> FrozenValue {
         self.default_outputs.get()
+    }
+
+    pub fn files_raw(&self) -> FrozenValue {
+        self.files.get()
+    }
+
+    pub fn files_to_run_raw(&self) -> FrozenValue {
+        self.files_to_run.get()
+    }
+
+    pub fn data_runfiles_raw(&self) -> FrozenValue {
+        self.data_runfiles.get()
+    }
+
+    pub fn default_runfiles_raw(&self) -> FrozenValue {
+        self.default_runfiles.get()
     }
 
     fn sub_targets_impl(

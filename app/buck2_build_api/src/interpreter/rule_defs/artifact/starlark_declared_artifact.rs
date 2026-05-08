@@ -57,6 +57,7 @@ use crate::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkArt
 use crate::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkInputArtifactLike;
 use crate::interpreter::rule_defs::artifact::starlark_artifact_like::ValueAsInputArtifactLike;
 use crate::interpreter::rule_defs::artifact::starlark_artifact_like::bazel_artifact_path;
+use crate::interpreter::rule_defs::artifact::starlark_artifact_like::bazel_artifact_short_path;
 use crate::interpreter::rule_defs::artifact::starlark_output_artifact::StarlarkOutputArtifact;
 use crate::interpreter::rule_defs::cmd_args::ArtifactPathMapper;
 use crate::interpreter::rule_defs::cmd_args::CommandLineArgLike;
@@ -148,6 +149,10 @@ impl<'v> StarlarkArtifactLike<'v> for StarlarkDeclaredArtifact<'v> {
         Ok(self.artifact.output_type() == OutputType::Directory)
     }
 
+    fn is_symlink(&'v self) -> buck2_error::Result<bool> {
+        Ok(self.artifact.output_type() == OutputType::Symlink)
+    }
+
     fn owner(&'v self) -> buck2_error::Result<Option<BaseDeferredKey>> {
         Ok(self.artifact.owner())
     }
@@ -157,6 +162,14 @@ impl<'v> StarlarkArtifactLike<'v> for StarlarkDeclaredArtifact<'v> {
         f: &dyn for<'b> Fn(&'b ForwardRelativePath) -> StringValue<'v>,
     ) -> buck2_error::Result<StringValue<'v>> {
         Ok(self.artifact.get_path().with_short_path(f))
+    }
+
+    fn with_bazel_short_path(
+        &self,
+        f: &dyn Fn(&str) -> StringValue<'v>,
+    ) -> buck2_error::Result<StringValue<'v>> {
+        let path = bazel_artifact_short_path(self.artifact.get_path());
+        Ok(f(&path))
     }
 
     fn with_bazel_path(
@@ -327,6 +340,7 @@ impl Freeze for StarlarkDeclaredArtifact<'_> {
         Ok(StarlarkArtifact {
             artifact,
             associated_artifacts: self.associated_artifacts,
+            source_is_directory: false,
         })
     }
 }
@@ -337,7 +351,7 @@ impl<'v> AllocValue<'v> for StarlarkDeclaredArtifact<'v> {
     }
 }
 
-#[starlark_value(type = "Artifact", StarlarkTypeRepr, UnpackValue)]
+#[starlark_value(type = "File", StarlarkTypeRepr, UnpackValue)]
 impl<'v> StarlarkValue<'v> for StarlarkDeclaredArtifact<'v> {
     type Canonical = StarlarkArtifact;
 

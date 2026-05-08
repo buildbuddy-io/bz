@@ -50,6 +50,7 @@ use crate::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkArt
 use crate::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkInputArtifactLike;
 use crate::interpreter::rule_defs::artifact::starlark_artifact_like::ValueAsInputArtifactLike;
 use crate::interpreter::rule_defs::artifact::starlark_artifact_like::bazel_artifact_path;
+use crate::interpreter::rule_defs::artifact::starlark_artifact_like::bazel_artifact_short_path;
 use crate::interpreter::rule_defs::artifact::starlark_output_artifact::StarlarkOutputArtifact;
 use crate::interpreter::rule_defs::cmd_args::ArtifactPathMapper;
 use crate::interpreter::rule_defs::cmd_args::CommandLineArgLike;
@@ -189,6 +190,19 @@ impl<'v> StarlarkArtifactLike<'v> for StarlarkPromiseArtifact {
         match self.artifact.get() {
             Some(v) => Ok(v.get_path().with_short_path(f)),
             None => Ok(f(self.short_path_err()?)),
+        }
+    }
+
+    fn with_bazel_short_path(
+        &self,
+        f: &dyn Fn(&str) -> StringValue<'v>,
+    ) -> buck2_error::Result<StringValue<'v>> {
+        match self.artifact.get() {
+            Some(v) => {
+                let path = bazel_artifact_short_path(v.get_path());
+                Ok(f(&path))
+            }
+            None => Ok(f(self.short_path_err()?.as_str())),
         }
     }
 

@@ -728,10 +728,14 @@ impl BuckActionExecutor {
                     if let Some(t) = result.0.outputs.get(x.get_path()) {
                         let real = if t.is_dir() {
                             OutputType::Directory
+                        } else if t.is_symlink() {
+                            OutputType::Symlink
                         } else {
                             OutputType::File
                         };
-                        if real != declared {
+                        let type_matches = real == declared
+                            || (declared == OutputType::File && real == OutputType::Symlink);
+                        if !type_matches {
                             return Err(ExecuteError::WrongOutputType {
                                 path: self.command_executor.fs().resolve_build(
                                     x.get_path(),
@@ -1002,6 +1006,7 @@ mod tests {
                             .map(|b| CommandExecutionOutput::BuildArtifact {
                                 path: b.get_path().dupe(),
                                 output_type: OutputType::FileOrDirectory,
+                                produced_path: None,
                             })
                             .collect(),
                         ctx.fs(),

@@ -10,6 +10,7 @@
 
 use buck2_build_api::analysis::registry::AnalysisRegistry;
 use buck2_build_api::interpreter::rule_defs::context::AnalysisContext;
+use buck2_build_api::interpreter::rule_defs::context::BazelCppOptions;
 use buck2_build_api::interpreter::rule_defs::plugins::AnalysisPlugins;
 use buck2_build_api::interpreter::rule_defs::register_rule_defs;
 use buck2_core::configuration::data::ConfigurationData;
@@ -93,7 +94,10 @@ fn run_ctx_test(
                 Some(plugins),
                 Vec::new(),
                 SmallMap::new(),
+                BazelCppOptions::default(),
                 false,
+                None,
+                None,
                 registry,
                 DigestConfig::testing_default(),
             ));

@@ -619,6 +619,10 @@ impl AttrCoercionContext for BuildAttrCoercionContext {
             .map(|(package, _)| package.dupe())
     }
 
+    fn is_bazel_compat_cell(&self) -> bool {
+        BuildAttrCoercionContext::is_bazel_compat_cell(self)
+    }
+
     fn visit_query_function_literals<'q>(
         &self,
         visitor: &mut dyn QueryLiteralVisitor<'q>,

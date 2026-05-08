@@ -46,5 +46,6 @@ pub fn init_late_bindings() {
         plugins::init_plugin_kind_from_value_impl();
         rule::init_frozen_rule_get_impl();
         rule::init_frozen_promise_artifact_mappings_get_impl();
+        rule::init_frozen_bazel_aspects_get_impl();
     });
 }

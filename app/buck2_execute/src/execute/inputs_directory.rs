@@ -17,6 +17,7 @@ use crate::digest_config::DigestConfig;
 use crate::directory::ActionDirectoryBuilder;
 use crate::directory::ActionDirectoryMember;
 use crate::directory::LazyActionDirectoryBuilder;
+use crate::directory::insert_artifact_lazy;
 use crate::execute::request::CommandExecutionInput;
 
 pub fn inputs_directory(
@@ -29,6 +30,9 @@ pub fn inputs_directory(
         match input {
             CommandExecutionInput::Artifact(group) => {
                 group.add_to_directory(&mut builder, fs)?;
+            }
+            CommandExecutionInput::ArtifactPathAlias { path, value, .. } => {
+                insert_artifact_lazy(&mut builder, path.clone(), value)?;
             }
             CommandExecutionInput::ActionMetadata(metadata) => {
                 let path = fs

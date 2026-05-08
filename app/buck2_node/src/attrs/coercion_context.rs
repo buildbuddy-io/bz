@@ -95,6 +95,10 @@ pub trait AttrCoercionContext {
         None
     }
 
+    fn is_bazel_compat_cell(&self) -> bool {
+        false
+    }
+
     fn visit_query_function_literals<'q>(
         &self,
         visitor: &mut dyn QueryLiteralVisitor<'q>,

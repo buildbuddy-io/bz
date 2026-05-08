@@ -14,6 +14,7 @@ use buck2_build_api::actions::impls::json::JsonUnpack;
 use buck2_build_api::artifact_groups::ArtifactGroup;
 use buck2_build_api::interpreter::rule_defs::artifact::associated::AssociatedArtifacts;
 use buck2_build_api::interpreter::rule_defs::artifact::output_artifact_like::OutputArtifactArg;
+use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::ValueAsInputArtifactLike;
 use buck2_build_api::interpreter::rule_defs::artifact::starlark_declared_artifact::StarlarkDeclaredArtifact;
 use buck2_build_api::interpreter::rule_defs::artifact_tagging::ArtifactTag;
 use buck2_build_api::interpreter::rule_defs::cmd_args::ArtifactPathMapper;
@@ -42,10 +43,12 @@ use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
+use starlark::values::dict::UnpackDictEntries;
 use starlark::values::none::NoneOr;
 use starlark::values::type_repr::StarlarkTypeRepr;
 use starlark_map::small_set::SmallSet;
 
+use crate::actions::impls::write::UnregisteredTemplateExpansionAction;
 use crate::actions::impls::write::UnregisteredWriteAction;
 use crate::actions::impls::write_json::UnregisteredWriteJsonAction;
 use crate::actions::impls::write_macros::UnregisteredWriteMacrosToFileAction;
@@ -110,6 +113,45 @@ impl<'v> CommandLineArtifactVisitor<'v> for CommandLineInputVisitor {
 
 #[starlark_module]
 pub(crate) fn analysis_actions_methods_write(methods: &mut MethodsBuilder) {
+    /// Creates a Bazel-compatible template expansion action.
+    fn expand_template<'v>(
+        this: &AnalysisActions<'v>,
+        #[starlark(require = named)] template: ValueAsInputArtifactLike<'v>,
+        #[starlark(require = named)] output: OutputArtifactArg<'v>,
+        #[starlark(require = named, default = UnpackDictEntries::default())]
+        substitutions: UnpackDictEntries<&'v str, &'v str>,
+        #[starlark(require = named, default = false)] is_executable: bool,
+        #[starlark(require = named, default = NoneOr::None)] computed_substitutions: NoneOr<
+            Value<'v>,
+        >,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<Value<'v>> {
+        if computed_substitutions.into_option().is_some() {
+            return Err(buck2_error::buck2_error!(
+                buck2_error::ErrorTag::Input,
+                "`computed_substitutions` for ctx.actions.expand_template is not supported yet"
+            )
+            .into());
+        }
+
+        let template = template.0;
+        let action = UnregisteredTemplateExpansionAction::new(
+            template.get_artifact_group()?,
+            substitutions
+                .entries
+                .into_iter()
+                .map(|(key, value)| (key.to_owned(), value.to_owned()))
+                .collect(),
+            is_executable,
+        );
+
+        let mut this = this.state()?;
+        let (_declaration, output_artifact) =
+            this.get_or_declare_output(eval, output, OutputType::File, None)?;
+        this.register_action(buck_indexset![output_artifact], action, None, None)?;
+        Ok(Value::new_none())
+    }
+
     /// Returns an `artifact` whose contents are `content` written as a JSON value.
     ///
     /// * `output`: can be a string, or an existing artifact created with `declare_output`
@@ -199,7 +241,7 @@ pub(crate) fn analysis_actions_methods_write(methods: &mut MethodsBuilder) {
         this: &AnalysisActions<'v>,
         output: OutputArtifactArg<'v>,
         content: WriteContentArg<'v>,
-        #[starlark(require = named, default = false)] is_executable: bool,
+        #[starlark(default = false)] is_executable: bool,
         #[starlark(require = named, default = NoneOr::None)] _mnemonic: NoneOr<&str>,
         #[starlark(require = named, default = NoneOr::None)] _execution_requirements: NoneOr<
             Value<'v>,

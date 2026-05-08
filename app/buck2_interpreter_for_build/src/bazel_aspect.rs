@@ -27,6 +27,7 @@ use starlark::values::NoSerialize;
 use starlark::values::StarlarkValue;
 use starlark::values::Trace;
 use starlark::values::Value;
+use starlark::values::ValueLike;
 use starlark::values::dict::UnpackDictEntries;
 use starlark::values::list::AllocList;
 use starlark::values::list_or_tuple::UnpackListOrTuple;
@@ -42,6 +43,7 @@ pub(crate) struct StarlarkAspect<'v> {
     implementation: StarlarkCallable<'v, (Value<'v>, Value<'v>), Value<'v>>,
     attr_aspects: Value<'v>,
     toolchains_aspects: Value<'v>,
+    has_required_providers: bool,
     attrs: Vec<String>,
     doc: Option<String>,
     apply_to_generating_rules: bool,
@@ -83,6 +85,7 @@ impl<'v> Freeze for StarlarkAspect<'v> {
             implementation: self.implementation.0.freeze(freezer)?,
             attr_aspects: self.attr_aspects.freeze(freezer)?,
             toolchains_aspects: self.toolchains_aspects.freeze(freezer)?,
+            has_required_providers: self.has_required_providers,
             attrs: self.attrs,
             doc: self.doc,
             apply_to_generating_rules: self.apply_to_generating_rules,
@@ -93,12 +96,12 @@ impl<'v> Freeze for StarlarkAspect<'v> {
 #[derive(Debug, ProvidesStaticType, NoSerialize, Allocative)]
 pub(crate) struct FrozenStarlarkAspect {
     id: Option<String>,
-    #[allow(dead_code)]
-    implementation: FrozenValue,
+    pub(crate) implementation: FrozenValue,
     #[allow(dead_code)]
     attr_aspects: FrozenValue,
     #[allow(dead_code)]
     toolchains_aspects: FrozenValue,
+    has_required_providers: bool,
     #[allow(dead_code)]
     attrs: Vec<String>,
     #[allow(dead_code)]
@@ -123,6 +126,14 @@ impl<'v> StarlarkValue<'v> for FrozenStarlarkAspect {
     type Canonical = StarlarkAspect<'v>;
 }
 
+pub(crate) fn frozen_aspect_implementation(aspect: FrozenValue) -> Option<FrozenValue> {
+    let aspect = aspect.downcast_ref::<FrozenStarlarkAspect>()?;
+    if aspect.has_required_providers {
+        return None;
+    }
+    Some(aspect.implementation)
+}
+
 fn doc_string(doc: NoneOr<&str>) -> Option<String> {
     doc.into_option().map(|doc| doc.trim().to_owned())
 }
@@ -134,7 +145,7 @@ pub(crate) fn register_bazel_aspect(builder: &mut GlobalsBuilder) {
         #[starlark(require = named, default = AllocList::EMPTY)] attr_aspects: Value<'v>,
         #[starlark(require = named, default = AllocList::EMPTY)] toolchains_aspects: Value<'v>,
         #[starlark(require = named, default = UnpackDictEntries::default())]
-        attrs: UnpackDictEntries<&'v str, &'v StarlarkAttribute>,
+        attrs: UnpackDictEntries<&'v str, &'v StarlarkAttribute<'v>>,
         #[starlark(require = named, default = UnpackListOrTuple::default())]
         required_providers: UnpackListOrTuple<Value<'v>>,
         #[starlark(require = named, default = UnpackListOrTuple::default())]
@@ -158,6 +169,7 @@ pub(crate) fn register_bazel_aspect(builder: &mut GlobalsBuilder) {
         #[starlark(require = named, default = UnpackListOrTuple::default())]
         subrules: UnpackListOrTuple<Value<'v>>,
     ) -> starlark::Result<StarlarkAspect<'v>> {
+        let has_required_providers = !required_providers.items.is_empty();
         let _unused = (
             required_providers,
             required_aspect_providers,
@@ -176,6 +188,7 @@ pub(crate) fn register_bazel_aspect(builder: &mut GlobalsBuilder) {
             implementation,
             attr_aspects,
             toolchains_aspects,
+            has_required_providers,
             attrs: attrs
                 .entries
                 .into_iter()

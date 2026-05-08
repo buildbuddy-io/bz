@@ -13,8 +13,10 @@ use std::time::Duration;
 
 use buck2_artifact::artifact::artifact_type::Artifact;
 use buck2_artifact::artifact::artifact_type::ArtifactErrors;
+use buck2_artifact::artifact::artifact_type::DeclaredArtifact;
 use buck2_artifact::artifact::artifact_type::OutputArtifact;
 use buck2_build_api::artifact_groups::ArtifactGroup;
+use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkArtifactLike;
 use buck2_build_api::interpreter::rule_defs::artifact::starlark_declared_artifact::StarlarkDeclaredArtifact;
 use buck2_build_api::interpreter::rule_defs::artifact::starlark_output_artifact::StarlarkOutputArtifact;
 use buck2_build_api::interpreter::rule_defs::artifact_tagging::ArtifactTag;
@@ -27,6 +29,11 @@ use buck2_build_api::interpreter::rule_defs::cmd_args::value_as::ValueAsCommandL
 use buck2_build_api::interpreter::rule_defs::command_executor_config::parse_custom_re_image;
 use buck2_build_api::interpreter::rule_defs::command_executor_config::parse_meta_internal_extra_params;
 use buck2_build_api::interpreter::rule_defs::context::AnalysisActions;
+use buck2_build_api::interpreter::rule_defs::context::bazel_workspace_name_for_cell;
+use buck2_build_api::interpreter::rule_defs::context::bazel_workspace_name_for_label;
+use buck2_build_api::interpreter::rule_defs::depset::BazelDepset;
+use buck2_build_api::interpreter::rule_defs::depset::bazel_depset_to_list;
+use buck2_build_api::interpreter::rule_defs::provider::builtin::cc_info::BazelCcCompileAction;
 use buck2_build_api::interpreter::rule_defs::provider::builtin::run_info::RunInfo;
 use buck2_build_api::interpreter::rule_defs::provider::builtin::worker_run_info::WorkerRunInfo;
 use buck2_core::category::CategoryRef;
@@ -49,15 +56,24 @@ use starlark::eval::Evaluator;
 use starlark::starlark_module;
 use starlark::values::StringValue;
 use starlark::values::UnpackAndDiscard;
+use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark::values::ValueOf;
+use starlark::values::ValueOfUnchecked;
 use starlark::values::ValueTyped;
+use starlark::values::dict::AllocDict;
 use starlark::values::dict::DictRef;
+use starlark::values::dict::DictType;
 use starlark::values::dict::UnpackDictEntries;
+use starlark::values::float::UnpackFloat;
+use starlark::values::list::AllocList;
+use starlark::values::list::ListRef;
 use starlark::values::list::UnpackList;
 use starlark::values::list_or_tuple::UnpackListOrTuple;
 use starlark::values::none::NoneOr;
 use starlark::values::none::NoneType;
+use starlark::values::structs::StructRef;
+use starlark::values::tuple::TupleRef;
 use starlark::values::typing::StarlarkCallable;
 use starlark_map::small_map;
 use starlark_map::small_map::SmallMap;
@@ -127,12 +143,22 @@ pub(crate) enum RunActionError {
 }
 
 fn bazel_run_outputs<'v>(
-    outputs: UnpackListOrTuple<ValueTyped<'v, StarlarkDeclaredArtifact<'v>>>,
+    outputs: impl IntoIterator<Item = ValueTyped<'v, StarlarkDeclaredArtifact<'v>>>,
 ) -> BuckIndexSet<OutputArtifact<'v>> {
     outputs
         .into_iter()
         .map(|artifact| artifact.output_artifact())
         .collect()
+}
+
+fn bazel_run_identifier<'v>(
+    outputs: &BuckIndexSet<OutputArtifact<'v>>,
+    eval: &mut Evaluator<'v, '_, '_>,
+) -> Option<StringValue<'v>> {
+    outputs.iter().next().map(|output| {
+        let identifier = output.get_path().with_full_path(|path| path.to_string());
+        eval.heap().alloc_str(&identifier)
+    })
 }
 
 fn bazel_run_add_hidden<'v>(
@@ -143,36 +169,315 @@ fn bazel_run_add_hidden<'v>(
     args.add_bazel_hidden_value(value, eval.heap())
 }
 
-fn register_bazel_run_action<'v>(
+fn bazel_manifest_path_for_artifact<'v>(
     this: &AnalysisActions<'v>,
-    exe: StarlarkCmdArgs<'v>,
-    mut args: StarlarkCmdArgs<'v>,
+    artifact: &'v dyn StarlarkArtifactLike<'v>,
+    eval: &mut Evaluator<'v, '_, '_>,
+) -> starlark::Result<String> {
+    let short_path = artifact.with_bazel_short_path(&|path| eval.heap().alloc_str(path))?;
+    let short_path = short_path.as_str();
+    if let Some(external_path) = short_path.strip_prefix("../") {
+        Ok(format!("external/{external_path}"))
+    } else {
+        let workspace = if let Some(owner) = artifact.owner()? {
+            if let Some(label) = owner.configured_label() {
+                bazel_workspace_name_for_cell(label.pkg().cell_name().as_str())
+            } else {
+                bazel_workspace_name_for_label(this.label)
+            }
+        } else if let Some(owner) = artifact.source_owner()? {
+            bazel_workspace_name_for_cell(owner.target().pkg().cell_name().as_str())
+        } else {
+            bazel_workspace_name_for_label(this.label)
+        };
+        Ok(format!("{workspace}/{short_path}"))
+    }
+}
+
+fn bazel_find_executable_artifact<'v>(
+    this: &AnalysisActions<'v>,
+    value: Value<'v>,
+    executable: &str,
+    eval: &mut Evaluator<'v, '_, '_>,
+) -> starlark::Result<Option<Value<'v>>> {
+    if value.is_none() {
+        return Ok(None);
+    }
+    if let Some(artifact) = <&dyn StarlarkArtifactLike<'v>>::unpack_value(value)? {
+        let bazel_path = artifact.with_bazel_path(&|path| eval.heap().alloc_str(path))?;
+        if bazel_path.as_str() == executable
+            || bazel_manifest_path_for_artifact(this, artifact, eval)? == executable
+        {
+            return Ok(Some(value));
+        }
+        return Ok(None);
+    }
+    if let Some(files_to_run_executable) = bazel_files_to_run_executable(value) {
+        return bazel_find_executable_artifact(this, files_to_run_executable, executable, eval);
+    }
+    if BazelDepset::from_value(value).is_some() {
+        for item in bazel_depset_to_list(value)? {
+            if let Some(artifact) = bazel_find_executable_artifact(this, item, executable, eval)? {
+                return Ok(Some(artifact));
+            }
+        }
+        return Ok(None);
+    }
+    if let Some(list) = ListRef::from_value(value) {
+        for item in list.iter() {
+            if let Some(artifact) = bazel_find_executable_artifact(this, item, executable, eval)? {
+                return Ok(Some(artifact));
+            }
+        }
+        return Ok(None);
+    }
+    if let Some(tuple) = TupleRef::from_value(value) {
+        for item in tuple.iter() {
+            if let Some(artifact) = bazel_find_executable_artifact(this, item, executable, eval)? {
+                return Ok(Some(artifact));
+            }
+        }
+    }
+    Ok(None)
+}
+
+fn bazel_files_to_run_executable<'v>(value: Value<'v>) -> Option<Value<'v>> {
+    StructRef::from_value(value).and_then(|st| {
+        st.iter().find_map(|(name, value)| {
+            (name.as_str() == "executable" && !value.is_none()).then_some(value)
+        })
+    })
+}
+
+fn bazel_resolve_executable<'v>(
+    this: &AnalysisActions<'v>,
+    executable: Value<'v>,
     inputs: Value<'v>,
     tools: Value<'v>,
-    outputs: UnpackListOrTuple<ValueTyped<'v, StarlarkDeclaredArtifact<'v>>>,
+    eval: &mut Evaluator<'v, '_, '_>,
+) -> starlark::Result<Value<'v>> {
+    if let Some(files_to_run_executable) = bazel_files_to_run_executable(executable) {
+        return Ok(files_to_run_executable);
+    }
+
+    let Some(executable_path) = executable.unpack_str() else {
+        return Ok(executable);
+    };
+    if let Some(artifact) = bazel_find_executable_artifact(this, inputs, executable_path, eval)? {
+        return Ok(artifact);
+    }
+    if let Some(artifact) = bazel_find_executable_artifact(this, tools, executable_path, eval)? {
+        return Ok(artifact);
+    }
+    Ok(executable)
+}
+
+fn bazel_resolve_env<'v>(
+    this: &AnalysisActions<'v>,
     env: Option<
         ValueOf<'v, UnpackDictEntries<UnpackAndDiscard<&'v str>, ValueAsCommandLineLike<'v>>>,
     >,
+    inputs: Value<'v>,
+    tools: Value<'v>,
+    eval: &mut Evaluator<'v, '_, '_>,
+) -> starlark::Result<Option<ValueOfUnchecked<'v, DictType<String, ValueAsCommandLineLike<'static>>>>>
+{
+    let Some(env) = env else {
+        return Ok(None);
+    };
+    let dict = DictRef::from_value(env.value).ok_or_else(|| {
+        buck2_error::buck2_error!(
+            buck2_error::ErrorTag::Input,
+            "`env` should be a dict, got `{}`",
+            env.value.get_type()
+        )
+    })?;
+    let mut entries = Vec::with_capacity(dict.len());
+    for (key, value) in dict.iter() {
+        let Some(key) = key.unpack_str() else {
+            return Err(buck2_error::buck2_error!(
+                buck2_error::ErrorTag::Input,
+                "`env` keys must be strings, got `{}`",
+                key.get_type()
+            )
+            .into());
+        };
+        let value = bazel_resolve_executable(this, value, inputs, tools, eval)?;
+        entries.push((key.to_owned(), value));
+    }
+    Ok(Some(ValueOfUnchecked::new(
+        eval.heap().alloc(AllocDict(entries)),
+    )))
+}
+
+fn bazel_resource_set_os_name() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "osx"
+    } else if cfg!(target_os = "windows") {
+        "windows"
+    } else if cfg!(target_os = "linux") {
+        "linux"
+    } else {
+        std::env::consts::OS
+    }
+}
+
+struct BazelResourceSetInputVisitor {
+    inputs: BuckIndexSet<ArtifactGroup>,
+}
+
+impl BazelResourceSetInputVisitor {
+    fn new() -> Self {
+        Self {
+            inputs: BuckIndexSet::default(),
+        }
+    }
+}
+
+impl<'v> CommandLineArtifactVisitor<'v> for BazelResourceSetInputVisitor {
+    fn visit_input(&mut self, input: ArtifactGroup, _tags: Vec<&ArtifactTag>) {
+        self.inputs.insert(input);
+    }
+
+    fn visit_declared_output(&mut self, _artifact: OutputArtifact<'v>, _tags: Vec<&ArtifactTag>) {}
+
+    fn visit_frozen_output(&mut self, _artifact: Artifact, _tags: Vec<&ArtifactTag>) {}
+
+    fn visit_declared_artifact(
+        &mut self,
+        declared_artifact: DeclaredArtifact<'v>,
+        tags: Vec<&ArtifactTag>,
+    ) -> buck2_error::Result<()> {
+        if let Ok(artifact) = declared_artifact.ensure_bound() {
+            self.visit_input(ArtifactGroup::Artifact(artifact.into_artifact()), tags);
+        }
+        Ok(())
+    }
+}
+
+fn bazel_run_input_count<'v>(
+    exe: &StarlarkCmdArgs<'v>,
+    args: &StarlarkCmdArgs<'v>,
+    bazel_inputs: &StarlarkCmdArgs<'v>,
+) -> starlark::Result<usize> {
+    let mut visitor = BazelResourceSetInputVisitor::new();
+    exe.visit_artifacts(&mut visitor)?;
+    args.visit_artifacts(&mut visitor)?;
+    bazel_inputs.visit_artifacts(&mut visitor)?;
+    Ok(visitor.inputs.len())
+}
+
+fn bazel_resource_number<'v>(dict: &DictRef<'v>, key: &str, default: f64) -> starlark::Result<f64> {
+    let Some(value) = dict.get_str(key) else {
+        return Ok(default);
+    };
+    let Some(value) = UnpackFloat::unpack_value(value)? else {
+        return Err(buck2_error::buck2_error!(
+            buck2_error::ErrorTag::Input,
+            "Illegal resource value type for key `{}`: got `{}`, want int or float",
+            key,
+            value.get_type()
+        )
+        .into());
+    };
+    Ok(value.0)
+}
+
+fn bazel_run_weight_from_resource_set<'v>(
+    resource_set: Option<StarlarkCallable<'v>>,
+    input_count: usize,
+    eval: &mut Evaluator<'v, '_, '_>,
+) -> starlark::Result<WeightClass> {
+    let Some(resource_set) = resource_set else {
+        return Ok(WeightClass::Permits(1));
+    };
+
+    let input_count = i32::try_from(input_count).unwrap_or(i32::MAX);
+    let os_name = eval
+        .heap()
+        .alloc_str(bazel_resource_set_os_name())
+        .to_value();
+    let input_count = eval.heap().alloc(input_count);
+    let response = eval.eval_function(resource_set.0, &[os_name, input_count], &[])?;
+    let dict = DictRef::from_value(response).ok_or_else(|| {
+        buck2_error::buck2_error!(
+            buck2_error::ErrorTag::Input,
+            "resource_set callback must return a dict, got `{}`",
+            response.get_type()
+        )
+    })?;
+
+    for (key, _) in dict.iter() {
+        let Some(key) = key.unpack_str() else {
+            return Err(buck2_error::buck2_error!(
+                buck2_error::ErrorTag::Input,
+                "resource_set keys must be strings, got `{}`",
+                key.get_type()
+            )
+            .into());
+        };
+        if key != "cpu" && key != "memory" && key != "local_test" {
+            return Err(buck2_error::buck2_error!(
+                buck2_error::ErrorTag::Input,
+                "Illegal resource key `{}`",
+                key
+            )
+            .into());
+        }
+    }
+
+    let cpu = bazel_resource_number(&dict, "cpu", 1.0)?;
+    let _memory = bazel_resource_number(&dict, "memory", 250.0)?;
+    let _local_test = bazel_resource_number(&dict, "local_test", 1.0)?;
+    let permits = cpu.max(1.0).ceil() as u32;
+    Ok(WeightClass::Permits(permits.try_into().map_err(|e| {
+        buck2_error::buck2_error!(
+            buck2_error::ErrorTag::Input,
+            "Invalid resource_set cpu: {e}"
+        )
+    })?))
+}
+
+fn register_bazel_run_action<'v>(
+    this: &AnalysisActions<'v>,
+    exe: StarlarkCmdArgs<'v>,
+    args: StarlarkCmdArgs<'v>,
+    inputs: Value<'v>,
+    tools: Value<'v>,
+    outputs: impl IntoIterator<Item = ValueTyped<'v, StarlarkDeclaredArtifact<'v>>>,
+    env: Option<ValueOfUnchecked<'v, DictType<String, ValueAsCommandLineLike<'static>>>>,
     mnemonic: Option<StringValue<'v>>,
+    use_default_shell_env: bool,
+    resource_set: NoneOr<StarlarkCallable<'v>>,
     eval: &mut Evaluator<'v, '_, '_>,
 ) -> starlark::Result<NoneType> {
-    bazel_run_add_hidden(&mut args, inputs, eval)?;
-    bazel_run_add_hidden(&mut args, tools, eval)?;
+    let mut bazel_inputs = StarlarkCmdArgs::default();
+    bazel_run_add_hidden(&mut bazel_inputs, inputs, eval)?;
+    bazel_run_add_hidden(&mut bazel_inputs, tools, eval)?;
 
     let outputs = bazel_run_outputs(outputs);
     if outputs.is_empty() {
         return Err(buck2_error::Error::from(RunActionError::NoOutputsSpecified).into());
     }
+    let identifier = bazel_run_identifier(&outputs, eval);
+    let resource_set = resource_set.into_option();
+    let weight = if resource_set.is_some() {
+        let input_count = bazel_run_input_count(&exe, &args, &bazel_inputs)?;
+        bazel_run_weight_from_resource_set(resource_set, input_count, eval)?
+    } else {
+        WeightClass::Permits(1)
+    };
 
     let executor_preference = new_executor_preference(false, false, false)?;
     let starlark_values = eval.heap().alloc_complex(StarlarkRunActionValues {
         exe: eval.heap().alloc_typed(exe),
         args: eval.heap().alloc_typed(args),
-        env: env.as_ref().map(|env| env.as_unchecked().cast()),
+        bazel_inputs: Some(eval.heap().alloc_typed(bazel_inputs)),
+        env,
         worker: None,
         remote_worker: None,
         category: mnemonic.unwrap_or_else(|| eval.heap().alloc_str("BazelRun")),
-        identifier: None,
+        identifier,
         outputs_for_error_handler: Vec::new(),
     });
 
@@ -180,7 +485,7 @@ fn register_bazel_run_action<'v>(
         executor_preference,
         always_print_stderr: false,
         eager_materialization_enabled: false,
-        weight: WeightClass::Permits(1),
+        weight,
         low_pass_filter: true,
         dep_files: RunActionDepFiles::new(),
         metadata_param: None,
@@ -197,11 +502,41 @@ fn register_bazel_run_action<'v>(
         meta_internal_extra_params: parse_meta_internal_extra_params(None)?,
         expected_eligible_for_dedupe: None,
         timeout: None,
+        bazel_use_default_shell_env: Some(use_default_shell_env),
     };
 
     this.state()?
         .register_action(outputs, action, Some(starlark_values), None)?;
     Ok(NoneType)
+}
+
+pub(crate) fn register_bazel_cc_compile_action<'v>(
+    action: BazelCcCompileAction<'v>,
+    eval: &mut Evaluator<'v, '_, '_>,
+) -> starlark::Result<NoneType> {
+    let inputs = eval.heap().alloc(AllocList(action.inputs));
+    let executable = bazel_resolve_executable(
+        action.actions.as_ref(),
+        action.executable,
+        inputs,
+        Value::new_none(),
+        eval,
+    )?;
+    let exe = StarlarkCmdArgs::from_values([executable])?;
+    let args = StarlarkCmdArgs::from_values(action.arguments)?;
+    register_bazel_run_action(
+        action.actions.as_ref(),
+        exe,
+        args,
+        inputs,
+        Value::new_none(),
+        action.outputs,
+        None,
+        Some(action.mnemonic),
+        true,
+        NoneOr::None,
+        eval,
+    )
 }
 
 #[starlark_module]
@@ -223,9 +558,19 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
         #[starlark(require = named, default = NoneType)] progress_message: Value<'v>,
         #[starlark(require = named, default = NoneType)] execution_requirements: Value<'v>,
         #[starlark(require = named, default = NoneType)] toolchain: Value<'v>,
+        #[starlark(require = named, default = NoneType)] exec_group: Value<'v>,
+        #[starlark(require = named, default = false)] use_default_shell_env: bool,
+        #[starlark(require = named, default = NoneOr::None)] resource_set: NoneOr<
+            StarlarkCallable<'v>,
+        >,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<NoneType> {
-        let _unused = (progress_message, execution_requirements, toolchain);
+        let _unused = (
+            progress_message,
+            execution_requirements,
+            toolchain,
+            exec_group,
+        );
         let heap = eval.heap();
         let exe = StarlarkCmdArgs::from_values([heap.alloc_str("/bin/bash").to_value()])?;
         let mut shell_args = Vec::with_capacity(arguments.items.len() + 3);
@@ -234,7 +579,20 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
         shell_args.push(heap.alloc_str("buck2_run_shell").to_value());
         shell_args.extend(arguments.items);
         let args = StarlarkCmdArgs::from_values(shell_args)?;
-        register_bazel_run_action(this, exe, args, inputs, tools, outputs, env, mnemonic, eval)
+        let env = bazel_resolve_env(this, env, inputs, tools, eval)?;
+        register_bazel_run_action(
+            this,
+            exe,
+            args,
+            inputs,
+            tools,
+            outputs,
+            env,
+            mnemonic,
+            use_default_shell_env,
+            resource_set,
+            eval,
+        )
     }
 
     /// Run a command to produce one or more artifacts.
@@ -375,6 +733,11 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
         #[starlark(require = named, default = NoneType)] progress_message: Value<'v>,
         #[starlark(require = named, default = NoneType)] execution_requirements: Value<'v>,
         #[starlark(require = named, default = NoneType)] toolchain: Value<'v>,
+        #[starlark(require = named, default = NoneType)] exec_group: Value<'v>,
+        #[starlark(require = named, default = false)] use_default_shell_env: bool,
+        #[starlark(require = named, default = NoneOr::None)] resource_set: NoneOr<
+            StarlarkCallable<'v>,
+        >,
         #[starlark(require = named, default = false)] local_only: bool,
         #[starlark(require = named, default = false)] prefer_local: bool,
         #[starlark(require = named, default = false)] prefer_remote: bool,
@@ -424,14 +787,31 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
     ) -> starlark::Result<NoneType> {
         let arguments = arguments.into_option();
         if let Some(executable) = executable {
-            let _unused = (progress_message, execution_requirements, toolchain);
+            let _unused = (
+                progress_message,
+                execution_requirements,
+                toolchain,
+                exec_group,
+            );
+            let executable = bazel_resolve_executable(this, executable, inputs, tools, eval)?;
+            let env = bazel_resolve_env(this, env, inputs, tools, eval)?;
             let exe = StarlarkCmdArgs::from_values([executable])?;
             let args = match arguments {
                 Some(arguments) => StarlarkCmdArgs::try_from_value_typed(arguments)?,
                 None => StarlarkCmdArgs::default(),
             };
             return register_bazel_run_action(
-                this, exe, args, inputs, tools, outputs, env, mnemonic, eval,
+                this,
+                exe,
+                args,
+                inputs,
+                tools,
+                outputs,
+                env,
+                mnemonic,
+                use_default_shell_env,
+                resource_set,
+                eval,
             );
         }
         let _unused_bazel_run_params = (
@@ -442,6 +822,9 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
             progress_message,
             execution_requirements,
             toolchain,
+            exec_group,
+            use_default_shell_env,
+            resource_set,
         );
         let arguments =
             arguments.ok_or_else(|| buck2_error::Error::from(RunActionError::MissingArguments))?;
@@ -691,6 +1074,7 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
         let starlark_values = heap.alloc_complex(StarlarkRunActionValues {
             exe: heap.alloc_typed(starlark_exe),
             args: heap.alloc_typed(starlark_args),
+            bazel_inputs: None,
             env: starlark_env,
             worker: starlark_worker,
             remote_worker: starlark_remote_worker,
@@ -764,6 +1148,7 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
             meta_internal_extra_params: extra_params,
             expected_eligible_for_dedupe: expect_eligible_for_dedupe.into_option(),
             timeout,
+            bazel_use_default_shell_env: None,
         };
 
         let expect_eligible_for_dedupe = expect_eligible_for_dedupe.into_option().unwrap_or(false);

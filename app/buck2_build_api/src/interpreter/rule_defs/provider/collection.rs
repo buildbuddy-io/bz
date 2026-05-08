@@ -342,6 +342,15 @@ impl<'v, V: ValueLike<'v>> ProviderCollectionGen<V> {
         Ok(ProviderCollection::<'v> { providers })
     }
 
+    /// Takes a value returned from a Bazel Starlark aspect implementation and builds a provider
+    /// collection without requiring or injecting `DefaultInfo`.
+    pub fn try_from_value_bazel_aspect(
+        value: Value<'v>,
+    ) -> buck2_error::Result<ProviderCollection<'v>> {
+        let providers = Self::try_from_bazel_value_impl(value)?;
+        Ok(ProviderCollection::<'v> { providers })
+    }
+
     /// Takes a value, e.g. a value passed to `DefaultInfo(subtargets)`, and builds a `ProviderCollection` from it.
     ///
     /// An error is returned if:
@@ -408,8 +417,21 @@ impl<'v, V: ValueLike<'v>> ProviderCollectionGen<V> {
 }
 
 impl<'v> ProviderCollection<'v> {
+    pub fn shallow_clone(&self) -> ProviderCollection<'v> {
+        ProviderCollection {
+            providers: self.providers.clone(),
+        }
+    }
+
     pub fn insert_provider(&mut self, value: Value<'v>) -> buck2_error::Result<()> {
         ProviderCollectionGen::<Value<'v>>::insert_provider_value(&mut self.providers, value)
+    }
+
+    pub fn extend_from(&mut self, other: ProviderCollection<'v>) -> buck2_error::Result<()> {
+        for (_, value) in other.providers {
+            self.insert_provider(value)?;
+        }
+        Ok(())
     }
 }
 

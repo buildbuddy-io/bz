@@ -472,12 +472,94 @@ fn write_cc_autoconf_support_files(dest: &AbsNormPath) -> buck2_error::Result<()
     .categorize_internal()?;
     fs_util::write(
         dest.join(ForwardRelativePath::new("cc_wrapper.sh")?),
-        "#!/usr/bin/env bash\nexec ${CC:-cc} \"$@\"\n",
+        r#"#!/usr/bin/env bash
+has_c_source=0
+has_cxx_source=0
+previous_arg=
+for arg in "$@"; do
+  if [[ "$previous_arg" == "-x" ]]; then
+    case "$arg" in
+      c|objective-c)
+        has_c_source=1
+        ;;
+      c++|objective-c++|c++-*|objective-c++-*)
+        has_cxx_source=1
+        ;;
+    esac
+  fi
+  case "$arg" in
+    -xc|-xobjective-c)
+      has_c_source=1
+      ;;
+    -xc++|-xobjective-c++|-xc++-*|-xobjective-c++-*)
+      has_cxx_source=1
+      ;;
+    *.c|*.m)
+      has_c_source=1
+      ;;
+    *.cc|*.cpp|*.cxx|*.c++|*.C|*.mm)
+      has_cxx_source=1
+      ;;
+  esac
+  previous_arg="$arg"
+done
+
+if [[ "$has_c_source" == "1" && "$has_cxx_source" == "0" ]]; then
+  exec cc "$@"
+fi
+
+exec c++ "$@"
+"#,
+    )
+    .categorize_internal()?;
+    fs_util::write(
+        dest.join(ForwardRelativePath::new("ar_wrapper.sh")?),
+        r#"#!/usr/bin/env bash
+if [[ "$(uname -s)" == "Darwin" ]]; then
+  exec libtool "$@"
+fi
+exec ar "$@"
+"#,
+    )
+    .categorize_internal()?;
+    fs_util::write(
+        dest.join(ForwardRelativePath::new("dwp_wrapper.sh")?),
+        "#!/usr/bin/env bash\nexec false \"$@\"\n",
+    )
+    .categorize_internal()?;
+    fs_util::write(
+        dest.join(ForwardRelativePath::new("gcov_wrapper.sh")?),
+        "#!/usr/bin/env bash\nexec gcov \"$@\"\n",
+    )
+    .categorize_internal()?;
+    fs_util::write(
+        dest.join(ForwardRelativePath::new("llvm_profdata_wrapper.sh")?),
+        "#!/usr/bin/env bash\nexec llvm-profdata \"$@\"\n",
+    )
+    .categorize_internal()?;
+    fs_util::write(
+        dest.join(ForwardRelativePath::new("nm_wrapper.sh")?),
+        "#!/usr/bin/env bash\nexec nm \"$@\"\n",
+    )
+    .categorize_internal()?;
+    fs_util::write(
+        dest.join(ForwardRelativePath::new("objcopy_wrapper.sh")?),
+        "#!/usr/bin/env bash\nexec objcopy \"$@\"\n",
+    )
+    .categorize_internal()?;
+    fs_util::write(
+        dest.join(ForwardRelativePath::new("objdump_wrapper.sh")?),
+        "#!/usr/bin/env bash\nexec objdump \"$@\"\n",
+    )
+    .categorize_internal()?;
+    fs_util::write(
+        dest.join(ForwardRelativePath::new("strip_wrapper.sh")?),
+        "#!/usr/bin/env bash\nexec strip \"$@\"\n",
     )
     .categorize_internal()?;
     fs_util::write(
         dest.join(ForwardRelativePath::new("deps_scanner_wrapper.sh")?),
-        "#!/usr/bin/env bash\nexec ${CC:-cc} \"$@\"\n",
+        "#!/usr/bin/env bash\nexec cc \"$@\"\n",
     )
     .categorize_internal()?;
     fs_util::write(
@@ -485,6 +567,22 @@ fn write_cc_autoconf_support_files(dest: &AbsNormPath) -> buck2_error::Result<()
         "#!/usr/bin/env bash\nexit 0\n",
     )
     .categorize_internal()?;
+    for wrapper in [
+        "cc_wrapper.sh",
+        "ar_wrapper.sh",
+        "dwp_wrapper.sh",
+        "gcov_wrapper.sh",
+        "llvm_profdata_wrapper.sh",
+        "nm_wrapper.sh",
+        "objcopy_wrapper.sh",
+        "objdump_wrapper.sh",
+        "strip_wrapper.sh",
+        "deps_scanner_wrapper.sh",
+        "validate_static_library.sh",
+    ] {
+        fs_util::set_executable(&dest.join(ForwardRelativePath::new(wrapper)?), true)
+            .categorize_internal()?;
+    }
     fs_util::create_dir_all(dest.join(ForwardRelativePath::new("tools/cpp")?))?;
     fs_util::write(
         dest.join(ForwardRelativePath::new("tools/cpp/empty.cc")?),
@@ -575,13 +673,53 @@ filegroup(
 )
 
 filegroup(
-    name = "validate_static_library",
-    srcs = ["validate_static_library.sh"],
+    name = "ar_wrapper",
+    srcs = ["ar_wrapper.sh"],
+)
+
+filegroup(
+    name = "dwp_wrapper",
+    srcs = ["dwp_wrapper.sh"],
+)
+
+filegroup(
+    name = "gcov_wrapper",
+    srcs = ["gcov_wrapper.sh"],
+)
+
+filegroup(
+    name = "llvm_profdata_wrapper",
+    srcs = ["llvm_profdata_wrapper.sh"],
+)
+
+filegroup(
+    name = "nm_wrapper",
+    srcs = ["nm_wrapper.sh"],
+)
+
+filegroup(
+    name = "objcopy_wrapper",
+    srcs = ["objcopy_wrapper.sh"],
+)
+
+filegroup(
+    name = "objdump_wrapper",
+    srcs = ["objdump_wrapper.sh"],
+)
+
+filegroup(
+    name = "strip_wrapper",
+    srcs = ["strip_wrapper.sh"],
 )
 
 filegroup(
     name = "deps_scanner_wrapper",
     srcs = ["deps_scanner_wrapper.sh"],
+)
+
+filegroup(
+    name = "validate_static_library",
+    srcs = ["validate_static_library.sh"],
 )
 
 filegroup(
@@ -596,11 +734,27 @@ filegroup(
 filegroup(
     name = "ar_files",
     srcs = [
+        "ar_wrapper.sh",
         "builtin_include_directory_paths",
         "cc_wrapper.sh",
         "deps_scanner_wrapper.sh",
         "validate_static_library.sh",
     ],
+)
+
+filegroup(
+    name = "dwp_files",
+    srcs = ["dwp_wrapper.sh"],
+)
+
+filegroup(
+    name = "objcopy_files",
+    srcs = ["objcopy_wrapper.sh"],
+)
+
+filegroup(
+    name = "strip_files",
+    srcs = ["strip_wrapper.sh"],
 )
 
 cc_toolchain_suite(
@@ -621,10 +775,10 @@ cc_toolchain(
     ar_files = ":ar_files",
     as_files = ":compiler_deps",
     compiler_files = ":compiler_deps",
-    dwp_files = ":empty",
+    dwp_files = ":dwp_files",
     linker_files = ":compiler_deps",
-    objcopy_files = ":empty",
-    strip_files = ":empty",
+    objcopy_files = ":objcopy_files",
+    strip_files = ":strip_files",
     supports_header_parsing = True,
     supports_param_files = True,
 )
@@ -639,6 +793,22 @@ cc_toolchain_config(
     target_libc = %HOST_TARGET_LIBC%,
     abi_version = "local",
     abi_libc_version = "local",
+    tool_paths = {
+        "ar": "ar_wrapper.sh",
+        "cpp": "cc_wrapper.sh",
+        "cpp-module-deps-scanner": "deps_scanner_wrapper.sh",
+        "dwp": "dwp_wrapper.sh",
+        "gcc": "cc_wrapper.sh",
+        "gcov": "gcov_wrapper.sh",
+        "ld": "cc_wrapper.sh",
+        "llvm-profdata": "llvm_profdata_wrapper.sh",
+        "nm": "nm_wrapper.sh",
+        "objcopy": "objcopy_wrapper.sh",
+        "objdump": "objdump_wrapper.sh",
+        "parse_headers": "cc_wrapper.sh",
+        "strip": "strip_wrapper.sh",
+        "validate_static_library": "validate_static_library.sh",
+    },
 )
 
 cc_toolchain(

@@ -19,6 +19,7 @@ use buck2_interpreter::late_binding_ty::AnalysisContextReprLate;
 use buck2_interpreter::late_binding_ty::ProviderReprLate;
 use buck2_interpreter::starlark_promise::StarlarkPromise;
 use buck2_interpreter::types::configured_providers_label::StarlarkProvidersLabel;
+use buck2_interpreter::types::rule::FROZEN_BAZEL_ASPECTS_GET_IMPL;
 use buck2_interpreter::types::rule::FROZEN_PROMISE_ARTIFACT_MAPPINGS_GET_IMPL;
 use buck2_interpreter::types::rule::FROZEN_RULE_GET_IMPL;
 use buck2_interpreter::types::target_label::StarlarkTargetLabel;
@@ -92,6 +93,7 @@ use starlark::values::typing::StarlarkCallableChecked;
 use starlark_map::small_map::SmallMap;
 
 use crate::attrs::starlark_attribute::StarlarkAttribute;
+use crate::bazel_aspect::frozen_aspect_implementation;
 use crate::interpreter::build_context::BuildContext;
 use crate::interpreter::build_context::PerFileTypeContext;
 use crate::interpreter::module_internals::ModuleInternals;
@@ -297,6 +299,8 @@ pub struct StarlarkRuleCallable<'v> {
     bazel_initializer: Option<Value<'v>>,
     /// Public Starlark attrs passed to the Bazel initializer when explicitly provided.
     bazel_initializer_attrs: Vec<String>,
+    /// Bazel aspects attached to this rule's label-like attrs.
+    bazel_attr_aspects: SmallMap<String, Vec<Value<'v>>>,
     /// This kind of the rule, e.g. whether it can be used in configuration context.
     rule_kind: RuleKind,
     /// The raw docstring for this rule
@@ -650,7 +654,7 @@ impl<'v> AllocValue<'v> for StarlarkRuleCallable<'v> {
 impl<'v> StarlarkRuleCallable<'v> {
     fn new(
         implementation: RuleImpl<'v>,
-        attrs: UnpackDictEntries<&'v str, &'v StarlarkAttribute>,
+        attrs: UnpackDictEntries<&'v str, &'v StarlarkAttribute<'v>>,
         cfg: Option<Value<'v>>,
         supports_incoming_transition: Option<bool>,
         doc: &str,
@@ -687,8 +691,17 @@ impl<'v> StarlarkRuleCallable<'v> {
         };
 
         let mut bazel_output_attrs = Vec::new();
-        let mut sorted_validated_attrs = attrs
-            .entries
+        let attr_entries = attrs.entries;
+        let mut bazel_attr_aspects = SmallMap::new();
+        for (name, value) in &attr_entries {
+            if !value.bazel_aspects().is_empty() {
+                bazel_attr_aspects.insert(
+                    (*name).to_owned(),
+                    value.bazel_aspects().iter().copied().collect(),
+                );
+            }
+        }
+        let mut sorted_validated_attrs = attr_entries
             .into_iter()
             .sorted_by(|(k1, _), (k2, _)| Ord::cmp(k1, k2))
             .map(|(name, value)| {
@@ -777,6 +790,7 @@ impl<'v> StarlarkRuleCallable<'v> {
             is_bazel_build_setting,
             bazel_initializer,
             bazel_initializer_attrs,
+            bazel_attr_aspects,
             docs: Some(doc.to_owned()),
             ignore_attrs_for_profiling: build_context.ignore_attrs_for_profiling,
             artifact_promise_mappings,
@@ -785,7 +799,7 @@ impl<'v> StarlarkRuleCallable<'v> {
 
     fn new_anon_impl(
         implementation: RuleImpl<'v>,
-        attrs: UnpackDictEntries<&'v str, &'v StarlarkAttribute>,
+        attrs: UnpackDictEntries<&'v str, &'v StarlarkAttribute<'v>>,
         doc: &str,
         artifact_promise_mappings: SmallMap<
             StringValue<'v>,
@@ -822,7 +836,7 @@ impl<'v> StarlarkRuleCallable<'v> {
 
     fn new_anon(
         implementation: StarlarkCallable<'v, (FrozenValue,), ListType<FrozenValue>>,
-        attrs: UnpackDictEntries<&'v str, &'v StarlarkAttribute>,
+        attrs: UnpackDictEntries<&'v str, &'v StarlarkAttribute<'v>>,
         doc: &str,
         artifact_promise_mappings: SmallMap<
             StringValue<'v>,
@@ -841,7 +855,7 @@ impl<'v> StarlarkRuleCallable<'v> {
 
     pub fn new_bxl_anon(
         implementation: StarlarkCallable<'v, (FrozenValue, FrozenValue), ListType<FrozenValue>>,
-        attrs: UnpackDictEntries<&'v str, &'v StarlarkAttribute>,
+        attrs: UnpackDictEntries<&'v str, &'v StarlarkAttribute<'v>>,
         doc: &str,
         artifact_promise_mappings: SmallMap<
             StringValue<'v>,
@@ -981,6 +995,17 @@ impl<'v> Freeze for StarlarkRuleCallable<'v> {
             Some(initializer) => Some(initializer.freeze(freezer)?),
             None => None,
         };
+        let bazel_attr_aspects = self
+            .bazel_attr_aspects
+            .into_iter()
+            .map(|(name, aspects)| {
+                let aspects = aspects
+                    .into_iter()
+                    .map(|aspect| aspect.freeze(freezer))
+                    .collect::<FreezeResult<Vec<_>>>()?;
+                Ok((name, aspects))
+            })
+            .collect::<FreezeResult<SmallMap<_, _>>>()?;
 
         Ok(FrozenStarlarkRuleCallable {
             rule: Arc::new(Rule {
@@ -1004,6 +1029,7 @@ impl<'v> Freeze for StarlarkRuleCallable<'v> {
             artifact_promise_mappings,
             bazel_initializer,
             bazel_initializer_attrs: self.bazel_initializer_attrs,
+            bazel_attr_aspects,
         })
     }
 }
@@ -1024,6 +1050,7 @@ pub struct FrozenStarlarkRuleCallable {
     artifact_promise_mappings: Option<FrozenArtifactPromiseMappings>,
     bazel_initializer: Option<FrozenValue>,
     bazel_initializer_attrs: Vec<String>,
+    bazel_attr_aspects: SmallMap<String, Vec<FrozenValue>>,
 }
 starlark_simple_value!(FrozenStarlarkRuleCallable);
 
@@ -1050,6 +1077,24 @@ pub(crate) fn init_frozen_promise_artifact_mappings_get_impl() {
     })
 }
 
+pub(crate) fn init_frozen_bazel_aspects_get_impl() {
+    FROZEN_BAZEL_ASPECTS_GET_IMPL.init(|rule| {
+        let rule = unpack_frozen_rule(rule)?;
+        let mut aspects = Vec::new();
+        for attr_aspects in rule.bazel_attr_aspects().values() {
+            for aspect in attr_aspects {
+                let Some(implementation) = frozen_aspect_implementation(*aspect) else {
+                    continue;
+                };
+                if !aspects.contains(&implementation) {
+                    aspects.push(implementation);
+                }
+            }
+        }
+        Ok(aspects)
+    })
+}
+
 impl FrozenStarlarkRuleCallable {
     pub fn rule_type(&self) -> &Arc<StarlarkRuleType> {
         &self.rule_type
@@ -1061,6 +1106,10 @@ impl FrozenStarlarkRuleCallable {
 
     pub fn artifact_promise_mappings(&self) -> &Option<FrozenArtifactPromiseMappings> {
         &self.artifact_promise_mappings
+    }
+
+    pub fn bazel_attr_aspects(&self) -> &SmallMap<String, Vec<FrozenValue>> {
+        &self.bazel_attr_aspects
     }
 
     fn named_value<'v>(
@@ -1257,7 +1306,7 @@ pub fn register_rule_function(builder: &mut GlobalsBuilder) {
     fn subrule<'v>(
         #[starlark(require = named)] implementation: StarlarkCallable<'v, (), Value<'v>>,
         #[starlark(require = named, default = UnpackDictEntries::default())]
-        attrs: UnpackDictEntries<&'v str, &'v StarlarkAttribute>,
+        attrs: UnpackDictEntries<&'v str, &'v StarlarkAttribute<'v>>,
         #[starlark(require = named)] fragments: Option<Value<'v>>,
         #[starlark(require = named)] toolchains: Option<Value<'v>>,
         #[starlark(require = named, default = UnpackListOrTuple::default())]
@@ -1319,7 +1368,7 @@ pub fn register_rule_function(builder: &mut GlobalsBuilder) {
             >,
         >,
         #[starlark(require = named, default = UnpackDictEntries::default())]
-        attrs: UnpackDictEntries<&'v str, &'v StarlarkAttribute>,
+        attrs: UnpackDictEntries<&'v str, &'v StarlarkAttribute<'v>>,
         #[starlark(require = named)] cfg: Option<Value<'v>>,
         #[starlark(require = named)] supports_incoming_transition: Option<bool>,
         #[starlark(require = named, default = "")] doc: &str,
@@ -1434,7 +1483,7 @@ pub fn register_rule_function(builder: &mut GlobalsBuilder) {
             (FrozenValue,),
             ListType<FrozenValue>,
         >,
-        #[starlark(require = named)] attrs: UnpackDictEntries<&'v str, &'v StarlarkAttribute>,
+        #[starlark(require = named)] attrs: UnpackDictEntries<&'v str, &'v StarlarkAttribute<'v>>,
         #[starlark(require = named, default = "")] doc: &str,
         #[starlark(require = named)] artifact_promise_mappings: SmallMap<
             StringValue<'v>,
