@@ -14,6 +14,8 @@ use std::ops::ControlFlow;
 use std::path::Path;
 use std::process::Command;
 use std::sync::Arc;
+use std::sync::atomic::AtomicU64;
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 use std::time::Instant;
 use std::time::SystemTime;
@@ -120,6 +122,8 @@ use crate::executors::worker::WorkerPool;
 use crate::incremental_actions_helper::get_incremental_path_map;
 use crate::incremental_actions_helper::save_content_based_incremental_state;
 use crate::sqlite::incremental_state_db::IncrementalDbState;
+
+static ARTIFACT_PATH_ALIAS_TMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, buck2_error::Error)]
 #[buck2(input)]
@@ -1480,7 +1484,9 @@ impl PreparedCommandOptionalExecutor for LocalExecutor {
                     action_digest
                 );
                 if let Err(e) = self.local_action_cache.remove(&action_digest) {
-                    return ControlFlow::Break(manager.error("local_action_cache_remove_failed", e));
+                    return ControlFlow::Break(
+                        manager.error("local_action_cache_remove_failed", e),
+                    );
                 }
                 return ControlFlow::Continue(manager);
             }
@@ -1647,14 +1653,14 @@ fn prepare_bazel_execroot_working_directory(
         return Ok(());
     }
 
-    match fs_util::symlink(&source, &dest).categorize_internal() {
+    match create_artifact_path_alias_symlink(&source, &dest) {
         Ok(()) => Ok(()),
         Err(e) if artifact_path_alias_is_current(&dest, &source) => Ok(()),
         Err(_) => {
             fs_util::remove_all(&dest)
                 .categorize_internal()
                 .buck_error_context("Error cleaning stale Bazel execroot buck-out symlink")?;
-            match fs_util::symlink(&source, &dest).categorize_internal() {
+            match create_artifact_path_alias_symlink(&source, &dest) {
                 Ok(()) => Ok(()),
                 Err(e) if artifact_path_alias_is_current(&dest, &source) => Ok(()),
                 Err(e) => {
@@ -1688,12 +1694,12 @@ fn materialize_artifact_path_alias(
         })?;
     }
 
-    match fs_util::symlink(&source, &dest).categorize_internal() {
+    match create_artifact_path_alias_symlink(&source, &dest) {
         Ok(()) => Ok(()),
         Err(e) if artifact_path_alias_is_current(&dest, &source) => Ok(()),
         Err(_) => {
             CleanOutputPaths::clean(std::iter::once(path), fs)?;
-            match fs_util::symlink(&source, &dest).categorize_internal() {
+            match create_artifact_path_alias_symlink(&source, &dest) {
                 Ok(()) => Ok(()),
                 Err(e) if artifact_path_alias_is_current(&dest, &source) => Ok(()),
                 Err(e) => Err(e).with_buck_error_context(|| {
@@ -1702,6 +1708,63 @@ fn materialize_artifact_path_alias(
             }
         }
     }
+}
+
+fn create_artifact_path_alias_symlink(
+    source: &AbsNormPathBuf,
+    dest: &AbsNormPathBuf,
+) -> buck2_error::Result<()> {
+    if artifact_path_alias_is_current(dest, source) {
+        return Ok(());
+    }
+
+    match fs_util::symlink(source, dest).categorize_internal() {
+        Ok(()) => Ok(()),
+        Err(e) if artifact_path_alias_is_current(dest, source) => Ok(()),
+        Err(e) => {
+            let tmp = artifact_path_alias_tmp_path(dest)?;
+            let _ignored = fs_util::remove_file(&tmp);
+            fs_util::symlink(source, &tmp)
+                .categorize_internal()
+                .buck_error_context("Error creating temporary artifact path alias")?;
+            match fs_util::rename(&tmp, dest).categorize_internal() {
+                Ok(()) => Ok(()),
+                Err(rename_error) if artifact_path_alias_is_current(dest, source) => {
+                    let _ignored = fs_util::remove_file(&tmp);
+                    Ok(())
+                }
+                Err(rename_error) => {
+                    let _ignored = fs_util::remove_file(&tmp);
+                    if artifact_path_alias_is_current(dest, source) {
+                        Ok(())
+                    } else {
+                        Err(rename_error).buck_error_context(e.to_string())
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn artifact_path_alias_tmp_path(dest: &AbsNormPathBuf) -> buck2_error::Result<AbsNormPathBuf> {
+    let parent = dest.parent().ok_or_else(|| {
+        buck2_error!(
+            buck2_error::ErrorTag::Tier0,
+            "Artifact path alias has no parent directory"
+        )
+    })?;
+    let file_name = dest
+        .as_path()
+        .file_name()
+        .map(|name| name.to_string_lossy())
+        .unwrap_or_else(|| "alias".into());
+    let id = ARTIFACT_PATH_ALIAS_TMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let mut tmp = parent.as_path().to_owned();
+    tmp.push(format!(
+        ".{file_name}.buck2-tmp-{}-{id}",
+        std::process::id()
+    ));
+    AbsNormPathBuf::new(tmp)
 }
 
 fn artifact_path_alias_is_current(dest: &AbsNormPathBuf, source: &AbsNormPathBuf) -> bool {
@@ -2289,6 +2352,26 @@ mod tests {
             BuckOutPathResolver::new(ProjectRelativePathBuf::unchecked_new("buck_out/v2".into())),
             project_fs,
         )
+    }
+
+    #[test]
+    fn test_artifact_path_alias_replaces_stale_symlink() -> buck2_error::Result<()> {
+        let temp = ProjectRootTemp::new()?;
+        temp.write_file("source", "new");
+        temp.write_file("old_source", "old");
+        let source = temp.path().resolve(ProjectRelativePath::new("source")?);
+        let old_source = temp.path().resolve(ProjectRelativePath::new("old_source")?);
+        let dest = temp.path().resolve(ProjectRelativePath::new("dest")?);
+
+        fs_util::symlink(&old_source, &dest).categorize_internal()?;
+        create_artifact_path_alias_symlink(&source, &dest)?;
+
+        assert!(artifact_path_alias_is_current(&dest, &source));
+        assert_eq!(
+            fs_util::read_link(&dest).categorize_internal()?.as_path(),
+            source.as_path()
+        );
+        Ok(())
     }
 
     fn test_executor() -> buck2_error::Result<(LocalExecutor, AbsNormPathBuf, ProjectRootTemp)> {

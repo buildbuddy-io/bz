@@ -538,6 +538,10 @@ impl BuckConfigBasedCells {
         .await
     }
 
+    pub fn root_config_with_bazel_compat_startup_defaults(&self) -> LegacyBuckConfig {
+        self.root_config.with_bazel_compat_startup_defaults()
+    }
+
     pub async fn parse_with_config_args_and_bzlmod_module_extension_results(
         project_fs: &ProjectRoot,
         config_args: &[buck2_cli_proto::ConfigOverride],

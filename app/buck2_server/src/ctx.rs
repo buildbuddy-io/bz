@@ -8,6 +8,7 @@
  * above-listed licenses.
  */
 
+use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::io::BufWriter;
 use std::marker::PhantomData;
@@ -649,7 +650,7 @@ fn bzlmod_cell_graph_module_extension_cache_key(
     let mut hasher = blake3::Hasher::new();
     update_bzlmod_cell_graph_module_extension_cache_key(
         &mut hasher,
-        "buck2-bzlmod-cell-graph-module-extension-v1",
+        "buck2-bzlmod-cell-graph-module-extension-v2",
     );
     update_bzlmod_cell_graph_module_extension_cache_key(&mut hasher, std::env::consts::OS);
     update_bzlmod_cell_graph_module_extension_cache_key(&mut hasher, std::env::consts::ARCH);
@@ -695,6 +696,39 @@ fn bzlmod_cell_graph_module_extension_cache_key(
     }
 
     hasher.finalize().to_hex().to_string()
+}
+
+fn bzlmod_module_extension_request_key(
+    request: &BzlmodModuleExtensionEvaluationRequest,
+) -> (String, String, String) {
+    (
+        request.extension_bzl_cell.to_string(),
+        request.extension_bzl_path.to_string(),
+        request.extension_name.to_string(),
+    )
+}
+
+fn unique_bzlmod_module_extension_requests(
+    requests: &[BzlmodModuleExtensionEvaluationRequest],
+) -> Vec<&BzlmodModuleExtensionEvaluationRequest> {
+    let mut seen = BTreeSet::new();
+    requests
+        .iter()
+        .filter(|request| seen.insert(bzlmod_module_extension_request_key(request)))
+        .collect()
+}
+
+fn bzlmod_module_extension_results_in_request_order(
+    requests: &[&BzlmodModuleExtensionEvaluationRequest],
+    results: &BTreeMap<(String, String, String), BzlmodEvaluatedModuleExtension>,
+) -> Vec<BzlmodEvaluatedModuleExtension> {
+    requests
+        .iter()
+        .filter_map(|request| {
+            let key = bzlmod_module_extension_request_key(request);
+            results.get(&key).cloned()
+        })
+        .collect()
 }
 
 fn bzlmod_cell_graph_module_extension_cache_path(cache_key: &str) -> ProjectRelativePathBuf {
@@ -906,103 +940,155 @@ impl DiceUpdater for DiceCommandUpdater<'_, '_> {
             }
 
             let mut preliminary_dice = ctx.commit_with_data(user_data).await;
-            let bzlmod_module_extension_results = match self
-                .read_bzlmod_cell_graph_module_extension_cache(
-                    &mut preliminary_dice,
+            let unique_bzlmod_module_extension_requests =
+                unique_bzlmod_module_extension_requests(
                     &bzlmod_module_extension_evaluation_requests,
-                )
-                .await?
+                );
+            let mut bzlmod_module_extension_results_by_key = BTreeMap::new();
+            let mut missing_bzlmod_module_extension_requests = Vec::new();
+            for request in &unique_bzlmod_module_extension_requests {
+                if let Some(cached_result) = self
+                    .read_bzlmod_cell_graph_module_extension_cache(&mut preliminary_dice, request)
+                    .await?
+                {
+                    bzlmod_module_extension_results_by_key.insert(
+                        bzlmod_module_extension_request_key(request),
+                        cached_result,
+                    );
+                } else {
+                    missing_bzlmod_module_extension_requests.push(*request);
+                }
+            }
+
+            if !bzlmod_module_extension_results_by_key.is_empty()
+                && !missing_bzlmod_module_extension_requests.is_empty()
             {
-                Some(cached_results) => cached_results,
-                None => {
-                    let mut seen_bzlmod_module_extension_requests = BTreeSet::new();
-                    let unique_bzlmod_module_extension_requests =
-                        bzlmod_module_extension_evaluation_requests
-                            .iter()
-                            .filter(|request| {
-                                seen_bzlmod_module_extension_requests.insert((
-                                    request.extension_bzl_cell.to_string(),
-                                    request.extension_bzl_path.to_string(),
-                                    request.extension_name.to_string(),
-                                ))
-                            })
-                            .collect::<Vec<_>>();
-
-                    let mut bzlmod_module_extension_results = Vec::new();
-                    for (request_index, request) in unique_bzlmod_module_extension_requests
-                        .iter()
-                        .copied()
-                        .enumerate()
-                    {
-                        let has_more_requests =
-                            request_index + 1 < unique_bzlmod_module_extension_requests.len();
-                        bzlmod_module_extension_results.extend(
-                            self.evaluate_bzlmod_module_extensions_for_cell_graph(
-                                &mut preliminary_dice,
-                                std::slice::from_ref(request),
-                            )
-                            .await
-                            .with_buck_error_context(|| {
-                                format!(
-                                    "Error evaluating bzlmod module extension `{}`%`{}` for `{}`",
-                                    request.extension_bzl_file,
-                                    request.extension_name,
-                                    request.parent_canonical_repo_name
-                                )
-                            })?,
-                        );
-
-                        if !has_more_requests {
-                            continue;
-                        }
-
-                        let partial_cells_and_configs =
-                            BuckConfigBasedCells::parse_with_config_args_and_bzlmod_module_extension_results(
-                                &self.cmd_ctx.base_context.project_root,
-                                &self.cmd_ctx.config_overrides,
-                                false,
-                                bzlmod_module_extension_results.clone(),
-                            )
-                            .await?;
-                        let partial_cell_resolver = partial_cells_and_configs.cell_resolver;
-                        let partial_configuror = BuildInterpreterConfiguror::new(
-                            configured_prelude_path(
-                                &partial_cell_resolver,
-                                &partial_cells_and_configs.root_config,
-                            )?,
-                            self.interpreter_platform,
-                            self.interpreter_architecture,
-                            self.interpreter_xcode_version.clone(),
-                            self.cmd_ctx.record_target_call_stacks,
-                            self.cmd_ctx.skip_targets_with_duplicate_names,
-                            None,
-                            Arc::new(ConcurrentTargetLabelInterner::default()),
-                        )?;
-
-                        let mut partial_ctx = preliminary_dice.into_updater();
-                        partial_ctx.set_buck_out_path(Some(self.cmd_ctx.buck_out_dir.clone()))?;
-                        partial_ctx
-                            .set_enabled_optional_validations(optional_validations.clone())?;
-                        setup_interpreter(
-                            &mut partial_ctx,
-                            partial_cell_resolver,
-                            partial_configuror,
-                            partial_cells_and_configs.external_data,
-                            profiler_instrumentation_override.clone(),
-                            self.cmd_ctx.disable_starlark_types,
-                            self.cmd_ctx.unstable_typecheck,
-                        )?;
-                        preliminary_dice = partial_ctx.commit().await;
-                    }
-                    self.write_bzlmod_cell_graph_module_extension_cache(
-                        &mut preliminary_dice,
-                        &bzlmod_module_extension_evaluation_requests,
-                        &bzlmod_module_extension_results,
+                let cached_bzlmod_module_extension_results =
+                    bzlmod_module_extension_results_in_request_order(
+                        &unique_bzlmod_module_extension_requests,
+                        &bzlmod_module_extension_results_by_key,
+                    );
+                let partial_cells_and_configs =
+                    BuckConfigBasedCells::parse_with_config_args_and_bzlmod_module_extension_results(
+                        &self.cmd_ctx.base_context.project_root,
+                        &self.cmd_ctx.config_overrides,
+                        false,
+                        cached_bzlmod_module_extension_results,
                     )
                     .await?;
-                    bzlmod_module_extension_results
+                let partial_cell_resolver = partial_cells_and_configs.cell_resolver;
+                let partial_configuror = BuildInterpreterConfiguror::new(
+                    configured_prelude_path(
+                        &partial_cell_resolver,
+                        &partial_cells_and_configs.root_config,
+                    )?,
+                    self.interpreter_platform,
+                    self.interpreter_architecture,
+                    self.interpreter_xcode_version.clone(),
+                    self.cmd_ctx.record_target_call_stacks,
+                    self.cmd_ctx.skip_targets_with_duplicate_names,
+                    None,
+                    Arc::new(ConcurrentTargetLabelInterner::default()),
+                )?;
+
+                let mut partial_ctx = preliminary_dice.into_updater();
+                partial_ctx.set_buck_out_path(Some(self.cmd_ctx.buck_out_dir.clone()))?;
+                partial_ctx.set_enabled_optional_validations(optional_validations.clone())?;
+                setup_interpreter(
+                    &mut partial_ctx,
+                    partial_cell_resolver,
+                    partial_configuror,
+                    partial_cells_and_configs.external_data,
+                    profiler_instrumentation_override.clone(),
+                    self.cmd_ctx.disable_starlark_types,
+                    self.cmd_ctx.unstable_typecheck,
+                )?;
+                preliminary_dice = partial_ctx.commit().await;
+            }
+
+            for (request_index, request) in missing_bzlmod_module_extension_requests
+                .iter()
+                .copied()
+                .enumerate()
+            {
+                let evaluated_result = self
+                    .evaluate_uncached_bzlmod_module_extension_for_cell_graph(
+                        &mut preliminary_dice,
+                        request,
+                    )
+                    .await
+                    .with_buck_error_context(|| {
+                        format!(
+                            "Error evaluating bzlmod module extension `{}`%`{}` for `{}`",
+                            request.extension_bzl_file,
+                            request.extension_name,
+                            request.parent_canonical_repo_name
+                        )
+                    })?;
+                self.write_bzlmod_cell_graph_module_extension_cache(
+                    &mut preliminary_dice,
+                    request,
+                    &evaluated_result,
+                )
+                .await?;
+                bzlmod_module_extension_results_by_key.insert(
+                    bzlmod_module_extension_request_key(request),
+                    evaluated_result,
+                );
+
+                let has_more_missing_requests =
+                    request_index + 1 < missing_bzlmod_module_extension_requests.len();
+                if !has_more_missing_requests {
+                    continue;
                 }
-            };
+
+                let partial_bzlmod_module_extension_results =
+                    bzlmod_module_extension_results_in_request_order(
+                        &unique_bzlmod_module_extension_requests,
+                        &bzlmod_module_extension_results_by_key,
+                    );
+                let partial_cells_and_configs =
+                    BuckConfigBasedCells::parse_with_config_args_and_bzlmod_module_extension_results(
+                        &self.cmd_ctx.base_context.project_root,
+                        &self.cmd_ctx.config_overrides,
+                        false,
+                        partial_bzlmod_module_extension_results,
+                    )
+                    .await?;
+                let partial_cell_resolver = partial_cells_and_configs.cell_resolver;
+                let partial_configuror = BuildInterpreterConfiguror::new(
+                    configured_prelude_path(
+                        &partial_cell_resolver,
+                        &partial_cells_and_configs.root_config,
+                    )?,
+                    self.interpreter_platform,
+                    self.interpreter_architecture,
+                    self.interpreter_xcode_version.clone(),
+                    self.cmd_ctx.record_target_call_stacks,
+                    self.cmd_ctx.skip_targets_with_duplicate_names,
+                    None,
+                    Arc::new(ConcurrentTargetLabelInterner::default()),
+                )?;
+
+                let mut partial_ctx = preliminary_dice.into_updater();
+                partial_ctx.set_buck_out_path(Some(self.cmd_ctx.buck_out_dir.clone()))?;
+                partial_ctx.set_enabled_optional_validations(optional_validations.clone())?;
+                setup_interpreter(
+                    &mut partial_ctx,
+                    partial_cell_resolver,
+                    partial_configuror,
+                    partial_cells_and_configs.external_data,
+                    profiler_instrumentation_override.clone(),
+                    self.cmd_ctx.disable_starlark_types,
+                    self.cmd_ctx.unstable_typecheck,
+                )?;
+                preliminary_dice = partial_ctx.commit().await;
+            }
+
+            let bzlmod_module_extension_results = bzlmod_module_extension_results_in_request_order(
+                &unique_bzlmod_module_extension_requests,
+                &bzlmod_module_extension_results_by_key,
+            );
 
             let final_cells_and_configs =
                 BuckConfigBasedCells::parse_with_config_args_and_bzlmod_module_extension_results(
@@ -1128,9 +1214,10 @@ impl DiceCommandUpdater<'_, '_> {
     async fn read_bzlmod_cell_graph_module_extension_cache(
         &self,
         ctx: &mut DiceComputations<'_>,
-        requests: &[BzlmodModuleExtensionEvaluationRequest],
-    ) -> buck2_error::Result<Option<Vec<BzlmodEvaluatedModuleExtension>>> {
-        let cache_key = bzlmod_cell_graph_module_extension_cache_key(requests);
+        request: &BzlmodModuleExtensionEvaluationRequest,
+    ) -> buck2_error::Result<Option<BzlmodEvaluatedModuleExtension>> {
+        let cache_key =
+            bzlmod_cell_graph_module_extension_cache_key(std::slice::from_ref(request));
         let cache_path = bzlmod_cell_graph_module_extension_cache_path(&cache_key);
         let project_root = self.cmd_ctx.base_context.project_root.dupe();
 
@@ -1150,13 +1237,14 @@ impl DiceCommandUpdater<'_, '_> {
     async fn write_bzlmod_cell_graph_module_extension_cache(
         &self,
         ctx: &mut DiceComputations<'_>,
-        requests: &[BzlmodModuleExtensionEvaluationRequest],
-        results: &[BzlmodEvaluatedModuleExtension],
+        request: &BzlmodModuleExtensionEvaluationRequest,
+        result: &BzlmodEvaluatedModuleExtension,
     ) -> buck2_error::Result<()> {
-        let cache_key = bzlmod_cell_graph_module_extension_cache_key(requests);
+        let cache_key =
+            bzlmod_cell_graph_module_extension_cache_key(std::slice::from_ref(request));
         let cache_path = bzlmod_cell_graph_module_extension_cache_path(&cache_key);
         let project_root = self.cmd_ctx.base_context.project_root.dupe();
-        let content = serde_json::to_string(results)
+        let content = serde_json::to_string(result)
             .buck_error_context("Error serializing bzlmod module extension cell graph cache")?;
 
         ctx.get_blocking_executor()
@@ -1192,103 +1280,106 @@ impl DiceCommandUpdater<'_, '_> {
         .await?
     }
 
+    fn bzlmod_evaluated_module_extension_from_evaluation(
+        &self,
+        request: &BzlmodModuleExtensionEvaluationRequest,
+        evaluation: &BazelModuleExtensionEvaluationResult,
+    ) -> buck2_error::Result<BzlmodEvaluatedModuleExtension> {
+        let mut repository_rules = Vec::new();
+        for invocation in &evaluation.repository_rule_invocations {
+            let rule_path = match &invocation.rule_id.path {
+                BzlOrBxlPath::Bzl(path) => path,
+                BzlOrBxlPath::Bxl(_) => {
+                    return Err(buck2_error::buck2_error!(
+                        buck2_error::ErrorTag::Input,
+                        "bzlmod repository_rule `{}` was emitted from a BXL path, which is unsupported",
+                        invocation.rule_id
+                    ));
+                }
+            };
+            repository_rules.push(BzlmodEvaluatedRepositoryRule {
+                repo_name: invocation.name.clone(),
+                rule_bzl_cell: rule_path.path().cell().as_str().to_owned(),
+                rule_bzl_path: rule_path.path().path().as_str().to_owned(),
+                rule_bzl_build_file_cell: rule_path.build_file_cell().name().as_str().to_owned(),
+                rule_name: invocation.rule_id.name.clone(),
+                attrs: invocation.attrs.clone(),
+                label_deps: invocation.label_deps.clone(),
+            });
+        }
+
+        let mut repo_names = repository_rules
+            .iter()
+            .map(|invocation| Arc::from(invocation.repo_name.as_str()))
+            .collect::<Vec<Arc<str>>>();
+        repo_names.sort();
+        repo_names.dedup();
+        repository_rules.sort_by(|a, b| a.repo_name.cmp(&b.repo_name));
+        repository_rules.dedup_by(|a, b| a.repo_name == b.repo_name);
+        let mut registered_toolchains = evaluation
+            .registered_toolchains
+            .iter()
+            .map(|toolchain| Arc::from(toolchain.as_str()))
+            .collect::<Vec<Arc<str>>>();
+        registered_toolchains.sort();
+        registered_toolchains.dedup();
+        Ok(BzlmodEvaluatedModuleExtension {
+            parent_canonical_repo_name: request.parent_canonical_repo_name.dupe(),
+            parent_is_root: request.parent_is_root,
+            extension_bzl_file: request.extension_bzl_file.dupe(),
+            extension_bzl_cell: request.extension_bzl_cell.dupe(),
+            extension_bzl_path: request.extension_bzl_path.dupe(),
+            extension_unique_name: request.extension_unique_name.dupe(),
+            extension_name: request.extension_name.dupe(),
+            extension_usages_json: request.extension_usages_json.dupe(),
+            repo_names,
+            registered_toolchains,
+            repository_rules,
+        })
+    }
+
+    async fn evaluate_uncached_bzlmod_module_extension_for_cell_graph(
+        &self,
+        ctx: &mut DiceComputations<'_>,
+        request: &BzlmodModuleExtensionEvaluationRequest,
+    ) -> buck2_error::Result<BzlmodEvaluatedModuleExtension> {
+        let working_dir_key = bzlmod_cell_name(&request.extension_unique_name);
+        let working_dir = format!(
+            "{}/external_cells/bzlmod_module_extensions/{working_dir_key}",
+            self.cmd_ctx.buck_out_dir.as_str()
+        );
+        let working_dir_path = ProjectRelativePath::new(&working_dir)?.to_owned();
+        let evaluation = self
+            .evaluate_cached_bzlmod_module_extension_for_cell_graph(ctx, request, working_dir_path)
+            .await?;
+        self.bzlmod_evaluated_module_extension_from_evaluation(request, &evaluation)
+    }
+
     async fn evaluate_bzlmod_module_extensions_for_cell_graph(
         &self,
         ctx: &mut DiceComputations<'_>,
         requests: &[BzlmodModuleExtensionEvaluationRequest],
     ) -> buck2_error::Result<Vec<BzlmodEvaluatedModuleExtension>> {
-        if let Some(results) = self
-            .read_bzlmod_cell_graph_module_extension_cache(ctx, requests)
-            .await?
-        {
-            return Ok(results);
-        }
-
         let mut results = Vec::new();
-        let mut seen = BTreeSet::new();
 
-        for request in requests {
-            if !seen.insert((
-                request.extension_bzl_cell.to_string(),
-                request.extension_bzl_path.to_string(),
-                request.extension_name.to_string(),
-            )) {
-                continue;
-            }
-
-            let working_dir_key = bzlmod_cell_name(&request.extension_unique_name);
-            let working_dir = format!(
-                "{}/external_cells/bzlmod_module_extensions/{working_dir_key}",
-                self.cmd_ctx.buck_out_dir.as_str()
-            );
-            let working_dir_path = ProjectRelativePath::new(&working_dir)?.to_owned();
-            let evaluation = self
-                .evaluate_cached_bzlmod_module_extension_for_cell_graph(
-                    ctx,
-                    request,
-                    working_dir_path,
-                )
-                .await?;
-
-            let mut repository_rules = Vec::new();
-            for invocation in &evaluation.repository_rule_invocations {
-                let rule_path = match &invocation.rule_id.path {
-                    BzlOrBxlPath::Bzl(path) => path,
-                    BzlOrBxlPath::Bxl(_) => {
-                        return Err(buck2_error::buck2_error!(
-                            buck2_error::ErrorTag::Input,
-                            "bzlmod repository_rule `{}` was emitted from a BXL path, which is unsupported",
-                            invocation.rule_id
-                        ));
-                    }
-                };
-                repository_rules.push(BzlmodEvaluatedRepositoryRule {
-                    repo_name: invocation.name.clone(),
-                    rule_bzl_cell: rule_path.path().cell().as_str().to_owned(),
-                    rule_bzl_path: rule_path.path().path().as_str().to_owned(),
-                    rule_bzl_build_file_cell: rule_path
-                        .build_file_cell()
-                        .name()
-                        .as_str()
-                        .to_owned(),
-                    rule_name: invocation.rule_id.name.clone(),
-                    attrs: invocation.attrs.clone(),
-                    label_deps: invocation.label_deps.clone(),
-                });
-            }
-
-            let mut repo_names = repository_rules
-                .iter()
-                .map(|invocation| Arc::from(invocation.repo_name.as_str()))
-                .collect::<Vec<Arc<str>>>();
-            repo_names.sort();
-            repo_names.dedup();
-            repository_rules.sort_by(|a, b| a.repo_name.cmp(&b.repo_name));
-            repository_rules.dedup_by(|a, b| a.repo_name == b.repo_name);
-            let mut registered_toolchains = evaluation
-                .registered_toolchains
-                .iter()
-                .map(|toolchain| Arc::from(toolchain.as_str()))
-                .collect::<Vec<Arc<str>>>();
-            registered_toolchains.sort();
-            registered_toolchains.dedup();
-            results.push(BzlmodEvaluatedModuleExtension {
-                parent_canonical_repo_name: request.parent_canonical_repo_name.dupe(),
-                parent_is_root: request.parent_is_root,
-                extension_bzl_file: request.extension_bzl_file.dupe(),
-                extension_bzl_cell: request.extension_bzl_cell.dupe(),
-                extension_bzl_path: request.extension_bzl_path.dupe(),
-                extension_unique_name: request.extension_unique_name.dupe(),
-                extension_name: request.extension_name.dupe(),
-                extension_usages_json: request.extension_usages_json.dupe(),
-                repo_names,
-                registered_toolchains,
-                repository_rules,
-            });
+        for request in unique_bzlmod_module_extension_requests(requests) {
+            let result = match self
+                .read_bzlmod_cell_graph_module_extension_cache(ctx, request)
+                .await?
+            {
+                Some(result) => result,
+                None => {
+                    let result = self
+                        .evaluate_uncached_bzlmod_module_extension_for_cell_graph(ctx, request)
+                        .await?;
+                    self.write_bzlmod_cell_graph_module_extension_cache(ctx, request, &result)
+                        .await?;
+                    result
+                }
+            };
+            results.push(result);
         }
 
-        self.write_bzlmod_cell_graph_module_extension_cache(ctx, requests, &results)
-            .await?;
         Ok(results)
     }
 

@@ -139,6 +139,13 @@ fn merge_ignore_specs_for_file_watcher(project_ignore: &str, bazelignore: &str) 
     }
 }
 
+fn use_minimal_bazel_daemon_startup_config(fs: &ProjectRoot) -> buck2_error::Result<bool> {
+    let module_file = fs.resolve(ProjectRelativePathBuf::unchecked_new(
+        "MODULE.bazel".to_owned(),
+    ));
+    fs_util::try_exists(&module_file)
+}
+
 /// For a buckd process there is a single DaemonState created at startup and never destroyed.
 #[derive(Allocative)]
 pub struct DaemonState {
@@ -341,14 +348,24 @@ impl DaemonState {
             let fs = paths.project_root().clone();
 
             tracing::info!("Reading config...");
-            let legacy_cells = BuckConfigBasedCells::parse_with_config_args(&fs, &[]).await?;
+            let minimal_bazel_startup_config = use_minimal_bazel_daemon_startup_config(&fs)?;
+            let legacy_cells = if minimal_bazel_startup_config {
+                BuckConfigBasedCells::parse_for_immediate_config(&fs).await?
+            } else {
+                BuckConfigBasedCells::parse_with_config_args(&fs, &[]).await?
+            };
 
             tracing::info!("Starting...");
 
             let cells = &legacy_cells.cell_resolver;
-            let root_config = &legacy_cells
-                .parse_single_cell(cells.root_cell(), &fs)
-                .await?;
+            let root_config_storage = if minimal_bazel_startup_config {
+                legacy_cells.root_config_with_bazel_compat_startup_defaults()
+            } else {
+                legacy_cells
+                    .parse_single_cell(cells.root_cell(), &fs)
+                    .await?
+            };
+            let root_config = &root_config_storage;
 
             let buffer_size = root_config
                 .parse(BuckconfigKeyRef {
@@ -441,7 +458,13 @@ impl DaemonState {
                     ignore_specs.insert(cell, empty_external_bzlmod_ignore.clone());
                     continue;
                 }
-                let config = legacy_cells.parse_single_cell(cell, &fs).await?;
+                let parsed_config;
+                let config = if minimal_bazel_startup_config && cell == cells.root_cell() {
+                    root_config
+                } else {
+                    parsed_config = legacy_cells.parse_single_cell(cell, &fs).await?;
+                    &parsed_config
+                };
                 let mut ignore_spec = config
                     .get(BuckconfigKeyRef {
                         section: "project",

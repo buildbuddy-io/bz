@@ -344,6 +344,10 @@ impl LegacyBuckConfig {
         )
     }
 
+    pub(crate) fn with_bazel_compat_startup_defaults(&self) -> Self {
+        self.with_bazel_compat_defaults_inner(&[], &[], &[], &BazelCompatBazelrcOptions::default())
+    }
+
     fn with_bazel_compat_defaults_inner(
         &self,
         current_cell_aliases: &[BazelCompatCellAlias],

@@ -165,7 +165,8 @@ Completed:
 - Bazel-compatible local execution now prepares the execroot `buck-out` alias before output-directory creation. Output parents are therefore created through the same execroot view that the action command sees, matching Bazel's `ActionOutputDirectoryHelper` behavior for non-tree and tree outputs.
 - Buck now has a persistent local action cache for local execution. Successful local actions record an action-digest to output-fingerprint entry under the isolation cache, later commands validate the real output metadata without mutating output paths, and cache hits are reported as `LocalActionCache` command execution kinds.
 - Generated bzlmod repository materialization now writes Bazel-style setup stamps beside generated repos and reuses matching already-materialized repos across daemon restarts. The stamp is outside the repo tree, is cleared before re-materialization, and is written only after successful materialization.
-- Bzlmod cell-graph module-extension results are persisted under `buck-out/v2/cache` and reused as a complete result set on fresh daemons, avoiding repeated per-extension graph reparsing when the module-extension request set is unchanged.
+- Bazel-compatible roots now start buckd from a minimal startup config and defer full bzlmod/module-extension resolution to command update, so daemon startup no longer performs repository resolution before the client connects.
+- Bzlmod cell-graph module-extension results are persisted under `buck-out/v2/cache` per extension, matching Bazel's independent module-extension values. Fresh daemons reuse unchanged extension results and evaluate only the extensions whose usage key changed.
 - BuildBuddy's current server target now builds with Buck2 actions:
 
 ```sh
@@ -210,6 +211,7 @@ All BuildBuddy measurements below were taken on `/Users/siggi/Code/buildbuddy` f
 | External module: `github.com/pkg/errors` patch | Buck2 before materializer metadata cache hits | cold reverse external-module patch | 52.30s | 44.91s | 3738 analyses, 1708 loads, 2353 cached actions, 4 local |
 | External module: `github.com/pkg/errors` patch | Buck2 with materializer metadata cache hits | cold same-state daemon restart | 23.65s | 16.42s | 3738 analyses, 1708 loads, 2357 cached actions, 0 local |
 | External module: `github.com/pkg/errors` patch | Buck2 with materializer metadata cache hits | cold reverse external-module patch | 39.04s | 31.69s | 3738 analyses, 1708 loads, 2353 cached actions, 4 local |
+| External module: `github.com/pkg/errors` patch | Buck2 with per-extension module cache | cold external-module patch after seeded isolation | 25.21s | 24.5s | 3740 targets analyzed, 2356 cached actions, 1 local |
 
 Latest BuildBuddy timing comparison, measured on `/Users/siggi/Code/buildbuddy` for
 `//server:server` with local-only execution:
@@ -287,6 +289,7 @@ Latest external-module edit timing comparison, measured by adding/removing a bzl
 | Buck2 before materializer metadata cache hits | cold reverse external-module patch | 52.30s wall / 44.91s command | 3738 analyses, 1708 loads, 2353 cached actions, 4 local |
 | Buck2 with materializer metadata cache hits | cold same-state daemon restart | 23.65s wall / 16.42s command | 3738 analyses, 1708 loads, 2357 cached actions, 0 local |
 | Buck2 with materializer metadata cache hits | cold reverse external-module patch | 39.04s wall / 31.69s command | 3738 analyses, 1708 loads, 2353 cached actions, 4 local |
+| Buck2 with per-extension module cache | cold external-module patch after seeded isolation | 25.21s wall / 24.5s command | 3740 targets analyzed, 2356 cached actions, 1 local |
 
 The warm external-module regression was global DICE invalidation from treating generated repo
 repository-rule setup as part of cell/config identity. Buck now compares cell resolver identity by
@@ -303,8 +306,17 @@ outputs from disk on every persistent hit after daemon restart, which put multi-
 Go actions on the critical path. Buck now asks the persisted materializer for declared output
 `ArtifactValue`s, validates those values against the local action-cache fingerprint, and only falls
 back to disk output calculation when metadata is missing. The cold same-state command duration is now
-comparable to Bazel's cold reverse command time; the remaining external-module cold reverse gap is
-actual invalidated Go compilation/linking, especially the final external-link BuildBuddy `GoLink`.
+comparable to Bazel's cold reverse command time.
+
+The next cold external-module profile showed the remaining gap was no longer action execution but
+monolithic bzlmod module-extension result caching: changing the `go_deps` usage key missed the full
+33-extension result-set cache and spent 28.47s in command-start setup before actions could begin.
+Bazel keys module extensions independently, so Buck now persists one cache entry per extension and
+seeds the preliminary cell graph from the unchanged cached extensions before evaluating only the
+missing requests. The same `github.com/pkg/errors` patch now spends 3.05s in command-start overhead,
+runs one local `GoCompilePkg`, and completes in 25.21s wall / 24.5s command time. The remaining gap
+to Bazel's 15.72s cold external-module run is mostly cold daemon startup, scheduler waiting, and
+normal rules_go SDK/package analysis rather than broad bzlmod re-evaluation.
 
 Latest smoke:
 
