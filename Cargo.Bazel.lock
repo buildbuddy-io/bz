@@ -2859,6 +2859,7 @@ dependencies = [
  "async-recursion",
  "async-trait",
  "bincode",
+ "blake3",
  "buck2_analysis",
  "buck2_build_api",
  "buck2_build_signals",

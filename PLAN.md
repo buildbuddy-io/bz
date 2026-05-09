@@ -164,6 +164,8 @@ Completed:
 - The Bazel main repo now uses Bazel's empty canonical repo name for root labels while preserving the apparent `module(repo_name = ...)` alias for repo mapping. This matches Bazel's `StarlarkBazelModule` tag-label coercion and lets Gazelle root-module tags see `repo_name == ""`, so generated `go_deps` config includes `go.mod` like Bazel.
 - Bazel-compatible local execution now prepares the execroot `buck-out` alias before output-directory creation. Output parents are therefore created through the same execroot view that the action command sees, matching Bazel's `ActionOutputDirectoryHelper` behavior for non-tree and tree outputs.
 - Buck now has a persistent local action cache for local execution. Successful local actions record an action-digest to output-fingerprint entry under the isolation cache, later commands validate the real output metadata without mutating output paths, and cache hits are reported as `LocalActionCache` command execution kinds.
+- Generated bzlmod repository materialization now writes Bazel-style setup stamps beside generated repos and reuses matching already-materialized repos across daemon restarts. The stamp is outside the repo tree, is cleared before re-materialization, and is written only after successful materialization.
+- Bzlmod cell-graph module-extension results are persisted under `buck-out/v2/cache` and reused as a complete result set on fresh daemons, avoiding repeated per-extension graph reparsing when the module-extension request set is unchanged.
 - BuildBuddy's current server target now builds with Buck2 actions:
 
 ```sh
@@ -213,11 +215,31 @@ Latest leaf-node edit timing comparison, measured by changing
 
 The leaf-node runs show the execution-side cutover working: cold same-state rebuilds hit the local
 action cache for every action, and cold leaf edits re-execute the same small affected action set as
-the warm leaf edit. Buck's warm leaf time is now comparable to Bazel's. The remaining cold leaf gap
-is above execution: fresh-daemon bzlmod/load/analysis still costs about two minutes before the small
-action delta is reused. The next performance milestone should profile and persist or avoid that
-cold command setup work using Bazel-aligned semantics, rather than adding language-specific action
-shortcuts.
+the warm leaf edit. Buck's warm leaf time is now comparable to Bazel's. The remaining cold gap was
+above execution: fresh-daemon bzlmod/load/analysis ran before the small action delta was reused.
+The generated-repo materialization stamps and module-extension cell-graph cache added for the
+high-invalidation benchmark below address the largest bzlmod portions of that cold setup cost.
+
+Latest high-invalidation edit timing comparison, measured by changing exported API in
+`server/util/status/status.go` in BuildBuddy:
+
+| Engine | State | Wall time | Work |
+| --- | --- | ---: | --- |
+| Bazel 9.1.0 | warm exported-const edit | 15.95s | 219 total actions, 217 sandboxed processes, 30 action cache hits |
+| Bazel 9.1.0 | cold reverse edit after seeded output base | 20.20s | 219 total actions, 217 sandboxed processes, 4300 action cache hits |
+| Buck2 before generated-repo/materialization caches | warm exported-const edit | 22.29s | 120 commands: 28 cached, 92 local |
+| Buck2 before generated-repo/materialization caches | cold reverse edit after seeded isolation | 146.05s | 2357 commands: 2265 cached, 92 local |
+| Buck2 with generated repo stamps only | cold reverse edit after seeded isolation | 89.79s | 2357 commands: 2265 cached, 92 local |
+| Buck2 with generated repo stamps and full module-extension cache | warm exported-const edit | 21.85s | 120 commands: 28 cached, 92 local |
+| Buck2 with generated repo stamps and full module-extension cache | cold reverse edit after seeded isolation | 55.40s | 2357 commands: 2265 cached, 92 local |
+
+The high-invalidation profile started with two concrete cold bottlenecks: fresh-daemon generated
+external repo materialization/listing and bzlmod module-extension cell-graph setup. Generated repo
+listing for `rules_go++go_sdk+main___download_0//` dropped from roughly 19-33s on the critical path
+to about 0.1s after materialization stamps. Command setup dropped from roughly 42s before first
+analysis to 9s after the complete module-extension cache path. The remaining cold gap is now mostly
+normal package/load/analysis/build-key work plus the 92 invalidated local actions, not bzlmod
+repository re-generation.
 
 Latest smoke:
 

@@ -1619,6 +1619,151 @@ fn bzlmod_generated_sibling_path_for_canonical(
     ProjectRelativePathBuf::unchecked_new(format!("{}/{}.{}", parent, canonical_repo_name, suffix))
 }
 
+fn update_bzlmod_repo_contents_cache_key_opt(hasher: &mut blake3::Hasher, field: Option<&str>) {
+    match field {
+        Some(field) => {
+            update_bzlmod_repo_contents_cache_key(hasher, "some");
+            update_bzlmod_repo_contents_cache_key(hasher, field);
+        }
+        None => update_bzlmod_repo_contents_cache_key(hasher, "none"),
+    }
+}
+
+fn bzlmod_generated_materialization_stamp_path(
+    setup: &BzlmodGeneratedCellSetup,
+    dest: &ProjectRelativePath,
+) -> ProjectRelativePathBuf {
+    bzlmod_generated_sibling_path(setup, dest, "materialization_stamp")
+}
+
+fn bzlmod_generated_materialization_stamp_content(setup: &BzlmodGeneratedCellSetup) -> String {
+    let mut hasher = blake3::Hasher::new();
+    update_bzlmod_repo_contents_cache_key(&mut hasher, "buck2-bzlmod-generated-materialization-v1");
+    update_bzlmod_repo_contents_cache_key(&mut hasher, std::env::consts::OS);
+    update_bzlmod_repo_contents_cache_key(&mut hasher, std::env::consts::ARCH);
+    update_bzlmod_repo_contents_cache_key(&mut hasher, &setup.canonical_repo_name);
+    match &setup.generator {
+        BzlmodGeneratedCellGenerator::BazelFeaturesGlobals(setup) => {
+            update_bzlmod_repo_contents_cache_key(&mut hasher, "bazel_features_globals");
+            update_bzlmod_repo_contents_cache_key(&mut hasher, &setup.parent_canonical_repo_name);
+            update_bzlmod_repo_contents_cache_key(&mut hasher, &setup.bazel_version);
+        }
+        BzlmodGeneratedCellGenerator::BazelFeaturesVersion(setup) => {
+            update_bzlmod_repo_contents_cache_key(&mut hasher, "bazel_features_version");
+            update_bzlmod_repo_contents_cache_key(&mut hasher, &setup.bazel_version);
+        }
+        BzlmodGeneratedCellGenerator::HostPlatform(_) => {
+            update_bzlmod_repo_contents_cache_key(&mut hasher, "host_platform");
+        }
+        BzlmodGeneratedCellGenerator::LocalConfigPlatform(_) => {
+            update_bzlmod_repo_contents_cache_key(&mut hasher, "local_config_platform");
+        }
+        BzlmodGeneratedCellGenerator::CcAutoconfToolchains(setup) => {
+            update_bzlmod_repo_contents_cache_key(&mut hasher, "cc_autoconf_toolchains");
+            update_bzlmod_repo_contents_cache_key(&mut hasher, &setup.parent_canonical_repo_name);
+        }
+        BzlmodGeneratedCellGenerator::CcAutoconf(_) => {
+            update_bzlmod_repo_contents_cache_key(&mut hasher, "cc_autoconf");
+        }
+        BzlmodGeneratedCellGenerator::ShellConfig(_) => {
+            update_bzlmod_repo_contents_cache_key(&mut hasher, "shell_config");
+        }
+        BzlmodGeneratedCellGenerator::HttpArchive(setup) => {
+            update_bzlmod_repo_contents_cache_key(&mut hasher, "http_archive");
+            update_bzlmod_repo_contents_cache_key(&mut hasher, &setup.repo_name);
+            update_bzlmod_repo_contents_cache_key(&mut hasher, &setup.url);
+            update_bzlmod_repo_contents_cache_key(&mut hasher, &setup.sha256);
+            update_bzlmod_repo_contents_cache_key_opt(&mut hasher, setup.strip_prefix.as_deref());
+            update_bzlmod_repo_contents_cache_key_opt(&mut hasher, setup.archive_type.as_deref());
+        }
+        BzlmodGeneratedCellGenerator::JavaLocalJdk(_) => {
+            update_bzlmod_repo_contents_cache_key(&mut hasher, "java_local_jdk");
+        }
+        BzlmodGeneratedCellGenerator::PythonHub(_) => {
+            update_bzlmod_repo_contents_cache_key(&mut hasher, "python_hub");
+        }
+        BzlmodGeneratedCellGenerator::RepositoryRule(setup) => {
+            update_bzlmod_repo_contents_cache_key(&mut hasher, "repository_rule");
+            update_bzlmod_repo_contents_cache_key(&mut hasher, &setup.files_json);
+            update_bzlmod_repo_contents_cache_key_opt(&mut hasher, setup.source_dir.as_deref());
+        }
+        BzlmodGeneratedCellGenerator::RepositoryRuleInvocation(setup) => {
+            update_bzlmod_repo_contents_cache_key(&mut hasher, "repository_rule_invocation");
+            update_bzlmod_repo_contents_cache_key(&mut hasher, &setup.repo_name);
+            update_bzlmod_repo_contents_cache_key(&mut hasher, &setup.rule_bzl_cell);
+            update_bzlmod_repo_contents_cache_key(&mut hasher, &setup.rule_bzl_path);
+            update_bzlmod_repo_contents_cache_key(&mut hasher, &setup.rule_bzl_build_file_cell);
+            update_bzlmod_repo_contents_cache_key(&mut hasher, &setup.rule_name);
+            update_bzlmod_repo_contents_cache_key(&mut hasher, &setup.attrs.len().to_string());
+            for (key, value) in setup.attrs.iter() {
+                update_bzlmod_repo_contents_cache_key(&mut hasher, key);
+                update_bzlmod_repo_contents_cache_key(&mut hasher, value);
+            }
+            update_bzlmod_repo_contents_cache_key(&mut hasher, &setup.label_deps.len().to_string());
+            for dep in setup.label_deps.iter() {
+                update_bzlmod_repo_contents_cache_key(&mut hasher, dep);
+            }
+        }
+        BzlmodGeneratedCellGenerator::ModuleExtensionRepo(setup) => {
+            update_bzlmod_repo_contents_cache_key(&mut hasher, "module_extension_repo");
+            update_bzlmod_repo_contents_cache_key(&mut hasher, &setup.parent_canonical_repo_name);
+            update_bzlmod_repo_contents_cache_key(&mut hasher, &setup.parent_is_root.to_string());
+            update_bzlmod_repo_contents_cache_key(&mut hasher, &setup.extension_bzl_file);
+            update_bzlmod_repo_contents_cache_key(&mut hasher, &setup.extension_bzl_cell);
+            update_bzlmod_repo_contents_cache_key(&mut hasher, &setup.extension_bzl_path);
+            update_bzlmod_repo_contents_cache_key(&mut hasher, &setup.extension_name);
+            update_bzlmod_repo_contents_cache_key(&mut hasher, &setup.repo_name);
+            update_bzlmod_repo_contents_cache_key(&mut hasher, &setup.extension_usages_json);
+        }
+    }
+    format!("{}\n", hasher.finalize().to_hex())
+}
+
+async fn bzlmod_generated_materialization_is_current(
+    ctx: &mut DiceComputations<'_>,
+    path: &ProjectRelativePath,
+    setup: &BzlmodGeneratedCellSetup,
+) -> buck2_error::Result<bool> {
+    let project_root = ctx.global_data().get_io_provider().project_root().dupe();
+    let repo_path = project_root.resolve(path);
+    let stamp_path =
+        project_root.resolve(&bzlmod_generated_materialization_stamp_path(setup, path));
+    let stamp_content = bzlmod_generated_materialization_stamp_content(setup);
+    ctx.get_blocking_executor()
+        .execute_io_inline(move || {
+            if !matches!(
+                fs_util::symlink_metadata_if_exists(&repo_path)?,
+                Some(metadata) if metadata.is_dir()
+            ) {
+                return Ok(false);
+            }
+            Ok(matches!(
+                fs_util::read_to_string_if_exists(&stamp_path)?,
+                Some(content) if content == stamp_content
+            ))
+        })
+        .await
+}
+
+async fn write_bzlmod_generated_materialization_stamp(
+    ctx: &mut DiceComputations<'_>,
+    path: &ProjectRelativePath,
+    setup: &BzlmodGeneratedCellSetup,
+) -> buck2_error::Result<()> {
+    let project_root = ctx.global_data().get_io_provider().project_root().dupe();
+    let stamp_path =
+        project_root.resolve(&bzlmod_generated_materialization_stamp_path(setup, path));
+    let stamp_content = bzlmod_generated_materialization_stamp_content(setup);
+    ctx.get_blocking_executor()
+        .execute_io_inline(move || {
+            if let Some(parent) = stamp_path.parent() {
+                fs_util::create_dir_all(parent)?;
+            }
+            fs_util::write(stamp_path, stamp_content).categorize_internal()
+        })
+        .await
+}
+
 fn bzlmod_module_extension_evaluation_cache_key(setup: &BzlmodModuleExtensionRepoSetup) -> String {
     let mut hasher = blake3::Hasher::new();
     update_bzlmod_repo_contents_cache_key(&mut hasher, "buck2-bzlmod-module-extension-v1");
@@ -2079,9 +2224,23 @@ async fn materialize_generated(
 ) -> buck2_error::Result<()> {
     let lock = bzlmod_materialization_lock(path);
     let _guard = lock.lock().await;
+    if bzlmod_generated_materialization_is_current(ctx, path, setup).await? {
+        return Ok(());
+    }
 
     cancellations
         .critical_section(|| async move {
+            let stamp_path = bzlmod_generated_materialization_stamp_path(setup, path);
+            ctx.get_blocking_executor()
+                .execute_io(
+                    Box::new(
+                        buck2_execute::execute::clean_output_paths::CleanOutputPaths {
+                            paths: vec![stamp_path],
+                        },
+                    ),
+                    cancellations,
+                )
+                .await?;
             match &setup.generator {
                 BzlmodGeneratedCellGenerator::ModuleExtensionRepo(module_extension) => {
                     let evaluation =
@@ -2102,20 +2261,20 @@ async fn materialize_generated(
                             cancellations,
                         )
                         .await?;
-                        return Ok(());
+                    } else {
+                        let emitted = evaluation
+                            .repository_rule_invocations
+                            .iter()
+                            .map(|invocation| invocation.name.clone())
+                            .collect();
+                        return Err(BzlmodError::ModuleExtensionRepoNotEmitted {
+                            extension_bzl_file: module_extension.extension_bzl_file.to_string(),
+                            extension_name: module_extension.extension_name.to_string(),
+                            repo_name: module_extension.repo_name.to_string(),
+                            emitted,
+                        }
+                        .into());
                     }
-                    let emitted = evaluation
-                        .repository_rule_invocations
-                        .iter()
-                        .map(|invocation| invocation.name.clone())
-                        .collect();
-                    return Err(BzlmodError::ModuleExtensionRepoNotEmitted {
-                        extension_bzl_file: module_extension.extension_bzl_file.to_string(),
-                        extension_name: module_extension.extension_name.to_string(),
-                        repo_name: module_extension.repo_name.to_string(),
-                        emitted,
-                    }
-                    .into());
                 }
                 BzlmodGeneratedCellGenerator::RepositoryRuleInvocation(invocation_setup) => {
                     let invocation = bzlmod_repository_rule_invocation_from_setup(
@@ -2130,7 +2289,6 @@ async fn materialize_generated(
                         cancellations,
                     )
                     .await?;
-                    return Ok(());
                 }
                 BzlmodGeneratedCellGenerator::HttpArchive(http_archive) => {
                     let archive = bzlmod_generated_sibling_path(setup, path, "source.archive");
@@ -2194,6 +2352,7 @@ async fn materialize_generated(
                         .await?;
                 }
             }
+            write_bzlmod_generated_materialization_stamp(ctx, path, setup).await?;
             Ok(())
         })
         .await

@@ -150,7 +150,18 @@ pub struct BzlmodModuleExtensionEvaluationRequest {
     pub extension_usages_json: Arc<str>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Allocative, Pagable)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Allocative,
+    Pagable,
+    Serialize,
+    Deserialize
+)]
 pub struct BzlmodEvaluatedModuleExtension {
     pub parent_canonical_repo_name: Arc<str>,
     pub parent_is_root: bool,
