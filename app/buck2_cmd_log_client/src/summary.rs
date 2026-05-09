@@ -72,7 +72,10 @@ impl Stats {
                     match ActionExecutionKind::try_from(data.execution_kind) {
                         Ok(ActionExecutionKind::Local) => self.total_local_actions += 1,
                         Ok(ActionExecutionKind::Remote) => self.total_remote_actions += 1,
-                        Ok(ActionExecutionKind::ActionCache) => self.total_cached_actions += 1,
+                        Ok(ActionExecutionKind::ActionCache)
+                        | Ok(ActionExecutionKind::LocalActionCache) => {
+                            self.total_cached_actions += 1
+                        }
                         _ => self.total_other_actions += 1,
                     }
                 }

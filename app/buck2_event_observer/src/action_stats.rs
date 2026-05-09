@@ -83,6 +83,10 @@ impl ActionStats {
         if was_fallback_action(action) {
             self.fallback_actions += 1;
         }
+        if action.execution_kind() == buck2_data::ActionExecutionKind::LocalActionCache {
+            self.cached_actions += 1;
+            return;
+        }
         match get_last_command_execution_kind(action) {
             LastCommandExecutionKind::Local | LastCommandExecutionKind::LocalWorker => {
                 self.local_actions += 1;

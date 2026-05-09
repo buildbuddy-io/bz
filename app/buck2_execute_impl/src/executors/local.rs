@@ -59,6 +59,7 @@ use buck2_execute::execute::manager::CommandExecutionManagerWithClaim;
 use buck2_execute::execute::output::CommandStdStreams;
 use buck2_execute::execute::prepared::PreparedCommand;
 use buck2_execute::execute::prepared::PreparedCommandExecutor;
+use buck2_execute::execute::prepared::PreparedCommandOptionalExecutor;
 use buck2_execute::execute::request::CommandExecutionInput;
 use buck2_execute::execute::request::CommandExecutionOutput;
 use buck2_execute::execute::request::CommandExecutionOutputRef;
@@ -112,6 +113,8 @@ use host_sharing::host_sharing::HostSharingGuard;
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tracing::info;
 
+use crate::executors::local_action_cache::LocalActionCache;
+use crate::executors::local_action_cache::local_action_cache_outputs_fingerprint;
 use crate::executors::worker::WorkerHandle;
 use crate::executors::worker::WorkerPool;
 use crate::incremental_actions_helper::get_incremental_path_map;
@@ -140,6 +143,7 @@ pub struct LocalExecutor {
     artifact_fs: ArtifactFs,
     materializer: Arc<dyn Materializer>,
     incremental_db_state: Arc<IncrementalDbState>,
+    local_action_cache: Arc<LocalActionCache>,
     blocking_executor: Arc<dyn BlockingExecutor>,
     pub(crate) host_sharing_broker: Arc<HostSharingBroker>,
     root: AbsNormPathBuf,
@@ -156,6 +160,7 @@ impl LocalExecutor {
         artifact_fs: ArtifactFs,
         materializer: Arc<dyn Materializer>,
         incremental_db_state: Arc<IncrementalDbState>,
+        local_action_cache: Arc<LocalActionCache>,
         blocking_executor: Arc<dyn BlockingExecutor>,
         host_sharing_broker: Arc<HostSharingBroker>,
         root: AbsNormPathBuf,
@@ -169,6 +174,7 @@ impl LocalExecutor {
             artifact_fs,
             materializer,
             incremental_db_state,
+            local_action_cache,
             blocking_executor,
             host_sharing_broker,
             root,
@@ -748,7 +754,7 @@ impl LocalExecutor {
                 // it, that's detected when BuckActionExecutor.execute validates
                 // that all outputs were actually returned.
                 let (outputs, hashing_time) = match self
-                    .calculate_and_declare_output_values(request, digest_config)
+                    .calculate_and_declare_output_values(request, digest_config, true)
                     .boxed()
                     .await
                 {
@@ -786,6 +792,19 @@ impl LocalExecutor {
                 timing.hashed_artifacts_count = hashing_time.hashed_artifacts_count;
 
                 if exit_code == 0 {
+                    let outputs_fingerprint =
+                        match local_action_cache_outputs_fingerprint(&self.artifact_fs, &outputs) {
+                            Ok(fingerprint) => fingerprint,
+                            Err(e) => {
+                                return manager.error("local_action_cache_fingerprint_failed", e);
+                            }
+                        };
+                    if let Err(e) = self
+                        .local_action_cache
+                        .insert(action_digest, outputs_fingerprint)
+                    {
+                        return manager.error("local_action_cache_insert_failed", e);
+                    }
                     manager.success(execution_kind, outputs, std_streams, *timing)
                 } else {
                     let manager = check_inputs(
@@ -848,7 +867,7 @@ impl LocalExecutor {
             }
             GatherOutputStatus::TimedOut(duration) => {
                 let (outputs, hashing_time) = match self
-                    .calculate_and_declare_output_values(request, digest_config)
+                    .calculate_and_declare_output_values(request, digest_config, true)
                     .boxed()
                     .await
                 {
@@ -891,6 +910,7 @@ impl LocalExecutor {
         &self,
         request: &CommandExecutionRequest,
         digest_config: DigestConfig,
+        declare_outputs: bool,
     ) -> buck2_error::Result<(
         BuckIndexMap<CommandExecutionOutput, ArtifactValue>,
         HashingInfo,
@@ -914,7 +934,9 @@ impl LocalExecutor {
                     Some(&ContentBasedPathHash::for_output_artifact()),
                 )?
                 .into_path();
-            promote_produced_output_path(&self.artifact_fs, &produced_path, &path)?;
+            if declare_outputs {
+                promote_produced_output_path(&self.artifact_fs, &produced_path, &path)?;
+            }
             let abspath = self.root.join(&path);
             let (entry, hashing_info) = build_entry_from_disk(
                 abspath,
@@ -1017,28 +1039,32 @@ impl LocalExecutor {
             }
         }
 
-        let configuration_paths = configuration_path_to_content_based_path_symlinks
-            .iter()
-            .map(|(p, _)| p.clone())
-            .collect();
-        self.materializer.declare_existing(to_declare).await?;
-        buck2_util::future::try_join_all(output_path_to_content_based_path_copies.into_iter().map(
-            |(path, value, copied_artifacts, cfg_path)| {
-                self.materializer
-                    .declare_copy(path, value, copied_artifacts, cfg_path)
-            },
-        ))
-        .await?;
-        buck2_util::future::try_join_all(
-            configuration_path_to_content_based_path_symlinks
-                .into_iter()
-                .map(|(path, value)| self.materializer.declare_copy(path, value, vec![], None)),
-        )
-        .await?;
-
-        self.materializer
-            .ensure_materialized(configuration_paths)
+        if declare_outputs {
+            let configuration_paths = configuration_path_to_content_based_path_symlinks
+                .iter()
+                .map(|(p, _)| p.clone())
+                .collect();
+            self.materializer.declare_existing(to_declare).await?;
+            buck2_util::future::try_join_all(
+                output_path_to_content_based_path_copies.into_iter().map(
+                    |(path, value, copied_artifacts, cfg_path)| {
+                        self.materializer
+                            .declare_copy(path, value, copied_artifacts, cfg_path)
+                    },
+                ),
+            )
             .await?;
+            buck2_util::future::try_join_all(
+                configuration_path_to_content_based_path_symlinks
+                    .into_iter()
+                    .map(|(path, value)| self.materializer.declare_copy(path, value, vec![], None)),
+            )
+            .await?;
+
+            self.materializer
+                .ensure_materialized(configuration_paths)
+                .await?;
+        }
 
         Ok((
             mapped_outputs,
@@ -1317,6 +1343,136 @@ impl PreparedCommandExecutor for LocalExecutor {
 
     fn is_full_hybrid_enabled(&self) -> bool {
         false
+    }
+}
+
+#[async_trait]
+impl PreparedCommandOptionalExecutor for LocalExecutor {
+    async fn maybe_execute(
+        &self,
+        command: &PreparedCommand<'_, '_>,
+        manager: CommandExecutionManager,
+        _cancellations: &CancellationContext,
+    ) -> ControlFlow<CommandExecutionResult, CommandExecutionManager> {
+        let action_digest = command.prepared_action.digest();
+        let expected_fingerprint = match self.local_action_cache.get(&action_digest) {
+            Some(fingerprint) => fingerprint,
+            None => return ControlFlow::Continue(manager),
+        };
+
+        let start = TimeSpan::start_now();
+        let start_time = SystemTime::now();
+        let (outputs, hashing_info) = match self
+            .calculate_and_declare_output_values(command.request, command.digest_config, false)
+            .boxed()
+            .await
+        {
+            Ok(outputs) => outputs,
+            Err(e) => {
+                tracing::debug!(
+                    "local action cache miss for `{}` while reading outputs: {}",
+                    action_digest,
+                    e
+                );
+                if let Err(e) = self.local_action_cache.remove(&action_digest) {
+                    return ControlFlow::Break(
+                        manager.error("local_action_cache_remove_failed", e),
+                    );
+                }
+                return ControlFlow::Continue(manager);
+            }
+        };
+
+        let actual_fingerprint =
+            match local_action_cache_outputs_fingerprint(&self.artifact_fs, &outputs) {
+                Ok(fingerprint) => fingerprint,
+                Err(e) => {
+                    return ControlFlow::Break(
+                        manager.error("local_action_cache_fingerprint_failed", e),
+                    );
+                }
+            };
+
+        if actual_fingerprint.as_slice() != expected_fingerprint.as_ref() {
+            tracing::debug!(
+                "local action cache miss for `{}` because outputs changed",
+                action_digest
+            );
+            if let Err(e) = self.local_action_cache.remove(&action_digest) {
+                return ControlFlow::Break(manager.error("local_action_cache_remove_failed", e));
+            }
+            return ControlFlow::Continue(manager);
+        }
+
+        let output_matches = match outputs
+            .iter()
+            .map(|(output, value)| {
+                Ok((
+                    output
+                        .as_ref()
+                        .resolve(&self.artifact_fs, Some(&value.content_based_path_hash()))?
+                        .into_path(),
+                    value.dupe(),
+                ))
+            })
+            .collect::<buck2_error::Result<Vec<_>>>()
+        {
+            Ok(output_matches) => output_matches,
+            Err(e) => {
+                return ControlFlow::Break(
+                    manager.error("local_action_cache_match_paths_failed", e),
+                );
+            }
+        };
+        let materializer_accepts = match self.materializer.declare_match(output_matches).await {
+            Ok(outcome) => outcome.is_match(),
+            Err(e) => {
+                return ControlFlow::Break(manager.error("local_action_cache_match_failed", e));
+            }
+        };
+        if !materializer_accepts {
+            tracing::debug!(
+                "local action cache miss for `{}` because materializer state did not match",
+                action_digest
+            );
+            if let Err(e) = self.local_action_cache.remove(&action_digest) {
+                return ControlFlow::Break(manager.error("local_action_cache_remove_failed", e));
+            }
+            return ControlFlow::Continue(manager);
+        }
+
+        let manager = manager
+            .with_execution_kind(CommandExecutionKind::LocalActionCache {
+                digest: action_digest.dupe(),
+            })
+            .claim()
+            .boxed()
+            .await;
+        let time_span = start.end_now();
+        let timing = CommandExecutionMetadata {
+            time_span,
+            execution_time: Duration::ZERO,
+            start_time,
+            execution_stats: None,
+            input_materialization_duration: Duration::ZERO,
+            hashing_duration: hashing_info.hashing_duration,
+            hashed_artifacts_count: hashing_info.hashed_artifacts_count,
+            queue_duration: None,
+            suspend_duration: None,
+            suspend_count: None,
+        };
+
+        ControlFlow::Break(manager.success(
+            CommandExecutionKind::LocalActionCache {
+                digest: action_digest,
+            },
+            outputs,
+            CommandStdStreams::Local {
+                stdout: Vec::new(),
+                stderr: Vec::new(),
+            },
+            timing,
+        ))
     }
 }
 
@@ -2015,6 +2171,7 @@ mod tests {
             artifact_fs,
             Arc::new(NoDiskMaterializer),
             Arc::new(IncrementalDbState::db_disabled()),
+            Arc::new(LocalActionCache::testing_new_in_memory()?),
             Arc::new(DummyBlockingExecutor {
                 fs: project_fs.dupe(),
             }),

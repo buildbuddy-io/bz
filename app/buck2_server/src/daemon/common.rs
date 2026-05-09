@@ -54,6 +54,8 @@ use buck2_execute_impl::executors::hybrid::FallbackTracker;
 use buck2_execute_impl::executors::hybrid::HybridExecutor;
 use buck2_execute_impl::executors::local::ForkserverAccess;
 use buck2_execute_impl::executors::local::LocalExecutor;
+use buck2_execute_impl::executors::local_action_cache::ChainedCommandOptionalExecutor;
+use buck2_execute_impl::executors::local_action_cache::LocalActionCache;
 use buck2_execute_impl::executors::re::ReExecutor;
 use buck2_execute_impl::executors::stacked::StackedExecutor;
 use buck2_execute_impl::executors::to_re_platform::RePlatformFieldsToRePlatform;
@@ -94,6 +96,7 @@ pub struct CommandExecutorFactory {
     re_use_case_override: Option<RemoteExecutorUseCase>,
     memory_tracker: Option<MemoryTrackerHandle>,
     incremental_db_state: Arc<IncrementalDbState>,
+    local_action_cache: Arc<LocalActionCache>,
     deduplicate_get_digests_ttl_calls: bool,
     output_trees_download_config: OutputTreesDownloadConfig,
     daemon_id: DaemonId,
@@ -120,6 +123,7 @@ impl CommandExecutorFactory {
         re_use_case_override: Option<RemoteExecutorUseCase>,
         memory_tracker: Option<MemoryTrackerHandle>,
         incremental_db_state: Arc<IncrementalDbState>,
+        local_action_cache: Arc<LocalActionCache>,
         deduplicate_get_digests_ttl_calls: bool,
         output_trees_download_config: OutputTreesDownloadConfig,
         daemon_id: DaemonId,
@@ -148,6 +152,7 @@ impl CommandExecutorFactory {
             re_use_case_override,
             memory_tracker,
             incremental_db_state,
+            local_action_cache,
             deduplicate_get_digests_ttl_calls,
             output_trees_download_config,
             daemon_id,
@@ -194,6 +199,7 @@ impl HasCommandExecutor for CommandExecutorFactory {
                 artifact_fs.clone(),
                 self.materializer.dupe(),
                 self.incremental_db_state.dupe(),
+                self.local_action_cache.dupe(),
                 self.blocking_executor.dupe(),
                 self.host_sharing_broker.dupe(),
                 self.project_root.root().to_owned(),
@@ -203,6 +209,9 @@ impl HasCommandExecutor for CommandExecutorFactory {
                 self.memory_tracker.dupe(),
                 self.daemon_id.dupe(),
             )
+        };
+        let local_action_cache_checker_new = || -> Arc<dyn PreparedCommandOptionalExecutor> {
+            Arc::new(local_executor_new(&LocalExecutorOptions::default()))
         };
 
         if !buck2_core::is_open_source() && !cfg!(fbcode_build) {
@@ -215,10 +224,11 @@ impl HasCommandExecutor for CommandExecutorFactory {
                 return Err(ExecutorCompatibilityError::LocalIncompatible(self.strategy).into());
             }
 
+            let local_executor = Arc::new(local_executor_new(&LocalExecutorOptions::default()));
             return Ok(CommandExecutorResponse {
-                executor: Arc::new(local_executor_new(&LocalExecutorOptions::default())),
+                executor: local_executor.dupe(),
                 platform: Default::default(),
-                action_cache_checker: Arc::new(NoOpCommandOptionalExecutor {}),
+                action_cache_checker: local_executor,
                 remote_dep_file_cache_checker: Arc::new(NoOpCommandOptionalExecutor {}),
                 cache_uploader: Arc::new(NoOpCacheUploader {}),
                 output_trees_download_config: self.output_trees_download_config.dupe(),
@@ -261,10 +271,11 @@ impl HasCommandExecutor for CommandExecutorFactory {
                 if self.strategy.ban_local() {
                     None
                 } else {
+                    let local_executor = Arc::new(local_executor_new(local));
                     Some(CommandExecutorResponse {
-                        executor: Arc::new(local_executor_new(local)),
+                        executor: local_executor.dupe(),
                         platform: Default::default(),
-                        action_cache_checker: Arc::new(NoOpCommandOptionalExecutor {}),
+                        action_cache_checker: local_executor,
                         remote_dep_file_cache_checker: Arc::new(NoOpCommandOptionalExecutor {}),
                         cache_uploader: Arc::new(NoOpCacheUploader {}),
                         output_trees_download_config: self.output_trees_download_config.dupe(),
@@ -294,7 +305,7 @@ impl HasCommandExecutor for CommandExecutorFactory {
                 let cache_checker_new = || -> (Arc<dyn PreparedCommandOptionalExecutor>, Arc<dyn PreparedCommandOptionalExecutor>) {
                     if disable_caching {
                         return (
-                            Arc::new(NoOpCommandOptionalExecutor {}) as _,
+                            local_action_cache_checker_new(),
                             Arc::new(NoOpCommandOptionalExecutor {}) as _,
                         );
                     }
@@ -317,7 +328,7 @@ impl HasCommandExecutor for CommandExecutorFactory {
                             Arc::new(NoOpCommandOptionalExecutor {}) as _
                         };
 
-                    let action_cache_checker: Arc<dyn PreparedCommandOptionalExecutor> =
+                    let remote_action_cache_checker: Arc<dyn PreparedCommandOptionalExecutor> =
                         if only_remote_dep_file_cache {
                             Arc::new(NoOpCommandOptionalExecutor {}) as _
                         } else {
@@ -334,6 +345,15 @@ impl HasCommandExecutor for CommandExecutorFactory {
                                 output_trees_download_config: self.output_trees_download_config.dupe(),
                             }) as _
                         };
+                    let action_cache_checker: Arc<dyn PreparedCommandOptionalExecutor> =
+                        if only_remote_dep_file_cache {
+                            local_action_cache_checker_new()
+                        } else {
+                            Arc::new(ChainedCommandOptionalExecutor {
+                                first: local_action_cache_checker_new(),
+                                second: remote_action_cache_checker,
+                            }) as _
+                        };
 
                     (action_cache_checker, remote_dep_file_cache_checker)
                 };
@@ -341,7 +361,9 @@ impl HasCommandExecutor for CommandExecutorFactory {
                 let executor: Option<Arc<dyn PreparedCommandExecutor>> =
                     match &remote_options.executor {
                         RemoteEnabledExecutor::Local(local) if !self.strategy.ban_local() => {
-                            Some(Arc::new(local_executor_new(local)))
+                            let local: Arc<dyn PreparedCommandExecutor> =
+                                Arc::new(local_executor_new(local));
+                            Some(local)
                         }
                         RemoteEnabledExecutor::Remote(remote) if !self.strategy.ban_remote() => {
                             Some(Arc::new(remote_executor_new(

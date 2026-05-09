@@ -152,6 +152,12 @@ impl InvocationPaths {
             .join(self.incremental_state_dir_name())
     }
 
+    /// Subdirectory of `cache_dir` responsible for storing persistent local action cache state
+    pub fn local_action_cache_path(&self) -> AbsNormPathBuf {
+        self.cache_dir_path()
+            .join(self.local_action_cache_dir_name())
+    }
+
     /// This is used by the forkserver to write the miniperf wrapper binary (if used), as well as
     /// temporary files used by miniperf. We put this in buck-out because that directory gets
     /// allowlisted for execution (because we write lots of tools there).
@@ -168,10 +174,15 @@ impl InvocationPaths {
         FileName::unchecked_new("incremental_state")
     }
 
+    fn local_action_cache_dir_name(&self) -> &FileName {
+        FileName::unchecked_new("local_action_cache")
+    }
+
     pub fn valid_cache_dirs(&self) -> Vec<&FileName> {
         vec![
             self.materializer_state_dir_name(),
             self.incremental_state_dir_name(),
+            self.local_action_cache_dir_name(),
         ]
     }
 

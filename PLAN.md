@@ -163,6 +163,7 @@ Completed:
 - Bazel `attr.label` and `attr.label_list` preserve downloaded aspect declarations, and analysis now runs downloaded no-required-provider aspect implementations against the owning target. This lets rules_go produce `GoProtoImports` from its real `_go_proto_aspect` without a rules_go-specific shim. Full dependency-aspect propagation for aspects with `required_providers` remains future work.
 - The Bazel main repo now uses Bazel's empty canonical repo name for root labels while preserving the apparent `module(repo_name = ...)` alias for repo mapping. This matches Bazel's `StarlarkBazelModule` tag-label coercion and lets Gazelle root-module tags see `repo_name == ""`, so generated `go_deps` config includes `go.mod` like Bazel.
 - Bazel-compatible local execution now prepares the execroot `buck-out` alias before output-directory creation. Output parents are therefore created through the same execroot view that the action command sees, matching Bazel's `ActionOutputDirectoryHelper` behavior for non-tree and tree outputs.
+- Buck now has a persistent local action cache for local execution. Successful local actions record an action-digest to output-fingerprint entry under the isolation cache, later commands validate the real output metadata without mutating output paths, and cache hits are reported as `LocalActionCache` command execution kinds.
 - BuildBuddy's current server target now builds with Buck2 actions:
 
 ```sh
@@ -197,6 +198,26 @@ resolution in the daemon command update. The cold comparison is likewise grounde
 log: the remaining critical path is real downloaded-toolchain work and package/action execution
 (`GoToolchainBinaryBuild`, `GoStdlib`, protobuf C++ actions, and downstream `GoCompilePkg`/`GoLink`
 actions), not bzlmod graph churn or eager generated-repo materialization.
+
+Latest leaf-node edit timing comparison, measured by changing
+`server/util/bytebufferpool/bytebufferpool.go` in BuildBuddy:
+
+| Engine | State | Wall time | Work |
+| --- | --- | ---: | --- |
+| Bazel 9.1.0 | warm leaf edit | 11.23s | 44 actions, 9 cache hits, 42 sandboxed processes |
+| Bazel 9.1.0 | cold leaf edit after seeded output base | 15.57s | 44 processes, 4475 action cache hits |
+| Buck2 before local action cache | cold leaf edit after seeded isolation | 546.75s | 2357 local actions, 0 cached |
+| Buck2 with local action cache | cold same-state rebuild after daemon restart | 126.36s | 2357 cached actions, 0 local |
+| Buck2 with local action cache | cold leaf edit after daemon restart | 131.60s | 2343 cached actions, 14 local |
+| Buck2 with local action cache | warm leaf edit in same daemon | 12.36s | 22 commands: 8 cached, 14 local |
+
+The leaf-node runs show the execution-side cutover working: cold same-state rebuilds hit the local
+action cache for every action, and cold leaf edits re-execute the same small affected action set as
+the warm leaf edit. Buck's warm leaf time is now comparable to Bazel's. The remaining cold leaf gap
+is above execution: fresh-daemon bzlmod/load/analysis still costs about two minutes before the small
+action delta is reused. The next performance milestone should profile and persist or avoid that
+cold command setup work using Bazel-aligned semantics, rather than adding language-specific action
+shortcuts.
 
 Latest smoke:
 

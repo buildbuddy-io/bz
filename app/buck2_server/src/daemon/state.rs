@@ -59,6 +59,7 @@ use buck2_execute::materialize::materializer::MaterializationMethod;
 use buck2_execute::materialize::materializer::Materializer;
 use buck2_execute::re::manager::ReConnectionManager;
 use buck2_execute_impl::executors::local::ForkserverAccess;
+use buck2_execute_impl::executors::local_action_cache::LocalActionCache;
 use buck2_execute_impl::materializers::deferred::AccessTimesUpdates;
 use buck2_execute_impl::materializers::deferred::DeferredMaterializer;
 use buck2_execute_impl::materializers::deferred::DeferredMaterializerConfigs;
@@ -239,6 +240,10 @@ pub struct DaemonStateData {
     /// State of the Incremental Action DB for content-based hash paths
     #[allocative(skip)]
     pub incremental_db_state: Arc<IncrementalDbState>,
+
+    /// Persistent action cache for local executions.
+    #[allocative(skip)]
+    pub local_action_cache: Arc<LocalActionCache>,
 
     /// A unique identifier for this instance of the daemon
     pub daemon_id: DaemonId,
@@ -612,6 +617,13 @@ impl DaemonState {
                 .build();
 
             let incremental_db_state = Arc::new(incremental_db_state);
+            let local_action_cache = Arc::new(
+                LocalActionCache::initialize(
+                    paths.local_action_cache_path(),
+                    blocking_executor.dupe(),
+                )
+                .await?,
+            );
 
             let materializer_state_identity =
                 materializer_db.as_ref().map(|d| d.identity().clone());
@@ -794,6 +806,7 @@ impl DaemonState {
                 memory_tracker,
                 previous_command_data: LockedPreviousCommandData::new(),
                 incremental_db_state,
+                local_action_cache,
                 daemon_id: daemon_id.dupe(),
                 named_semaphores_for_run_actions: Arc::new(NamedSemaphores::new()),
             }))
