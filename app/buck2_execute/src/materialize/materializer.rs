@@ -216,6 +216,14 @@ pub trait Materializer: Allocative + Send + Sync + 'static {
         artifacts: Vec<(ProjectRelativePathBuf, ArtifactValue)>,
     ) -> buck2_error::Result<DeclareMatchOutcome>;
 
+    /// Return the artifact values currently tracked by the materializer for the given paths.
+    async fn get_declared_artifact_values(
+        &self,
+        paths: Vec<ProjectRelativePathBuf>,
+    ) -> buck2_error::Result<Vec<Option<ArtifactValue>>> {
+        Ok(vec![None; paths.len()])
+    }
+
     /// Ask the materializer if there is a "tracked" artifact at the given path.
     ///
     /// While this method provides no information about what that artifact actually is, it can be

@@ -186,7 +186,11 @@ impl InjectedKey for LegacyExternalBuckConfigDataKey {
     type Value = Option<Arc<ExternalBuckconfigData>>;
 
     fn equality(x: &Self::Value, y: &Self::Value) -> bool {
-        x == y
+        match (x, y) {
+            (Some(x), Some(y)) => x.dice_config_equal(y),
+            (None, None) => true,
+            _ => false,
+        }
     }
 
     fn value_serialize() -> impl ValueSerialize<Value = Self::Value> {

@@ -28,6 +28,7 @@ use pagable::pagable_typetag;
 use pagable::typetag::PagableTagged;
 
 use crate::dice::cells::HasCellResolver;
+use crate::dice::cells::HasExternalCellOrigins;
 use crate::external_cells::EXTERNAL_CELLS_IMPL;
 use crate::file_ops::delegate::keys::FileOpsKey;
 use crate::file_ops::delegate::keys::FileOpsValue;
@@ -120,10 +121,11 @@ impl Key for FileOpsKey {
             None
         };
 
-        let out = if let Some(origin) = cells.get(self.cell)?.external() {
+        let out = if let Some(origin) = ctx.get_external_cell_origin(self.cell).await? {
+            cells.get(self.cell)?;
             let delegate = EXTERNAL_CELLS_IMPL
                 .get()?
-                .get_file_ops_delegate(ctx, self.cell, origin.dupe())
+                .get_file_ops_delegate(ctx, self.cell, origin)
                 .await?;
             FileOpsDelegateWithIgnores::new(ignores, delegate)
         } else {

@@ -241,6 +241,37 @@ analysis to 9s after the complete module-extension cache path. The remaining col
 normal package/load/analysis/build-key work plus the 92 invalidated local actions, not bzlmod
 repository re-generation.
 
+Latest external-module edit timing comparison, measured by adding/removing a bzlmod
+`go_deps.module_override(...)` patch for `github.com/pkg/errors` in BuildBuddy:
+
+| Engine | State | Wall time | Work |
+| --- | --- | ---: | --- |
+| Bazel 9.1.0 | warm external-module patch | 14.01s | 133 total actions, 4386 action cache hits |
+| Bazel 9.1.0 | cold reverse external-module patch | 15.72s | 133 total actions, 4386 action cache hits |
+| Buck2 before per-cell bzlmod origin keys | warm external-module patch | 59-61s | 3738 analyses, 1708 loads, 2353 cached actions, 4 local |
+| Buck2 with per-cell bzlmod origin keys | warm external-module patch | 16.44-21.61s | 0 analyses, 1 load, 76 cached actions, 4 local |
+| Buck2 before materializer metadata cache hits | cold reverse external-module patch | 52.30s wall / 44.91s command | 3738 analyses, 1708 loads, 2353 cached actions, 4 local |
+| Buck2 with materializer metadata cache hits | cold same-state daemon restart | 23.65s wall / 16.42s command | 3738 analyses, 1708 loads, 2357 cached actions, 0 local |
+| Buck2 with materializer metadata cache hits | cold reverse external-module patch | 39.04s wall / 31.69s command | 3738 analyses, 1708 loads, 2353 cached actions, 4 local |
+
+The warm external-module regression was global DICE invalidation from treating generated repo
+repository-rule setup as part of cell/config identity. Buck now compares cell resolver identity by
+graph shape, keeps external generated-repo origins as per-cell injected DICE values, and updates
+only the generated repo origin cells whose repository-rule inputs changed. File operations for
+external cells read that per-cell origin key, so an external-module patch dirties the changed
+generated repo and its actual reverse deps instead of the full BuildBuddy graph. The remaining warm
+time is real local Go work, dominated by the final BuildBuddy `GoLink`, not bzlmod sync.
+
+The cold external-module profile then exposed local action-cache hit validation as a separate
+Bazel-aligned bottleneck. Bazel's persistent action cache stores output metadata and reinjects it
+into output metadata state on cache hits. Buck's local action cache was re-reading and hashing real
+outputs from disk on every persistent hit after daemon restart, which put multi-second cached C++ and
+Go actions on the critical path. Buck now asks the persisted materializer for declared output
+`ArtifactValue`s, validates those values against the local action-cache fingerprint, and only falls
+back to disk output calculation when metadata is missing. The cold same-state command duration is now
+comparable to Bazel's cold reverse command time; the remaining external-module cold reverse gap is
+actual invalidated Go compilation/linking, especially the final external-link BuildBuddy `GoLink`.
+
 Latest smoke:
 
 ```sh

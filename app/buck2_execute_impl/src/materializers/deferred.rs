@@ -497,6 +497,19 @@ impl<T: IoHandler + Allocative> Materializer for DeferredMaterializerAccessor<T>
         Ok(is_match.into())
     }
 
+    async fn get_declared_artifact_values(
+        &self,
+        paths: Vec<ProjectRelativePathBuf>,
+    ) -> buck2_error::Result<Vec<Option<ArtifactValue>>> {
+        let (sender, recv) = oneshot::channel();
+
+        self.command_sender
+            .send(MaterializerCommand::GetDeclaredArtifactValues(paths, sender))?;
+
+        recv.await
+            .buck_error_context("Receiving artifact values from command thread.")
+    }
+
     async fn has_artifact_at(&self, path: ProjectRelativePathBuf) -> buck2_error::Result<bool> {
         let (sender, recv) = oneshot::channel();
 

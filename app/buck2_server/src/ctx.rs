@@ -45,6 +45,8 @@ use buck2_cli_proto::client_context::HostPlatformOverride;
 use buck2_cli_proto::client_context::PreemptibleWhen;
 use buck2_cli_proto::common_build_options::ExecutionStrategy;
 use buck2_cli_proto::config_override::ConfigType;
+use buck2_common::dice::cells::SetExternalCellOrigins;
+use buck2_common::dice::cells::cell_resolver_graph_shape_equal;
 use buck2_common::dice::cycles::CycleDetectorAdapter;
 use buck2_common::dice::cycles::PairDiceCycleDetector;
 use buck2_common::file_ops::io::initialize_read_dir_cache;
@@ -714,23 +716,38 @@ impl DiceUpdater for DiceCommandUpdater<'_, '_> {
         let bzlmod_module_extension_evaluation_requests = cells_and_configs
             .bzlmod_module_extension_evaluation_requests
             .clone();
-        let previous_bzlmod_module_extension_results =
-            if !bzlmod_module_extension_evaluation_requests.is_empty()
-                && existing_state
-                    .is_injected_external_buckconfig_data_key_set()
-                    .await?
-            {
+        let previous_external_buckconfig_data = if !bzlmod_module_extension_evaluation_requests
+            .is_empty()
+            && existing_state
+                .is_injected_external_buckconfig_data_key_set()
+                .await?
+        {
+            Some(
                 existing_state
                     .get_injected_external_buckconfig_data()
-                    .await?
-                    .matching_bzlmod_module_extension_results(
-                        &bzlmod_module_extension_evaluation_requests,
-                    )
-            } else {
-                None
-            };
+                    .await?,
+            )
+        } else {
+            None
+        };
+        let previous_bzlmod_module_extension_results =
+            previous_external_buckconfig_data.as_ref().and_then(|data| {
+                data.matching_bzlmod_module_extension_results(
+                    &bzlmod_module_extension_evaluation_requests,
+                )
+            });
+        let previous_bzlmod_module_extension_graph_results =
+            previous_bzlmod_module_extension_results
+                .clone()
+                .or_else(|| {
+                    previous_external_buckconfig_data.as_ref().and_then(|data| {
+                        data.matching_bzlmod_module_extension_graph_results(
+                            &bzlmod_module_extension_evaluation_requests,
+                        )
+                    })
+                });
 
-        if let Some(previous_results) = &previous_bzlmod_module_extension_results {
+        if let Some(previous_results) = &previous_bzlmod_module_extension_graph_results {
             cells_and_configs =
                 BuckConfigBasedCells::parse_with_config_args_and_bzlmod_module_extension_results(
                     &self.cmd_ctx.base_context.project_root,
@@ -756,6 +773,8 @@ impl DiceUpdater for DiceCommandUpdater<'_, '_> {
         }
 
         let cell_resolver = cells_and_configs.cell_resolver;
+        let current_cell_resolver = cell_resolver.dupe();
+        let current_external_data = cells_and_configs.external_data.clone();
 
         let configuror = BuildInterpreterConfiguror::new(
             configured_prelude_path(&cell_resolver, &cells_and_configs.root_config)?,
@@ -768,6 +787,7 @@ impl DiceUpdater for DiceCommandUpdater<'_, '_> {
             // New interner for each transaction.
             Arc::new(ConcurrentTargetLabelInterner::default()),
         )?;
+        let current_configuror = configuror.dupe();
 
         ctx.set_buck_out_path(Some(self.cmd_ctx.buck_out_dir.clone()))?;
 
@@ -851,6 +871,22 @@ impl DiceUpdater for DiceCommandUpdater<'_, '_> {
                 )?;
 
                 let mut final_ctx = validated_dice.into_updater();
+                if cell_resolver_graph_shape_equal(&current_cell_resolver, &final_cell_resolver)
+                    && current_external_data
+                        .dice_config_equal(&final_cells_and_configs.external_data)
+                    && current_configuror == final_configuror
+                {
+                    final_ctx.set_changed_external_cell_origins(
+                        &current_cell_resolver,
+                        &final_cell_resolver,
+                    )?;
+
+                    let mut final_user_data =
+                        self.make_user_computation_data(&final_cells_and_configs.root_config)?;
+                    final_user_data.set_mergebase(mergebase);
+                    return Ok((final_ctx, final_user_data));
+                }
+
                 final_ctx.set_buck_out_path(Some(self.cmd_ctx.buck_out_dir.clone()))?;
                 final_ctx.set_enabled_optional_validations(optional_validations.clone())?;
                 setup_interpreter(
@@ -879,16 +915,27 @@ impl DiceUpdater for DiceCommandUpdater<'_, '_> {
             {
                 Some(cached_results) => cached_results,
                 None => {
-                    let mut bzlmod_module_extension_results = Vec::new();
                     let mut seen_bzlmod_module_extension_requests = BTreeSet::new();
-                    for request in &bzlmod_module_extension_evaluation_requests {
-                        if !seen_bzlmod_module_extension_requests.insert((
-                            request.extension_bzl_cell.to_string(),
-                            request.extension_bzl_path.to_string(),
-                            request.extension_name.to_string(),
-                        )) {
-                            continue;
-                        }
+                    let unique_bzlmod_module_extension_requests =
+                        bzlmod_module_extension_evaluation_requests
+                            .iter()
+                            .filter(|request| {
+                                seen_bzlmod_module_extension_requests.insert((
+                                    request.extension_bzl_cell.to_string(),
+                                    request.extension_bzl_path.to_string(),
+                                    request.extension_name.to_string(),
+                                ))
+                            })
+                            .collect::<Vec<_>>();
+
+                    let mut bzlmod_module_extension_results = Vec::new();
+                    for (request_index, request) in unique_bzlmod_module_extension_requests
+                        .iter()
+                        .copied()
+                        .enumerate()
+                    {
+                        let has_more_requests =
+                            request_index + 1 < unique_bzlmod_module_extension_requests.len();
                         bzlmod_module_extension_results.extend(
                             self.evaluate_bzlmod_module_extensions_for_cell_graph(
                                 &mut preliminary_dice,
@@ -904,6 +951,10 @@ impl DiceUpdater for DiceCommandUpdater<'_, '_> {
                                 )
                             })?,
                         );
+
+                        if !has_more_requests {
+                            continue;
+                        }
 
                         let partial_cells_and_configs =
                             BuckConfigBasedCells::parse_with_config_args_and_bzlmod_module_extension_results(
@@ -980,6 +1031,21 @@ impl DiceUpdater for DiceCommandUpdater<'_, '_> {
             )?;
 
             let mut final_ctx = preliminary_dice.into_updater();
+            if cell_resolver_graph_shape_equal(&current_cell_resolver, &final_cell_resolver)
+                && current_external_data.dice_config_equal(&final_cells_and_configs.external_data)
+                && current_configuror == final_configuror
+            {
+                final_ctx.set_changed_external_cell_origins(
+                    &current_cell_resolver,
+                    &final_cell_resolver,
+                )?;
+
+                let mut final_user_data =
+                    self.make_user_computation_data(&final_cells_and_configs.root_config)?;
+                final_user_data.set_mergebase(mergebase);
+                return Ok((final_ctx, final_user_data));
+            }
+
             final_ctx.set_buck_out_path(Some(self.cmd_ctx.buck_out_dir.clone()))?;
             final_ctx.set_enabled_optional_validations(optional_validations)?;
             setup_interpreter(

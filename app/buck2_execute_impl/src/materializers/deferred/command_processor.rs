@@ -153,6 +153,11 @@ pub(super) enum MaterializerCommand<T: 'static> {
         oneshot::Sender<bool>,
     ),
 
+    GetDeclaredArtifactValues(
+        Vec<ProjectRelativePathBuf>,
+        oneshot::Sender<Vec<Option<ArtifactValue>>>,
+    ),
+
     HasArtifact(ProjectRelativePathBuf, oneshot::Sender<bool>),
 
     /// Declares that given paths are no longer eligible to be materialized by this materializer.
@@ -236,6 +241,9 @@ impl<T> std::fmt::Debug for MaterializerCommand<T> {
             }
             MaterializerCommand::MatchArtifacts(paths, _) => {
                 write!(f, "MatchArtifacts({paths:?})")
+            }
+            MaterializerCommand::GetDeclaredArtifactValues(paths, _) => {
+                write!(f, "GetDeclaredArtifactValues({paths:?})")
             }
             MaterializerCommand::HasArtifact(path, _) => {
                 write!(f, "HasArtifact({path:?})")
@@ -687,6 +695,13 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
                     .all(|(path, value)| self.match_artifact(path, value));
                 sender.send(all_matches).ok();
             }
+            MaterializerCommand::GetDeclaredArtifactValues(paths, sender) => {
+                let values = paths
+                    .into_iter()
+                    .map(|path| self.artifact_value(path))
+                    .collect();
+                sender.send(values).ok();
+            }
             MaterializerCommand::HasArtifact(path, sender) => {
                 sender.send(self.has_artifact(path)).ok();
             }
@@ -1093,6 +1108,20 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
         }
 
         is_match
+    }
+
+    fn artifact_value(&mut self, path: ProjectRelativePathBuf) -> Option<ArtifactValue> {
+        let mut path_iter = path.iter();
+        let data = self.tree.prefix_get_mut(&mut path_iter)?;
+        if path_iter.next().is_some() {
+            return None;
+        }
+
+        let entry = match &data.stage {
+            ArtifactMaterializationStage::Materialized { metadata, .. } => metadata.dupe(),
+            ArtifactMaterializationStage::Declared { entry, .. } => entry.dupe(),
+        };
+        Some(ArtifactValue::new(entry, data.deps.dupe()))
     }
 
     fn has_artifact(&mut self, path: ProjectRelativePathBuf) -> bool {

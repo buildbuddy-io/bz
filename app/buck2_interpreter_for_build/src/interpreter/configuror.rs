@@ -57,7 +57,7 @@ impl PartialEq for AdditionalGlobalsFn {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Allocative, PagablePanic)]
+#[derive(Clone, Debug, Allocative, PagablePanic)]
 pub struct BuildInterpreterConfiguror {
     /// Path to prelude import (typically `prelude//:prelude.bzl`).
     ///
@@ -73,6 +73,16 @@ pub struct BuildInterpreterConfiguror {
     global_target_interner: Arc<ConcurrentTargetLabelInterner>,
     /// For test.
     additional_globals: Option<AdditionalGlobalsFn>,
+}
+
+impl PartialEq for BuildInterpreterConfiguror {
+    fn eq(&self, other: &Self) -> bool {
+        self.prelude_import == other.prelude_import
+            && self.host_info == other.host_info
+            && self.record_target_call_stack == other.record_target_call_stack
+            && self.skip_targets_with_duplicate_names == other.skip_targets_with_duplicate_names
+            && self.additional_globals == other.additional_globals
+    }
 }
 
 impl BuildInterpreterConfiguror {

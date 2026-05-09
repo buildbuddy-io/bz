@@ -200,6 +200,20 @@ pub struct BzlmodEvaluatedRepositoryRule {
 }
 
 impl ExternalBuckconfigData {
+    pub fn dice_config_equal(&self, other: &Self) -> bool {
+        self.external_path_configs == other.external_path_configs
+            && self.args == other.args
+            && self.bzlmod_module_extension_results_complete
+                == other.bzlmod_module_extension_results_complete
+            && match (&self.bzlmod_module_aliases, &other.bzlmod_module_aliases) {
+                (Some(x), Some(y)) => x.dice_config_equal(y),
+                (None, None) => {
+                    self.bzlmod_module_extension_results == other.bzlmod_module_extension_results
+                }
+                _ => false,
+            }
+    }
+
     pub fn testing_default() -> Self {
         Self {
             external_path_configs: Vec::new(),
@@ -238,6 +252,33 @@ impl ExternalBuckconfigData {
                     && result.extension_name.as_ref() == request.extension_name.as_ref()
                     && result.extension_usages_json.as_ref()
                         == request.extension_usages_json.as_ref()
+            })?;
+            results.push(result.clone());
+        }
+
+        Some(results)
+    }
+
+    pub fn matching_bzlmod_module_extension_graph_results(
+        &self,
+        requests: &[BzlmodModuleExtensionEvaluationRequest],
+    ) -> Option<Vec<BzlmodEvaluatedModuleExtension>> {
+        let mut seen = BTreeSet::new();
+        let mut results = Vec::new();
+
+        for request in requests {
+            if !seen.insert((
+                request.extension_bzl_cell.to_string(),
+                request.extension_bzl_path.to_string(),
+                request.extension_name.to_string(),
+            )) {
+                continue;
+            }
+
+            let result = self.bzlmod_module_extension_results.iter().find(|result| {
+                result.extension_bzl_cell.as_ref() == request.extension_bzl_cell.as_ref()
+                    && result.extension_bzl_path.as_ref() == request.extension_bzl_path.as_ref()
+                    && result.extension_name.as_ref() == request.extension_name.as_ref()
             })?;
             results.push(result.clone());
         }
@@ -1394,6 +1435,12 @@ struct BazelModuleCellAliases {
 }
 
 impl BazelModuleCellAliases {
+    fn dice_config_equal(&self, other: &Self) -> bool {
+        self.root_aliases == other.root_aliases
+            && self.cell_aliases == other.cell_aliases
+            && self.registered_toolchains == other.registered_toolchains
+    }
+
     fn aliases_for_cell(&self, cell_name: &str) -> &[BazelCompatCellAlias] {
         if cell_name == "root" {
             &self.root_aliases

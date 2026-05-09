@@ -131,6 +131,12 @@ enum LocalExecutionError {
     RemoteOnlyAction,
 }
 
+enum LocalActionCacheMetadataLookup {
+    Hit(BuckIndexMap<CommandExecutionOutput, ArtifactValue>),
+    MissingMetadata,
+    Stale,
+}
+
 #[derive(Clone, Dupe, Allocative)]
 pub enum ForkserverAccess {
     None,
@@ -1075,6 +1081,70 @@ impl LocalExecutor {
         ))
     }
 
+    async fn local_action_cache_outputs_from_materializer(
+        &self,
+        request: &CommandExecutionRequest,
+        expected_fingerprint: &[u8],
+    ) -> buck2_error::Result<LocalActionCacheMetadataLookup> {
+        let mut output_paths = Vec::new();
+        let mut output_keys = Vec::new();
+        for output in request.outputs() {
+            let path = output
+                .resolve(
+                    &self.artifact_fs,
+                    Some(&ContentBasedPathHash::for_output_artifact()),
+                )?
+                .into_path();
+            output_paths.push(path);
+            output_keys.push(output.cloned());
+        }
+
+        let values = self
+            .materializer
+            .get_declared_artifact_values(output_paths)
+            .await?;
+        if values.iter().any(Option::is_none) {
+            return Ok(LocalActionCacheMetadataLookup::MissingMetadata);
+        }
+
+        let mut outputs = BuckIndexMap::with_capacity(values.len());
+        for (output, value) in std::iter::zip(output_keys, values) {
+            let Some(value) = value else {
+                return Ok(LocalActionCacheMetadataLookup::MissingMetadata);
+            };
+            outputs.insert(output, value);
+        }
+
+        let actual_fingerprint =
+            local_action_cache_outputs_fingerprint(&self.artifact_fs, &outputs)?;
+        if actual_fingerprint.as_slice() != expected_fingerprint {
+            return Ok(LocalActionCacheMetadataLookup::Stale);
+        }
+
+        let output_matches = outputs
+            .iter()
+            .map(|(output, value)| {
+                Ok((
+                    output
+                        .as_ref()
+                        .resolve(&self.artifact_fs, Some(&value.content_based_path_hash()))?
+                        .into_path(),
+                    value.dupe(),
+                ))
+            })
+            .collect::<buck2_error::Result<Vec<_>>>()?;
+        if !self
+            .materializer
+            .declare_match(output_matches)
+            .await?
+            .is_match()
+        {
+            return Ok(LocalActionCacheMetadataLookup::Stale);
+        }
+
+        Ok(LocalActionCacheMetadataLookup::Hit(outputs))
+    }
+
     async fn acquire_worker_permit(
         &self,
         request: &CommandExecutionRequest,
@@ -1362,6 +1432,65 @@ impl PreparedCommandOptionalExecutor for LocalExecutor {
 
         let start = TimeSpan::start_now();
         let start_time = SystemTime::now();
+        match self
+            .local_action_cache_outputs_from_materializer(
+                command.request,
+                expected_fingerprint.as_ref(),
+            )
+            .await
+        {
+            Ok(LocalActionCacheMetadataLookup::Hit(outputs)) => {
+                let manager = manager
+                    .with_execution_kind(CommandExecutionKind::LocalActionCache {
+                        digest: action_digest.dupe(),
+                    })
+                    .claim()
+                    .boxed()
+                    .await;
+                let time_span = start.end_now();
+                let timing = CommandExecutionMetadata {
+                    time_span,
+                    execution_time: Duration::ZERO,
+                    start_time,
+                    execution_stats: None,
+                    input_materialization_duration: Duration::ZERO,
+                    hashing_duration: Duration::ZERO,
+                    hashed_artifacts_count: 0,
+                    queue_duration: None,
+                    suspend_duration: None,
+                    suspend_count: None,
+                };
+
+                return ControlFlow::Break(manager.success(
+                    CommandExecutionKind::LocalActionCache {
+                        digest: action_digest,
+                    },
+                    outputs,
+                    CommandStdStreams::Local {
+                        stdout: Vec::new(),
+                        stderr: Vec::new(),
+                    },
+                    timing,
+                ));
+            }
+            Ok(LocalActionCacheMetadataLookup::MissingMetadata) => {}
+            Ok(LocalActionCacheMetadataLookup::Stale) => {
+                tracing::debug!(
+                    "local action cache miss for `{}` because persisted output metadata did not match",
+                    action_digest
+                );
+                if let Err(e) = self.local_action_cache.remove(&action_digest) {
+                    return ControlFlow::Break(manager.error("local_action_cache_remove_failed", e));
+                }
+                return ControlFlow::Continue(manager);
+            }
+            Err(e) => {
+                return ControlFlow::Break(
+                    manager.error("local_action_cache_metadata_lookup_failed", e),
+                );
+            }
+        }
+
         let (outputs, hashing_info) = match self
             .calculate_and_declare_output_values(command.request, command.digest_config, false)
             .boxed()
