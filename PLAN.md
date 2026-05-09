@@ -177,6 +177,40 @@ BUCK2_HARD_ERROR=false \
 
 The successful run executed 2357 local commands and did not call `bazel build`.
 
+### Benchmark Summary
+
+All BuildBuddy measurements below were taken on `/Users/siggi/Code/buildbuddy` for
+`//server:server` with local-only Buck execution unless the row explicitly says otherwise.
+
+| Benchmark | Engine | State | Wall time | Engine/command time | Work |
+| --- | --- | --- | ---: | ---: | --- |
+| Full server build | Bazel 9.1.0 | cold fresh output base | 302.51s | 302.33s | 4519 processes |
+| Full server build | Bazel 9.1.0 | warm same output base | 1.64-2.53s | 1.57-2.48s | 0 packages analyzed, 1 internal process |
+| Full server build | Buck2 before bzlmod warm cutover | warm same isolation | 127-134s | ~2:00 | 3743 targets analyzed, 0 local actions |
+| Full server build | Buck2 final cutover | cold fresh isolation | 282.66s | 4:32.0 | 3738 targets analyzed, 2357 local actions |
+| Full server build | Buck2 final cutover | first warm same daemon/isolation | 5.78s | 5.8s | 0 targets analyzed, 0 actions |
+| Full server build | Buck2 final cutover | steady warm same daemon/isolation | 1.18s | 1.2s | 0 targets analyzed, 0 actions |
+| Leaf edit: `server/util/bytebufferpool/bytebufferpool.go` | Bazel 9.1.0 | warm leaf edit | 11.23s | - | 44 actions, 9 cache hits, 42 sandboxed processes |
+| Leaf edit: `server/util/bytebufferpool/bytebufferpool.go` | Bazel 9.1.0 | cold leaf edit after seeded output base | 15.57s | - | 44 processes, 4475 action cache hits |
+| Leaf edit: `server/util/bytebufferpool/bytebufferpool.go` | Buck2 before local action cache | cold leaf edit after seeded isolation | 546.75s | - | 2357 local actions, 0 cached |
+| Leaf edit: `server/util/bytebufferpool/bytebufferpool.go` | Buck2 with local action cache | cold same-state rebuild after daemon restart | 126.36s | - | 2357 cached actions, 0 local |
+| Leaf edit: `server/util/bytebufferpool/bytebufferpool.go` | Buck2 with local action cache | cold leaf edit after daemon restart | 131.60s | - | 2343 cached actions, 14 local |
+| Leaf edit: `server/util/bytebufferpool/bytebufferpool.go` | Buck2 with local action cache | warm leaf edit in same daemon | 12.36s | - | 22 commands: 8 cached, 14 local |
+| High invalidation: `server/util/status/status.go` | Bazel 9.1.0 | warm exported-const edit | 15.95s | - | 219 total actions, 217 sandboxed processes, 30 action cache hits |
+| High invalidation: `server/util/status/status.go` | Bazel 9.1.0 | cold reverse edit after seeded output base | 20.20s | - | 219 total actions, 217 sandboxed processes, 4300 action cache hits |
+| High invalidation: `server/util/status/status.go` | Buck2 before generated-repo/materialization caches | warm exported-const edit | 22.29s | - | 120 commands: 28 cached, 92 local |
+| High invalidation: `server/util/status/status.go` | Buck2 before generated-repo/materialization caches | cold reverse edit after seeded isolation | 146.05s | - | 2357 commands: 2265 cached, 92 local |
+| High invalidation: `server/util/status/status.go` | Buck2 with generated repo stamps only | cold reverse edit after seeded isolation | 89.79s | - | 2357 commands: 2265 cached, 92 local |
+| High invalidation: `server/util/status/status.go` | Buck2 with generated repo stamps and full module-extension cache | warm exported-const edit | 21.85s | - | 120 commands: 28 cached, 92 local |
+| High invalidation: `server/util/status/status.go` | Buck2 with generated repo stamps and full module-extension cache | cold reverse edit after seeded isolation | 55.40s | - | 2357 commands: 2265 cached, 92 local |
+| External module: `github.com/pkg/errors` patch | Bazel 9.1.0 | warm external-module patch | 14.01s | - | 133 total actions, 4386 action cache hits |
+| External module: `github.com/pkg/errors` patch | Bazel 9.1.0 | cold reverse external-module patch | 15.72s | - | 133 total actions, 4386 action cache hits |
+| External module: `github.com/pkg/errors` patch | Buck2 before per-cell bzlmod origin keys | warm external-module patch | 59-61s | - | 3738 analyses, 1708 loads, 2353 cached actions, 4 local |
+| External module: `github.com/pkg/errors` patch | Buck2 with per-cell bzlmod origin keys | warm external-module patch | 16.44-21.61s | - | 0 analyses, 1 load, 76 cached actions, 4 local |
+| External module: `github.com/pkg/errors` patch | Buck2 before materializer metadata cache hits | cold reverse external-module patch | 52.30s | 44.91s | 3738 analyses, 1708 loads, 2353 cached actions, 4 local |
+| External module: `github.com/pkg/errors` patch | Buck2 with materializer metadata cache hits | cold same-state daemon restart | 23.65s | 16.42s | 3738 analyses, 1708 loads, 2357 cached actions, 0 local |
+| External module: `github.com/pkg/errors` patch | Buck2 with materializer metadata cache hits | cold reverse external-module patch | 39.04s | 31.69s | 3738 analyses, 1708 loads, 2353 cached actions, 4 local |
+
 Latest BuildBuddy timing comparison, measured on `/Users/siggi/Code/buildbuddy` for
 `//server:server` with local-only execution:
 
