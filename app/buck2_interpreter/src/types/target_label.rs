@@ -52,6 +52,9 @@ use crate::types::label_display::bazel_label_string_for_target;
 use crate::types::package_path::StarlarkPackagePath;
 
 fn bazel_repo_name_for_cell(cell: &str) -> String {
+    if cell == "root" {
+        return String::new();
+    }
     bzlmod_canonical_repo_name_for_cell(cell).unwrap_or_else(|| cell.to_owned())
 }
 

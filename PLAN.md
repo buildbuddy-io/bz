@@ -161,6 +161,8 @@ Completed:
 - Bazel-compatible run actions render command-line artifacts with Bazel exec paths and normalize Buck-owned external/generated/root artifact paths back into Bazel-shaped `external/...` and `buck-out/bin/...` paths before execution.
 - Produced directory/tree outputs are precreated at the declared output root, matching Bazel tree-artifact execution behavior for actions that expect an empty declared directory to exist.
 - Bazel `attr.label` and `attr.label_list` preserve downloaded aspect declarations, and analysis now runs downloaded no-required-provider aspect implementations against the owning target. This lets rules_go produce `GoProtoImports` from its real `_go_proto_aspect` without a rules_go-specific shim. Full dependency-aspect propagation for aspects with `required_providers` remains future work.
+- The Bazel main repo now uses Bazel's empty canonical repo name for root labels while preserving the apparent `module(repo_name = ...)` alias for repo mapping. This matches Bazel's `StarlarkBazelModule` tag-label coercion and lets Gazelle root-module tags see `repo_name == ""`, so generated `go_deps` config includes `go.mod` like Bazel.
+- Bazel-compatible local execution now prepares the execroot `buck-out` alias before output-directory creation. Output parents are therefore created through the same execroot view that the action command sees, matching Bazel's `ActionOutputDirectoryHelper` behavior for non-tree and tree outputs.
 - BuildBuddy's current server target now builds with Buck2 actions:
 
 ```sh
@@ -171,6 +173,30 @@ BUCK2_HARD_ERROR=false \
 ```
 
 The successful run executed 2357 local commands and did not call `bazel build`.
+
+Latest BuildBuddy timing comparison, measured on `/Users/siggi/Code/buildbuddy` for
+`//server:server` with local-only execution:
+
+| Engine | State | Wall time | Engine duration | Work |
+| --- | --- | ---: | ---: | --- |
+| Bazel 9.1.0 | cold fresh output base | 302.51s | 302.33s | 4519 processes |
+| Bazel 9.1.0 | warm same output base | 1.64-2.53s | 1.57-2.48s | 0 packages analyzed, 1 internal process |
+| Buck2 before bzlmod warm cutover | warm same isolation | 127-134s | ~2:00 | 3743 targets analyzed, 0 local actions |
+| Buck2 final cutover | cold fresh isolation | 282.66s | 4:32.0 | 3738 targets analyzed, 2357 local actions |
+| Buck2 final cutover | first warm same daemon/isolation | 5.78s | 5.8s | 0 targets analyzed, 0 actions |
+| Buck2 final cutover | steady warm same daemon/isolation | 1.18s | 1.2s | 0 targets analyzed, 0 actions |
+
+The warm speedup is grounded in the event logs: Buck was publishing preliminary and partial bzlmod
+cell graphs during no-op warm builds, invalidating package loading and analysis even with no file
+watcher events. Buck now seeds the command cell graph from previous module-extension results whose
+extension usage JSON matches the current MODULE graph, validates those results through DICE after
+file-watcher sync, and only publishes a new final graph if the evaluated result actually changes.
+The client immediate-config path also no longer resolves bzlmod before connecting to the daemon; it
+parses only real Buck config plus a minimal root cell for Bazel repos, leaving full MODULE.bazel
+resolution in the daemon command update. The cold comparison is likewise grounded in the Buck event
+log: the remaining critical path is real downloaded-toolchain work and package/action execution
+(`GoToolchainBinaryBuild`, `GoStdlib`, protobuf C++ actions, and downstream `GoCompilePkg`/`GoLink`
+actions), not bzlmod graph churn or eager generated-repo materialization.
 
 Latest smoke:
 

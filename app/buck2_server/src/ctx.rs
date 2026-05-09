@@ -112,6 +112,7 @@ use buck2_interpreter::factory::SetProfileEventListener;
 use buck2_interpreter::prelude_path::PreludePath;
 use buck2_interpreter::prelude_path::prelude_path;
 use buck2_interpreter_for_build::bazel_repository::evaluate_bzlmod_module_extension_repo;
+use buck2_interpreter_for_build::interpreter::build_context::BazelModuleExtensionEvaluationResult;
 use buck2_interpreter_for_build::interpreter::configuror::BuildInterpreterConfiguror;
 use buck2_interpreter_for_build::interpreter::cycles::LoadCycleDescriptor;
 use buck2_interpreter_for_build::interpreter::interpreter_setup::setup_interpreter;
@@ -131,16 +132,22 @@ use buck2_test::local_resource_registry::InitLocalResourceRegistry;
 use buck2_util::arc_str::ArcS;
 use buck2_util::truncate::truncate_container;
 use buck2_validation::enabled_optional_validations_key::SetEnabledOptionalValidations;
+use derive_more::Display;
 use dice::DiceComputations;
 use dice::DiceData;
 use dice::DiceTransactionUpdater;
+use dice::Key;
+use dice::NoValueSerialize;
 use dice::UserComputationData;
 use dice::UserCycleDetector;
+use dice::ValueSerialize;
 use dice_futures::cancellation::CancellationContext;
 use dupe::Dupe;
 use gazebo::prelude::SliceExt;
 use host_sharing::HostSharingBroker;
 use host_sharing::HostSharingStrategy;
+use pagable::Pagable;
+use pagable::pagable_typetag;
 use tracing::warn;
 
 use crate::active_commands::ActiveCommandDropGuard;
@@ -635,7 +642,39 @@ impl DiceUpdater for DiceCommandUpdater<'_, '_> {
         early_timings: &mut EarlyCommandTimingBuilder,
     ) -> buck2_error::Result<(DiceTransactionUpdater, UserComputationData)> {
         let existing_state = &mut ctx.existing_state().await.clone();
-        let cells_and_configs = self.cmd_ctx.load_new_configs(existing_state).await?;
+        let mut cells_and_configs = self.cmd_ctx.load_new_configs(existing_state).await?;
+
+        let bzlmod_module_extension_evaluation_requests = cells_and_configs
+            .bzlmod_module_extension_evaluation_requests
+            .clone();
+        let previous_bzlmod_module_extension_results =
+            if !bzlmod_module_extension_evaluation_requests.is_empty()
+                && existing_state
+                    .is_injected_external_buckconfig_data_key_set()
+                    .await?
+            {
+                existing_state
+                    .get_injected_external_buckconfig_data()
+                    .await?
+                    .matching_bzlmod_module_extension_results(
+                        &bzlmod_module_extension_evaluation_requests,
+                    )
+            } else {
+                None
+            };
+
+        if let Some(previous_results) = &previous_bzlmod_module_extension_results {
+            cells_and_configs =
+                BuckConfigBasedCells::parse_with_config_args_and_bzlmod_module_extension_results(
+                    &self.cmd_ctx.base_context.project_root,
+                    &self.cmd_ctx.config_overrides,
+                    false,
+                    previous_results.clone(),
+                )
+                .await?;
+            self.cmd_ctx
+                .report_traced_config_paths(&cells_and_configs.config_paths)?;
+        }
 
         // Validate agent context against buckconfig schema if entries were provided.
         if !self.cmd_ctx.agent_context.is_empty() {
@@ -649,9 +688,6 @@ impl DiceUpdater for DiceCommandUpdater<'_, '_> {
             )?;
         }
 
-        let bzlmod_module_extension_evaluation_requests = cells_and_configs
-            .bzlmod_module_extension_evaluation_requests
-            .clone();
         let cell_resolver = cells_and_configs.cell_resolver;
 
         let configuror = BuildInterpreterConfiguror::new(
@@ -703,6 +739,69 @@ impl DiceUpdater for DiceCommandUpdater<'_, '_> {
         user_data.set_mergebase(mergebase.dupe());
 
         if !bzlmod_module_extension_evaluation_requests.is_empty() {
+            if let Some(previous_results) = previous_bzlmod_module_extension_results {
+                let mut validated_dice = ctx.commit_with_data(user_data).await;
+                let bzlmod_module_extension_results = self
+                    .evaluate_bzlmod_module_extensions_for_cell_graph(
+                        &mut validated_dice,
+                        &bzlmod_module_extension_evaluation_requests,
+                    )
+                    .await
+                    .buck_error_context(
+                        "Error validating cached bzlmod module extension results for current cell graph",
+                    )?;
+                if bzlmod_module_extension_results == previous_results {
+                    let mut final_user_data =
+                        self.make_user_computation_data(&cells_and_configs.root_config)?;
+                    final_user_data.set_mergebase(mergebase);
+                    return Ok((validated_dice.into_updater(), final_user_data));
+                }
+
+                let final_cells_and_configs =
+                    BuckConfigBasedCells::parse_with_config_args_and_bzlmod_module_extension_results(
+                        &self.cmd_ctx.base_context.project_root,
+                        &self.cmd_ctx.config_overrides,
+                        false,
+                        bzlmod_module_extension_results,
+                    )
+                    .await?;
+                self.cmd_ctx
+                    .report_traced_config_paths(&final_cells_and_configs.config_paths)?;
+
+                let final_cell_resolver = final_cells_and_configs.cell_resolver;
+                let final_configuror = BuildInterpreterConfiguror::new(
+                    configured_prelude_path(
+                        &final_cell_resolver,
+                        &final_cells_and_configs.root_config,
+                    )?,
+                    self.interpreter_platform,
+                    self.interpreter_architecture,
+                    self.interpreter_xcode_version.clone(),
+                    self.cmd_ctx.record_target_call_stacks,
+                    self.cmd_ctx.skip_targets_with_duplicate_names,
+                    None,
+                    Arc::new(ConcurrentTargetLabelInterner::default()),
+                )?;
+
+                let mut final_ctx = validated_dice.into_updater();
+                final_ctx.set_buck_out_path(Some(self.cmd_ctx.buck_out_dir.clone()))?;
+                final_ctx.set_enabled_optional_validations(optional_validations.clone())?;
+                setup_interpreter(
+                    &mut final_ctx,
+                    final_cell_resolver,
+                    final_configuror,
+                    final_cells_and_configs.external_data,
+                    profiler_instrumentation_override.clone(),
+                    self.cmd_ctx.disable_starlark_types,
+                    self.cmd_ctx.unstable_typecheck,
+                )?;
+
+                let mut final_user_data =
+                    self.make_user_computation_data(&final_cells_and_configs.root_config)?;
+                final_user_data.set_mergebase(mergebase);
+                return Ok((final_ctx, final_user_data));
+            }
+
             let mut preliminary_dice = ctx.commit_with_data(user_data).await;
             let mut bzlmod_module_extension_results = Vec::new();
             let mut seen_bzlmod_module_extension_requests = BTreeSet::new();
@@ -820,13 +919,87 @@ impl DiceUpdater for DiceCommandUpdater<'_, '_> {
     }
 }
 
+#[derive(Clone, Debug, Display, PartialEq, Eq, Hash, Allocative, Pagable)]
+#[display("{setup:?}")]
+#[pagable_typetag(dice::DiceKeyDyn)]
+struct BzlmodCellGraphModuleExtensionEvaluationKey {
+    setup: BzlmodModuleExtensionRepoSetup,
+    working_dir: ProjectRelativePathBuf,
+}
+
+#[async_trait]
+impl Key for BzlmodCellGraphModuleExtensionEvaluationKey {
+    type Value = buck2_error::Result<Arc<BazelModuleExtensionEvaluationResult>>;
+
+    async fn compute(
+        &self,
+        ctx: &mut DiceComputations,
+        cancellations: &CancellationContext,
+    ) -> Self::Value {
+        ctx.get_blocking_executor()
+            .execute_io(
+                Box::new(CleanOutputPaths {
+                    paths: vec![self.working_dir.clone()],
+                }),
+                cancellations,
+            )
+            .await?;
+        Ok(Arc::new(
+            evaluate_bzlmod_module_extension_repo(
+                ctx,
+                &self.setup,
+                self.working_dir.as_str(),
+                None,
+                cancellations,
+            )
+            .await?,
+        ))
+    }
+
+    fn equality(x: &Self::Value, y: &Self::Value) -> bool {
+        match (x, y) {
+            (Ok(x), Ok(y)) => x == y,
+            _ => false,
+        }
+    }
+
+    fn validity(x: &Self::Value) -> bool {
+        x.is_ok()
+    }
+
+    fn value_serialize() -> impl ValueSerialize<Value = Self::Value> {
+        NoValueSerialize::<Self::Value>::new()
+    }
+}
+
 impl DiceCommandUpdater<'_, '_> {
+    async fn evaluate_cached_bzlmod_module_extension_for_cell_graph(
+        &self,
+        ctx: &mut DiceComputations<'_>,
+        request: &BzlmodModuleExtensionEvaluationRequest,
+        working_dir: ProjectRelativePathBuf,
+    ) -> buck2_error::Result<Arc<BazelModuleExtensionEvaluationResult>> {
+        ctx.compute(&BzlmodCellGraphModuleExtensionEvaluationKey {
+            setup: BzlmodModuleExtensionRepoSetup {
+                parent_canonical_repo_name: request.parent_canonical_repo_name.dupe(),
+                parent_is_root: request.parent_is_root,
+                extension_bzl_file: request.extension_bzl_file.dupe(),
+                extension_bzl_cell: request.extension_bzl_cell.dupe(),
+                extension_bzl_path: request.extension_bzl_path.dupe(),
+                extension_name: request.extension_name.dupe(),
+                repo_name: Arc::from(""),
+                extension_usages_json: request.extension_usages_json.dupe(),
+            },
+            working_dir,
+        })
+        .await?
+    }
+
     async fn evaluate_bzlmod_module_extensions_for_cell_graph(
         &self,
         ctx: &mut DiceComputations<'_>,
         requests: &[BzlmodModuleExtensionEvaluationRequest],
     ) -> buck2_error::Result<Vec<BzlmodEvaluatedModuleExtension>> {
-        let cancellations = CancellationContext::never_cancelled();
         let mut results = Vec::new();
         let mut seen = BTreeSet::new();
 
@@ -845,35 +1018,16 @@ impl DiceCommandUpdater<'_, '_> {
                 self.cmd_ctx.buck_out_dir.as_str()
             );
             let working_dir_path = ProjectRelativePath::new(&working_dir)?.to_owned();
-            ctx.get_blocking_executor()
-                .execute_io(
-                    Box::new(CleanOutputPaths {
-                        paths: vec![working_dir_path],
-                    }),
-                    cancellations,
+            let evaluation = self
+                .evaluate_cached_bzlmod_module_extension_for_cell_graph(
+                    ctx,
+                    request,
+                    working_dir_path,
                 )
                 .await?;
 
-            let evaluation = evaluate_bzlmod_module_extension_repo(
-                ctx,
-                &BzlmodModuleExtensionRepoSetup {
-                    parent_canonical_repo_name: request.parent_canonical_repo_name.dupe(),
-                    parent_is_root: request.parent_is_root,
-                    extension_bzl_file: request.extension_bzl_file.dupe(),
-                    extension_bzl_cell: request.extension_bzl_cell.dupe(),
-                    extension_bzl_path: request.extension_bzl_path.dupe(),
-                    extension_name: request.extension_name.dupe(),
-                    repo_name: Arc::from(""),
-                    extension_usages_json: request.extension_usages_json.dupe(),
-                },
-                &working_dir,
-                None,
-                cancellations,
-            )
-            .await?;
-
             let mut repository_rules = Vec::new();
-            for invocation in evaluation.repository_rule_invocations {
+            for invocation in &evaluation.repository_rule_invocations {
                 let rule_path = match &invocation.rule_id.path {
                     BzlOrBxlPath::Bzl(path) => path,
                     BzlOrBxlPath::Bxl(_) => {
@@ -885,7 +1039,7 @@ impl DiceCommandUpdater<'_, '_> {
                     }
                 };
                 repository_rules.push(BzlmodEvaluatedRepositoryRule {
-                    repo_name: invocation.name,
+                    repo_name: invocation.name.clone(),
                     rule_bzl_cell: rule_path.path().cell().as_str().to_owned(),
                     rule_bzl_path: rule_path.path().path().as_str().to_owned(),
                     rule_bzl_build_file_cell: rule_path
@@ -893,9 +1047,9 @@ impl DiceCommandUpdater<'_, '_> {
                         .name()
                         .as_str()
                         .to_owned(),
-                    rule_name: invocation.rule_id.name,
-                    attrs: invocation.attrs,
-                    label_deps: invocation.label_deps,
+                    rule_name: invocation.rule_id.name.clone(),
+                    attrs: invocation.attrs.clone(),
+                    label_deps: invocation.label_deps.clone(),
                 });
             }
 
@@ -909,8 +1063,8 @@ impl DiceCommandUpdater<'_, '_> {
             repository_rules.dedup_by(|a, b| a.repo_name == b.repo_name);
             let mut registered_toolchains = evaluation
                 .registered_toolchains
-                .into_iter()
-                .map(Arc::from)
+                .iter()
+                .map(|toolchain| Arc::from(toolchain.as_str()))
                 .collect::<Vec<Arc<str>>>();
             registered_toolchains.sort();
             registered_toolchains.dedup();
@@ -922,6 +1076,7 @@ impl DiceCommandUpdater<'_, '_> {
                 extension_bzl_path: request.extension_bzl_path.dupe(),
                 extension_unique_name: request.extension_unique_name.dupe(),
                 extension_name: request.extension_name.dupe(),
+                extension_usages_json: request.extension_usages_json.dupe(),
                 repo_names,
                 registered_toolchains,
                 repository_rules,

@@ -82,8 +82,10 @@ use buck2_execute_local::status_decoder::DefaultStatusDecoder;
 use buck2_fs::IoResultExt;
 use buck2_fs::async_fs_util;
 use buck2_fs::fs_util;
+use buck2_fs::paths::abs_norm_path::AbsNormPath;
 use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
 use buck2_fs::paths::abs_path::AbsPath;
+use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
 use buck2_hash::BuckIndexMap;
 use buck2_resource_control::ActionFreezeEvent;
 use buck2_resource_control::ActionFreezeEventReceiver;
@@ -196,6 +198,7 @@ impl LocalExecutor {
     ) -> impl futures::future::Future<Output = buck2_error::Result<CommandResult>> + Send + 'a {
         async move {
             let working_directory = self.root.join_cow(working_directory);
+            prepare_bazel_execroot_working_directory(&self.root, &working_directory)?;
 
             let result = match &self.forkserver {
                 #[cfg(unix)]
@@ -295,6 +298,9 @@ impl LocalExecutor {
                 stage: Some(buck2_data::LocalPrepareOutputDirs {}.into()),
             },
             async {
+                let working_directory = self.root.join_cow(request.working_directory());
+                prepare_bazel_execroot_working_directory(&self.root, &working_directory)?;
+
                 tokio::try_join!(
                     create_output_dirs(
                         &self.artifact_fs,
@@ -1338,6 +1344,42 @@ impl<'a> StrOrOsStr<'a> {
     }
 }
 
+fn prepare_bazel_execroot_working_directory(
+    project_root: &AbsNormPathBuf,
+    working_directory: &AbsNormPath,
+) -> buck2_error::Result<()> {
+    if !working_directory.as_path().ends_with("__bazel_execroot") {
+        return Ok(());
+    }
+
+    fs_util::create_dir_all(working_directory)
+        .buck_error_context("Error creating Bazel execroot working directory")?;
+
+    let buck_out = ForwardRelativePathBuf::unchecked_new("buck-out".to_owned());
+    let source = project_root.join(&buck_out);
+    let dest = working_directory.join(&buck_out);
+    if artifact_path_alias_is_current(&dest, &source) {
+        return Ok(());
+    }
+
+    match fs_util::symlink(&source, &dest).categorize_internal() {
+        Ok(()) => Ok(()),
+        Err(e) if artifact_path_alias_is_current(&dest, &source) => Ok(()),
+        Err(_) => {
+            fs_util::remove_all(&dest)
+                .categorize_internal()
+                .buck_error_context("Error cleaning stale Bazel execroot buck-out symlink")?;
+            match fs_util::symlink(&source, &dest).categorize_internal() {
+                Ok(()) => Ok(()),
+                Err(e) if artifact_path_alias_is_current(&dest, &source) => Ok(()),
+                Err(e) => {
+                    Err(e).buck_error_context("Error creating Bazel execroot buck-out symlink")
+                }
+            }
+        }
+    }
+}
+
 pub struct MaterializedInputPaths {
     pub scratch: ScratchPath,
     pub paths: Vec<ProjectRelativePathBuf>,
@@ -1379,32 +1421,68 @@ fn materialize_artifact_path_alias(
 
 fn artifact_path_alias_is_current(dest: &AbsNormPathBuf, source: &AbsNormPathBuf) -> bool {
     fs_util::read_link(dest)
-        .map(|target| artifact_path_alias_target_matches(dest, source, &target))
+        .map(|target| artifact_path_alias_target_is_compatible(dest, source, &target))
         .unwrap_or(false)
 }
 
-fn artifact_path_alias_target_matches(
+fn artifact_path_alias_target_is_compatible(
     dest: &AbsNormPathBuf,
     source: &AbsNormPathBuf,
     target: &Path,
 ) -> bool {
+    let Some(target) = resolve_artifact_path_alias_target(dest, source, target) else {
+        return false;
+    };
+
+    target.as_path() == source.as_path()
+        || artifact_path_alias_files_are_equivalent(&target, source)
+}
+
+fn resolve_artifact_path_alias_target(
+    dest: &AbsNormPathBuf,
+    source: &AbsNormPathBuf,
+    target: &Path,
+) -> Option<AbsNormPathBuf> {
     if target == source.as_path() {
-        return true;
+        return Some(source.clone());
     }
 
     if target.is_absolute() {
-        return AbsNormPathBuf::new(target.to_owned())
-            .map(|target| target.as_path() == source.as_path())
-            .unwrap_or(false);
+        return AbsNormPathBuf::new(target.to_owned()).ok();
     }
 
     let Some(parent) = dest.parent() else {
-        return false;
+        return None;
     };
     fs_util::relative_path_from_system(target)
         .and_then(|target| parent.join_normalized(target.as_ref()))
-        .map(|target| target.as_path() == source.as_path())
-        .unwrap_or(false)
+        .ok()
+}
+
+fn artifact_path_alias_files_are_equivalent(
+    target: &AbsNormPathBuf,
+    source: &AbsNormPathBuf,
+) -> bool {
+    let Ok(target_metadata) = fs_util::metadata(target) else {
+        return false;
+    };
+    let Ok(source_metadata) = fs_util::metadata(source) else {
+        return false;
+    };
+    if !target_metadata.is_file()
+        || !source_metadata.is_file()
+        || target_metadata.len() != source_metadata.len()
+    {
+        return false;
+    }
+
+    let Ok(target_content) = fs_util::read(target) else {
+        return false;
+    };
+    let Ok(source_content) = fs_util::read(source) else {
+        return false;
+    };
+    target_content == source_content
 }
 
 fn promote_produced_output_path(

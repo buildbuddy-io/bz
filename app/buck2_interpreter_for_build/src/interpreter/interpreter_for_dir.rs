@@ -302,6 +302,16 @@ struct EvalResult {
 }
 
 impl InterpreterForDir {
+    pub(crate) fn equivalent(&self, other: &Self) -> bool {
+        self.global_state.equivalent(&other.global_state)
+            && self.cell_info == other.cell_info
+            && self.verbose_gc == other.verbose_gc
+            && self.ignore_attrs_for_profiling == other.ignore_attrs_for_profiling
+            && self.implicit_import_paths == other.implicit_import_paths
+            && self.current_dir_with_allowed_relative_dirs
+                == other.current_dir_with_allowed_relative_dirs
+    }
+
     fn verbose_gc() -> buck2_error::Result<bool> {
         match std::env::var_os("BUCK2_STARLARK_VERBOSE_GC") {
             Some(val) => Ok(!val.is_empty()),

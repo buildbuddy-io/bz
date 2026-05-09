@@ -284,7 +284,7 @@ pub struct BazelRepositoryRuleInvocation {
     pub label_deps: Vec<String>,
 }
 
-#[derive(Debug, Default, allocative::Allocative)]
+#[derive(Debug, Default, Eq, PartialEq, allocative::Allocative)]
 pub struct BazelModuleExtensionEvaluationResult {
     pub repository_rule_invocations: Vec<BazelRepositoryRuleInvocation>,
     pub registered_toolchains: Vec<String>,

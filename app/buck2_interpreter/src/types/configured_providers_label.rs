@@ -53,6 +53,9 @@ use crate::types::target_label::StarlarkConfiguredTargetLabel;
 use crate::types::target_label::StarlarkTargetLabel;
 
 fn bazel_repo_name_for_cell(cell: &str) -> String {
+    if cell == "root" {
+        return String::new();
+    }
     bzlmod_canonical_repo_name_for_cell(cell).unwrap_or_else(|| cell.to_owned())
 }
 
@@ -552,6 +555,12 @@ mod tests {
                 )),
             })
         }
+
+        fn root_label() -> starlark::Result<StarlarkProvidersLabel> {
+            Ok(StarlarkProvidersLabel {
+                label: ProvidersLabel::default_for(TargetLabel::testing_parse("root//:go.mod")),
+            })
+        }
     }
 
     #[test]
@@ -588,11 +597,20 @@ mod tests {
 
         let mut a = Assert::new();
         a.globals_add(register_test_providers_label);
+        a.eq("''", "root_label().workspace_root");
         a.eq("''", "command_line_option_label().workspace_root");
         a.eq(
             "'external/rules_python+'",
             "bzlmod_providers_label().workspace_root",
         );
+    }
+
+    #[test]
+    fn test_root_label_repo_name() {
+        let mut a = Assert::new();
+        a.globals_add(register_test_providers_label);
+        a.eq("''", "root_label().repo_name");
+        a.eq("''", "root_label().workspace_name");
     }
 
     #[test]

@@ -84,6 +84,13 @@ impl GlobalInterpreterState {
     pub fn globals(&self) -> &Globals {
         &self.global_env
     }
+
+    pub(crate) fn equivalent(&self, other: &Self) -> bool {
+        self.cell_resolver == other.cell_resolver
+            && self.configuror == other.configuror
+            && self.disable_starlark_types == other.disable_starlark_types
+            && self.unstable_typecheck == other.unstable_typecheck
+    }
 }
 
 #[async_trait]
@@ -137,8 +144,11 @@ impl HasGlobalInterpreterState for DiceComputations<'_> {
                 )?)))
             }
 
-            fn equality(_: &Self::Value, _: &Self::Value) -> bool {
-                false
+            fn equality(x: &Self::Value, y: &Self::Value) -> bool {
+                match (x, y) {
+                    (Ok(x), Ok(y)) => x.0.equivalent(&y.0),
+                    _ => false,
+                }
             }
 
             fn value_serialize() -> impl ValueSerialize<Value = Self::Value> {

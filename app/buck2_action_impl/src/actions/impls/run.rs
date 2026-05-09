@@ -717,6 +717,23 @@ fn visit_run_action_command_line_artifacts<'v>(
 }
 
 impl RunAction {
+    fn bazel_execroot(fs: &ArtifactFs) -> ProjectRelativePathBuf {
+        fs.buck_out_path_resolver()
+            .root()
+            .join(ForwardRelativePathBuf::unchecked_new(
+                "__bazel_execroot".to_owned(),
+            ))
+    }
+
+    fn bazel_execroot_path(
+        fs: &ArtifactFs,
+        path: String,
+    ) -> buck2_error::Result<ProjectRelativePathBuf> {
+        let path = ForwardRelativePathBuf::try_from(path)
+            .buck_error_context("Invalid Bazel execroot path")?;
+        Ok(Self::bazel_execroot(fs).join(path))
+    }
+
     fn visit_artifacts<'a>(
         &'a self,
         artifact_visitor: &mut dyn CommandLineArtifactVisitor<'a>,
@@ -1151,8 +1168,7 @@ impl RunAction {
         for artifact_group_values in artifact_inputs {
             for (artifact, value) in artifact_group_values.iter() {
                 let bazel_path = bazel_artifact_path(artifact.get_path());
-                let alias = ProjectRelativePathBuf::try_from(bazel_path)
-                    .buck_error_context("Invalid Bazel execroot input path")?;
+                let alias = Self::bazel_execroot_path(artifact_fs, bazel_path)?;
                 if aliases.insert(alias.clone()) {
                     let source_path = artifact
                         .get_path()
@@ -1250,10 +1266,10 @@ impl RunAction {
             .map(|b| {
                 let produced_path = if self.inner.bazel_use_default_shell_env.is_some() {
                     let artifact = Artifact::from(b.dupe());
-                    Some(
-                        ProjectRelativePathBuf::try_from(bazel_artifact_path(artifact.get_path()))
-                            .buck_error_context("Invalid Bazel execroot output path")?,
-                    )
+                    Some(Self::bazel_execroot_path(
+                        fs,
+                        bazel_artifact_path(artifact.get_path()),
+                    )?)
                 } else {
                     None
                 };
@@ -1621,6 +1637,10 @@ impl RunAction {
             )
             .with_meta_internal_extra_params(self.inner.meta_internal_extra_params.clone())
             .with_outputs_for_error_handler(outputs_for_error_handler);
+
+        if self.inner.bazel_use_default_shell_env.is_some() {
+            req = req.with_working_directory(Self::bazel_execroot(ctx.executor_fs().fs()));
+        }
 
         if let Some(timeout) = self.inner.timeout {
             req = req.with_timeout(timeout);

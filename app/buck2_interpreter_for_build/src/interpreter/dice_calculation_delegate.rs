@@ -149,8 +149,11 @@ impl<'c, 'd> HasCalculationDelegate<'c, 'd> for DiceComputations<'d> {
                 )?))
             }
 
-            fn equality(_: &Self::Value, _: &Self::Value) -> bool {
-                false
+            fn equality(x: &Self::Value, y: &Self::Value) -> bool {
+                match (x, y) {
+                    (Ok(x), Ok(y)) => x.equivalent(y),
+                    _ => false,
+                }
             }
 
             fn value_serialize() -> impl ValueSerialize<Value = Self::Value> {

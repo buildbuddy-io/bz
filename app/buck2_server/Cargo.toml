@@ -39,9 +39,11 @@ tracing = { workspace = true }
 
 allocative = { workspace = true }
 dice = { workspace = true }
+derive_more = { workspace = true }
 dupe = { workspace = true }
 fbinit = { workspace = true }
 gazebo = { workspace = true }
+pagable = { workspace = true }
 starlark = { workspace = true }
 starlark_lsp = { workspace = true }
 

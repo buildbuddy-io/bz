@@ -159,6 +159,7 @@ pub struct BzlmodEvaluatedModuleExtension {
     pub extension_bzl_path: Arc<str>,
     pub extension_unique_name: Arc<str>,
     pub extension_name: Arc<str>,
+    pub extension_usages_json: Arc<str>,
     pub repo_names: Vec<Arc<str>>,
     pub registered_toolchains: Vec<Arc<str>>,
     pub repository_rules: Vec<BzlmodEvaluatedRepositoryRule>,
@@ -196,6 +197,41 @@ impl ExternalBuckconfigData {
             bzlmod_module_extension_results: Vec::new(),
             bzlmod_module_aliases: None,
         }
+    }
+
+    pub fn matching_bzlmod_module_extension_results(
+        &self,
+        requests: &[BzlmodModuleExtensionEvaluationRequest],
+    ) -> Option<Vec<BzlmodEvaluatedModuleExtension>> {
+        let mut seen = BTreeSet::new();
+        let mut results = Vec::new();
+
+        for request in requests {
+            if !seen.insert((
+                request.extension_bzl_cell.to_string(),
+                request.extension_bzl_path.to_string(),
+                request.extension_name.to_string(),
+            )) {
+                continue;
+            }
+
+            let result = self.bzlmod_module_extension_results.iter().find(|result| {
+                result.parent_canonical_repo_name.as_ref()
+                    == request.parent_canonical_repo_name.as_ref()
+                    && result.parent_is_root == request.parent_is_root
+                    && result.extension_bzl_file.as_ref() == request.extension_bzl_file.as_ref()
+                    && result.extension_bzl_cell.as_ref() == request.extension_bzl_cell.as_ref()
+                    && result.extension_bzl_path.as_ref() == request.extension_bzl_path.as_ref()
+                    && result.extension_unique_name.as_ref()
+                        == request.extension_unique_name.as_ref()
+                    && result.extension_name.as_ref() == request.extension_name.as_ref()
+                    && result.extension_usages_json.as_ref()
+                        == request.extension_usages_json.as_ref()
+            })?;
+            results.push(result.clone());
+        }
+
+        Some(results)
     }
 
     pub fn filter_values<F>(self, filter: F) -> Self
@@ -332,6 +368,24 @@ impl BuckConfigBasedCells {
                 project_fs: project_fs.dupe(),
             },
             cwd,
+            true, /* apply bazel compatibility defaults */
+        )
+        .await
+    }
+
+    pub async fn get_cell_alias_resolver_for_cwd_immediate_config(
+        &self,
+        project_fs: &ProjectRoot,
+        cwd: &ProjectRelativePath,
+    ) -> buck2_error::Result<CellAliasResolver> {
+        // Immediate config runs in the client before connecting to the daemon. It must not resolve
+        // Bazel modules; the daemon command update owns that after file-watcher sync.
+        self.get_cell_alias_resolver_for_cwd_fast_with_file_ops(
+            &mut DefaultConfigParserFileOps {
+                project_fs: project_fs.dupe(),
+            },
+            cwd,
+            false, /* apply bazel compatibility defaults */
         )
         .await
     }
@@ -340,6 +394,7 @@ impl BuckConfigBasedCells {
         &self,
         file_ops: &mut dyn ConfigParserFileOps,
         cwd: &ProjectRelativePath,
+        apply_bazel_compat_defaults: bool,
     ) -> buck2_error::Result<CellAliasResolver> {
         let cell_name = self.cell_resolver.find(cwd);
         let cell_path = self.cell_resolver.get(cell_name)?.path();
@@ -361,12 +416,14 @@ impl BuckConfigBasedCells {
             follow_includes,
         )
         .await?;
-        let apply_bazel_project_defaults = !is_bzlmod_cell
+        let apply_bazel_project_defaults = apply_bazel_compat_defaults
+            && !is_bzlmod_cell
             && cell_name.as_str() != "bazel_tools"
             && should_apply_bazel_compat_defaults(cell_path, file_ops).await?;
-        let config = if is_bzlmod_cell
-            || cell_name.as_str() == "bazel_tools"
-            || apply_bazel_project_defaults
+        let config = if apply_bazel_compat_defaults
+            && (is_bzlmod_cell
+                || cell_name.as_str() == "bazel_tools"
+                || apply_bazel_project_defaults)
         {
             let module_aliases =
                 get_bazel_module_resolution_for_external_data(file_ops, &self.external_data)
@@ -385,7 +442,7 @@ impl BuckConfigBasedCells {
             config
         };
 
-        if is_bzlmod_cell || cell_name.as_str() == "bazel_tools" {
+        if apply_bazel_compat_defaults && (is_bzlmod_cell || cell_name.as_str() == "bazel_tools") {
             return Self::get_bazel_cell_alias_resolver_from_config(
                 cell_name,
                 &self.cell_resolver,
@@ -413,6 +470,22 @@ impl BuckConfigBasedCells {
         .await
     }
 
+    pub async fn parse_for_immediate_config(project_fs: &ProjectRoot) -> buck2_error::Result<Self> {
+        // Keep the client-side startup parse to real Buck config plus a minimal Bazel root cell.
+        // Full MODULE.bazel resolution happens in the daemon command update.
+        Self::parse_with_file_ops_and_options(
+            &mut DefaultConfigParserFileOps {
+                project_fs: project_fs.dupe(),
+            },
+            &[],
+            false, /* follow includes */
+            false,
+            Vec::new(),
+            false, /* apply bazel compatibility defaults */
+        )
+        .await
+    }
+
     pub async fn parse_with_config_args_and_bzlmod_module_extension_results(
         project_fs: &ProjectRoot,
         config_args: &[buck2_cli_proto::ConfigOverride],
@@ -427,6 +500,7 @@ impl BuckConfigBasedCells {
             false, /* follow includes */
             bzlmod_module_extension_results_complete,
             bzlmod_module_extension_results,
+            true, /* apply bazel compatibility defaults */
         )
         .await
     }
@@ -441,6 +515,7 @@ impl BuckConfigBasedCells {
             true, /* follow includes */
             false,
             Vec::new(),
+            true, /* apply bazel compatibility defaults */
         )
         .await
     }
@@ -451,6 +526,7 @@ impl BuckConfigBasedCells {
         follow_includes: bool,
         bzlmod_module_extension_results_complete: bool,
         bzlmod_module_extension_results: Vec<BzlmodEvaluatedModuleExtension>,
+        apply_bazel_compat_defaults: bool,
     ) -> buck2_error::Result<Self> {
         Self::parse_with_file_ops_and_options_inner(
             file_ops,
@@ -458,6 +534,7 @@ impl BuckConfigBasedCells {
             follow_includes,
             bzlmod_module_extension_results_complete,
             bzlmod_module_extension_results,
+            apply_bazel_compat_defaults,
         )
         .await
         .buck_error_context("Parsing cells")
@@ -469,6 +546,7 @@ impl BuckConfigBasedCells {
         follow_includes: bool,
         bzlmod_module_extension_results_complete: bool,
         bzlmod_module_extension_results: Vec<BzlmodEvaluatedModuleExtension>,
+        apply_bazel_compat_defaults: bool,
     ) -> buck2_error::Result<Self> {
         // Tracing file ops to record config file accesses on command invocation.
         struct TracingFileOps<'a> {
@@ -530,7 +608,9 @@ impl BuckConfigBasedCells {
         .await?;
         let mut bzlmod_module_extension_evaluation_requests = Vec::new();
         let mut bzlmod_module_aliases = None;
-        let root_config = if should_apply_bazel_compat_defaults(&root_path, &mut file_ops).await? {
+        let bazel_compat_project_root =
+            should_apply_bazel_compat_defaults(&root_path, &mut file_ops).await?;
+        let root_config = if apply_bazel_compat_defaults && bazel_compat_project_root {
             let module_aliases = Arc::new(
                 get_bazel_module_resolution(
                     &root_path,
@@ -580,6 +660,12 @@ impl BuckConfigBasedCells {
                 let name = CellName::unchecked_new(alias)?;
                 cell_definitions.push((name, alias_path));
             }
+        }
+        if cell_definitions.is_empty() && !apply_bazel_compat_defaults && bazel_compat_project_root
+        {
+            // The client needs a root cell to resolve cwd-relative paths in Bazel repos, but not
+            // external module aliases or toolchain defaults.
+            cell_definitions.push((CellName::unchecked_new("root")?, root_path.clone()));
         }
 
         let root_aliases = Self::get_cell_aliases_from_config(&root_config)?.collect();
@@ -1441,6 +1527,7 @@ fn bcr_discovery_cache_key(
 struct RootBzlmodModule {
     name: String,
     version: String,
+    repo_name: String,
     canonical_repo_name: String,
     lockfile_extension_generated_repos: BTreeMap<String, BTreeSet<String>>,
     lockfile_extension_facts: BTreeSet<String>,
@@ -1986,11 +2073,11 @@ fn resolve_bcr_modules_from_discovered(
 
     let mut root_aliases_by_key = BTreeMap::<(String, String), BTreeSet<String>>::new();
     let mut cell_aliases_by_cell = BzlmodCellAliasesByCell::default();
-    if !root_module.canonical_repo_name.is_empty() {
+    if !root_module.repo_name.is_empty() {
         add_bzlmod_cell_alias(
             &mut cell_aliases_by_cell,
             "root",
-            &root_module.canonical_repo_name,
+            &root_module.repo_name,
             "root",
         );
     }
@@ -4137,7 +4224,7 @@ fn bzlmod_single_version_overrides_from_lines(lines: &[String]) -> BTreeMap<Stri
 fn bzlmod_root_module_from_lines(lines: &[String]) -> buck2_error::Result<RootBzlmodModule> {
     let mut name = "root".to_owned();
     let mut version = String::new();
-    let mut canonical_repo_name = "root".to_owned();
+    let mut repo_name = "root".to_owned();
     for call in collect_bzl_calls(lines, "module(") {
         if let Some(module_name) = bzl_string_arg(&call, "name") {
             if !module_name.is_empty() {
@@ -4147,9 +4234,9 @@ fn bzlmod_root_module_from_lines(lines: &[String]) -> buck2_error::Result<RootBz
         if let Some(module_version) = bzl_string_arg(&call, "version") {
             version = module_version;
         }
-        if let Some(repo_name) = bzl_repo_name_arg(&call, &name) {
-            if !repo_name.is_empty() {
-                canonical_repo_name = repo_name;
+        if let Some(module_repo_name) = bzl_repo_name_arg(&call, &name) {
+            if !module_repo_name.is_empty() {
+                repo_name = module_repo_name;
             }
         }
     }
@@ -4160,7 +4247,8 @@ fn bzlmod_root_module_from_lines(lines: &[String]) -> buck2_error::Result<RootBz
     Ok(RootBzlmodModule {
         name,
         version,
-        canonical_repo_name,
+        repo_name,
+        canonical_repo_name: String::new(),
         lockfile_extension_generated_repos: BTreeMap::new(),
         lockfile_extension_facts: BTreeSet::new(),
         constants,
@@ -5975,6 +6063,7 @@ mod tests {
             .get_cell_alias_resolver_for_cwd_fast_with_file_ops(
                 &mut file_ops,
                 tp_instance.path().as_project_relative_path(),
+                true,
             )
             .await?;
 
@@ -6043,6 +6132,7 @@ mod tests {
             .get_cell_alias_resolver_for_cwd_fast_with_file_ops(
                 &mut file_ops,
                 ProjectRelativePath::new("buck-out/v2/external_cells/bzlmod/rules_go+0.57.0")?,
+                true,
             )
             .await?;
         assert_eq!(
@@ -6455,6 +6545,7 @@ mod tests {
         let root_module = super::RootBzlmodModule {
             name: "buildbuddy".to_owned(),
             version: String::new(),
+            repo_name: "buildbuddy".to_owned(),
             canonical_repo_name: String::new(),
             lockfile_extension_generated_repos: std::collections::BTreeMap::new(),
             lockfile_extension_facts: std::collections::BTreeSet::new(),
@@ -6556,6 +6647,7 @@ mod tests {
         let root_module = super::RootBzlmodModule {
             name: "bazelisk".to_owned(),
             version: String::new(),
+            repo_name: "bazelisk".to_owned(),
             canonical_repo_name: String::new(),
             lockfile_extension_generated_repos: std::collections::BTreeMap::new(),
             lockfile_extension_facts: std::collections::BTreeSet::new(),
@@ -6656,6 +6748,7 @@ mod tests {
         let root_module = super::RootBzlmodModule {
             name: "buildbuddy".to_owned(),
             version: String::new(),
+            repo_name: "buildbuddy".to_owned(),
             canonical_repo_name: String::new(),
             lockfile_extension_generated_repos: std::collections::BTreeMap::new(),
             lockfile_extension_facts: std::collections::BTreeSet::new(),
@@ -6751,6 +6844,7 @@ mod tests {
         let root_module = super::RootBzlmodModule {
             name: "buildbuddy".to_owned(),
             version: String::new(),
+            repo_name: "buildbuddy".to_owned(),
             canonical_repo_name: String::new(),
             lockfile_extension_generated_repos: std::collections::BTreeMap::new(),
             lockfile_extension_facts: std::collections::BTreeSet::new(),
@@ -6791,6 +6885,7 @@ mod tests {
             extension_bzl_path: Arc::from("lib/extensions.bzl"),
             extension_unique_name: Arc::from("aspect_bazel_lib++toolchains"),
             extension_name: Arc::from("toolchains"),
+            extension_usages_json: Arc::from("{}"),
             repo_names: vec![
                 Arc::from("coreutils_toolchains"),
                 Arc::from("coreutils_darwin_arm64"),
