@@ -58,9 +58,12 @@ use buck2_core::cells::external::register_external_cell_origin;
 use buck2_core::cells::name::CellName;
 use buck2_core::fs::project::ProjectRoot;
 use buck2_core::fs::project_rel_path::ProjectRelativePath;
+use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
 use buck2_error::BuckErrorContext;
 use buck2_error::buck2_error;
 use buck2_error::conversion::from_any_with_tag;
+use buck2_fs::error::IoResultExt;
+use buck2_fs::fs_util;
 use buck2_fs::paths::RelativePath;
 use buck2_fs::paths::abs_path::AbsPath;
 use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
@@ -534,6 +537,7 @@ impl BuckConfigBasedCells {
             false,
             Vec::new(),
             false, /* apply bazel compatibility defaults */
+            None,
         )
         .await
     }
@@ -557,6 +561,7 @@ impl BuckConfigBasedCells {
             bzlmod_module_extension_results_complete,
             bzlmod_module_extension_results,
             true, /* apply bazel compatibility defaults */
+            Some(project_fs),
         )
         .await
     }
@@ -572,6 +577,7 @@ impl BuckConfigBasedCells {
             false,
             Vec::new(),
             true, /* apply bazel compatibility defaults */
+            None,
         )
         .await
     }
@@ -583,6 +589,7 @@ impl BuckConfigBasedCells {
         bzlmod_module_extension_results_complete: bool,
         bzlmod_module_extension_results: Vec<BzlmodEvaluatedModuleExtension>,
         apply_bazel_compat_defaults: bool,
+        persistent_cache_project_fs: Option<&ProjectRoot>,
     ) -> buck2_error::Result<Self> {
         Self::parse_with_file_ops_and_options_inner(
             file_ops,
@@ -591,6 +598,7 @@ impl BuckConfigBasedCells {
             bzlmod_module_extension_results_complete,
             bzlmod_module_extension_results,
             apply_bazel_compat_defaults,
+            persistent_cache_project_fs,
         )
         .await
         .buck_error_context("Parsing cells")
@@ -603,6 +611,7 @@ impl BuckConfigBasedCells {
         bzlmod_module_extension_results_complete: bool,
         bzlmod_module_extension_results: Vec<BzlmodEvaluatedModuleExtension>,
         apply_bazel_compat_defaults: bool,
+        persistent_cache_project_fs: Option<&ProjectRoot>,
     ) -> buck2_error::Result<Self> {
         // Tracing file ops to record config file accesses on command invocation.
         struct TracingFileOps<'a> {
@@ -673,6 +682,7 @@ impl BuckConfigBasedCells {
                     &mut file_ops,
                     bzlmod_module_extension_results_complete,
                     &bzlmod_module_extension_results,
+                    persistent_cache_project_fs,
                 )
                 .await?,
             );
@@ -1424,6 +1434,7 @@ async fn get_bazel_module_resolution_for_external_data(
             file_ops,
             external_data.bzlmod_module_extension_results_complete,
             &external_data.bzlmod_module_extension_results,
+            None,
         )
         .await?,
     ))
@@ -1497,14 +1508,14 @@ impl BazelModuleCellAliases {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 struct BazelDep {
     name: String,
     version: String,
     apparent_name: Option<String>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 struct DiscoveredBcrModule {
     dep: BazelDep,
     source_json: BcrSourceJson,
@@ -1518,6 +1529,13 @@ struct DiscoveredBcrModule {
 }
 
 type DiscoveredBcrModules = BTreeMap<(String, String), DiscoveredBcrModule>;
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct PersistentBcrDiscoveryCacheEntry {
+    name: String,
+    version: String,
+    module: DiscoveredBcrModule,
+}
 
 static BCR_DISCOVERY_CACHE: LazyLock<
     Mutex<BTreeMap<BcrDiscoveryCacheKey, Arc<DiscoveredBcrModules>>>,
@@ -1534,14 +1552,14 @@ struct BcrResolutionCacheKey {
     bzlmod_module_extension_results: Vec<BzlmodEvaluatedModuleExtension>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize)]
 struct BcrDiscoveryCacheKey {
     root_deps: Vec<(String, String)>,
     archive_overrides: Vec<BcrDiscoveryArchiveOverrideKey>,
     single_version_overrides: Vec<(String, String)>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize)]
 struct BcrDiscoveryArchiveOverrideKey {
     module_name: String,
     url: String,
@@ -1598,13 +1616,13 @@ struct RootBzlmodModule {
     use_repo_rule_invocations: Vec<BzlmodUseRepoRuleInvocation>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
 struct BzlmodUseRepoImport {
     alias: String,
     repo_name: String,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
 struct BzlmodExtensionUsage {
     proxy_name: String,
     extension_bzl_file: String,
@@ -1615,21 +1633,21 @@ struct BzlmodExtensionUsage {
     tags: Vec<BzlmodExtensionTag>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
 struct BzlmodRepoOverride {
     repo_name: String,
     overriding_repo_name: String,
     must_exist: bool,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
 struct BzlmodExtensionTag {
     tag_name: String,
     bindings: Vec<(String, String)>,
     kwargs: Vec<(String, String)>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
 struct BzlmodUseRepoRuleInvocation {
     rule_bzl_file: String,
     rule_name: String,
@@ -1770,7 +1788,7 @@ struct BzlmodModuleLockfileData {
     extension_facts: BTreeSet<String>,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 struct BcrSourceJson {
     url: String,
     integrity: String,
@@ -1796,6 +1814,7 @@ async fn get_bazel_module_resolution(
     file_ops: &mut dyn ConfigParserFileOps,
     bzlmod_module_extension_results_complete: bool,
     bzlmod_module_extension_results: &[BzlmodEvaluatedModuleExtension],
+    persistent_cache_project_fs: Option<&ProjectRoot>,
 ) -> buck2_error::Result<BazelModuleCellAliases> {
     let mut aliases = BazelModuleCellAliases::default();
     let mut root_deps = Vec::new();
@@ -1897,6 +1916,7 @@ async fn get_bazel_module_resolution(
         single_version_overrides,
         bzlmod_module_extension_results_complete,
         bzlmod_module_extension_results,
+        persistent_cache_project_fs,
     )
     .await?;
     aliases.external_modules = bcr_resolution.external_modules;
@@ -1930,8 +1950,10 @@ async fn resolve_bcr_modules(
     single_version_overrides: BTreeMap<String, String>,
     bzlmod_module_extension_results_complete: bool,
     bzlmod_module_extension_results: &[BzlmodEvaluatedModuleExtension],
+    persistent_cache_project_fs: Option<&ProjectRoot>,
 ) -> buck2_error::Result<BcrResolution> {
     let bzlmod_module_extension_results = bzlmod_module_extension_results.to_owned();
+    let persistent_cache_project_fs = persistent_cache_project_fs.map(Dupe::dupe);
     std::thread::Builder::new()
         .name("buck2-bzlmod-resolver".to_owned())
         .spawn(move || {
@@ -1947,6 +1969,7 @@ async fn resolve_bcr_modules(
                     single_version_overrides,
                     bzlmod_module_extension_results_complete,
                     &bzlmod_module_extension_results,
+                    persistent_cache_project_fs.as_ref(),
                 )
                 .await
             })
@@ -1968,6 +1991,7 @@ async fn resolve_bcr_modules_with_cache(
     single_version_overrides: BTreeMap<String, String>,
     bzlmod_module_extension_results_complete: bool,
     bzlmod_module_extension_results: &[BzlmodEvaluatedModuleExtension],
+    persistent_cache_project_fs: Option<&ProjectRoot>,
 ) -> buck2_error::Result<BcrResolution> {
     let discovery_cache_key =
         bcr_discovery_cache_key(&root_deps, &archive_overrides, &single_version_overrides);
@@ -1990,6 +2014,7 @@ async fn resolve_bcr_modules_with_cache(
         &archive_overrides,
         &single_version_overrides,
         discovery_cache_key,
+        persistent_cache_project_fs,
     )
     .await?;
     let resolution = resolve_bcr_modules_from_discovered(
@@ -2011,6 +2036,7 @@ async fn discover_bcr_modules_with_cache(
     archive_overrides: &BTreeMap<String, BzlmodArchiveOverride>,
     single_version_overrides: &BTreeMap<String, String>,
     cache_key: BcrDiscoveryCacheKey,
+    persistent_cache_project_fs: Option<&ProjectRoot>,
 ) -> buck2_error::Result<Arc<DiscoveredBcrModules>> {
     if let Some(discovered) = BCR_DISCOVERY_CACHE
         .lock()
@@ -2018,6 +2044,16 @@ async fn discover_bcr_modules_with_cache(
         .get(&cache_key)
     {
         return Ok(Arc::clone(discovered));
+    }
+
+    if let Some(project_fs) = persistent_cache_project_fs
+        && let Some(discovered) = read_persistent_bcr_discovery_cache(project_fs, &cache_key)?
+    {
+        BCR_DISCOVERY_CACHE
+            .lock()
+            .expect("BCR discovery cache lock poisoned")
+            .insert(cache_key, Arc::clone(&discovered));
+        return Ok(discovered);
     }
 
     let client = bzlmod_http_client().await?;
@@ -2029,11 +2065,73 @@ async fn discover_bcr_modules_with_cache(
     )
     .await?;
     let discovered = Arc::new(discovered);
+    if let Some(project_fs) = persistent_cache_project_fs {
+        write_persistent_bcr_discovery_cache(project_fs, &cache_key, &discovered)?;
+    }
     BCR_DISCOVERY_CACHE
         .lock()
         .expect("BCR discovery cache lock poisoned")
         .insert(cache_key, Arc::clone(&discovered));
     Ok(discovered)
+}
+
+fn persistent_bcr_discovery_cache_path(
+    cache_key: &BcrDiscoveryCacheKey,
+) -> buck2_error::Result<ProjectRelativePathBuf> {
+    let cache_key = serde_json::to_vec(cache_key)
+        .buck_error_context("Error serializing bzlmod BCR discovery cache key")?;
+    let digest = Sha256::digest(&cache_key);
+    Ok(ProjectRelativePathBuf::unchecked_new(format!(
+        "buck-out/v2/cache/bzlmod_bcr_discovery/{}.json",
+        hex::encode(digest)
+    )))
+}
+
+fn read_persistent_bcr_discovery_cache(
+    project_fs: &ProjectRoot,
+    cache_key: &BcrDiscoveryCacheKey,
+) -> buck2_error::Result<Option<Arc<DiscoveredBcrModules>>> {
+    let path = project_fs.resolve(&persistent_bcr_discovery_cache_path(cache_key)?);
+    let Some(content) = fs_util::read_to_string_if_exists(&path)
+        .with_buck_error_context(|| format!("Reading bzlmod BCR discovery cache `{path}`"))?
+    else {
+        return Ok(None);
+    };
+    let entries: Vec<PersistentBcrDiscoveryCacheEntry> = serde_json::from_str(&content)
+        .with_buck_error_context(|| format!("Parsing bzlmod BCR discovery cache `{path}`"))?;
+    let modules = entries
+        .into_iter()
+        .map(|entry| ((entry.name, entry.version), entry.module))
+        .collect();
+    Ok(Some(Arc::new(modules)))
+}
+
+fn write_persistent_bcr_discovery_cache(
+    project_fs: &ProjectRoot,
+    cache_key: &BcrDiscoveryCacheKey,
+    discovered: &DiscoveredBcrModules,
+) -> buck2_error::Result<()> {
+    let path = project_fs.resolve(&persistent_bcr_discovery_cache_path(cache_key)?);
+    if let Some(parent) = path.parent() {
+        fs_util::create_dir_all(parent).with_buck_error_context(|| {
+            format!("Creating bzlmod BCR discovery cache dir `{parent}`")
+        })?;
+    }
+    let entries = discovered
+        .iter()
+        .map(
+            |((name, version), module)| PersistentBcrDiscoveryCacheEntry {
+                name: name.clone(),
+                version: version.clone(),
+                module: module.clone(),
+            },
+        )
+        .collect::<Vec<_>>();
+    let content = serde_json::to_string(&entries)
+        .buck_error_context("Error serializing bzlmod BCR discovery cache")?;
+    fs_util::write(&path, content)
+        .categorize_internal()
+        .with_buck_error_context(|| format!("Writing bzlmod BCR discovery cache `{path}`"))
 }
 
 async fn discover_bcr_modules_with_client(

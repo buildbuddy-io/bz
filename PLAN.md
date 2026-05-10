@@ -115,6 +115,7 @@ Completed:
 - `platform_common.ConstraintValueInfo` and `ctx.target_platform_has_constraint(...)` are available with native provider identity and target-platform constraint lookup.
 - Bazelisk now builds `//:bazelisk` end to end with downloaded bzlmod modules, generated Gazelle/rules_go repos, the downloaded Go SDK, and Buck2 actions.
 - BuildBuddy bzlmod resolution now consumes root `use_repo_rule(...)`, `archive_override(...)`, and `single_version_override(...)` data without reintroducing module-specific generated-repo materializers.
+- Bzlmod BCR module discovery now persists an exact-key result cache under `buck-out/v2/cache/bzlmod_bcr_discovery`, matching Bazel's output-base registry/download cache shape instead of keeping discovery only in daemon memory.
 - Module-extension generated repos are grouped and reused by extension identity, avoiding repeated generated repo mapping work across large graphs.
 - Bazel tag calls inside top-level `MODULE.bazel` list comprehensions now carry all comprehension bindings, including tuple bindings from `dict.items()`, into the Starlark attr evaluator.
 - Bazel `py_internal` is available for downloaded rules_python load/extension code, including `regex_match`, OS naming, and bzlmod/runfiles probes.
@@ -199,6 +200,7 @@ All BuildBuddy measurements below were taken on `/Users/siggi/Code/buildbuddy` f
 | Leaf edit: `server/util/bytebufferpool/bytebufferpool.go` | Buck2 with local action cache | warm leaf edit in same daemon | 12.36s | - | 22 commands: 8 cached, 14 local |
 | Leaf edit: `server/util/bytebufferpool/bytebufferpool.go` | Buck2 with Bazel Args param files | warm leaf edit in same daemon | 10.83s | 10.8s | 2 local actions, 4 cached; final GoLink 4.2s |
 | Leaf edit: `server/util/bytebufferpool/bytebufferpool.go` | Buck2 with Bazel Args param files | cold leaf edit after daemon restart | 32.87s | 31.8s | 2355 cached actions, 2 local; final GoLink 5.7s |
+| Leaf edit: `server/util/bytebufferpool/bytebufferpool.go` | Buck2 with persistent BCR discovery cache | cold reverse leaf edit after daemon restart | 27.67s | 26.7s | 2355 cached actions, 2 local; `buckd_command_init` 0.30s, final GoLink 6.5s |
 | High invalidation: `server/util/status/status.go` | Bazel 9.1.0 | warm exported-const edit | 15.95s | - | 219 total actions, 217 sandboxed processes, 30 action cache hits |
 | High invalidation: `server/util/status/status.go` | Bazel 9.1.0 | cold reverse edit after seeded output base | 20.20s | - | 219 total actions, 217 sandboxed processes, 4300 action cache hits |
 | High invalidation: `server/util/status/status.go` | Buck2 before generated-repo/materialization caches | warm exported-const edit | 22.29s | - | 120 commands: 28 cached, 92 local |
@@ -252,14 +254,20 @@ Latest leaf-node edit timing comparison, measured by changing
 | Buck2 with local action cache | warm leaf edit in same daemon | 12.36s | 22 commands: 8 cached, 14 local |
 | Buck2 with Bazel Args param files | warm leaf edit in same daemon | 10.83s | 2 local actions, 4 cached; final GoLink 4.2s |
 | Buck2 with Bazel Args param files | cold leaf edit after daemon restart | 32.87s | 2355 cached actions, 2 local; final GoLink 5.7s |
+| Buck2 with persistent BCR discovery cache | cold reverse leaf edit after daemon restart | 27.67s | 2355 cached actions, 2 local; `buckd_command_init` 0.30s; final GoLink 6.5s |
 
 The leaf-node runs show the execution-side cutover working: after the Bazel Args param-file cutover,
 the leaf edit re-executes only `GoCompilePkg bytebufferpool.a` and the final `GoLink buildbuddy`.
 The final link command now passes the large rules_go builder argument set through
 `buildbuddy-0.params` instead of an enormous inline archive list. The profiled link segment dropped
 from the earlier 17.8s inline-command critical-path span to 4.2s warm / 5.7s cold. The remaining
-cold leaf gap is now above those two local actions: fresh-daemon setup, bzlmod/load, and analysis
-consume most of the 31.8s engine duration before the cached action graph reaches the link.
+cold leaf gap then moved above those two local actions: fresh-daemon setup, bzlmod/load, and
+analysis consumed most of the 31.8s engine duration before the cached action graph reached the
+link. Buck now persists the BCR module discovery result in the output tree. The cold no-execution
+BuildBuddy server build dropped from 18.0s engine / 18.69s wall to 12.4s engine / 13.13s wall, and
+the cold leaf edit dropped to 26.7s engine / 27.67s wall with `buckd_command_init` reduced from
+about 5.76s to 0.30s. The remaining cold gap is dominated by package/load/analysis scheduling and
+the two real local actions, not by BCR registry discovery.
 
 Latest high-invalidation edit timing comparison, measured by changing exported API in
 `server/util/status/status.go` in BuildBuddy:
