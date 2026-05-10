@@ -35,6 +35,7 @@ use buck2_execute::materialize::utils::dynamic_priority_handle::DynamicPriorityH
 use buck2_execute::materialize::utils::priority_semaphore::Priority;
 use buck2_fs::fs_util::disk_space_stats;
 use buck2_fs::paths::abs_path::AbsPath;
+use buck2_hash::BuckDashMap;
 use buck2_hash::StdBuckHashSet;
 use buck2_util::threads::check_stack_overflow;
 use buck2_wrapper_common::invocation_id::TraceId;
@@ -110,6 +111,8 @@ pub(super) struct DeferredMaterializerCommandProcessor<T: 'static> {
     pub(super) command_sender: Arc<MaterializerSender<T>>,
     /// The actual materializer state.
     pub(super) tree: ArtifactTree,
+    /// Exact-path artifact values for fast read-only metadata lookups.
+    pub(super) declared_artifact_values: Arc<BuckDashMap<ProjectRelativePathBuf, ArtifactValue>>,
     /// Active subscriptions
     pub(super) subscriptions: MaterializerSubscriptions,
     /// History of refreshes. This *does* grow without bound, but considering the data is pretty
@@ -151,11 +154,6 @@ pub(super) enum MaterializerCommand<T: 'static> {
     MatchArtifacts(
         Vec<(ProjectRelativePathBuf, ArtifactValue)>,
         oneshot::Sender<bool>,
-    ),
-
-    GetDeclaredArtifactValues(
-        Vec<ProjectRelativePathBuf>,
-        oneshot::Sender<Vec<Option<ArtifactValue>>>,
     ),
 
     HasArtifact(ProjectRelativePathBuf, oneshot::Sender<bool>),
@@ -241,9 +239,6 @@ impl<T> std::fmt::Debug for MaterializerCommand<T> {
             }
             MaterializerCommand::MatchArtifacts(paths, _) => {
                 write!(f, "MatchArtifacts({paths:?})")
-            }
-            MaterializerCommand::GetDeclaredArtifactValues(paths, _) => {
-                write!(f, "GetDeclaredArtifactValues({paths:?})")
             }
             MaterializerCommand::HasArtifact(path, _) => {
                 write!(f, "HasArtifact({path:?})")
@@ -390,6 +385,7 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
         defer_write_actions: bool,
         command_sender: Arc<MaterializerSender<T>>,
         tree: ArtifactTree,
+        declared_artifact_values: Arc<BuckDashMap<ProjectRelativePathBuf, ArtifactValue>>,
         cancellations: &'static CancellationContext,
         stats: Arc<DeferredMaterializerStats>,
         access_times_buffer: Option<StdBuckHashSet<ProjectRelativePathBuf>>,
@@ -410,6 +406,7 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
             version_tracker,
             command_sender,
             tree,
+            declared_artifact_values,
             subscriptions,
             ttl_refresh_history,
             ttl_refresh_instance,
@@ -695,13 +692,6 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
                     .all(|(path, value)| self.match_artifact(path, value));
                 sender.send(all_matches).ok();
             }
-            MaterializerCommand::GetDeclaredArtifactValues(paths, sender) => {
-                let values = paths
-                    .into_iter()
-                    .map(|path| self.artifact_value(path))
-                    .collect();
-                sender.send(values).ok();
-            }
             MaterializerCommand::HasArtifact(path, sender) => {
                 sender.send(self.has_artifact(path)).ok();
             }
@@ -724,9 +714,15 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
                         )
                     });
 
-                    let existing_futs = self
+                    let invalidation = self
                         .tree
                         .invalidate_paths_and_collect_futures(paths, self.sqlite_db.as_mut());
+                    let existing_futs = invalidation.map(|invalidation| {
+                        for path in invalidation.paths {
+                            self.declared_artifact_values.remove(&path);
+                        }
+                        invalidation.futures
+                    });
 
                     // TODO: This probably shouldn't return a CleanFuture
                     sender
@@ -902,6 +898,8 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
 
     fn declare_existing(&mut self, path: &ProjectRelativePath, value: ArtifactValue) {
         let metadata = value.entry().dupe();
+        self.declared_artifact_values
+            .insert(path.to_owned(), value.dupe());
         on_materialization(
             self.sqlite_db.as_mut(),
             &self.subscriptions,
@@ -970,6 +968,8 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
                             active: true,
                         };
                         data.deps = deps;
+                        self.declared_artifact_values
+                            .insert(path.to_owned(), value.dupe());
 
                         self.stats.declares_reused.fetch_add(1, Ordering::Relaxed);
 
@@ -985,6 +985,8 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
                         );
                         let deps = value.deps().duped();
                         data.deps = deps;
+                        self.declared_artifact_values
+                            .insert(path.to_owned(), value.dupe());
 
                         return;
                     }
@@ -1006,9 +1008,15 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
         // Always invalidate materializer state before actual deleting from filesystem
         // so there will never be a moment where artifact is deleted but materializer
         // thinks it still exists.
-        let existing_futs = self
+        let invalidation = self
             .tree
             .invalidate_paths_and_collect_futures(vec![path.to_owned()], self.sqlite_db.as_mut());
+        let existing_futs = invalidation.map(|invalidation| {
+            for path in invalidation.paths {
+                self.declared_artifact_values.remove(&path);
+            }
+            invalidation.futures
+        });
 
         let existing_futs = ExistingFutures(existing_futs);
 
@@ -1060,6 +1068,7 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
             },
         });
         self.tree.insert(path.iter().map(|f| f.to_owned()), data);
+        self.declared_artifact_values.insert(path.to_owned(), value);
     }
 
     /// Check if artifact to be declared is same as artifact that's already materialized.
@@ -1105,23 +1114,10 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
             if let Some(deps) = value.deps() {
                 data.deps = Some(deps.dupe())
             }
+            self.declared_artifact_values.insert(path, value);
         }
 
         is_match
-    }
-
-    fn artifact_value(&mut self, path: ProjectRelativePathBuf) -> Option<ArtifactValue> {
-        let mut path_iter = path.iter();
-        let data = self.tree.prefix_get_mut(&mut path_iter)?;
-        if path_iter.next().is_some() {
-            return None;
-        }
-
-        let entry = match &data.stage {
-            ArtifactMaterializationStage::Materialized { metadata, .. } => metadata.dupe(),
-            ArtifactMaterializationStage::Declared { entry, .. } => entry.dupe(),
-        };
-        Some(ArtifactValue::new(entry, data.deps.dupe()))
     }
 
     fn has_artifact(&mut self, path: ProjectRelativePathBuf) -> bool {

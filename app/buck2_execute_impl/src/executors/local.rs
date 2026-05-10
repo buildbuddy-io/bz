@@ -1125,6 +1125,18 @@ impl LocalExecutor {
             return Ok(LocalActionCacheMetadataLookup::Stale);
         }
 
+        // For ordinary outputs the value above came from the same materializer path that
+        // `declare_match` would check, so another materializer round trip is redundant. Bazel's
+        // action cache similarly injects cached output metadata on hits instead of revalidating the
+        // same metadata through a second path. Content-based outputs still need the extra match
+        // because their configuration path and content-addressed path are distinct declarations.
+        if !outputs
+            .keys()
+            .any(CommandExecutionOutput::has_content_based_path)
+        {
+            return Ok(LocalActionCacheMetadataLookup::Hit(outputs));
+        }
+
         let output_matches = outputs
             .iter()
             .map(|(output, value)| {
@@ -1537,6 +1549,44 @@ impl PreparedCommandOptionalExecutor for LocalExecutor {
                 return ControlFlow::Break(manager.error("local_action_cache_remove_failed", e));
             }
             return ControlFlow::Continue(manager);
+        }
+
+        if !outputs
+            .keys()
+            .any(CommandExecutionOutput::has_content_based_path)
+        {
+            let manager = manager
+                .with_execution_kind(CommandExecutionKind::LocalActionCache {
+                    digest: action_digest.dupe(),
+                })
+                .claim()
+                .boxed()
+                .await;
+            let time_span = start.end_now();
+            let timing = CommandExecutionMetadata {
+                time_span,
+                execution_time: Duration::ZERO,
+                start_time,
+                execution_stats: None,
+                input_materialization_duration: Duration::ZERO,
+                hashing_duration: hashing_info.hashing_duration,
+                hashed_artifacts_count: hashing_info.hashed_artifacts_count,
+                queue_duration: None,
+                suspend_duration: None,
+                suspend_count: None,
+            };
+
+            return ControlFlow::Break(manager.success(
+                CommandExecutionKind::LocalActionCache {
+                    digest: action_digest,
+                },
+                outputs,
+                CommandStdStreams::Local {
+                    stdout: Vec::new(),
+                    stderr: Vec::new(),
+                },
+                timing,
+            ));
         }
 
         let output_matches = match outputs

@@ -201,6 +201,8 @@ All BuildBuddy measurements below were taken on `/Users/siggi/Code/buildbuddy` f
 | Leaf edit: `server/util/bytebufferpool/bytebufferpool.go` | Buck2 with Bazel Args param files | warm leaf edit in same daemon | 10.83s | 10.8s | 2 local actions, 4 cached; final GoLink 4.2s |
 | Leaf edit: `server/util/bytebufferpool/bytebufferpool.go` | Buck2 with Bazel Args param files | cold leaf edit after daemon restart | 32.87s | 31.8s | 2355 cached actions, 2 local; final GoLink 5.7s |
 | Leaf edit: `server/util/bytebufferpool/bytebufferpool.go` | Buck2 with persistent BCR discovery cache | cold reverse leaf edit after daemon restart | 27.67s | 26.7s | 2355 cached actions, 2 local; `buckd_command_init` 0.30s, final GoLink 6.5s |
+| Leaf edit: `server/util/bytebufferpool/bytebufferpool.go` | Buck2 with materializer metadata snapshot | cold same-state cache-hit rebuild after daemon restart | 17.69s | 16.6s | 2357 cached actions, 0 local; local action-cache hit wall sum 0.14s |
+| Leaf edit: `server/util/bytebufferpool/bytebufferpool.go` | Buck2 with materializer metadata snapshot | cold uncached leaf edit after daemon restart | 32.45s | 31.7s | 2355 cached actions, 2 local; cache-hit queue removed, final GoLink 15.3s outlier |
 | High invalidation: `server/util/status/status.go` | Bazel 9.1.0 | warm exported-const edit | 15.95s | - | 219 total actions, 217 sandboxed processes, 30 action cache hits |
 | High invalidation: `server/util/status/status.go` | Bazel 9.1.0 | cold reverse edit after seeded output base | 20.20s | - | 219 total actions, 217 sandboxed processes, 4300 action cache hits |
 | High invalidation: `server/util/status/status.go` | Buck2 before generated-repo/materialization caches | warm exported-const edit | 22.29s | - | 120 commands: 28 cached, 92 local |
@@ -255,6 +257,8 @@ Latest leaf-node edit timing comparison, measured by changing
 | Buck2 with Bazel Args param files | warm leaf edit in same daemon | 10.83s | 2 local actions, 4 cached; final GoLink 4.2s |
 | Buck2 with Bazel Args param files | cold leaf edit after daemon restart | 32.87s | 2355 cached actions, 2 local; final GoLink 5.7s |
 | Buck2 with persistent BCR discovery cache | cold reverse leaf edit after daemon restart | 27.67s | 2355 cached actions, 2 local; `buckd_command_init` 0.30s; final GoLink 6.5s |
+| Buck2 with materializer metadata snapshot | cold same-state cache-hit rebuild after daemon restart | 17.69s | 2357 cached actions, 0 local; local action-cache hit wall sum 0.14s |
+| Buck2 with materializer metadata snapshot | cold uncached leaf edit after daemon restart | 32.45s | 2355 cached actions, 2 local; final GoLink 15.3s outlier |
 
 The leaf-node runs show the execution-side cutover working: after the Bazel Args param-file cutover,
 the leaf edit re-executes only `GoCompilePkg bytebufferpool.a` and the final `GoLink buildbuddy`.
@@ -267,7 +271,14 @@ link. Buck now persists the BCR module discovery result in the output tree. The 
 BuildBuddy server build dropped from 18.0s engine / 18.69s wall to 12.4s engine / 13.13s wall, and
 the cold leaf edit dropped to 26.7s engine / 27.67s wall with `buckd_command_init` reduced from
 about 5.76s to 0.30s. The remaining cold gap is dominated by package/load/analysis scheduling and
-the two real local actions, not by BCR registry discovery.
+the two real local actions, not by BCR registry discovery. A subsequent profile showed that cold
+local action-cache hits were still serializing through the deferred materializer command loop for
+metadata reads. Buck now mirrors exact-path materializer metadata in a read-through snapshot, which
+matches Bazel's cached output metadata injection model and removes the per-hit materializer actor
+round trip. The all-cache-hit cold run dropped to 16.6s engine / 17.69s wall, with total cached
+action reported wall time falling from about 116.9s to 0.14s. The uncached leaf edit is now bounded
+by analysis plus the two real local actions; the latest run had a noisy 15.3s final GoLink, so it is
+not representative of the cache-hit optimization itself.
 
 Latest high-invalidation edit timing comparison, measured by changing exported API in
 `server/util/status/status.go` in BuildBuddy:

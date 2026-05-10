@@ -67,6 +67,7 @@ use buck2_execute::materialize::materializer::MaterializationError;
 use buck2_execute::materialize::materializer::Materializer;
 use buck2_execute::materialize::materializer::WriteRequest;
 use buck2_execute::re::manager::ReConnectionManager;
+use buck2_hash::BuckDashMap;
 use buck2_hash::StdBuckHashSet;
 use buck2_http::HttpClient;
 use buck2_util::threads::thread_spawn;
@@ -134,6 +135,9 @@ pub struct DeferredMaterializerAccessor<T: IoHandler + 'static> {
     eager_materialization_enabled: bool,
 
     io: Arc<T>,
+
+    /// Exact-path artifact values mirrored from the command processor for cheap metadata reads.
+    declared_artifact_values: Arc<BuckDashMap<ProjectRelativePathBuf, ArtifactValue>>,
 
     /// Tracked for logging purposes.
     materializer_state_info: buck2_data::MaterializerStateInfo,
@@ -501,13 +505,14 @@ impl<T: IoHandler + Allocative> Materializer for DeferredMaterializerAccessor<T>
         &self,
         paths: Vec<ProjectRelativePathBuf>,
     ) -> buck2_error::Result<Vec<Option<ArtifactValue>>> {
-        let (sender, recv) = oneshot::channel();
-
-        self.command_sender
-            .send(MaterializerCommand::GetDeclaredArtifactValues(paths, sender))?;
-
-        recv.await
-            .buck_error_context("Receiving artifact values from command thread.")
+        Ok(paths
+            .into_iter()
+            .map(|path| {
+                self.declared_artifact_values
+                    .get(&path)
+                    .map(|value| value.value().dupe())
+            })
+            .collect())
     }
 
     async fn has_artifact_at(&self, path: ProjectRelativePathBuf) -> buck2_error::Result<bool> {
@@ -696,6 +701,16 @@ impl DeferredMaterializerAccessor<DefaultIoHandler> {
             (!matches!(configs.update_access_times, AccessTimesUpdates::Disabled))
                 .then(StdBuckHashSet::new);
 
+        let declared_artifact_values = Arc::new(BuckDashMap::default());
+        if let Some(sqlite_state) = &sqlite_state {
+            for entry in sqlite_state {
+                declared_artifact_values.insert(
+                    entry.path.clone(),
+                    ArtifactValue::new(entry.metadata.dupe(), None),
+                );
+            }
+        }
+
         let tree = ArtifactTree::initialize(sqlite_state);
 
         let io = Arc::new(DefaultIoHandler::new(
@@ -709,6 +724,7 @@ impl DeferredMaterializerAccessor<DefaultIoHandler> {
 
         let command_processor = {
             let command_sender = command_sender.dupe();
+            let declared_artifact_values = declared_artifact_values.dupe();
             let rt = Handle::current();
             let stats = stats.dupe();
             let io = io.dupe();
@@ -720,6 +736,7 @@ impl DeferredMaterializerAccessor<DefaultIoHandler> {
                     configs.defer_write_actions,
                     command_sender,
                     tree,
+                    declared_artifact_values,
                     cancellations,
                     stats,
                     access_times_buffer,
@@ -756,6 +773,7 @@ impl DeferredMaterializerAccessor<DefaultIoHandler> {
             defer_write_actions: configs.defer_write_actions,
             eager_materialization_enabled: configs.eager_materialization_enabled,
             io,
+            declared_artifact_values,
             materializer_state_info,
             stats,
         })
