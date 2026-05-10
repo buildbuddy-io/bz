@@ -9,7 +9,9 @@
  */
 
 use std::borrow::Cow;
+use std::cell::RefCell;
 use std::ops::ControlFlow;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -57,6 +59,8 @@ use buck2_build_api::interpreter::rule_defs::provider::builtin::worker_info::Fro
 use buck2_build_api::interpreter::rule_defs::provider::builtin::worker_info::WorkerInfo;
 use buck2_build_signals::env::WaitingCategory;
 use buck2_build_signals::env::WaitingData;
+use buck2_common::file_ops::metadata::FileMetadata;
+use buck2_common::file_ops::metadata::TrackedFileDigest;
 use buck2_common::io::trace::TracingIoProvider;
 use buck2_core::category::Category;
 use buck2_core::category::CategoryRef;
@@ -75,6 +79,8 @@ use buck2_error::buck2_error;
 use buck2_error::internal_error;
 use buck2_events::dispatch::span_async_simple;
 use buck2_execute::artifact::fs::ExecutorFs;
+use buck2_execute::artifact_value::ArtifactValue;
+use buck2_execute::digest_config::DigestConfig;
 use buck2_execute::execute::action_digest::ActionDigest;
 use buck2_execute::execute::action_digest_and_blobs::ActionDigestAndBlobs;
 use buck2_execute::execute::cache_uploader::IntoRemoteDepFile;
@@ -559,17 +565,202 @@ impl CommandLineContext for BazelCommandLineContext<'_> {
     }
 }
 
+#[derive(Clone, Copy, Dupe)]
+enum RunActionParamFileMode {
+    Record,
+    Replay,
+}
+
+#[derive(Clone)]
+struct RunActionParamFile {
+    path: BuildArtifactPath,
+    digest: TrackedFileDigest,
+    content_hash: ContentBasedPathHash,
+    content: Vec<u8>,
+    command_line_path: buck2_fs::paths::RelativePathBuf,
+    bazel_exec_path: Option<String>,
+}
+
+struct RunActionParamFiles {
+    owner: BaseDeferredKey,
+    base_path: ForwardRelativePathBuf,
+    base_bazel_exec_path: Option<String>,
+    path_resolution_method: BuckOutPathKind,
+    digest_config: DigestConfig,
+    files: Vec<RunActionParamFile>,
+    replay_cursor: usize,
+}
+
+#[derive(Clone)]
+struct RunActionParamFilesRef(Rc<RefCell<RunActionParamFiles>>);
+
+impl RunActionParamFilesRef {
+    fn new(
+        owner: BaseDeferredKey,
+        base_path: ForwardRelativePathBuf,
+        base_bazel_exec_path: Option<String>,
+        path_resolution_method: BuckOutPathKind,
+        digest_config: DigestConfig,
+    ) -> Self {
+        Self(Rc::new(RefCell::new(RunActionParamFiles {
+            owner,
+            base_path,
+            base_bazel_exec_path,
+            path_resolution_method,
+            digest_config,
+            files: Vec::new(),
+            replay_cursor: 0,
+        })))
+    }
+
+    fn add_param_file(
+        &self,
+        fs: &ExecutorFs<'_>,
+        mode: RunActionParamFileMode,
+        content: Vec<u8>,
+    ) -> buck2_error::Result<CommandLineLocation<'_>> {
+        let mut state = self.0.borrow_mut();
+        match mode {
+            RunActionParamFileMode::Record => {
+                let index = state.files.len();
+                let path = BuildArtifactPath::new(
+                    state.owner.dupe(),
+                    derive_param_file_path(&state.base_path, index)?,
+                    state.path_resolution_method,
+                );
+                let digest = TrackedFileDigest::from_content(
+                    &content,
+                    state.digest_config.cas_digest_config(),
+                );
+                let content_hash = ContentBasedPathHash::new(digest.raw_digest().as_bytes())?;
+                let command_line_path =
+                    if let Some(base_bazel_exec_path) = &state.base_bazel_exec_path {
+                        buck2_fs::paths::RelativePathBuf::from(derive_param_file_exec_path(
+                            base_bazel_exec_path,
+                            index,
+                        ))
+                    } else {
+                        fs.fs()
+                            .buck_out_path_resolver()
+                            .resolve_gen(&path, Some(&content_hash))?
+                            .into()
+                    };
+                let bazel_exec_path = state
+                    .base_bazel_exec_path
+                    .as_ref()
+                    .map(|base| derive_param_file_exec_path(base, index));
+                state.files.push(RunActionParamFile {
+                    path,
+                    digest,
+                    content_hash,
+                    content,
+                    command_line_path: command_line_path.clone(),
+                    bazel_exec_path,
+                });
+                Ok(CommandLineLocation::from_relative_path(
+                    command_line_path,
+                    fs.path_separator(),
+                ))
+            }
+            RunActionParamFileMode::Replay => {
+                let index = state.replay_cursor;
+                let Some(param_file) = state.files.get(index) else {
+                    return Err(internal_error!(
+                        "param-file replay requested entry {index}, but only {} were recorded",
+                        state.files.len()
+                    ));
+                };
+                if param_file.content != content {
+                    return Err(internal_error!(
+                        "param-file replay content mismatch for entry {index}"
+                    ));
+                }
+                let command_line_path = param_file.command_line_path.clone();
+                state.replay_cursor += 1;
+                Ok(CommandLineLocation::from_relative_path(
+                    command_line_path,
+                    fs.path_separator(),
+                ))
+            }
+        }
+    }
+
+    fn files(&self) -> buck2_error::Result<Vec<RunActionParamFile>> {
+        let state = self.0.borrow();
+        if state.replay_cursor != state.files.len() {
+            return Err(internal_error!(
+                "param-file replay consumed {} entries, but {} were recorded",
+                state.replay_cursor,
+                state.files.len()
+            ));
+        }
+        Ok(state.files.clone())
+    }
+}
+
+fn derive_param_file_path(
+    base_path: &buck2_fs::paths::forward_rel_path::ForwardRelativePath,
+    index: usize,
+) -> buck2_error::Result<ForwardRelativePathBuf> {
+    let file_name = base_path
+        .file_name()
+        .ok_or_else(|| internal_error!("cannot derive param-file path from empty output path"))?;
+    let derived_name = format!("{}-{index}.params", file_name.as_str());
+    if let Some(parent) = base_path.parent()
+        && !parent.is_empty()
+    {
+        ForwardRelativePathBuf::new(format!("{}/{derived_name}", parent.as_str()))
+    } else {
+        ForwardRelativePathBuf::new(derived_name)
+    }
+}
+
+fn derive_param_file_exec_path(base_exec_path: &str, index: usize) -> String {
+    let (parent, file_name) = base_exec_path
+        .rsplit_once('/')
+        .map_or(("", base_exec_path), |(parent, file_name)| {
+            (parent, file_name)
+        });
+    let derived_name = format!("{file_name}-{index}.params");
+    if parent.is_empty() {
+        derived_name
+    } else {
+        format!("{parent}/{derived_name}")
+    }
+}
+
 enum RunActionCommandLineContext<'v> {
-    Default(DefaultCommandLineContext<'v>),
-    Bazel(BazelCommandLineContext<'v>),
+    Default {
+        inner: DefaultCommandLineContext<'v>,
+        param_files: RunActionParamFilesRef,
+        param_file_mode: RunActionParamFileMode,
+    },
+    Bazel {
+        inner: BazelCommandLineContext<'v>,
+        param_files: RunActionParamFilesRef,
+        param_file_mode: RunActionParamFileMode,
+    },
 }
 
 impl<'v> RunActionCommandLineContext<'v> {
-    fn new(fs: &'v ExecutorFs<'v>, bazel_paths: bool) -> Self {
+    fn new(
+        fs: &'v ExecutorFs<'v>,
+        bazel_paths: bool,
+        param_files: RunActionParamFilesRef,
+        param_file_mode: RunActionParamFileMode,
+    ) -> Self {
         if bazel_paths {
-            Self::Bazel(BazelCommandLineContext::new(fs))
+            Self::Bazel {
+                inner: BazelCommandLineContext::new(fs),
+                param_files,
+                param_file_mode,
+            }
         } else {
-            Self::Default(DefaultCommandLineContext::new(fs))
+            Self::Default {
+                inner: DefaultCommandLineContext::new(fs),
+                param_files,
+                param_file_mode,
+            }
         }
     }
 }
@@ -580,15 +771,15 @@ impl CommandLineContext for RunActionCommandLineContext<'_> {
         path: ProjectRelativePathBuf,
     ) -> buck2_error::Result<CommandLineLocation<'_>> {
         match self {
-            Self::Default(ctx) => ctx.resolve_project_path(path),
-            Self::Bazel(ctx) => ctx.resolve_project_path(path),
+            Self::Default { inner, .. } => inner.resolve_project_path(path),
+            Self::Bazel { inner, .. } => inner.resolve_project_path(path),
         }
     }
 
     fn fs(&self) -> &ExecutorFs<'_> {
         match self {
-            Self::Default(ctx) => ctx.fs(),
-            Self::Bazel(ctx) => ctx.fs(),
+            Self::Default { inner, .. } => inner.fs(),
+            Self::Bazel { inner, .. } => inner.fs(),
         }
     }
 
@@ -598,8 +789,8 @@ impl CommandLineContext for RunActionCommandLineContext<'_> {
         artifact_path_mapping: &dyn ArtifactPathMapper,
     ) -> buck2_error::Result<CommandLineLocation<'_>> {
         match self {
-            Self::Default(ctx) => ctx.resolve_artifact(artifact, artifact_path_mapping),
-            Self::Bazel(ctx) => ctx.resolve_artifact(artifact, artifact_path_mapping),
+            Self::Default { inner, .. } => inner.resolve_artifact(artifact, artifact_path_mapping),
+            Self::Bazel { inner, .. } => inner.resolve_artifact(artifact, artifact_path_mapping),
         }
     }
 
@@ -608,15 +799,37 @@ impl CommandLineContext for RunActionCommandLineContext<'_> {
         artifact: &Artifact,
     ) -> buck2_error::Result<CommandLineLocation<'_>> {
         match self {
-            Self::Default(ctx) => ctx.resolve_output_artifact(artifact),
-            Self::Bazel(ctx) => ctx.resolve_output_artifact(artifact),
+            Self::Default { inner, .. } => inner.resolve_output_artifact(artifact),
+            Self::Bazel { inner, .. } => inner.resolve_output_artifact(artifact),
         }
     }
 
     fn next_macro_file_path(&mut self) -> buck2_error::Result<buck2_fs::paths::RelativePathBuf> {
         match self {
-            Self::Default(ctx) => ctx.next_macro_file_path(),
-            Self::Bazel(ctx) => ctx.next_macro_file_path(),
+            Self::Default { inner, .. } => inner.next_macro_file_path(),
+            Self::Bazel { inner, .. } => inner.next_macro_file_path(),
+        }
+    }
+
+    fn add_param_file(&mut self, content: Vec<u8>) -> buck2_error::Result<CommandLineLocation<'_>> {
+        match self {
+            Self::Default {
+                inner,
+                param_files,
+                param_file_mode,
+            } => param_files.add_param_file(inner.fs(), *param_file_mode, content),
+            Self::Bazel {
+                inner,
+                param_files,
+                param_file_mode,
+            } => param_files.add_param_file(inner.fs(), *param_file_mode, content),
+        }
+    }
+
+    fn normalize_param_file_arg(&self, arg: String) -> String {
+        match self {
+            Self::Default { .. } => arg,
+            Self::Bazel { .. } => bazel_normalize_buck_owned_exec_paths(&arg),
         }
     }
 }
@@ -830,10 +1043,44 @@ impl RunAction {
         ExpandedCommandLineDigestForDepFiles,
         Option<WorkerSpec>,
         Option<RemoteWorkerSpec>,
+        Vec<RunActionParamFile>,
     )> {
         let fs = &action_execution_ctx.executor_fs();
         let bazel_paths = self.inner.bazel_use_default_shell_env.is_some();
-        let mut cli_ctx = RunActionCommandLineContext::new(fs, bazel_paths);
+        let base_output = self
+            .outputs
+            .iter()
+            .next()
+            .ok_or_else(|| internal_error!("run actions must have at least one output"))?;
+        let base_bazel_exec_path = if bazel_paths {
+            let artifact = Artifact::from(base_output.dupe());
+            Some(bazel_artifact_path(artifact.get_path()))
+        } else {
+            None
+        };
+        let param_files = RunActionParamFilesRef::new(
+            action_execution_ctx.target().owner().dupe(),
+            base_output.get_path().path().to_owned(),
+            base_bazel_exec_path,
+            if self.all_outputs_are_content_based() {
+                BuckOutPathKind::ContentHash
+            } else {
+                BuckOutPathKind::Configuration
+            },
+            action_execution_ctx.digest_config(),
+        );
+        let mut cli_ctx = RunActionCommandLineContext::new(
+            fs,
+            bazel_paths,
+            param_files.clone(),
+            RunActionParamFileMode::Record,
+        );
+        let mut cli_digest_ctx = RunActionCommandLineContext::new(
+            fs,
+            bazel_paths,
+            param_files.clone(),
+            RunActionParamFileMode::Replay,
+        );
         let values = Self::unpack(&self.starlark_values)?;
 
         let mut command_line_digest_for_dep_files = ExpandedCommandLineFingerprinter::new();
@@ -864,7 +1111,7 @@ impl RunAction {
             .add_to_command_line(&mut exe_rendered, &mut cli_ctx, &artifact_path_mapping)?;
         values.exe.add_to_command_line(
             &mut command_line_digest_for_dep_files,
-            &mut cli_ctx,
+            &mut cli_digest_ctx,
             &artifact_path_mapping_for_dep_files,
         )?;
         visit_run_action_command_line_artifacts(&self.outputs, values.exe, artifact_visitor)?;
@@ -880,7 +1127,7 @@ impl RunAction {
             )?;
             worker.exe.add_to_command_line(
                 &mut command_line_digest_for_dep_files,
-                &mut cli_ctx,
+                &mut cli_digest_ctx,
                 &artifact_path_mapping_for_dep_files,
             )?;
             visit_run_action_command_line_artifacts(
@@ -893,7 +1140,18 @@ impl RunAction {
                 .into_iter()
                 .map(|(k, v)| {
                     let mut env = String::new();
-                    let mut ctx = RunActionCommandLineContext::new(fs, bazel_paths);
+                    let mut ctx = RunActionCommandLineContext::new(
+                        fs,
+                        bazel_paths,
+                        param_files.clone(),
+                        RunActionParamFileMode::Record,
+                    );
+                    let mut digest_ctx = RunActionCommandLineContext::new(
+                        fs,
+                        bazel_paths,
+                        param_files.clone(),
+                        RunActionParamFileMode::Replay,
+                    );
                     v.add_to_command_line(
                         &mut SpaceSeparatedCommandLineBuilder::wrap_string(&mut env),
                         &mut ctx,
@@ -908,7 +1166,7 @@ impl RunAction {
                     command_line_digest_for_dep_files.push_arg(k.to_owned());
                     v.add_to_command_line(
                         &mut command_line_digest_for_dep_files,
-                        &mut ctx,
+                        &mut digest_ctx,
                         &artifact_path_mapping_for_dep_files,
                     )?;
                     command_line_digest_for_dep_files.push_count();
@@ -988,7 +1246,7 @@ impl RunAction {
             )?;
             remote_worker.exe.add_to_command_line(
                 &mut command_line_digest_for_dep_files,
-                &mut cli_ctx,
+                &mut cli_digest_ctx,
                 &artifact_path_mapping_for_dep_files,
             )?;
             visit_run_action_command_line_artifacts(
@@ -1002,7 +1260,18 @@ impl RunAction {
                 .into_iter()
                 .map(|(k, v)| {
                     let mut env = String::new();
-                    let mut ctx = RunActionCommandLineContext::new(fs, bazel_paths);
+                    let mut ctx = RunActionCommandLineContext::new(
+                        fs,
+                        bazel_paths,
+                        param_files.clone(),
+                        RunActionParamFileMode::Record,
+                    );
+                    let mut digest_ctx = RunActionCommandLineContext::new(
+                        fs,
+                        bazel_paths,
+                        param_files.clone(),
+                        RunActionParamFileMode::Replay,
+                    );
                     v.add_to_command_line(
                         &mut SpaceSeparatedCommandLineBuilder::wrap_string(&mut env),
                         &mut ctx,
@@ -1017,7 +1286,7 @@ impl RunAction {
                     command_line_digest_for_dep_files.push_arg(k.to_owned());
                     v.add_to_command_line(
                         &mut command_line_digest_for_dep_files,
-                        &mut ctx,
+                        &mut digest_ctx,
                         &artifact_path_mapping_for_dep_files,
                     )?;
                     command_line_digest_for_dep_files.push_count();
@@ -1062,7 +1331,7 @@ impl RunAction {
         )?;
         values.args.add_to_command_line(
             &mut command_line_digest_for_dep_files,
-            &mut cli_ctx,
+            &mut cli_digest_ctx,
             &artifact_path_mapping_for_dep_files,
         )?;
         visit_run_action_command_line_artifacts(&self.outputs, values.args, artifact_visitor)?;
@@ -1078,7 +1347,18 @@ impl RunAction {
             .into_iter()
             .map(|(k, v)| {
                 let mut env = String::new();
-                let mut ctx = RunActionCommandLineContext::new(fs, bazel_paths);
+                let mut ctx = RunActionCommandLineContext::new(
+                    fs,
+                    bazel_paths,
+                    param_files.clone(),
+                    RunActionParamFileMode::Record,
+                );
+                let mut digest_ctx = RunActionCommandLineContext::new(
+                    fs,
+                    bazel_paths,
+                    param_files.clone(),
+                    RunActionParamFileMode::Replay,
+                );
                 v.add_to_command_line(
                     &mut SpaceSeparatedCommandLineBuilder::wrap_string(&mut env),
                     &mut ctx,
@@ -1089,7 +1369,7 @@ impl RunAction {
                 command_line_digest_for_dep_files.push_arg(k.to_owned());
                 v.add_to_command_line(
                     &mut command_line_digest_for_dep_files,
-                    &mut ctx,
+                    &mut digest_ctx,
                     &artifact_path_mapping_for_dep_files,
                 )?;
                 command_line_digest_for_dep_files.push_count();
@@ -1126,6 +1406,7 @@ impl RunAction {
             command_line_digest_for_dep_files.finalize(),
             worker,
             remote_worker,
+            param_files.files()?,
         ))
     }
 
@@ -1206,8 +1487,13 @@ impl RunAction {
         ExpandedCommandLineDigestForDepFiles,
         HostSharingRequirements,
     )> {
-        let (expanded, expanded_command_line_digest_for_dep_files, worker, remote_worker) =
-            self.expand_command_line_and_worker(ctx, visitor)?;
+        let (
+            expanded,
+            expanded_command_line_digest_for_dep_files,
+            worker,
+            remote_worker,
+            param_files,
+        ) = self.expand_command_line_and_worker(ctx, visitor)?;
 
         let executor_fs = ctx.executor_fs();
         let fs = executor_fs.fs();
@@ -1225,6 +1511,8 @@ impl RunAction {
 
         let mut extra_env = Vec::new();
         let cli_ctx = DefaultCommandLineContext::new(&executor_fs);
+        self.prepare_param_files(ctx, fs, &param_files, &mut inputs)
+            .await?;
         self.prepare_action_metadata(ctx, &cli_ctx, fs, visitor, &mut inputs, &mut extra_env)
             .await?;
 
@@ -1300,6 +1588,54 @@ impl RunAction {
             expanded_command_line_digest_for_dep_files,
             host_sharing_requirements,
         ))
+    }
+
+    async fn prepare_param_files(
+        &self,
+        ctx: &dyn ActionExecutionCtx,
+        fs: &ArtifactFs,
+        param_files: &[RunActionParamFile],
+        inputs: &mut Vec<CommandExecutionInput>,
+    ) -> buck2_error::Result<()> {
+        for param_file in param_files {
+            let project_rel_path = fs
+                .buck_out_path_resolver()
+                .resolve_gen(&param_file.path, Some(&param_file.content_hash))?;
+            let configuration_path = ctx
+                .materializer()
+                .maybe_eager_configuration_path(fs, &param_file.path)?;
+            let content = param_file.content.clone();
+            let write_path = project_rel_path.clone();
+            ctx.materializer()
+                .declare_write(Box::new(move || {
+                    Ok(vec![WriteRequest {
+                        path: write_path,
+                        content,
+                        is_executable: false,
+                        configuration_path,
+                    }])
+                }))
+                .await
+                .buck_error_context("Failed to write action param file!")?;
+
+            inputs.push(CommandExecutionInput::ActionMetadata(ActionMetadataBlob {
+                digest: param_file.digest.dupe(),
+                path: param_file.path.dupe(),
+                content_hash: param_file.content_hash.clone(),
+            }));
+
+            if let Some(bazel_exec_path) = &param_file.bazel_exec_path {
+                inputs.push(CommandExecutionInput::ArtifactPathAlias {
+                    source_path: project_rel_path,
+                    path: Self::bazel_execroot_path(fs, bazel_exec_path.clone())?,
+                    value: ArtifactValue::file(FileMetadata {
+                        digest: param_file.digest.dupe(),
+                        is_executable: false,
+                    }),
+                });
+            }
+        }
+        Ok(())
     }
 
     /// Handle case when user requested file with action metadata to be generated.
@@ -1838,8 +2174,30 @@ impl Action for RunAction {
         artifact_path_mapping: &dyn ArtifactPathMapper,
     ) -> BuckIndexMap<String, String> {
         let mut cli_rendered = Vec::<String>::new();
-        let mut ctx =
-            RunActionCommandLineContext::new(fs, self.inner.bazel_use_default_shell_env.is_some());
+        let base_output = self.outputs.iter().next().unwrap();
+        let base_bazel_exec_path = if self.inner.bazel_use_default_shell_env.is_some() {
+            let artifact = Artifact::from(base_output.dupe());
+            Some(bazel_artifact_path(artifact.get_path()))
+        } else {
+            None
+        };
+        let param_files = RunActionParamFilesRef::new(
+            base_output.key().owner().dupe(),
+            base_output.get_path().path().to_owned(),
+            base_bazel_exec_path,
+            if self.all_outputs_are_content_based() {
+                BuckOutPathKind::ContentHash
+            } else {
+                BuckOutPathKind::Configuration
+            },
+            DigestConfig::testing_default(),
+        );
+        let mut ctx = RunActionCommandLineContext::new(
+            fs,
+            self.inner.bazel_use_default_shell_env.is_some(),
+            param_files,
+            RunActionParamFileMode::Record,
+        );
         let values = Self::unpack(&self.starlark_values).unwrap();
         values
             .exe

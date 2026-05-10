@@ -48,6 +48,13 @@ use crate::interpreter::rule_defs::artifact_tagging::ArtifactTag;
 use crate::interpreter::rule_defs::cmd_args::command_line_arg_like_type::command_line_arg_like_impl;
 use crate::interpreter::rule_defs::resolved_macro::ResolvedMacro;
 
+#[derive(Debug, buck2_error::Error)]
+#[buck2(tag = Input)]
+enum CommandLineContextError {
+    #[error("param files are only supported when rendering run-action command lines")]
+    ParamFileNotSupported,
+}
+
 pub trait CommandLineArtifactVisitor<'v> {
     fn visit_input(&mut self, input: ArtifactGroup, tags: Vec<&ArtifactTag>);
 
@@ -544,6 +551,18 @@ pub trait CommandLineContext {
 
     /// Result is 'RelativePathBuf' relative to the directory this command will run in. The path points to the file containing expanded macro.
     fn next_macro_file_path(&mut self) -> buck2_error::Result<RelativePathBuf>;
+
+    /// Register a generated parameter file and return the path to pass on the command line.
+    fn add_param_file(
+        &mut self,
+        _content: Vec<u8>,
+    ) -> buck2_error::Result<CommandLineLocation<'_>> {
+        Err(CommandLineContextError::ParamFileNotSupported.into())
+    }
+
+    fn normalize_param_file_arg(&self, arg: String) -> String {
+        arg
+    }
 }
 
 /// CommandLineBuilder accumulates elements into some form of list (which might be an actual Vec, a

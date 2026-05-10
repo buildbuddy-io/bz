@@ -101,7 +101,7 @@ Completed:
 - Bazel analysis now exposes `ctx.file`, `ctx.files`, `ctx.executable`, `ctx.configuration`, `ctx.bin_dir`, `ctx.genfiles_dir`, `ctx.features`, `ctx.disabled_features`, `ctx.coverage_instrumented()`, and `ctx.runfiles(...)` for the rules_go paths reached so far.
 - Bazel `DefaultInfo` now carries `files`, `files_to_run`, `default_runfiles`, and `data_runfiles`; Bazel rule analysis accepts omitted `DefaultInfo` for positional and named Bazel `rule(...)` declarations.
 - Bazel `ctx.actions.args`, `ctx.actions.declare_file`, `ctx.actions.declare_directory`, `ctx.actions.symlink`, `ctx.actions.run_shell`, and named-parameter `ctx.actions.run` are wired to native Buck actions for the direct/transitive input and output shapes reached by rules_go.
-- Bazel command-line `Args` supports the `add`, `add_all`, `add_joined`, direct depset values, hidden depset/input expansion, map_each, uniquify, and param-file API surface reached by rules_go; real param-file action lowering is still pending.
+- Bazel command-line `Args` supports the `add`, `add_all`, `add_joined`, direct depset values, hidden depset/input expansion, map_each, uniquify, and real Bazel-style param-file action lowering reached by rules_go.
 - Bazel user provider instances now report Starlark type `struct`, matching Bazel `StarlarkInfo` behavior used by real rules_go provider helpers, while the abstract `Provider` type remains available for provider APIs and type checking.
 - Bazel `ctx.info_file` and `ctx.version_file` now expose stable/volatile workspace-status artifacts backed by a generic Buck write action.
 - Bazel `File.path`/`dirname` for generated bzlmod external source artifacts now resolve to Buck-owned external-cell materialization paths, so downloaded tools such as the Go SDK are invoked from their real execution-root locations.
@@ -197,6 +197,8 @@ All BuildBuddy measurements below were taken on `/Users/siggi/Code/buildbuddy` f
 | Leaf edit: `server/util/bytebufferpool/bytebufferpool.go` | Buck2 with local action cache | cold same-state rebuild after daemon restart | 126.36s | - | 2357 cached actions, 0 local |
 | Leaf edit: `server/util/bytebufferpool/bytebufferpool.go` | Buck2 with local action cache | cold leaf edit after daemon restart | 131.60s | - | 2343 cached actions, 14 local |
 | Leaf edit: `server/util/bytebufferpool/bytebufferpool.go` | Buck2 with local action cache | warm leaf edit in same daemon | 12.36s | - | 22 commands: 8 cached, 14 local |
+| Leaf edit: `server/util/bytebufferpool/bytebufferpool.go` | Buck2 with Bazel Args param files | warm leaf edit in same daemon | 10.83s | 10.8s | 2 local actions, 4 cached; final GoLink 4.2s |
+| Leaf edit: `server/util/bytebufferpool/bytebufferpool.go` | Buck2 with Bazel Args param files | cold leaf edit after daemon restart | 32.87s | 31.8s | 2355 cached actions, 2 local; final GoLink 5.7s |
 | High invalidation: `server/util/status/status.go` | Bazel 9.1.0 | warm exported-const edit | 15.95s | - | 219 total actions, 217 sandboxed processes, 30 action cache hits |
 | High invalidation: `server/util/status/status.go` | Bazel 9.1.0 | cold reverse edit after seeded output base | 20.20s | - | 219 total actions, 217 sandboxed processes, 4300 action cache hits |
 | High invalidation: `server/util/status/status.go` | Buck2 before generated-repo/materialization caches | warm exported-const edit | 22.29s | - | 120 commands: 28 cached, 92 local |
@@ -248,13 +250,16 @@ Latest leaf-node edit timing comparison, measured by changing
 | Buck2 with local action cache | cold same-state rebuild after daemon restart | 126.36s | 2357 cached actions, 0 local |
 | Buck2 with local action cache | cold leaf edit after daemon restart | 131.60s | 2343 cached actions, 14 local |
 | Buck2 with local action cache | warm leaf edit in same daemon | 12.36s | 22 commands: 8 cached, 14 local |
+| Buck2 with Bazel Args param files | warm leaf edit in same daemon | 10.83s | 2 local actions, 4 cached; final GoLink 4.2s |
+| Buck2 with Bazel Args param files | cold leaf edit after daemon restart | 32.87s | 2355 cached actions, 2 local; final GoLink 5.7s |
 
-The leaf-node runs show the execution-side cutover working: cold same-state rebuilds hit the local
-action cache for every action, and cold leaf edits re-execute the same small affected action set as
-the warm leaf edit. Buck's warm leaf time is now comparable to Bazel's. The remaining cold gap was
-above execution: fresh-daemon bzlmod/load/analysis ran before the small action delta was reused.
-The generated-repo materialization stamps and module-extension cell-graph cache added for the
-high-invalidation benchmark below address the largest bzlmod portions of that cold setup cost.
+The leaf-node runs show the execution-side cutover working: after the Bazel Args param-file cutover,
+the leaf edit re-executes only `GoCompilePkg bytebufferpool.a` and the final `GoLink buildbuddy`.
+The final link command now passes the large rules_go builder argument set through
+`buildbuddy-0.params` instead of an enormous inline archive list. The profiled link segment dropped
+from the earlier 17.8s inline-command critical-path span to 4.2s warm / 5.7s cold. The remaining
+cold leaf gap is now above those two local actions: fresh-daemon setup, bzlmod/load, and analysis
+consume most of the 31.8s engine duration before the cached action graph reaches the link.
 
 Latest high-invalidation edit timing comparison, measured by changing exported API in
 `server/util/status/status.go` in BuildBuddy:
@@ -556,7 +561,6 @@ Implement remaining:
 - Complete `ctx.actions.write` Bazel keyword compatibility as failures require.
 - Complete `ctx.actions.run` metadata/tool/input-manifest/unused-inputs behavior beyond the named executable/arguments/inputs/outputs/env shape reached so far.
 - Complete `ctx.actions.run_shell` parity beyond the direct command/arguments shape reached so far.
-- Lower Bazel Args param files to real action param files instead of accepting the API as a no-op.
 - Add remaining args/depset behavior used by rules_go and later validation repos.
 - exec platform selection sufficient for host builds
 

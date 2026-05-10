@@ -81,6 +81,8 @@ use crate::interpreter::rule_defs::cmd_args::options::CommandLineOptions;
 use crate::interpreter::rule_defs::cmd_args::options::CommandLineOptionsRef;
 use crate::interpreter::rule_defs::cmd_args::options::CommandLineOptionsTrait;
 use crate::interpreter::rule_defs::cmd_args::options::FrozenCommandLineOptions;
+use crate::interpreter::rule_defs::cmd_args::options::ParamFileFormat;
+use crate::interpreter::rule_defs::cmd_args::options::ParamFileOptions;
 use crate::interpreter::rule_defs::cmd_args::options::QuoteStyle;
 use crate::interpreter::rule_defs::cmd_args::options::RelativeOrigin;
 use crate::interpreter::rule_defs::cmd_args::regex::CmdArgsRegex;
@@ -243,7 +245,72 @@ impl<'v, F: Fields<'v>> CommandLineArgLike<'v> for FieldsRef<'v, F> {
                 Ok(())
             }
             Some(options) => {
-                let options = options.to_command_line_options();
+                let mut options = options.to_command_line_options();
+                if let Some(param_file) = options.param_file.and_then(|param_file| {
+                    param_file
+                        .arg_format
+                        .map(|arg_format| (param_file, arg_format))
+                }) {
+                    let (param_file, arg_format) = param_file;
+                    options.param_file = None;
+                    let mut rendered = Vec::new();
+                    let expand_directories = options.expand_directories;
+                    options.wrap_builder(
+                        &mut rendered,
+                        context,
+                        |cli, context| {
+                            for item in self.0.items() {
+                                let item = item.as_command_line_arg();
+                                if expand_directories {
+                                    item.add_to_command_line_expanding_directories(
+                                        cli,
+                                        context,
+                                        artifact_path_mapping,
+                                    )?;
+                                } else {
+                                    item.add_to_command_line(cli, context, artifact_path_mapping)?;
+                                }
+                            }
+                            Ok(())
+                        },
+                        artifact_path_mapping,
+                    )?;
+
+                    if !param_file.use_always && !bazel_param_file_threshold_exceeded(&rendered) {
+                        for arg in rendered {
+                            cli.push_arg(arg);
+                        }
+                        return Ok(());
+                    }
+
+                    let mut retained_args = Vec::new();
+                    let param_file_args = match param_file.format {
+                        ParamFileFormat::Shell | ParamFileFormat::Multiline => rendered,
+                        ParamFileFormat::FlagPerLine => {
+                            let mut param_file_args = Vec::new();
+                            for arg in rendered {
+                                if arg.starts_with("--") {
+                                    param_file_args.push(arg);
+                                } else {
+                                    retained_args.push(arg);
+                                }
+                            }
+                            param_file_args
+                        }
+                    };
+                    let param_file_args = param_file_args
+                        .into_iter()
+                        .map(|arg| context.normalize_param_file_arg(arg))
+                        .collect();
+                    let content = bazel_param_file_content(param_file_args, param_file.format);
+                    let param_file_path = context.add_param_file(content)?.into_string();
+                    cli.push_arg(arg_format.as_str().replace("{}", &param_file_path));
+                    for arg in retained_args {
+                        cli.push_arg(arg);
+                    }
+                    return Ok(());
+                }
+
                 let expand_directories = options.expand_directories;
                 options.wrap_builder(
                     cli,
@@ -515,7 +582,7 @@ impl<'v, A: Fields<'v>, B: Fields<'v>> Fields<'v> for Either<A, B> {
 // These types show up a lot in the frozen heaps, so make sure they don't regress
 assert_eq_size!(StarlarkCmdArgs<'static>, [usize; 8]);
 assert_eq_size!(FrozenStarlarkCmdArgs, [usize; 3]);
-assert_eq_size!(CommandLineOptions<'static>, [usize; 10]);
+assert_eq_size!(CommandLineOptions<'static>, [usize; 11]);
 
 impl<'v> Display for StarlarkCmdArgs<'v> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
@@ -944,6 +1011,65 @@ fn bazel_args_format_literal<'v>(
     Ok(heap.alloc_str(&converted))
 }
 
+fn bazel_param_file_threshold_exceeded(args: &[String]) -> bool {
+    const BAZEL_DEFAULT_MIN_PARAM_FILE_SIZE: usize = 32 * 1024;
+    args.iter().map(|arg| arg.len() + 1).sum::<usize>() > BAZEL_DEFAULT_MIN_PARAM_FILE_SIZE
+}
+
+fn bazel_param_file_content(args: Vec<String>, format: ParamFileFormat) -> Vec<u8> {
+    let mut content = Vec::new();
+    for arg in args {
+        match format {
+            ParamFileFormat::Shell => {
+                content.extend_from_slice(bazel_shell_escape(&arg).as_bytes());
+            }
+            ParamFileFormat::Multiline | ParamFileFormat::FlagPerLine => {
+                content.extend_from_slice(arg.as_bytes());
+            }
+        }
+        content.push(b'\n');
+    }
+    content
+}
+
+fn bazel_shell_escape(arg: &str) -> String {
+    if arg.is_empty() {
+        return "''".to_owned();
+    }
+
+    if arg.bytes().all(bazel_shell_safe_char) {
+        return arg.to_owned();
+    }
+
+    if !arg.starts_with('~')
+        && arg
+            .bytes()
+            .all(|byte| bazel_shell_safe_char(byte) || byte == b'~')
+    {
+        return arg.to_owned();
+    }
+
+    let mut escaped = String::with_capacity(arg.len() + 2);
+    escaped.push('\'');
+    for ch in arg.chars() {
+        if ch == '\'' {
+            escaped.push_str("'\\''");
+        } else {
+            escaped.push(ch);
+        }
+    }
+    escaped.push('\'');
+    escaped
+}
+
+fn bazel_shell_safe_char(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric()
+        || matches!(
+            byte,
+            b'@' | b'%' | b'-' | b'_' | b'+' | b':' | b',' | b'.' | b'/'
+        )
+}
+
 fn bazel_args_values<'v>(value: Value<'v>, heap: Heap<'v>) -> starlark::Result<Vec<Value<'v>>> {
     if BazelDepset::from_value(value).is_some() {
         return bazel_depset_to_list(value);
@@ -1250,27 +1376,48 @@ fn cmd_args_methods(builder: &mut MethodsBuilder) {
     /// Records Bazel param-file preferences. Buck's command-line lowering keeps the arguments inline
     /// until a native param-file action shape is available here.
     fn use_param_file<'v>(
-        this: StarlarkCommandLineMut<'v>,
+        mut this: StarlarkCommandLineMut<'v>,
         #[starlark(default = "@%s")] param_file_arg: &str,
         #[starlark(require = named, default = false)] use_always: bool,
+        eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<StarlarkCommandLineMut<'v>> {
-        let _unused = (param_file_arg, use_always);
+        let arg_format = bazel_args_format_literal(param_file_arg, eval.heap(), "param_file_arg")?;
+        let options = this.borrow.options_mut();
+        let param_file = options
+            .param_file
+            .get_or_insert_with(|| Box::new(ParamFileOptions::default()));
+        param_file.arg_format = Some(arg_format);
+        param_file.use_always = use_always;
         Ok(this)
     }
 
     /// Records Bazel param-file formatting preferences.
     fn set_param_file_format<'v>(
-        this: StarlarkCommandLineMut<'v>,
+        mut this: StarlarkCommandLineMut<'v>,
         #[starlark(require = pos)] format: &str,
     ) -> starlark::Result<StarlarkCommandLineMut<'v>> {
-        match format {
-            "shell" | "multiline" | "flag_per_line" => Ok(this),
-            _ => Err(buck2_error::buck2_error!(
+        let format = match ParamFileFormat::parse(format) {
+            Ok(format) => format,
+            Err(_) => return Err(buck2_error::buck2_error!(
                 buck2_error::ErrorTag::Input,
                 "Invalid value for parameter `format`: expected one of `shell`, `multiline`, `flag_per_line`"
             )
             .into()),
+        };
+        let options = this.borrow.options_mut();
+        let param_file = options
+            .param_file
+            .get_or_insert_with(|| Box::new(ParamFileOptions::default()));
+        if param_file.format_set {
+            return Err(buck2_error::buck2_error!(
+                buck2_error::ErrorTag::Input,
+                "set_param_file_format() may only be called once"
+            )
+            .into());
         }
+        param_file.format = format;
+        param_file.format_set = true;
+        Ok(this)
     }
 
     /// Make all artifact paths relative to a given location. Typically used when the command
