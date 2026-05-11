@@ -178,6 +178,57 @@ fn test_eval_build_file() {
     assert_eq!(vec!["invoke_some-exported", "java"], target_names);
 }
 
+#[test]
+fn test_bazel_package_default_visibility_after_target() {
+    let mut tester = Tester::new().unwrap();
+    tester.additional_globals(register_builtin_providers);
+
+    tester
+        .add_import(
+            &ImportPath::testing_new("root//:rules.bzl"),
+            indoc!(
+                r#"
+                def _impl(ctx):
+                    return DefaultInfo()
+
+                simple = rule(
+                    impl = _impl,
+                    attrs = {},
+                )
+            "#
+            ),
+        )
+        .unwrap();
+
+    let build_path = BuildFilePath::testing_new("root//some/package:BUILD");
+    let eval_result = tester
+        .eval_build_file(
+            &build_path,
+            indoc!(
+                r#"
+                load("@root//:rules.bzl", "simple")
+
+                simple(name = "before", visibility = ["//visibility:public"])
+
+                package(default_visibility = ["//some/..."])
+
+                simple(name = "after")
+                "#
+            ),
+            PackageListing::testing_files(&[]),
+        )
+        .unwrap();
+
+    let after = eval_result
+        .targets()
+        .get(TargetNameRef::unchecked_new("after"))
+        .unwrap();
+    assert_eq!(
+        &VisibilitySpecification::testing_parse(&["root//some/..."]),
+        after.visibility().unwrap(),
+    );
+}
+
 fn cells() -> CellsData {
     let BuckConfigBasedCells { cell_resolver, .. } =
         futures::executor::block_on(BuckConfigBasedCells::testing_parse_with_file_ops(

@@ -1003,6 +1003,7 @@ impl BuckConfigBasedCells {
             let patches: Vec<BzlmodPatchConfig> =
                 serde_json::from_str(get_config(section, "patches")?)
                     .buck_error_context("Invalid bzlmod patch configuration")?;
+            let module_patch_strip = get_config(section, "patch_strip")?.parse()?;
             Ok(ExternalCellOrigin::Bzlmod(BzlmodCellSetup {
                 module_name: get_config(section, "module_name")?.into(),
                 version: get_config(section, "version")?.into(),
@@ -1027,10 +1028,12 @@ impl BuckConfigBasedCells {
                         .map(|patch| BzlmodPatch {
                             url: Arc::from(patch.url),
                             integrity: Arc::from(patch.integrity),
+                            path: patch.path.map(Arc::from),
+                            patch_strip: patch.patch_strip.unwrap_or(module_patch_strip),
                         })
                         .collect(),
                 ),
-                patch_strip: get_config(section, "patch_strip")?.parse()?,
+                patch_strip: module_patch_strip,
             }))
         } else if value == "bzlmod_generated" {
             let section = &format!("external_cell_{}", cell.as_str());
@@ -1609,7 +1612,7 @@ struct BcrResolutionCacheKey {
 struct BcrDiscoveryCacheKey {
     root_deps: Vec<(String, String)>,
     archive_overrides: Vec<BcrDiscoveryArchiveOverrideKey>,
-    single_version_overrides: Vec<(String, String)>,
+    single_version_overrides: Vec<BcrDiscoverySingleVersionOverrideKey>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize)]
@@ -1623,10 +1626,18 @@ struct BcrDiscoveryArchiveOverrideKey {
     patch_strip: Option<u32>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize)]
+struct BcrDiscoverySingleVersionOverrideKey {
+    module_name: String,
+    version: String,
+    patches: Vec<String>,
+    patch_strip: Option<u32>,
+}
+
 fn bcr_discovery_cache_key(
     root_deps: &[BazelDep],
     archive_overrides: &BTreeMap<String, BzlmodArchiveOverride>,
-    single_version_overrides: &BTreeMap<String, String>,
+    single_version_overrides: &BTreeMap<String, BzlmodSingleVersionOverride>,
 ) -> BcrDiscoveryCacheKey {
     let mut root_deps = root_deps
         .iter()
@@ -1651,7 +1662,14 @@ fn bcr_discovery_cache_key(
             .collect(),
         single_version_overrides: single_version_overrides
             .iter()
-            .map(|(name, version)| (name.clone(), version.clone()))
+            .map(
+                |(name, version_override)| BcrDiscoverySingleVersionOverrideKey {
+                    module_name: name.clone(),
+                    version: version_override.version.clone(),
+                    patches: version_override.patches.clone(),
+                    patch_strip: version_override.patch_strip,
+                },
+            )
             .collect(),
     }
 }
@@ -1735,8 +1753,14 @@ type BzlmodCellAliasesByCell = StdBuckHashMap<String, BzlmodCellAliasMap>;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct BzlmodPatchConfig {
+    #[serde(default)]
     url: String,
+    #[serde(default)]
     integrity: String,
+    #[serde(default)]
+    path: Option<String>,
+    #[serde(default)]
+    patch_strip: Option<u32>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -1862,6 +1886,13 @@ struct BzlmodArchiveOverride {
     patch_strip: Option<u32>,
 }
 
+#[derive(Clone, Debug)]
+struct BzlmodSingleVersionOverride {
+    version: String,
+    patches: Vec<String>,
+    patch_strip: Option<u32>,
+}
+
 async fn get_bazel_module_resolution(
     cell_path: &CellRootPath,
     file_ops: &mut dyn ConfigParserFileOps,
@@ -1872,6 +1903,7 @@ async fn get_bazel_module_resolution(
     let mut aliases = BazelModuleCellAliases::default();
     let mut root_deps = Vec::new();
     let mut archive_overrides = BTreeMap::new();
+    let mut single_version_overrides = BTreeMap::new();
     let mut root_module_lines = Vec::new();
     let mut seen = BTreeSet::new();
     let mut stack = vec!["MODULE.bazel".to_owned()];
@@ -1916,8 +1948,17 @@ async fn get_bazel_module_resolution(
         }
 
         for call in collect_bzl_calls(&lines, "archive_override(") {
-            let archive_override = bzlmod_archive_override_from_call(&call)?;
+            let archive_override = bzlmod_archive_override_from_call(&module_file, &call)?;
             archive_overrides.insert(archive_override.module_name.clone(), archive_override);
+        }
+
+        for call in collect_bzl_calls(&lines, "single_version_override(") {
+            let Some((module_name, single_version_override)) =
+                bzlmod_single_version_override_from_call(&module_file, &call)?
+            else {
+                continue;
+            };
+            single_version_overrides.insert(module_name, single_version_override);
         }
 
         for call in collect_bzl_calls(&lines, "git_override(") {
@@ -1949,12 +1990,11 @@ async fn get_bazel_module_resolution(
         }
     }
 
-    let single_version_overrides = bzlmod_single_version_overrides_from_lines(&root_module_lines);
     for dep in &mut root_deps {
         if archive_overrides.contains_key(&dep.name) {
             dep.version.clear();
-        } else if let Some(version) = single_version_overrides.get(&dep.name) {
-            dep.version = version.clone();
+        } else if let Some(version_override) = single_version_overrides.get(&dep.name) {
+            dep.version = version_override.version.clone();
         }
     }
 
@@ -2000,7 +2040,7 @@ async fn resolve_bcr_modules(
     root_deps: Vec<BazelDep>,
     root_module: RootBzlmodModule,
     archive_overrides: BTreeMap<String, BzlmodArchiveOverride>,
-    single_version_overrides: BTreeMap<String, String>,
+    single_version_overrides: BTreeMap<String, BzlmodSingleVersionOverride>,
     bzlmod_module_extension_results_complete: bool,
     bzlmod_module_extension_results: &[BzlmodEvaluatedModuleExtension],
     persistent_cache_project_fs: Option<&ProjectRoot>,
@@ -2041,7 +2081,7 @@ async fn resolve_bcr_modules_with_cache(
     root_deps: Vec<BazelDep>,
     root_module: RootBzlmodModule,
     archive_overrides: BTreeMap<String, BzlmodArchiveOverride>,
-    single_version_overrides: BTreeMap<String, String>,
+    single_version_overrides: BTreeMap<String, BzlmodSingleVersionOverride>,
     bzlmod_module_extension_results_complete: bool,
     bzlmod_module_extension_results: &[BzlmodEvaluatedModuleExtension],
     persistent_cache_project_fs: Option<&ProjectRoot>,
@@ -2074,6 +2114,8 @@ async fn resolve_bcr_modules_with_cache(
         root_deps,
         root_module,
         &discovered,
+        &archive_overrides,
+        &single_version_overrides,
         bzlmod_module_extension_results_complete,
         bzlmod_module_extension_results,
     )?;
@@ -2087,7 +2129,7 @@ async fn resolve_bcr_modules_with_cache(
 async fn discover_bcr_modules_with_cache(
     root_deps: &[BazelDep],
     archive_overrides: &BTreeMap<String, BzlmodArchiveOverride>,
-    single_version_overrides: &BTreeMap<String, String>,
+    single_version_overrides: &BTreeMap<String, BzlmodSingleVersionOverride>,
     cache_key: BcrDiscoveryCacheKey,
     persistent_cache_project_fs: Option<&ProjectRoot>,
 ) -> buck2_error::Result<Arc<DiscoveredBcrModules>> {
@@ -2190,7 +2232,7 @@ fn write_persistent_bcr_discovery_cache(
 async fn discover_bcr_modules_with_client(
     root_deps: &[BazelDep],
     archive_overrides: &BTreeMap<String, BzlmodArchiveOverride>,
-    single_version_overrides: &BTreeMap<String, String>,
+    single_version_overrides: &BTreeMap<String, BzlmodSingleVersionOverride>,
     client: &HttpClient,
 ) -> buck2_error::Result<DiscoveredBcrModules> {
     let registry = "https://bcr.bazel.build";
@@ -2234,6 +2276,8 @@ fn resolve_bcr_modules_from_discovered(
     root_deps: Vec<BazelDep>,
     root_module: RootBzlmodModule,
     discovered: &DiscoveredBcrModules,
+    archive_overrides: &BTreeMap<String, BzlmodArchiveOverride>,
+    single_version_overrides: &BTreeMap<String, BzlmodSingleVersionOverride>,
     bzlmod_module_extension_results_complete: bool,
     bzlmod_module_extension_results: &[BzlmodEvaluatedModuleExtension],
 ) -> buck2_error::Result<BcrResolution> {
@@ -2373,9 +2417,24 @@ fn resolve_bcr_modules_from_discovered(
             &module.dep.name,
             &module.dep.version,
         )?;
-        let patch_configs = bzlmod_patch_configs(registry, &module.dep, &module.source_json);
+        let archive_override = archive_overrides.get(&module.dep.name);
+        let single_version_override = single_version_overrides.get(&module.dep.name);
+        let patch_configs = bzlmod_patch_configs(
+            registry,
+            &module.dep,
+            &module.source_json,
+            archive_override,
+            single_version_override,
+        );
         let patches_json = serde_json::to_string(&patch_configs)
             .buck_error_context("Error serializing bzlmod patch configuration")?;
+        let patch_strip = archive_override
+            .and_then(|archive_override| archive_override.patch_strip)
+            .or_else(|| {
+                single_version_override.and_then(|version_override| version_override.patch_strip)
+            })
+            .or(module.source_json.patch_strip)
+            .unwrap_or(0);
         let cell_name = bzlmod_cell_name(&canonical_repo_name);
         resolved.insert(
             cell_name.clone(),
@@ -2390,7 +2449,7 @@ fn resolve_bcr_modules_from_discovered(
                 strip_prefix: module.source_json.strip_prefix.clone(),
                 archive_type: module.source_json.archive_type.clone(),
                 patches_json,
-                patch_strip: module.source_json.patch_strip.unwrap_or(0),
+                patch_strip,
             }),
         );
     }
@@ -4009,14 +4068,14 @@ fn schedule_bcr_module_fetch(
     client: &HttpClient,
     mut dep: BazelDep,
     archive_overrides: &BTreeMap<String, BzlmodArchiveOverride>,
-    single_version_overrides: &BTreeMap<String, String>,
+    single_version_overrides: &BTreeMap<String, BzlmodSingleVersionOverride>,
     scheduled: &mut BTreeSet<(String, String)>,
     pending: &mut FuturesUnordered<BcrModuleFetch>,
 ) {
     if archive_overrides.contains_key(&dep.name) {
         dep.version.clear();
-    } else if let Some(version) = single_version_overrides.get(&dep.name) {
-        dep.version = version.clone();
+    } else if let Some(version_override) = single_version_overrides.get(&dep.name) {
+        dep.version = version_override.version.clone();
     }
     let key = (dep.name.clone(), dep.version.clone());
     if scheduled.insert(key) {
@@ -4335,7 +4394,10 @@ fn bzlmod_module_aliases(lines: &[String]) -> Vec<String> {
     aliases
 }
 
-fn bzlmod_archive_override_from_call(call: &str) -> buck2_error::Result<BzlmodArchiveOverride> {
+fn bzlmod_archive_override_from_call(
+    current_module_file: &str,
+    call: &str,
+) -> buck2_error::Result<BzlmodArchiveOverride> {
     let module_name = bzl_string_arg(call, "module_name").ok_or_else(|| {
         buck2_error!(
             buck2_error::ErrorTag::Input,
@@ -4362,24 +4424,9 @@ fn bzlmod_archive_override_from_call(call: &str) -> buck2_error::Result<BzlmodAr
     let strip_prefix = bzl_string_arg(call, "strip_prefix");
     let archive_type =
         bzl_string_arg(call, "type").or_else(|| bzl_string_arg(call, "archive_type"));
-    let patches = bzl_call_named_arg_value(call, "patches")
-        .as_deref()
-        .and_then(|value| bzl_string_sequence_expression_raw_values(value, &[]))
-        .unwrap_or_default();
-    let patch_strip = bzl_call_named_arg_value(call, "patch_strip")
-        .as_deref()
-        .and_then(bzl_integer_expression_value)
-        .map(|value| {
-            u32::try_from(value).map_err(|_| {
-                buck2_error!(
-                    buck2_error::ErrorTag::Input,
-                    "archive_override for module `{}` has negative patch_strip `{}`",
-                    module_name,
-                    value
-                )
-            })
-        })
-        .transpose()?;
+    let patches = bzlmod_override_patch_paths_from_call(current_module_file, call)?;
+    let patch_strip =
+        bzlmod_override_patch_strip_from_call("archive_override", &module_name, call)?;
     Ok(BzlmodArchiveOverride {
         module_name,
         url,
@@ -4391,15 +4438,71 @@ fn bzlmod_archive_override_from_call(call: &str) -> buck2_error::Result<BzlmodAr
     })
 }
 
-fn bzlmod_single_version_overrides_from_lines(lines: &[String]) -> BTreeMap<String, String> {
-    collect_bzl_calls(lines, "single_version_override(")
+fn bzlmod_single_version_override_from_call(
+    current_module_file: &str,
+    call: &str,
+) -> buck2_error::Result<Option<(String, BzlmodSingleVersionOverride)>> {
+    let Some(module_name) = bzl_string_arg(call, "module_name") else {
+        return Ok(None);
+    };
+    let Some(version) = bzl_string_arg(call, "version") else {
+        return Ok(None);
+    };
+    let patches = bzlmod_override_patch_paths_from_call(current_module_file, call)?;
+    let patch_strip =
+        bzlmod_override_patch_strip_from_call("single_version_override", &module_name, call)?;
+    Ok(Some((
+        module_name,
+        BzlmodSingleVersionOverride {
+            version,
+            patches,
+            patch_strip,
+        },
+    )))
+}
+
+fn bzlmod_override_patch_paths_from_call(
+    current_module_file: &str,
+    call: &str,
+) -> buck2_error::Result<Vec<String>> {
+    let patches = bzl_call_named_arg_value(call, "patches")
+        .as_deref()
+        .and_then(|value| bzl_string_sequence_expression_raw_values(value, &[]))
+        .unwrap_or_default();
+    patches
         .into_iter()
-        .filter_map(|call| {
-            let module_name = bzl_string_arg(&call, "module_name")?;
-            let version = bzl_string_arg(&call, "version")?;
-            Some((module_name, version))
+        .map(|label| {
+            module_include_to_path(current_module_file, &label).ok_or_else(|| {
+                buck2_error!(
+                    buck2_error::ErrorTag::Input,
+                    "bzlmod override patch must be a root-module label, got `{}`",
+                    label
+                )
+            })
         })
         .collect()
+}
+
+fn bzlmod_override_patch_strip_from_call(
+    function: &str,
+    module_name: &str,
+    call: &str,
+) -> buck2_error::Result<Option<u32>> {
+    bzl_call_named_arg_value(call, "patch_strip")
+        .as_deref()
+        .and_then(bzl_integer_expression_value)
+        .map(|value| {
+            u32::try_from(value).map_err(|_| {
+                buck2_error!(
+                    buck2_error::ErrorTag::Input,
+                    "{} for module `{}` has negative patch_strip `{}`",
+                    function,
+                    module_name,
+                    value
+                )
+            })
+        })
+        .transpose()
 }
 
 fn bzlmod_root_module_from_lines(lines: &[String]) -> buck2_error::Result<RootBzlmodModule> {
@@ -5197,8 +5300,10 @@ fn bzlmod_patch_configs(
     registry: &str,
     dep: &BazelDep,
     source_json: &BcrSourceJson,
+    archive_override: Option<&BzlmodArchiveOverride>,
+    single_version_override: Option<&BzlmodSingleVersionOverride>,
 ) -> Vec<BzlmodPatchConfig> {
-    source_json
+    let mut patches = source_json
         .patches
         .as_ref()
         .into_iter()
@@ -5209,8 +5314,37 @@ fn bzlmod_patch_configs(
                 dep.name, dep.version, file
             ),
             integrity: integrity.clone(),
+            path: None,
+            patch_strip: source_json.patch_strip,
         })
-        .collect()
+        .collect::<Vec<_>>();
+    if let Some(archive_override) = archive_override {
+        patches.extend(
+            archive_override
+                .patches
+                .iter()
+                .map(|path| BzlmodPatchConfig {
+                    url: String::new(),
+                    integrity: String::new(),
+                    path: Some(path.clone()),
+                    patch_strip: archive_override.patch_strip,
+                }),
+        );
+    }
+    if let Some(single_version_override) = single_version_override {
+        patches.extend(
+            single_version_override
+                .patches
+                .iter()
+                .map(|path| BzlmodPatchConfig {
+                    url: String::new(),
+                    integrity: String::new(),
+                    path: Some(path.clone()),
+                    patch_strip: single_version_override.patch_strip,
+                }),
+        );
+    }
+    patches
 }
 
 fn bzlmod_selected_keys_dependency_first(

@@ -170,6 +170,9 @@ Completed:
 - Bzlmod cell-graph module-extension results are persisted under `buck-out/v2/cache` per extension, matching Bazel's independent module-extension values. Fresh daemons reuse unchanged extension results and evaluate only the extensions whose usage key changed.
 - Local action-cache hits now return successful command results without acquiring output claims. This matches Bazel's action-cache hit model, where `ActionCacheChecker` returns without an execution token and injects cached output metadata instead of reserving a writer for outputs that will not be mutated.
 - Bazel `cfg = "exec"` and resolved Bazel toolchain implementations now use the Bazel host execution platform when Buck execution platforms are not configured. Resolved Bazel toolchain implementations carry the parent exec configuration even when the implementation target is an ordinary Starlark rule, matching Bazel's `native.toolchain(toolchain = ...)` model rather than Buck's native-only toolchain rule invariant.
+- `platform_common` now exposes Bazel's `ConstraintSettingInfo` and `PlatformInfo` provider constructors in addition to the existing platform provider exports.
+- BUILD-file `package(default_visibility = ...)` follows Bazel's at-most-once semantics without rejecting calls after earlier target declarations; later targets see the updated package default visibility.
+- Root-module `single_version_override(...)` and `archive_override(...)` patches are included in bzlmod external-cell materialization, and each registry/override patch carries its own strip level. This matches Bazel's patched module contents for BuildBuddy's `gazelle` and `googleapis` overrides.
 - BuildBuddy's current server target now builds with Buck2 actions:
 
 ```sh
@@ -180,6 +183,14 @@ BUCK2_HARD_ERROR=false \
 ```
 
 The successful run executed 2357 local commands and did not call `bazel build`.
+
+- BuildBuddy's enterprise server target now builds with the Bazel-built Buck2 binary:
+
+```sh
+/Users/siggi/Code/buck2/bazel-bin/app/buck2/buck2_bin build enterprise/server
+```
+
+The first successful run executed 4721 commands with 1159 cache hits and 3562 local actions. A follow-up warm run completed with 4721/4721 cache hits and no local actions.
 
 ### Benchmark Summary
 

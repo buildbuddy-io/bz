@@ -161,12 +161,17 @@ fn bzlmod_materialization_lock(path: &ProjectRelativePath) -> Arc<tokio::sync::M
 struct BzlmodExtractIoRequest {
     setup: BzlmodCellSetup,
     archive: ProjectRelativePathBuf,
-    patch_files: Vec<ProjectRelativePathBuf>,
+    patch_files: Vec<BzlmodPatchFile>,
     temp: ProjectRelativePathBuf,
     cache_repo: ProjectRelativePathBuf,
     cache_tmp: ProjectRelativePathBuf,
     cache_alias: ProjectRelativePathBuf,
     dest: ProjectRelativePathBuf,
+}
+
+struct BzlmodPatchFile {
+    path: ProjectRelativePathBuf,
+    patch_strip: u32,
 }
 
 impl IoRequest for BzlmodExtractIoRequest {
@@ -205,7 +210,7 @@ impl IoRequest for BzlmodExtractIoRequest {
         copy_dir_contents(&source, &cache_tmp)?;
 
         for patch in &self.patch_files {
-            apply_patch(project_fs, &cache_tmp, patch, self.setup.patch_strip)?;
+            apply_patch(project_fs, &cache_tmp, &patch.path, patch.patch_strip)?;
         }
 
         if let Some(parent) = cache_repo.parent() {
@@ -1551,6 +1556,8 @@ fn bzlmod_repo_contents_cache_key(setup: &BzlmodCellSetup) -> String {
     for patch in setup.patches.iter() {
         update_bzlmod_repo_contents_cache_key(&mut hasher, &patch.url);
         update_bzlmod_repo_contents_cache_key(&mut hasher, &patch.integrity);
+        update_bzlmod_repo_contents_cache_key(&mut hasher, patch.path.as_deref().unwrap_or(""));
+        update_bzlmod_repo_contents_cache_key(&mut hasher, &patch.patch_strip.to_string());
     }
     hasher.finalize().to_hex().to_string()
 }
@@ -2088,7 +2095,13 @@ async fn download_impl(
         .patches
         .iter()
         .enumerate()
-        .map(|(idx, _)| patch_dir.join(ForwardRelativePath::new(&format!("{idx}.patch")).unwrap()))
+        .map(|(idx, patch)| BzlmodPatchFile {
+            path: match patch.path.as_deref() {
+                Some(path) => ProjectRelativePathBuf::unchecked_new(path.to_owned()),
+                None => patch_dir.join(ForwardRelativePath::new(&format!("{idx}.patch")).unwrap()),
+            },
+            patch_strip: patch.patch_strip,
+        })
         .collect();
 
     io.execute_io(
@@ -2125,12 +2138,15 @@ async fn download_impl(
     .await?;
 
     for (patch, output) in setup.patches.iter().zip(&patch_files) {
+        if patch.path.is_some() {
+            continue;
+        }
         let checksum = Checksum::new(None, Some(&integrity_to_sha256_hex(&patch.integrity)?))?;
         http_download(
             &client,
             project_root,
             digest_config.dupe(),
-            output,
+            &output.path,
             &patch.url,
             &checksum,
             false,

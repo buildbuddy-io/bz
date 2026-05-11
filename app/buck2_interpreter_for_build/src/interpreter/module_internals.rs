@@ -354,8 +354,6 @@ enum OncallErrors {
 enum BazelPackageError {
     #[error("'package' can only be used once per BUILD file")]
     AtMostOnce,
-    #[error("package() must be called before targets are declared")]
-    AfterTargets,
 }
 
 impl ModuleInternals {
@@ -474,10 +472,6 @@ impl ModuleInternals {
             return Err(BazelPackageError::AtMostOnce.into());
         }
         *declared = true;
-
-        if matches!(&*self.state.borrow(), State::RecordingTargets(_)) {
-            return Err(BazelPackageError::AfterTargets.into());
-        }
 
         let current = self.super_package.borrow();
         let next = SuperPackage::new(
