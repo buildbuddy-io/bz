@@ -352,7 +352,7 @@ fn coercing_src_to_path_works() -> buck2_error::Result<()> {
 }
 
 #[test]
-fn bazel_label_allows_nested_assumed_source_file_labels() -> buck2_error::Result<()> {
+fn bazel_label_uses_package_relative_file_labels() -> buck2_error::Result<()> {
     Heap::temp(|heap| {
         let cell_resolver = cells(None)?.1;
         let cell_alias_resolver = cells(None)?.0;
@@ -382,10 +382,10 @@ fn bazel_label_allows_nested_assumed_source_file_labels() -> buck2_error::Result
         )?;
 
         match value {
-            CoercedAttr::SourceFile(path) => {
-                assert_eq!("plugins/bazel-sandbox.js", path.path().as_str());
+            CoercedAttr::Dep(label) => {
+                assert_eq!("root//foo:plugins/bazel-sandbox.js", label.to_string());
             }
-            value => panic!("expected source file, got {value:?}"),
+            value => panic!("expected dependency label, got {value:?}"),
         }
 
         Ok(())

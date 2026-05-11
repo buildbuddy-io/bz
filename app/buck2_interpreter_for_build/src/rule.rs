@@ -373,11 +373,11 @@ enum RuleError {
     BazelInitializerChangedName,
 }
 
-fn bazel_build_setting_default_attr(
+fn bazel_build_setting_attrs(
     build_setting: Option<Value<'_>>,
-) -> buck2_error::Result<Option<(String, Attribute)>> {
+) -> buck2_error::Result<Vec<(String, Attribute)>> {
     let Some(build_setting_value) = build_setting else {
-        return Ok(None);
+        return Ok(Vec::new());
     };
     let Some(build_setting) = StructRef::from_value(build_setting_value) else {
         return Err(RuleError::InvalidBazelBuildSetting(build_setting_value.to_repr()).into());
@@ -394,10 +394,22 @@ fn bazel_build_setting_default_attr(
         "string_list" => AttrType::list(AttrType::string()),
         other => return Err(RuleError::UnsupportedBazelBuildSettingType(other.to_owned()).into()),
     };
-    Ok(Some((
-        "build_setting_default".to_owned(),
-        Attribute::new(None, "", attr_type)?,
-    )))
+    Ok(vec![
+        (
+            "build_setting_default".to_owned(),
+            Attribute::new(None, "", attr_type)?,
+        ),
+        (
+            "help".to_owned(),
+            Attribute::new(
+                Some(Arc::new(CoercedAttr::String(StringLiteral(ArcStr::from(
+                    "",
+                ))))),
+                "",
+                AttrType::string(),
+            )?,
+        ),
+    ])
 }
 
 fn add_bazel_common_implicit_attrs(
@@ -719,8 +731,9 @@ impl<'v> StarlarkRuleCallable<'v> {
             })
             .collect::<buck2_error::Result<Vec<(String, Attribute)>>>()?;
         let is_bazel_build_setting = build_setting.is_some();
-        if let Some(attr) = bazel_build_setting_default_attr(build_setting)? {
-            sorted_validated_attrs.push(attr);
+        let build_setting_attrs = bazel_build_setting_attrs(build_setting)?;
+        if !build_setting_attrs.is_empty() {
+            sorted_validated_attrs.extend(build_setting_attrs);
             sorted_validated_attrs.sort_by(|(a, _), (b, _)| a.cmp(b));
         }
         add_bazel_common_implicit_attrs(&mut sorted_validated_attrs)?;

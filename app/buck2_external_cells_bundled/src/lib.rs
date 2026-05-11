@@ -155,5 +155,23 @@ mod tests {
                     .unwrap()
                     .contains("host_xcodes")
         }));
+        assert!(c.files.iter().any(|file| {
+            file.path == "tools/test/BUILD.bazel"
+                && std::str::from_utf8(file.contents)
+                    .unwrap()
+                    .contains("collect_cc_coverage")
+        }));
+        assert!(c.files.iter().any(|file| {
+            file.path == "tools/python/BUILD.bazel"
+                && std::str::from_utf8(file.contents)
+                    .unwrap()
+                    .contains("python_bootstrap_template.txt")
+        }));
+        assert!(c.files.iter().any(|file| {
+            file.path == "tools/zip/BUILD.bazel"
+                && std::str::from_utf8(file.contents)
+                    .unwrap()
+                    .contains("unzip_fdo")
+        }));
     }
 }

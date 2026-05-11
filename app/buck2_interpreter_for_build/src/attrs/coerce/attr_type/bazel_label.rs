@@ -30,6 +30,18 @@ impl AttrTypeCoerce for BazelLabelAttrType {
         value: Value,
     ) -> buck2_error::Result<CoercedAttr> {
         if let Some(value_str) = value.unpack_str() {
+            if ctx.is_bazel_compat_cell() {
+                return self
+                    .dep
+                    .coerce_item(configurable, ctx, value)
+                    .map_err(|dep_error| {
+                        buck2_error::buck2_error!(
+                            buck2_error::ErrorTag::Input,
+                            "could not coerce Bazel label as dependency ({:#})",
+                            dep_error
+                        )
+                    });
+            }
             if !looks_like_label(value_str) {
                 if let Ok(value) = self.source.coerce_item(configurable, ctx, value) {
                     return Ok(value);

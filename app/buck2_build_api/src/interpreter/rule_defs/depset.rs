@@ -196,6 +196,41 @@ impl<'v, V: ValueLike<'v>> BazelDepsetGen<'v, V> {
             })
     }
 
+    fn count_unique_values_up_to(
+        &self,
+        count: &mut usize,
+        seen_values: &mut SmallSet<Value<'v>>,
+        seen_depsets: &mut SmallSet<Value<'v>>,
+        limit: usize,
+    ) -> starlark::Result<()> {
+        for value in &self.direct {
+            let value = value.to_value();
+            if seen_values.insert_hashed(Hashed::new_unchecked(bazel_depset_hash(value)?, value)) {
+                *count += 1;
+                if *count > limit {
+                    return Ok(());
+                }
+            }
+        }
+
+        for transitive in &self.transitive {
+            let transitive = transitive.to_value();
+            if seen_depsets.insert_hashed(bazel_depset_identity_hash(transitive)) {
+                depset_from_value(transitive)?.count_unique_values_up_to(
+                    count,
+                    seen_values,
+                    seen_depsets,
+                    limit,
+                )?;
+                if *count > limit {
+                    return Ok(());
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     fn for_each_command_line_value(
         &self,
         values: &mut SmallSet<Value<'v>>,
@@ -462,6 +497,20 @@ pub fn bazel_depset_to_list<'v>(value: Value<'v>) -> starlark::Result<Vec<Value<
     seen_depsets.insert_hashed(bazel_depset_identity_hash(value));
     depset_from_value(value)?.collect_to_list(&mut values, &mut seen_values, &mut seen_depsets)?;
     Ok(values)
+}
+
+pub fn bazel_depset_is_singleton<'v>(value: Value<'v>) -> starlark::Result<bool> {
+    let mut count = 0;
+    let mut seen_values = SmallSet::new();
+    let mut seen_depsets = SmallSet::new();
+    seen_depsets.insert_hashed(bazel_depset_identity_hash(value));
+    depset_from_value(value)?.count_unique_values_up_to(
+        &mut count,
+        &mut seen_values,
+        &mut seen_depsets,
+        1,
+    )?;
+    Ok(count == 1)
 }
 
 fn check_element_type(element_type: &mut Option<String>, value: Value) -> buck2_error::Result<()> {

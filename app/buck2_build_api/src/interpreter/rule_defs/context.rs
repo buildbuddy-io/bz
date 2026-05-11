@@ -1481,6 +1481,21 @@ fn bazel_files_from_attr_value<'v>(value: Value<'v>) -> buck2_error::Result<Vec<
     Ok(files)
 }
 
+fn bazel_executable_from_attr_value<'v>(
+    value: Value<'v>,
+) -> buck2_error::Result<Option<Value<'v>>> {
+    if value.is_none() {
+        return Ok(None);
+    }
+    if let Some(dep) = Dependency::from_value(value) {
+        return dep.files_to_run_executable();
+    }
+    if value.downcast_ref::<StarlarkArtifact>().is_some() {
+        return Ok(Some(value));
+    }
+    Ok(None)
+}
+
 fn analysis_context_bazel_file_structs_from_attrs<'v>(
     heap: Heap<'v>,
     attrs: ValueOfUnchecked<'v, StructRef<'static>>,
@@ -1497,13 +1512,19 @@ fn analysis_context_bazel_file_structs_from_attrs<'v>(
             let name = name.as_str().to_owned();
             let files = bazel_files_from_attr_value(value)?;
             files_fields.push((name.clone(), heap.alloc(files.clone())));
+            let executable = bazel_executable_from_attr_value(value)?;
             let single_file = match files.as_slice() {
                 [file] => *file,
                 [] => Value::new_none(),
-                _ => continue,
+                _ => {
+                    if let Some(executable) = executable {
+                        executable_fields.push((name, executable));
+                    }
+                    continue;
+                }
             };
             file_fields.push((name.clone(), single_file));
-            executable_fields.push((name, single_file));
+            executable_fields.push((name, executable.unwrap_or(single_file)));
         }
     }
     Ok((
@@ -2177,6 +2198,36 @@ impl<'v> AllocValue<'v> for AnalysisContext<'v> {
     }
 }
 
+pub fn bazel_analysis_context_declare_file<'v>(
+    ctx: Value<'v>,
+    name: &str,
+    heap: Heap<'v>,
+) -> starlark::Result<Value<'v>> {
+    let ctx = ctx.downcast_ref::<AnalysisContext>().ok_or_else(|| {
+        buck2_error::buck2_error!(
+            buck2_error::ErrorTag::Input,
+            "expected AnalysisContext, got `{}`",
+            ctx.to_string_for_type_error()
+        )
+    })?;
+    let mut state = ctx.actions.state()?;
+    let declared = state.declare_output(
+        None,
+        name,
+        OutputType::File,
+        None,
+        BuckOutPathKind::Configuration,
+        heap,
+    )?;
+    Ok(heap
+        .alloc_typed(StarlarkDeclaredArtifact::new(
+            None,
+            declared,
+            AssociatedArtifacts::new(),
+        ))
+        .to_value())
+}
+
 struct RefAnalysisContext<'v>(&'v AnalysisContext<'v>);
 
 impl<'v> StarlarkTypeRepr for RefAnalysisContext<'v> {
@@ -2394,18 +2445,6 @@ fn analysis_context_methods(builder: &mut MethodsBuilder) {
         #[starlark(require = named, default = false)] skip_conflict_checking: bool,
         heap: Heap<'v>,
     ) -> starlark::Result<BazelRunfiles<'v>> {
-        if symlinks.into_option().is_some() {
-            return Err(buck2_error::Error::from(
-                AnalysisContextError::UnsupportedRunfilesArgument("symlinks"),
-            )
-            .into());
-        }
-        if root_symlinks.into_option().is_some() {
-            return Err(buck2_error::Error::from(
-                AnalysisContextError::UnsupportedRunfilesArgument("root_symlinks"),
-            )
-            .into());
-        }
         if skip_conflict_checking {
             return Err(buck2_error::Error::from(
                 AnalysisContextError::UnsupportedRunfilesArgument("skip_conflict_checking"),
@@ -2416,6 +2455,8 @@ fn analysis_context_methods(builder: &mut MethodsBuilder) {
             heap,
             files.into_option().unwrap_or_default().items,
             transitive_files.into_option(),
+            symlinks.into_option(),
+            root_symlinks.into_option(),
         )?;
         if !collect_data && !collect_default {
             return Ok(explicit);

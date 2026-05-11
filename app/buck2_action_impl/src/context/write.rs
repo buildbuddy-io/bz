@@ -8,6 +8,10 @@
  * above-listed licenses.
  */
 
+use std::collections::HashSet;
+use std::fmt;
+
+use allocative::Allocative;
 use buck2_artifact::artifact::artifact_type::Artifact;
 use buck2_artifact::artifact::artifact_type::OutputArtifact;
 use buck2_build_api::actions::impls::json::JsonUnpack;
@@ -26,26 +30,39 @@ use buck2_build_api::interpreter::rule_defs::cmd_args::StarlarkCommandLineValueU
 use buck2_build_api::interpreter::rule_defs::cmd_args::WriteToFileMacroVisitor;
 use buck2_build_api::interpreter::rule_defs::cmd_args::value::CommandLineArg;
 use buck2_build_api::interpreter::rule_defs::context::AnalysisActions;
+use buck2_build_api::interpreter::rule_defs::depset::bazel_depset_to_list;
 use buck2_build_api::interpreter::rule_defs::resolved_macro::ResolvedMacro;
 use buck2_execute::execute::request::OutputType;
 use buck2_hash::BuckHashMap;
 use buck2_hash::buck_indexset;
 use dupe::Dupe;
 use either::Either;
+use parking_lot::Mutex;
 use relative_path::RelativePathBuf;
 use sha1::Digest;
 use sha1::Sha1;
+use starlark::any::ProvidesStaticType;
+use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
+use starlark::environment::MethodsStatic;
 use starlark::eval::Evaluator;
 use starlark::starlark_module;
+use starlark::starlark_simple_value;
 use starlark::values::AllocValue;
+use starlark::values::NoSerialize;
+use starlark::values::StarlarkValue;
+use starlark::values::StringValue;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
 use starlark::values::dict::UnpackDictEntries;
+use starlark::values::list::ListRef;
 use starlark::values::none::NoneOr;
+use starlark::values::starlark_value;
+use starlark::values::tuple::TupleRef;
 use starlark::values::type_repr::StarlarkTypeRepr;
+use starlark::values::typing::StarlarkCallable;
 use starlark_map::small_set::SmallSet;
 
 use crate::actions::impls::write::UnregisteredTemplateExpansionAction;
@@ -66,6 +83,193 @@ enum WriteActionError {
 enum WriteContentArg<'v> {
     CommandLineArg(CommandLineArg<'v>),
     StarlarkCommandLineValueUnpack(StarlarkCommandLineValueUnpack<'v>),
+}
+
+#[derive(Debug, ProvidesStaticType, NoSerialize, Allocative)]
+struct StarlarkTemplateDict {
+    substitutions: Mutex<Vec<(String, String)>>,
+}
+
+impl StarlarkTemplateDict {
+    fn new() -> Self {
+        Self {
+            substitutions: Mutex::new(Vec::new()),
+        }
+    }
+
+    fn push(&self, key: &str, value: String) {
+        self.substitutions.lock().push((key.to_owned(), value));
+    }
+
+    fn substitutions(&self) -> Vec<(String, String)> {
+        self.substitutions.lock().clone()
+    }
+}
+
+impl fmt::Display for StarlarkTemplateDict {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "TemplateDict")
+    }
+}
+
+starlark_simple_value!(StarlarkTemplateDict);
+
+#[starlark_value(type = "TemplateDict")]
+impl<'v> StarlarkValue<'v> for StarlarkTemplateDict {
+    fn get_methods() -> Option<&'static Methods> {
+        static RES: MethodsStatic = MethodsStatic::new();
+        RES.methods_for_type::<Self::Canonical>(template_dict_methods)
+    }
+}
+
+fn template_dict_format_joined(format: &str, value: &str) -> buck2_error::Result<String> {
+    let mut converted = String::with_capacity(format.len() + value.len());
+    let mut idx = 0;
+    let mut found = false;
+    while let Some(next) = format[idx..].find('%') {
+        let next = idx + next;
+        converted.push_str(&format[idx..next]);
+        let Some(escaped) = format[next + 1..].chars().next() else {
+            return Err(buck2_error::buck2_error!(
+                buck2_error::ErrorTag::Input,
+                "Invalid value for parameter `format_joined`: expected string with a single `%s`, got `{}`",
+                format
+            ));
+        };
+        match escaped {
+            's' if !found => {
+                converted.push_str(value);
+                found = true;
+            }
+            's' => {
+                return Err(buck2_error::buck2_error!(
+                    buck2_error::ErrorTag::Input,
+                    "Invalid value for parameter `format_joined`: expected string with a single `%s`, got `{}`",
+                    format
+                ));
+            }
+            '%' => converted.push('%'),
+            _ => {
+                return Err(buck2_error::buck2_error!(
+                    buck2_error::ErrorTag::Input,
+                    "Invalid value for parameter `format_joined`: expected string with a single `%s`, got `{}`",
+                    format
+                ));
+            }
+        }
+        idx = next + 1 + escaped.len_utf8();
+    }
+    converted.push_str(&format[idx..]);
+    if !found {
+        return Err(buck2_error::buck2_error!(
+            buck2_error::ErrorTag::Input,
+            "Invalid value for parameter `format_joined`: expected string with a single `%s`, got `{}`",
+            format
+        ));
+    }
+    Ok(converted)
+}
+
+fn template_dict_push_mapped_string(
+    value: Value<'_>,
+    key: &str,
+    original: Value<'_>,
+    parts: &mut Vec<String>,
+) -> starlark::Result<()> {
+    let Some(value_str) = value.unpack_str() else {
+        return Err(buck2_error::buck2_error!(
+            buck2_error::ErrorTag::Input,
+            "Function provided to map_each must return string, None, or list of strings, but returned list containing element `{}` of type {} for key `{}` and value: {}",
+            value.to_repr(),
+            value.get_type(),
+            key,
+            original.to_repr()
+        )
+        .into());
+    };
+    parts.push(value_str.to_owned());
+    Ok(())
+}
+
+fn template_dict_extend_mapped_value(
+    mapped: Value<'_>,
+    key: &str,
+    original: Value<'_>,
+    parts: &mut Vec<String>,
+) -> starlark::Result<()> {
+    if mapped.is_none() {
+        return Ok(());
+    }
+    if let Some(value) = mapped.unpack_str() {
+        parts.push(value.to_owned());
+        return Ok(());
+    }
+    if let Some(list) = ListRef::from_value(mapped) {
+        for value in list.iter() {
+            template_dict_push_mapped_string(value, key, original, parts)?;
+        }
+        return Ok(());
+    }
+    if let Some(tuple) = TupleRef::from_value(mapped) {
+        for value in tuple.content() {
+            template_dict_push_mapped_string(*value, key, original, parts)?;
+        }
+        return Ok(());
+    }
+    Err(buck2_error::buck2_error!(
+        buck2_error::ErrorTag::Input,
+        "Function provided to map_each must return string, None, or list of strings, but returned type {} for key `{}` and value: {}",
+        mapped.get_type(),
+        key,
+        original.to_repr()
+    )
+    .into())
+}
+
+#[starlark_module]
+fn template_dict_methods(builder: &mut MethodsBuilder) {
+    fn add<'v>(
+        this: Value<'v>,
+        #[starlark(require = pos)] key: &str,
+        #[starlark(require = pos)] value: &str,
+    ) -> starlark::Result<Value<'v>> {
+        let template_dict =
+            StarlarkTemplateDict::from_value(this).expect("validated method receiver");
+        template_dict.push(key, value.to_owned());
+        Ok(this)
+    }
+
+    fn add_joined<'v>(
+        this: Value<'v>,
+        #[starlark(require = pos)] key: &str,
+        #[starlark(require = pos)] values: Value<'v>,
+        #[starlark(require = named)] join_with: StringValue<'v>,
+        #[starlark(require = named)] map_each: StarlarkCallable<'v>,
+        #[starlark(require = named, default = false)] uniquify: bool,
+        #[starlark(require = named, default = NoneOr::None)] format_joined: NoneOr<StringValue<'v>>,
+        #[starlark(require = named, default = false)] allow_closure: bool,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<Value<'v>> {
+        let _unused = allow_closure;
+        let template_dict =
+            StarlarkTemplateDict::from_value(this).expect("validated method receiver");
+        let mut parts = Vec::new();
+        for value in bazel_depset_to_list(values)? {
+            let mapped = eval.eval_function(map_each.0, &[value], &[])?;
+            template_dict_extend_mapped_value(mapped, key, value, &mut parts)?;
+        }
+        if uniquify {
+            let mut seen = HashSet::new();
+            parts.retain(|part| seen.insert(part.clone()));
+        }
+        let joined = parts.join(join_with.as_str());
+        let joined = match format_joined.into_option() {
+            Some(format_joined) => template_dict_format_joined(format_joined.as_str(), &joined)?,
+            None => joined,
+        };
+        template_dict.push(key, joined);
+        Ok(this)
+    }
 }
 
 /// We don't need to run this visitor in order to provide the inputs to the write actions,
@@ -113,6 +317,15 @@ impl<'v> CommandLineArtifactVisitor<'v> for CommandLineInputVisitor {
 
 #[starlark_module]
 pub(crate) fn analysis_actions_methods_write(methods: &mut MethodsBuilder) {
+    /// Returns a Bazel-compatible template dictionary for computed substitutions.
+    fn template_dict<'v>(
+        this: &AnalysisActions<'v>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<Value<'v>> {
+        let _unused = this;
+        Ok(eval.heap().alloc(StarlarkTemplateDict::new()))
+    }
+
     /// Creates a Bazel-compatible template expansion action.
     fn expand_template<'v>(
         this: &AnalysisActions<'v>,
@@ -122,26 +335,34 @@ pub(crate) fn analysis_actions_methods_write(methods: &mut MethodsBuilder) {
         substitutions: UnpackDictEntries<&'v str, &'v str>,
         #[starlark(require = named, default = false)] is_executable: bool,
         #[starlark(require = named, default = NoneOr::None)] computed_substitutions: NoneOr<
-            Value<'v>,
+            &'v StarlarkTemplateDict,
         >,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {
-        if computed_substitutions.into_option().is_some() {
-            return Err(buck2_error::buck2_error!(
-                buck2_error::ErrorTag::Input,
-                "`computed_substitutions` for ctx.actions.expand_template is not supported yet"
-            )
-            .into());
+        let mut substitutions = substitutions
+            .entries
+            .into_iter()
+            .map(|(key, value)| (key.to_owned(), value.to_owned()))
+            .collect::<Vec<_>>();
+        if let Some(computed_substitutions) = computed_substitutions.into_option() {
+            substitutions.extend(computed_substitutions.substitutions());
+        }
+        let mut seen = HashSet::new();
+        for (key, _) in &substitutions {
+            if !seen.insert(key.clone()) {
+                return Err(buck2_error::buck2_error!(
+                    buck2_error::ErrorTag::Input,
+                    "Multiple entries with same key: `{}`",
+                    key
+                )
+                .into());
+            }
         }
 
         let template = template.0;
         let action = UnregisteredTemplateExpansionAction::new(
             template.get_artifact_group()?,
-            substitutions
-                .entries
-                .into_iter()
-                .map(|(key, value)| (key.to_owned(), value.to_owned()))
-                .collect(),
+            substitutions,
             is_executable,
         );
 

@@ -2544,6 +2544,7 @@ dependencies = [
  "allocative",
  "async-trait",
  "base64",
+ "buck2_build_api",
  "buck2_common",
  "buck2_core",
  "buck2_data",

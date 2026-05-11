@@ -8,6 +8,7 @@
  * above-listed licenses.
  */
 
+use std::collections::BTreeSet;
 use std::fmt;
 use std::fmt::Debug;
 use std::iter;
@@ -50,6 +51,7 @@ use starlark::values::ValueOf;
 use starlark::values::ValueOfUnchecked;
 use starlark::values::ValueOfUncheckedGeneric;
 use starlark::values::dict::AllocDict;
+use starlark::values::dict::DictRef;
 use starlark::values::dict::DictType;
 use starlark::values::dict::FrozenDictRef;
 use starlark::values::dict::UnpackDictEntries;
@@ -93,10 +95,59 @@ use crate::interpreter::rule_defs::provider::collection::FrozenProviderCollectio
 #[repr(C)]
 pub struct BazelRunfilesGen<'v, V: ValueLike<'v>> {
     files: ValueOfUncheckedGeneric<V, FrozenBazelDepset>,
+    symlinks: ValueOfUncheckedGeneric<V, FrozenBazelDepset>,
+    root_symlinks: ValueOfUncheckedGeneric<V, FrozenBazelDepset>,
+    empty_filenames: ValueOfUncheckedGeneric<V, FrozenBazelDepset>,
     _marker: PhantomData<&'v ()>,
 }
 
 starlark_complex_value!(pub BazelRunfiles<'v>);
+
+#[derive(
+    Debug,
+    Clone,
+    Coerce,
+    Trace,
+    Freeze,
+    ProvidesStaticType,
+    NoSerialize,
+    Allocative
+)]
+#[repr(C)]
+pub struct BazelSymlinkEntryGen<V: ValueLifetimeless> {
+    path: String,
+    target_file: V,
+}
+
+starlark_complex_value!(pub BazelSymlinkEntry);
+
+impl<V: ValueLifetimeless> fmt::Display for BazelSymlinkEntryGen<V> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "SymlinkEntry(path = {:?}, target_file = <computed>)",
+            self.path
+        )
+    }
+}
+
+#[starlark_value(type = "SymlinkEntry")]
+impl<'v, V: ValueLike<'v>> StarlarkValue<'v> for BazelSymlinkEntryGen<V>
+where
+    Self: ProvidesStaticType<'v>,
+{
+    fn dir_attr(&self) -> Vec<String> {
+        vec!["path".to_owned(), "target_file".to_owned()]
+    }
+
+    fn get_attr(&self, attribute: &str, heap: Heap<'v>) -> Option<Value<'v>> {
+        match attribute {
+            "path" => Some(heap.alloc_str(&self.path).to_value()),
+            "target_file" => Some(self.target_file.to_value()),
+            _ => None,
+        }
+    }
+}
 
 impl<'v, V: ValueLike<'v>> fmt::Display for BazelRunfilesGen<'v, V> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -115,20 +166,36 @@ where
     }
 }
 
-fn bazel_runfiles_from_depset<'v>(files: Value<'v>) -> BazelRunfiles<'v> {
+fn bazel_runfiles_from_depsets<'v>(
+    files: Value<'v>,
+    symlinks: Value<'v>,
+    root_symlinks: Value<'v>,
+    empty_filenames: Value<'v>,
+) -> BazelRunfiles<'v> {
     BazelRunfiles {
         files: ValueOfUnchecked::new(files),
+        symlinks: ValueOfUnchecked::new(symlinks),
+        root_symlinks: ValueOfUnchecked::new(root_symlinks),
+        empty_filenames: ValueOfUnchecked::new(empty_filenames),
         _marker: PhantomData,
     }
 }
 
 fn bazel_runfiles_empty_value<'v>(heap: Heap<'v>) -> Value<'v> {
-    heap.alloc(bazel_runfiles_from_depset(bazel_depset_empty(heap)))
+    heap.alloc(bazel_runfiles_from_depsets(
+        bazel_depset_empty(heap),
+        bazel_depset_empty(heap),
+        bazel_depset_empty(heap),
+        bazel_depset_empty(heap),
+    ))
 }
 
 fn bazel_runfiles_empty_frozen_value(heap: &FrozenHeap) -> FrozenValue {
     heap.alloc(FrozenBazelRunfiles {
         files: FrozenValueOfUnchecked::new(bazel_depset_empty_frozen(heap)),
+        symlinks: FrozenValueOfUnchecked::new(bazel_depset_empty_frozen(heap)),
+        root_symlinks: FrozenValueOfUnchecked::new(bazel_depset_empty_frozen(heap)),
+        empty_filenames: FrozenValueOfUnchecked::new(bazel_depset_empty_frozen(heap)),
         _marker: PhantomData,
     })
 }
@@ -151,19 +218,41 @@ where
     'v: 'a,
 {
     let mut files = Vec::new();
+    let mut symlinks = Vec::new();
+    let mut root_symlinks = Vec::new();
+    let mut empty_filenames = Vec::new();
     for runfiles in runfiles {
         for file in bazel_depset_to_list(runfiles.files.get().to_value())? {
             push_unique_value(&mut files, file)?;
         }
+        for symlink in bazel_depset_to_list(runfiles.symlinks.get().to_value())? {
+            push_unique_value(&mut symlinks, symlink)?;
+        }
+        for root_symlink in bazel_depset_to_list(runfiles.root_symlinks.get().to_value())? {
+            push_unique_value(&mut root_symlinks, root_symlink)?;
+        }
+        for empty_filename in bazel_depset_to_list(runfiles.empty_filenames.get().to_value())? {
+            push_unique_value(&mut empty_filenames, empty_filename)?;
+        }
     }
     let files = bazel_depset_from_values(heap, files)?;
-    Ok(bazel_runfiles_from_depset(files))
+    let symlinks = bazel_depset_from_values(heap, symlinks)?;
+    let root_symlinks = bazel_depset_from_values(heap, root_symlinks)?;
+    let empty_filenames = bazel_depset_from_values(heap, empty_filenames)?;
+    Ok(bazel_runfiles_from_depsets(
+        files,
+        symlinks,
+        root_symlinks,
+        empty_filenames,
+    ))
 }
 
 pub(crate) fn bazel_runfiles_from_files<'v>(
     heap: Heap<'v>,
     direct_files: impl IntoIterator<Item = Value<'v>>,
     transitive_files: Option<Value<'v>>,
+    symlinks: Option<Value<'v>>,
+    root_symlinks: Option<Value<'v>>,
 ) -> starlark::Result<BazelRunfiles<'v>> {
     let mut files = Vec::new();
     for file in direct_files {
@@ -175,7 +264,257 @@ pub(crate) fn bazel_runfiles_from_files<'v>(
         }
     }
     let files = bazel_depset_from_values(heap, files)?;
-    Ok(bazel_runfiles_from_depset(files))
+    let symlinks = bazel_runfiles_symlinks_from_value(heap, symlinks, "symlinks")?;
+    let root_symlinks = bazel_runfiles_symlinks_from_value(heap, root_symlinks, "root_symlinks")?;
+    Ok(bazel_runfiles_from_depsets(
+        files,
+        symlinks,
+        root_symlinks,
+        bazel_depset_empty(heap),
+    ))
+}
+
+fn bazel_runfiles_symlinks_from_value<'v>(
+    heap: Heap<'v>,
+    value: Option<Value<'v>>,
+    arg_name: &'static str,
+) -> starlark::Result<Value<'v>> {
+    let Some(value) = value else {
+        return Ok(bazel_depset_empty(heap));
+    };
+    if value.is_none() {
+        return Ok(bazel_depset_empty(heap));
+    }
+    if BazelDepset::from_value(value).is_some() {
+        return Ok(value);
+    }
+    let dict = DictRef::from_value(value).ok_or_else(|| {
+        buck2_error::buck2_error!(
+            buck2_error::ErrorTag::Input,
+            "ctx.runfiles argument `{}` expected dict or depset, got `{}`",
+            arg_name,
+            value.to_string_for_type_error()
+        )
+    })?;
+    let mut symlink_entries = Vec::with_capacity(dict.len());
+    for (path, target_file) in dict.iter() {
+        let path = path.unpack_str().ok_or_else(|| {
+            buck2_error::buck2_error!(
+                buck2_error::ErrorTag::Input,
+                "ctx.runfiles argument `{}` expected string keys, got `{}`",
+                arg_name,
+                path.to_string_for_type_error()
+            )
+        })?;
+        ValueIsInputArtifactAnnotation::unpack_value(target_file)?.ok_or_else(|| {
+            buck2_error::buck2_error!(
+                buck2_error::ErrorTag::Input,
+                "ctx.runfiles argument `{}` expected File values, got `{}`",
+                arg_name,
+                target_file.to_string_for_type_error()
+            )
+        })?;
+        symlink_entries.push(
+            heap.alloc(BazelSymlinkEntry {
+                path: path.to_owned(),
+                target_file,
+            })
+            .to_value(),
+        );
+    }
+    bazel_depset_from_values(heap, symlink_entries)
+}
+
+fn path_parent(path: &str) -> Option<&str> {
+    path.rsplit_once('/').map(|(parent, _)| parent)
+}
+
+fn path_file_name(path: &str) -> &str {
+    path.rsplit_once('/').map_or(path, |(_, name)| name)
+}
+
+fn path_join(parent: &str, child: &str) -> String {
+    if parent.is_empty() {
+        child.to_owned()
+    } else {
+        format!("{parent}/{child}")
+    }
+}
+
+fn path_is_multi_segment(path: &str) -> bool {
+    path.contains('/')
+}
+
+fn path_ends_with_segment(path: &str, segment: &str) -> bool {
+    path_file_name(path) == segment
+}
+
+fn path_requires_init(path: &str) -> bool {
+    path.ends_with(".py") || path.ends_with(".so") || path.ends_with(".pyc")
+}
+
+fn path_is_package_init(path: &str) -> bool {
+    matches!(path_file_name(path), "__init__.py" | "__init__.pyc")
+}
+
+fn bazel_runfiles_file_path<'v>(heap: Heap<'v>, file: Value<'v>) -> starlark::Result<String> {
+    let file = ValueAsInputArtifactLike::unpack_value(file)?.ok_or_else(|| {
+        buck2_error::buck2_error!(
+            buck2_error::ErrorTag::Input,
+            "runfiles.files expected File values, got `{}`",
+            file.to_string_for_type_error()
+        )
+    })?;
+    Ok(file
+        .0
+        .with_bazel_short_path(&|short_path| heap.alloc_str(short_path))?
+        .as_str()
+        .to_owned())
+}
+
+fn bazel_runfiles_symlink_path<'v>(heap: Heap<'v>, symlink: Value<'v>) -> starlark::Result<String> {
+    if let Some(symlink) = BazelSymlinkEntry::from_value(symlink) {
+        return Ok(symlink.path.clone());
+    }
+    let path = symlink.get_attr_error("path", heap)?;
+    path.unpack_str().map(str::to_owned).ok_or_else(|| {
+        buck2_error::buck2_error!(
+            buck2_error::ErrorTag::Input,
+            "runfiles.symlinks expected SymlinkEntry values, got `{}`",
+            symlink.to_string_for_type_error()
+        )
+        .into()
+    })
+}
+
+fn bazel_runfiles_symlink_target_file<'v>(
+    heap: Heap<'v>,
+    symlink: Value<'v>,
+) -> starlark::Result<Value<'v>> {
+    if let Some(symlink) = BazelSymlinkEntry::from_value(symlink) {
+        return Ok(symlink.target_file.to_value());
+    }
+    let target_file = symlink.get_attr_error("target_file", heap)?;
+    if ValueAsInputArtifactLike::unpack_value(target_file)?.is_none() {
+        return Err(buck2_error::buck2_error!(
+            buck2_error::ErrorTag::Input,
+            "runfiles.symlinks expected SymlinkEntry target_file values to be File, got `{}`",
+            target_file.to_string_for_type_error()
+        )
+        .into());
+    }
+    Ok(target_file)
+}
+
+fn bazel_runfiles_artifact_entry<'v>(
+    heap: Heap<'v>,
+    path: &str,
+    target_file: Value<'v>,
+) -> Value<'v> {
+    heap.alloc(AllocStruct([
+        ("path", heap.alloc_str(path).to_value()),
+        ("target_file", target_file),
+    ]))
+}
+
+pub fn bazel_runfiles_artifact_entries<'v>(
+    heap: Heap<'v>,
+    runfiles: &BazelRunfiles<'v>,
+) -> starlark::Result<Value<'v>> {
+    let mut entries = Vec::new();
+    for file in bazel_depset_to_list(runfiles.files.get().to_value())? {
+        let path = bazel_runfiles_file_path(heap, file)?;
+        entries.push(bazel_runfiles_artifact_entry(heap, &path, file));
+    }
+    for symlink in bazel_depset_to_list(runfiles.symlinks.get().to_value())? {
+        let path = bazel_runfiles_symlink_path(heap, symlink)?;
+        let target_file = bazel_runfiles_symlink_target_file(heap, symlink)?;
+        entries.push(bazel_runfiles_artifact_entry(heap, &path, target_file));
+    }
+    for symlink in bazel_depset_to_list(runfiles.root_symlinks.get().to_value())? {
+        let path = bazel_runfiles_symlink_path(heap, symlink)?;
+        let target_file = bazel_runfiles_symlink_target_file(heap, symlink)?;
+        entries.push(bazel_runfiles_artifact_entry(heap, &path, target_file));
+    }
+    Ok(heap.alloc(AllocList(entries)))
+}
+
+fn generated_init_empty_filenames(manifest_paths: BTreeSet<String>) -> BTreeSet<String> {
+    let mut result = BTreeSet::new();
+    let mut has_package_init_dirs = BTreeSet::new();
+
+    for source in &manifest_paths {
+        if path_is_package_init(source) {
+            if let Some(parent) = path_parent(source) {
+                has_package_init_dirs.insert(parent.to_owned());
+            }
+        }
+    }
+
+    for source in &manifest_paths {
+        if !path_requires_init(source) {
+            continue;
+        }
+        let mut current = source.as_str();
+        while path_is_multi_segment(current) {
+            let Some(parent) = path_parent(current) else {
+                break;
+            };
+            current = parent;
+            if path_ends_with_segment(current, "__pycache__")
+                || has_package_init_dirs.contains(current)
+            {
+                continue;
+            }
+            let init_py = path_join(current, "__init__.py");
+            let init_pyc = path_join(current, "__init__.pyc");
+            if !manifest_paths.contains(&init_py) && !manifest_paths.contains(&init_pyc) {
+                result.insert(init_py);
+            }
+        }
+    }
+
+    result
+}
+
+/// Bazel Python runfiles helper that adds generated empty `__init__.py` entries.
+pub fn bazel_runfiles_with_generated_inits_empty_files_supplier<'v>(
+    heap: Heap<'v>,
+    runfiles: &BazelRunfiles<'v>,
+) -> starlark::Result<BazelRunfiles<'v>> {
+    let files = bazel_depset_to_list(runfiles.files.get().to_value())?;
+    let symlinks = bazel_depset_to_list(runfiles.symlinks.get().to_value())?;
+    let root_symlinks = bazel_depset_to_list(runfiles.root_symlinks.get().to_value())?;
+    if files.is_empty() && symlinks.is_empty() && root_symlinks.is_empty() {
+        return Err(buck2_error::buck2_error!(
+            buck2_error::ErrorTag::Input,
+            "input runfiles cannot be empty"
+        )
+        .into());
+    }
+
+    let mut manifest_paths = BTreeSet::new();
+    for file in &files {
+        manifest_paths.insert(bazel_runfiles_file_path(heap, *file)?);
+    }
+    for symlink in &symlinks {
+        manifest_paths.insert(bazel_runfiles_symlink_path(heap, *symlink)?);
+    }
+
+    let mut empty_filenames = bazel_depset_to_list(runfiles.empty_filenames.get().to_value())?;
+    for empty_filename in generated_init_empty_filenames(manifest_paths) {
+        push_unique_value(
+            &mut empty_filenames,
+            heap.alloc_str(&empty_filename).to_value(),
+        )?;
+    }
+
+    Ok(bazel_runfiles_from_depsets(
+        runfiles.files.get().to_value(),
+        runfiles.symlinks.get().to_value(),
+        runfiles.root_symlinks.get().to_value(),
+        bazel_depset_from_values(heap, empty_filenames)?,
+    ))
 }
 
 #[starlark_module]
@@ -186,24 +525,18 @@ fn bazel_runfiles_methods(builder: &mut MethodsBuilder) {
     }
 
     #[starlark(attribute)]
-    fn symlinks<'v>(this: &BazelRunfiles<'v>, heap: Heap<'v>) -> starlark::Result<Value<'v>> {
-        let _ = this;
-        Ok(bazel_depset_empty(heap))
+    fn symlinks<'v>(this: &BazelRunfiles<'v>) -> starlark::Result<Value<'v>> {
+        Ok(this.symlinks.get().to_value())
     }
 
     #[starlark(attribute)]
-    fn root_symlinks<'v>(this: &BazelRunfiles<'v>, heap: Heap<'v>) -> starlark::Result<Value<'v>> {
-        let _ = this;
-        Ok(bazel_depset_empty(heap))
+    fn root_symlinks<'v>(this: &BazelRunfiles<'v>) -> starlark::Result<Value<'v>> {
+        Ok(this.root_symlinks.get().to_value())
     }
 
     #[starlark(attribute)]
-    fn empty_filenames<'v>(
-        this: &BazelRunfiles<'v>,
-        heap: Heap<'v>,
-    ) -> starlark::Result<Value<'v>> {
-        let _ = this;
-        Ok(bazel_depset_empty(heap))
+    fn empty_filenames<'v>(this: &BazelRunfiles<'v>) -> starlark::Result<Value<'v>> {
+        Ok(this.empty_filenames.get().to_value())
     }
 
     fn merge<'v>(
@@ -335,7 +668,11 @@ pub struct DefaultInfoGen<V: ValueLifetimeless> {
 }
 
 fn bazel_files_to_run<'v>(heap: Heap<'v>, executable: Value<'v>) -> Value<'v> {
-    heap.alloc(AllocStruct([("executable", executable)]))
+    heap.alloc(AllocStruct([
+        ("executable", executable),
+        ("repo_mapping_manifest", Value::new_none()),
+        ("runfiles_manifest", Value::new_none()),
+    ]))
 }
 
 fn validate_default_info(info: &FrozenDefaultInfo) -> buck2_error::Result<()> {
@@ -452,9 +789,11 @@ impl FrozenDefaultInfo {
             FrozenValueOfUnchecked::<ListType<_>>::new(heap.alloc(AllocList::EMPTY));
         let files =
             FrozenValueOfUnchecked::<FrozenBazelDepset>::new(bazel_depset_empty_frozen(heap));
-        let files_to_run = FrozenValueOfUnchecked::<StructRef>::new(
-            heap.alloc(AllocStruct([("executable", FrozenValue::new_none())])),
-        );
+        let files_to_run = FrozenValueOfUnchecked::<StructRef>::new(heap.alloc(AllocStruct([
+            ("executable", FrozenValue::new_none()),
+            ("repo_mapping_manifest", FrozenValue::new_none()),
+            ("runfiles_manifest", FrozenValue::new_none()),
+        ])));
         let data_runfiles = FrozenValueOfUnchecked::<FrozenBazelRunfiles>::new(
             bazel_runfiles_empty_frozen_value(heap),
         );

@@ -191,6 +191,9 @@ The successful run executed 2357 local commands and did not call `bazel build`.
 ```
 
 The first successful run executed 4721 commands with 1159 cache hits and 3562 local actions. A follow-up warm run completed with 4721/4721 cache hits and no local actions.
+- Bazel label attrs with `allow_files` now coerce package-relative strings as labels in Bazel-compatible cells, so generated output file labels such as `zlib/include/deflate.h` and `server/util/bb:bb-bin` resolve through Bazel-style output-file targets instead of missing source artifacts.
+- `py_internal.is_singleton_depset(...)` is implemented using a bounded depset traversal, matching the Bazel `PyBuiltins` API reached by rules_python runtime analysis.
+- BuildBuddy's `server/util/...` package scope now builds with the Bazel-built Buck2 binary. The validated warm run completed with 10,202/10,202 cache hits and skipped only the expected incompatible `server/util/fastcopy:fastcopy_benchmark_test` target.
 
 ### Benchmark Summary
 

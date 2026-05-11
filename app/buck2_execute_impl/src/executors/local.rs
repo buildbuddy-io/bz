@@ -214,7 +214,11 @@ impl LocalExecutor {
     ) -> impl futures::future::Future<Output = buck2_error::Result<CommandResult>> + Send + 'a {
         async move {
             let working_directory = self.root.join_cow(working_directory);
-            prepare_bazel_execroot_working_directory(&self.root, &working_directory)?;
+            prepare_bazel_execroot_working_directory(
+                &self.root,
+                &working_directory,
+                BazelExecrootPreparation::Reuse,
+            )?;
 
             let result = match &self.forkserver {
                 #[cfg(unix)]
@@ -315,7 +319,11 @@ impl LocalExecutor {
             },
             async {
                 let working_directory = self.root.join_cow(request.working_directory());
-                prepare_bazel_execroot_working_directory(&self.root, &working_directory)?;
+                prepare_bazel_execroot_working_directory(
+                    &self.root,
+                    &working_directory,
+                    BazelExecrootPreparation::Reuse,
+                )?;
 
                 tokio::try_join!(
                     create_output_dirs(
@@ -566,6 +574,13 @@ impl LocalExecutor {
             },
             async {
                 let start = Instant::now();
+
+                let working_directory = self.root.join_cow(request.working_directory());
+                prepare_bazel_execroot_working_directory(
+                    &self.root,
+                    &working_directory,
+                    BazelExecrootPreparation::Reset,
+                )?;
 
                 let (r1, r2) = future::join(
                     async {
@@ -1664,12 +1679,25 @@ impl<'a> StrOrOsStr<'a> {
     }
 }
 
+#[derive(Clone, Copy)]
+enum BazelExecrootPreparation {
+    Reuse,
+    Reset,
+}
+
 fn prepare_bazel_execroot_working_directory(
     project_root: &AbsNormPathBuf,
     working_directory: &AbsNormPath,
+    preparation: BazelExecrootPreparation,
 ) -> buck2_error::Result<()> {
-    if !working_directory.as_path().ends_with("__bazel_execroot") {
+    if !is_bazel_execroot_working_directory(working_directory) {
         return Ok(());
+    }
+
+    if matches!(preparation, BazelExecrootPreparation::Reset) {
+        fs_util::remove_all(working_directory)
+            .categorize_internal()
+            .buck_error_context("Error resetting Bazel execroot working directory")?;
     }
 
     fs_util::create_dir_all(working_directory)
@@ -1698,6 +1726,14 @@ fn prepare_bazel_execroot_working_directory(
             }
         }
     }
+}
+
+fn is_bazel_execroot_working_directory(working_directory: &AbsNormPath) -> bool {
+    let path = working_directory.as_path();
+    path.ends_with("__bazel_execroot")
+        || path
+            .parent()
+            .is_some_and(|parent| parent.ends_with("__bazel_execroot"))
 }
 
 pub struct MaterializedInputPaths {

@@ -463,9 +463,10 @@ impl ModuleInternals {
         self.super_package.borrow()
     }
 
-    pub(crate) fn set_bazel_package_default_visibility(
+    pub(crate) fn set_bazel_package_defaults(
         &self,
-        visibility: VisibilitySpecification,
+        visibility: Option<VisibilitySpecification>,
+        default_testonly: Option<bool>,
     ) -> buck2_error::Result<()> {
         let mut declared = self.bazel_package_declared.borrow_mut();
         if *declared {
@@ -474,10 +475,13 @@ impl ModuleInternals {
         *declared = true;
 
         let current = self.super_package.borrow();
+        let visibility = visibility.unwrap_or_else(|| current.visibility().to_owned());
+        let default_testonly = default_testonly.unwrap_or_else(|| current.default_testonly());
         let next = SuperPackage::new(
             current.package_values().clone(),
             visibility,
             current.within_view().to_owned(),
+            default_testonly,
             current.cfg_constructor().cloned(),
             current.test_config_unification_rollout(),
         )?;

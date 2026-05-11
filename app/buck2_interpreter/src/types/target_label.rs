@@ -380,6 +380,7 @@ fn value_to_providers_name(subtarget_name: SubtargetNameArg) -> buck2_error::Res
 pub enum LabelArg<'v> {
     Target(&'v StarlarkTargetLabel),
     Providers(&'v StarlarkProvidersLabel),
+    ConfiguredProviders(&'v StarlarkConfiguredProvidersLabel),
 }
 
 impl<'v> LabelArg<'v> {
@@ -390,6 +391,9 @@ impl<'v> LabelArg<'v> {
                 ProvidersName::Default,
             )),
             LabelArg::Providers(t) => StarlarkProvidersLabel::new(t.label().dupe()),
+            LabelArg::ConfiguredProviders(t) => {
+                StarlarkProvidersLabel::new(t.label().unconfigured())
+            }
         }
     }
 }

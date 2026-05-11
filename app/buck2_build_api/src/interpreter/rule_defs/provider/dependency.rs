@@ -40,6 +40,7 @@ use starlark::values::ValueOfUnchecked;
 use starlark::values::ValueOfUncheckedGeneric;
 use starlark::values::none::NoneOr;
 use starlark::values::starlark_value;
+use starlark::values::structs::StructRef;
 use starlark_map::StarlarkHasher;
 
 use crate::interpreter::rule_defs::provider::builtin::default_info::BazelRunfiles;
@@ -131,6 +132,27 @@ impl<'v> Dependency<'v> {
         self.provider_collection
             .default_info()?
             .default_output_values()
+    }
+
+    pub fn files_to_run_executable(&self) -> buck2_error::Result<Option<Value<'v>>> {
+        let files_to_run = self
+            .provider_collection
+            .default_info()?
+            .files_to_run_raw()
+            .to_value();
+        Ok(StructRef::from_value(files_to_run).and_then(|st| {
+            st.iter().find_map(|(name, value)| {
+                (name.as_str() == "executable" && !value.is_none()).then_some(value)
+            })
+        }))
+    }
+
+    pub fn default_runfiles_value(&self) -> buck2_error::Result<Value<'v>> {
+        Ok(self
+            .provider_collection
+            .default_info()?
+            .default_runfiles_raw()
+            .to_value())
     }
 
     pub fn template_variable_info(

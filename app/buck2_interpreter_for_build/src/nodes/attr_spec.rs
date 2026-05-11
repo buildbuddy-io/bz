@@ -83,6 +83,17 @@ fn coerce_attr_value(
     )
 }
 
+fn package_default_testonly_attr(
+    attr_name: &str,
+    internals: &ModuleInternals,
+) -> Option<CoercedAttr> {
+    if attr_name == "testonly" && internals.super_package().default_testonly() {
+        Some(CoercedAttr::Bool(BoolLiteral(true)))
+    } else {
+        None
+    }
+}
+
 pub trait AttributeSpecExt {
     fn start_parse<'a, 'v>(
         &'a self,
@@ -218,6 +229,10 @@ impl AttributeSpecExt for AttributeSpec {
                     attr_idx,
                     CoercedAttr::WithinView(super_package.within_view().dupe()),
                 );
+            } else if let Some(default_testonly) =
+                package_default_testonly_attr(attr_name, internals)
+            {
+                attr_values.push_sorted(attr_idx, default_testonly);
             }
         }
 
@@ -345,6 +360,10 @@ impl AttributeSpecExt for AttributeSpec {
                     attr_idx,
                     CoercedAttr::WithinView(super_package.within_view().dupe()),
                 );
+            } else if let Some(default_testonly) =
+                package_default_testonly_attr(attr_name, internals)
+            {
+                attr_values.push_sorted(attr_idx, default_testonly);
             } else if attribute.default().is_none() {
                 return Err(AttributeSpecParseError::MissingRequiredAttribute(
                     attr_name.to_owned(),

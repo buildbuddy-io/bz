@@ -132,6 +132,17 @@ pub fn bzlmod_cell_aliases_for_cell(cell_name: &str) -> Vec<(String, String)> {
         .unwrap_or_default()
 }
 
+pub fn bzlmod_all_cell_aliases() -> Vec<(String, Vec<(String, String)>)> {
+    let mut aliases = BZLMOD_CELL_ALIASES
+        .lock()
+        .expect("bzlmod cell alias map poisoned")
+        .iter()
+        .map(|(cell_name, aliases)| (cell_name.clone(), aliases.clone()))
+        .collect::<Vec<_>>();
+    aliases.sort_by(|(a, _), (b, _)| a.cmp(b));
+    aliases
+}
+
 #[derive(Debug, Clone, Dupe, Allocative, PartialEq, Eq, Pagable)]
 pub enum ExternalCellOrigin {
     Bundled(CellName),

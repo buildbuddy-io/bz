@@ -43,6 +43,8 @@ enum PackageFileError {
     PackageFileOnlyArg(&'static str),
     #[error("at least one argument must be given to the 'package' function")]
     NoArguments,
+    #[error("expected one of [False, True, 0, 1] for package() argument `{0}`, got `{1}`")]
+    InvalidBool(&'static str, String),
 }
 
 fn parse_visibility(
@@ -108,6 +110,20 @@ fn parse_build_default_visibility(
     Ok(builder.build_visibility())
 }
 
+fn parse_bazel_bool_arg(name: &'static str, value: Value<'_>) -> buck2_error::Result<bool> {
+    if let Some(value) = value.unpack_bool() {
+        return Ok(value);
+    }
+    if let Some(value) = value.unpack_i32() {
+        return match value {
+            0 => Ok(false),
+            1 => Ok(true),
+            _ => Err(PackageFileError::InvalidBool(name, value.to_string()).into()),
+        };
+    }
+    Err(PackageFileError::InvalidBool(name, value.to_repr()).into())
+}
+
 /// Globals for `PACKAGE` files and `bzl` files included from `PACKAGE` files.
 #[starlark_module]
 pub(crate) fn register_package_function(globals: &mut GlobalsBuilder) {
@@ -131,7 +147,7 @@ pub(crate) fn register_package_function(globals: &mut GlobalsBuilder) {
         #[starlark(require=named)] visibility: Option<UnpackListOrTuple<String>>,
         #[starlark(require=named)] within_view: Option<UnpackListOrTuple<String>>,
         #[starlark(require=named)] default_visibility: Option<UnpackListOrTuple<String>>,
-        #[starlark(require=named)] default_testonly: Option<bool>,
+        #[starlark(require=named)] default_testonly: Option<Value<'v>>,
         #[starlark(require=named)] default_deprecation: Option<String>,
         #[starlark(require=named)] features: Option<UnpackListOrTuple<String>>,
         #[starlark(require=named)] licenses: Option<Value<'v>>,
@@ -248,7 +264,15 @@ pub(crate) fn register_package_function(globals: &mut GlobalsBuilder) {
                 if let Some(default_visibility) = default_visibility {
                     let default_visibility =
                         parse_build_default_visibility(&default_visibility.items, internals)?;
-                    internals.set_bazel_package_default_visibility(default_visibility)?;
+                    let default_testonly = default_testonly
+                        .map(|value| parse_bazel_bool_arg("default_testonly", value))
+                        .transpose()?;
+                    internals
+                        .set_bazel_package_defaults(Some(default_visibility), default_testonly)?;
+                } else if let Some(default_testonly) = default_testonly {
+                    let default_testonly =
+                        parse_bazel_bool_arg("default_testonly", default_testonly)?;
+                    internals.set_bazel_package_defaults(None, Some(default_testonly))?;
                 }
             }
             _ => {

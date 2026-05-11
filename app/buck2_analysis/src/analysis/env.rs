@@ -334,7 +334,7 @@ async fn run_bazel_input_file_analysis_underlying(
             ));
             let default_info = eval
                 .heap()
-                .alloc(DefaultInfo::with_default_outputs(eval.heap(), [source]));
+                .alloc(DefaultInfo::for_file_target(eval.heap(), source));
             let providers =
                 ProviderCollection::try_from_value(eval.heap().alloc(AllocList([default_info])))?;
             Ok(ValueTypedComplex::new_err(eval.heap().alloc(providers))
@@ -438,7 +438,7 @@ async fn run_bazel_output_file_analysis_underlying(
             let output = output.to_value();
             let default_info = eval
                 .heap()
-                .alloc(DefaultInfo::with_default_outputs(eval.heap(), [output]));
+                .alloc(DefaultInfo::for_file_target(eval.heap(), output));
             let providers =
                 ProviderCollection::try_from_value(eval.heap().alloc(AllocList([default_info])))?;
             Ok(ValueTypedComplex::new_err(eval.heap().alloc(providers))

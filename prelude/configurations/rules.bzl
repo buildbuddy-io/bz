@@ -35,7 +35,7 @@ def config_setting_impl(ctx):
     subinfos.append(ConfigurationInfo(
         constraints = {},
         values = {},
-        build_settings = {str(label): value for label, value in ctx.attrs.flag_values.items()},
+        build_settings = {_raw_target(label): value for label, value in ctx.attrs.flag_values.items()},
     ))
     cfg_info = util.configuration_info_union(subinfos)
     providers = [DefaultInfo(), cfg_info]

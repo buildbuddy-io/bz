@@ -66,12 +66,7 @@ impl AttrTypeCoerce for SourceAttrType {
         if ctx.is_bazel_compat_cell() {
             match ctx.coerce_existing_path(source_path, self.allow_directory) {
                 Ok(Some(path)) => return Ok(CoercedAttr::SourceFile(path)),
-                Ok(None) => {
-                    let generated_label = format!(":{source_path}");
-                    if let Ok(label) = ctx.coerce_providers_label(&generated_label) {
-                        return Ok(CoercedAttr::SourceLabel(label));
-                    }
-                }
+                Ok(None) => {}
                 Err(_) => {}
             }
         }
