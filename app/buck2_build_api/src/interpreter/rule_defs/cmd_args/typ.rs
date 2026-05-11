@@ -59,6 +59,7 @@ use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark::values::ValueLike;
 use starlark::values::ValueOf;
+use starlark::values::list::AllocList;
 use starlark::values::list::ListRef;
 use starlark::values::list::UnpackList;
 use starlark::values::none::NoneOr;
@@ -96,6 +97,36 @@ use crate::interpreter::rule_defs::cmd_args::value::CommandLineArg;
 use crate::interpreter::rule_defs::cmd_args::value::FrozenCommandLineArg;
 use crate::interpreter::rule_defs::depset::BazelDepset;
 use crate::interpreter::rule_defs::depset::bazel_depset_to_list;
+
+#[derive(Debug, ProvidesStaticType, NoSerialize, Allocative)]
+struct BazelDirectoryExpander;
+
+impl Display for BazelDirectoryExpander {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.write_str("<DirectoryExpander>")
+    }
+}
+
+starlark::starlark_simple_value!(BazelDirectoryExpander);
+
+#[starlark_value(type = "DirectoryExpander")]
+impl<'v> StarlarkValue<'v> for BazelDirectoryExpander {
+    fn get_methods() -> Option<&'static Methods> {
+        static RES: MethodsStatic = MethodsStatic::new();
+        RES.methods(bazel_directory_expander_methods)
+    }
+}
+
+#[starlark_module]
+fn bazel_directory_expander_methods(builder: &mut MethodsBuilder) {
+    fn expand<'v>(
+        #[starlark(this)] _this: &BazelDirectoryExpander,
+        file: Value<'v>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<Value<'v>> {
+        Ok(eval.heap().alloc(AllocList([file])))
+    }
+}
 
 #[derive(Debug, buck2_error::Error)]
 pub enum CommandLineError {
@@ -285,7 +316,10 @@ impl<'v, F: Fields<'v>> CommandLineArgLike<'v> for FieldsRef<'v, F> {
 
                     let mut retained_args = Vec::new();
                     let param_file_args = match param_file.format {
-                        ParamFileFormat::Shell | ParamFileFormat::Multiline => rendered,
+                        ParamFileFormat::Shell
+                        | ParamFileFormat::Multiline
+                        | ParamFileFormat::GccQuoted
+                        | ParamFileFormat::Windows => rendered,
                         ParamFileFormat::FlagPerLine => {
                             let mut param_file_args = Vec::new();
                             for arg in rendered {
@@ -794,6 +828,32 @@ impl<'v> StarlarkCmdArgs<'v> {
         Ok(builder)
     }
 
+    pub(crate) fn from_values_with_bazel_param_file(
+        values: impl IntoIterator<Item = Value<'v>>,
+        arg_format: StringValue<'v>,
+        parameter_file_type: &str,
+    ) -> buck2_error::Result<Self> {
+        let format = match parameter_file_type {
+            "GCC_QUOTED" => ParamFileFormat::GccQuoted,
+            "UNQUOTED" => ParamFileFormat::Multiline,
+            "WINDOWS" => ParamFileFormat::Windows,
+            parameter_file_type => {
+                return Err(buck2_error::buck2_error!(
+                    buck2_error::ErrorTag::Input,
+                    "Invalid Bazel parameter file type `{parameter_file_type}`"
+                ));
+            }
+        };
+        let mut builder = Self::from_values(values)?;
+        builder.0.get_mut().options_mut().param_file = Some(Box::new(ParamFileOptions {
+            arg_format: Some(arg_format),
+            format,
+            use_always: true,
+            format_set: true,
+        }));
+        Ok(builder)
+    }
+
     pub fn add_hidden_value(&mut self, value: Value<'v>) -> buck2_error::Result<()> {
         self.0
             .get_mut()
@@ -811,13 +871,6 @@ impl<'v> StarlarkCmdArgs<'v> {
 
         if let Some(executable) = bazel_files_to_run_executable(value) {
             self.add_bazel_hidden_value(executable, heap)?;
-            return Ok(());
-        }
-
-        if BazelDepset::from_value(value).is_some() {
-            for item in bazel_depset_to_list(value)? {
-                self.add_bazel_hidden_value(item, heap)?;
-            }
             return Ok(());
         }
 
@@ -1023,6 +1076,12 @@ fn bazel_param_file_content(args: Vec<String>, format: ParamFileFormat) -> Vec<u
             ParamFileFormat::Shell => {
                 content.extend_from_slice(bazel_shell_escape(&arg).as_bytes());
             }
+            ParamFileFormat::GccQuoted => {
+                content.extend_from_slice(bazel_gcc_param_file_escape(&arg).as_bytes());
+            }
+            ParamFileFormat::Windows => {
+                content.extend_from_slice(bazel_windows_param_file_escape(&arg).as_bytes());
+            }
             ParamFileFormat::Multiline | ParamFileFormat::FlagPerLine => {
                 content.extend_from_slice(arg.as_bytes());
             }
@@ -1070,6 +1129,34 @@ fn bazel_shell_safe_char(byte: u8) -> bool {
         )
 }
 
+fn bazel_gcc_param_file_escape(arg: &str) -> String {
+    if arg.is_empty() {
+        return "''".to_owned();
+    }
+
+    let mut escaped = String::with_capacity(arg.len());
+    for ch in arg.chars() {
+        if matches!(
+            ch,
+            '\'' | '"' | '\\' | ' ' | '\t' | '\r' | '\n' | '\x0c' | '\x0b'
+        ) {
+            escaped.push('\\');
+        }
+        escaped.push(ch);
+    }
+    escaped
+}
+
+fn bazel_windows_param_file_escape(arg: &str) -> String {
+    let needs_quotes = arg.chars().any(|ch| matches!(ch, ' ' | '\t' | '\n' | '\r'));
+    let escaped = arg.replace('"', "\\\"");
+    if needs_quotes {
+        format!("\"{escaped}\"")
+    } else {
+        escaped
+    }
+}
+
 fn bazel_args_values<'v>(value: Value<'v>, heap: Heap<'v>) -> starlark::Result<Vec<Value<'v>>> {
     if BazelDepset::from_value(value).is_some() {
         return bazel_depset_to_list(value);
@@ -1107,15 +1194,28 @@ fn bazel_args_extend_mapped_value<'v>(
 
 fn bazel_args_apply_map_each<'v>(
     values: Vec<Value<'v>>,
-    map_each: NoneOr<StarlarkCallable<'v, (Value<'v>,), Value<'v>>>,
+    map_each: NoneOr<StarlarkCallable<'v>>,
     eval: &mut Evaluator<'v, '_, '_>,
 ) -> starlark::Result<Vec<Value<'v>>> {
     let Some(map_each) = map_each.into_option() else {
         return Ok(values);
     };
+    let tree_expander = if map_each
+        .0
+        .parameters_spec()
+        .is_some_and(|parameters| parameters.len() >= 2)
+    {
+        Some(eval.heap().alloc_typed(BazelDirectoryExpander).to_value())
+    } else {
+        None
+    };
     let mut mapped = Vec::new();
     for value in values {
-        let result = eval.eval_function(map_each.0.to_value(), &[value], &[])?;
+        let result = if let Some(tree_expander) = tree_expander {
+            eval.eval_function(map_each.0, &[value, tree_expander], &[])?
+        } else {
+            eval.eval_function(map_each.0, &[value], &[])?
+        };
         bazel_args_extend_mapped_value(result, &mut mapped, eval.heap())?;
     }
     Ok(mapped)
@@ -1240,9 +1340,7 @@ fn cmd_args_methods(builder: &mut MethodsBuilder) {
         mut this: StarlarkCommandLineMut<'v>,
         #[starlark(require = pos)] arg_name_or_values: Value<'v>,
         #[starlark(require = pos)] values: Option<Value<'v>>,
-        #[starlark(require = named, default = NoneOr::None)] map_each: NoneOr<
-            StarlarkCallable<'v, (Value<'v>,), Value<'v>>,
-        >,
+        #[starlark(require = named, default = NoneOr::None)] map_each: NoneOr<StarlarkCallable<'v>>,
         #[starlark(require = named, default = NoneOr::None)] format_each: NoneOr<StringValue<'v>>,
         #[starlark(require = named, default = NoneOr::None)] before_each: NoneOr<StringValue<'v>>,
         #[starlark(require = named, default = true)] omit_if_empty: bool,
@@ -1304,9 +1402,7 @@ fn cmd_args_methods(builder: &mut MethodsBuilder) {
         #[starlark(require = pos)] arg_name_or_values: Value<'v>,
         #[starlark(require = pos)] values: Option<Value<'v>>,
         #[starlark(require = named)] join_with: StringValue<'v>,
-        #[starlark(require = named, default = NoneOr::None)] map_each: NoneOr<
-            StarlarkCallable<'v, (Value<'v>,), Value<'v>>,
-        >,
+        #[starlark(require = named, default = NoneOr::None)] map_each: NoneOr<StarlarkCallable<'v>>,
         #[starlark(require = named, default = NoneOr::None)] format_each: NoneOr<StringValue<'v>>,
         #[starlark(require = named, default = NoneOr::None)] format_joined: NoneOr<StringValue<'v>>,
         #[starlark(require = named, default = true)] omit_if_empty: bool,
@@ -1373,8 +1469,7 @@ fn cmd_args_methods(builder: &mut MethodsBuilder) {
         Ok(this)
     }
 
-    /// Records Bazel param-file preferences. Buck's command-line lowering keeps the arguments inline
-    /// until a native param-file action shape is available here.
+    /// Records Bazel param-file preferences for command-line lowering.
     fn use_param_file<'v>(
         mut this: StarlarkCommandLineMut<'v>,
         #[starlark(default = "@%s")] param_file_arg: &str,

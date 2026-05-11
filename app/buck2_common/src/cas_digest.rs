@@ -24,15 +24,13 @@ use chrono::TimeZone;
 use chrono::Utc;
 use derivative::Derivative;
 use derive_more::Display;
-use digest::Digest;
 use dupe::Clone_;
 use dupe::Copy_;
 use dupe::Dupe;
 use dupe::Dupe_;
 use num_enum::TryFromPrimitive;
 use pagable::Pagable;
-use sha1::Sha1;
-use sha2::Sha256;
+use ring::digest;
 use static_interner::Intern;
 
 /// The number of bytes required by a SHA-1 hash
@@ -377,8 +375,8 @@ pub struct Digester<Kind: CasDigestKind> {
 }
 
 enum DigesterVariant {
-    Sha1(Sha1),
-    Sha256(Sha256),
+    Sha1(digest::Context),
+    Sha256(digest::Context),
     Blake3(Box<blake3::Hasher>),      // This is unusually large.
     Blake3Keyed(Box<blake3::Hasher>), // Same as above
 }
@@ -406,8 +404,17 @@ impl DataDigester {
 
     pub fn finalize(self) -> CasDigestData {
         match self.variant {
-            DigesterVariant::Sha1(h) => CasDigestData::new_sha1(h.finalize().into(), self.size),
-            DigesterVariant::Sha256(h) => CasDigestData::new_sha256(h.finalize().into(), self.size),
+            DigesterVariant::Sha1(h) => CasDigestData::new_sha1(
+                h.finish().as_ref().try_into().expect("SHA-1 digest length"),
+                self.size,
+            ),
+            DigesterVariant::Sha256(h) => CasDigestData::new_sha256(
+                h.finish()
+                    .as_ref()
+                    .try_into()
+                    .expect("SHA-256 digest length"),
+                self.size,
+            ),
             DigesterVariant::Blake3(h) => CasDigestData::new_blake3(h.finalize().into(), self.size),
             DigesterVariant::Blake3Keyed(h) => {
                 CasDigestData::new_blake3_keyed(h.finalize().into(), self.size)
@@ -488,8 +495,12 @@ impl CasDigestData {
 
     pub fn digester_for_algorithm(algorithm: DigestAlgorithm) -> DataDigester {
         let variant = match algorithm {
-            DigestAlgorithm::Sha1 => DigesterVariant::Sha1(Sha1::new()),
-            DigestAlgorithm::Sha256 => DigesterVariant::Sha256(Sha256::new()),
+            DigestAlgorithm::Sha1 => {
+                DigesterVariant::Sha1(digest::Context::new(&digest::SHA1_FOR_LEGACY_USE_ONLY))
+            }
+            DigestAlgorithm::Sha256 => {
+                DigesterVariant::Sha256(digest::Context::new(&digest::SHA256))
+            }
             DigestAlgorithm::Blake3 => DigesterVariant::Blake3(Box::new(blake3::Hasher::new())),
             DigestAlgorithm::Blake3Keyed => {
                 #[cfg(fbcode_build)]

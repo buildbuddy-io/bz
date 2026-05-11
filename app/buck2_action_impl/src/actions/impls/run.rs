@@ -78,6 +78,7 @@ use buck2_error::BuckErrorContext;
 use buck2_error::buck2_error;
 use buck2_error::internal_error;
 use buck2_events::dispatch::span_async_simple;
+use buck2_execute::artifact::artifact_dyn::ArtifactDyn;
 use buck2_execute::artifact::fs::ExecutorFs;
 use buck2_execute::artifact_value::ArtifactValue;
 use buck2_execute::digest_config::DigestConfig;
@@ -952,10 +953,19 @@ impl RunAction {
         artifact_visitor: &mut dyn CommandLineArtifactVisitor<'a>,
     ) -> buck2_error::Result<()> {
         let values = Self::unpack(&self.starlark_values)?;
-        visit_run_action_command_line_artifacts(&self.outputs, values.args, artifact_visitor)?;
-        visit_run_action_command_line_artifacts(&self.outputs, values.exe, artifact_visitor)?;
-        if let Some(bazel_inputs) = values.bazel_inputs {
-            visit_run_action_command_line_artifacts(&self.outputs, bazel_inputs, artifact_visitor)?;
+        if self.inner.bazel_use_default_shell_env.is_some() {
+            if let Some(bazel_inputs) = values.bazel_inputs {
+                visit_run_action_command_line_artifacts(
+                    &self.outputs,
+                    bazel_inputs,
+                    artifact_visitor,
+                )?;
+            }
+            visit_run_action_command_line_artifacts(&self.outputs, values.exe, artifact_visitor)?;
+            visit_run_action_command_line_artifacts(&self.outputs, values.args, artifact_visitor)?;
+        } else {
+            visit_run_action_command_line_artifacts(&self.outputs, values.args, artifact_visitor)?;
+            visit_run_action_command_line_artifacts(&self.outputs, values.exe, artifact_visitor)?;
         }
         if let Some(worker) = values.worker {
             visit_run_action_command_line_artifacts(&self.outputs, worker.exe, artifact_visitor)?;
@@ -1468,6 +1478,8 @@ impl RunAction {
                     }
                     inputs.push(CommandExecutionInput::ArtifactPathAlias {
                         source_path,
+                        source_requires_materialization: artifact
+                            .requires_materialization(artifact_fs),
                         path: alias,
                         value: value.dupe(),
                     });
@@ -1505,8 +1517,12 @@ impl RunAction {
             .map(|group| ctx.artifact_values(group))
             .collect();
 
-        let mut inputs: Vec<CommandExecutionInput> =
-            artifact_inputs[..].map(|&i| CommandExecutionInput::Artifact(Box::new(i.dupe())));
+        let bazel_paths = self.inner.bazel_use_default_shell_env.is_some();
+        let mut inputs: Vec<CommandExecutionInput> = if bazel_paths {
+            Vec::new()
+        } else {
+            artifact_inputs[..].map(|&i| CommandExecutionInput::Artifact(Box::new(i.dupe())))
+        };
         self.add_bazel_execroot_path_aliases(&mut inputs, &artifact_inputs, fs)?;
 
         let mut extra_env = Vec::new();
@@ -1627,6 +1643,7 @@ impl RunAction {
             if let Some(bazel_exec_path) = &param_file.bazel_exec_path {
                 inputs.push(CommandExecutionInput::ArtifactPathAlias {
                     source_path: project_rel_path,
+                    source_requires_materialization: true,
                     path: Self::bazel_execroot_path(fs, bazel_exec_path.clone())?,
                     value: ArtifactValue::file(FileMetadata {
                         digest: param_file.digest.dupe(),

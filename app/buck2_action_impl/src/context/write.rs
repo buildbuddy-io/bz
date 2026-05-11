@@ -242,7 +242,7 @@ pub(crate) fn analysis_actions_methods_write(methods: &mut MethodsBuilder) {
         output: OutputArtifactArg<'v>,
         content: WriteContentArg<'v>,
         #[starlark(default = false)] is_executable: bool,
-        #[starlark(require = named, default = NoneOr::None)] _mnemonic: NoneOr<&str>,
+        #[starlark(require = named, default = NoneOr::None)] mnemonic: NoneOr<&str>,
         #[starlark(require = named, default = NoneOr::None)] _execution_requirements: NoneOr<
             Value<'v>,
         >,
@@ -263,6 +263,7 @@ pub(crate) fn analysis_actions_methods_write(methods: &mut MethodsBuilder) {
             ),
         >,
     > {
+        let _unused = mnemonic;
         fn count_write_to_file_macros(
             args_allowed: bool,
             cli: &dyn CommandLineArgLike,

@@ -1093,7 +1093,11 @@ impl BuckConfigBasedCells {
                     extension_name,
                     repo_name,
                     extension_usages_json,
-                } => BzlmodGeneratedCellGenerator::ModuleExtensionRepo(
+                } => BzlmodGeneratedCellGenerator::ModuleExtensionRepo({
+                    let extension_usages_key =
+                        BzlmodModuleExtensionRepoSetup::extension_usages_key_from_json(
+                            &extension_usages_json,
+                        );
                     BzlmodModuleExtensionRepoSetup {
                         parent_canonical_repo_name: Arc::from(parent_canonical_repo_name),
                         parent_is_root,
@@ -1102,9 +1106,10 @@ impl BuckConfigBasedCells {
                         extension_bzl_path: Arc::from(extension_bzl_path),
                         extension_name: Arc::from(extension_name),
                         repo_name: Arc::from(repo_name),
+                        extension_usages_key: Arc::from(extension_usages_key),
                         extension_usages_json: Arc::from(extension_usages_json),
-                    },
-                ),
+                    }
+                }),
             };
             Ok(ExternalCellOrigin::BzlmodGenerated(
                 BzlmodGeneratedCellSetup {
@@ -1330,6 +1335,12 @@ fn bazelrc_add_options(
                 options.host_cxxopt.push(value);
             } else if let Some(value) = bazelrc_arg_value(args, &mut index, "--per_file_copt") {
                 options.per_file_copt.push(value);
+            } else if let Some(value) = bazelrc_arg_value(args, &mut index, "--macos_minimum_os") {
+                options.macos_minimum_os.push(value);
+            } else if let Some(value) =
+                bazelrc_arg_value(args, &mut index, "--host_macos_minimum_os")
+            {
+                options.host_macos_minimum_os.push(value);
             }
         }
         index += 1;
@@ -2437,38 +2448,6 @@ fn resolve_generated_bzlmod_repos(
             &mut generated,
             &mut generated_repo_declaring_cells,
         )?;
-        if module.dep.name == "rules_cc" {
-            for alias in &module.use_repo_aliases {
-                let generator = match alias.as_str() {
-                    "local_config_cc_toolchains" => {
-                        needs_local_config_platform = true;
-                        Some(BzlmodGeneratedRepoConfig::CcAutoconfToolchains {
-                            parent_canonical_repo_name: parent_canonical_repo_name.clone(),
-                        })
-                    }
-                    "local_config_cc" => Some(BzlmodGeneratedRepoConfig::CcAutoconf {}),
-                    _ => None,
-                };
-                let Some(generator) = generator else {
-                    continue;
-                };
-                let canonical_repo_name =
-                    format!("{parent_canonical_repo_name}+cc_configure+{alias}");
-                let generator_json = serde_json::to_string(&generator).buck_error_context(
-                    "Error serializing generated rules_cc configure repo configuration",
-                )?;
-                add_generated_bzlmod_repo(
-                    &mut generated,
-                    &mut generated_repo_declaring_cells,
-                    cell_aliases_by_cell,
-                    &parent_cell_name,
-                    alias,
-                    &canonical_repo_name,
-                    generator_json,
-                );
-            }
-        }
-
         if module.dep.name == "rules_shell" {
             for alias in &module.use_repo_aliases {
                 if alias != "local_config_shell" {

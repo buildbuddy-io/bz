@@ -46,6 +46,7 @@ use starlark::values::starlark_value;
 
 use crate::types::cell_path::StarlarkCellPath;
 use crate::types::cell_root::CellRoot;
+use crate::types::label_display::starlark_configured_providers_label_str;
 use crate::types::label_display::starlark_providers_label_str;
 use crate::types::package_path::StarlarkPackagePath;
 use crate::types::project_root::StarlarkProjectRoot;
@@ -134,7 +135,7 @@ impl Serialize for StarlarkConfiguredProvidersLabel {
     where
         S: Serializer,
     {
-        self.label.serialize(serializer)
+        serializer.serialize_str(&starlark_configured_providers_label_str(&self.label))
     }
 }
 
@@ -145,6 +146,10 @@ impl StarlarkConfiguredProvidersLabel {
 
     pub fn inner(&self) -> &ConfiguredProvidersLabel {
         &self.label
+    }
+
+    pub fn starlark_label_string(&self) -> String {
+        starlark_configured_providers_label_str(&self.label)
     }
 }
 
@@ -168,6 +173,10 @@ where
     fn write_hash(&self, hasher: &mut StarlarkHasher) -> starlark::Result<()> {
         self.label.hash(hasher);
         Ok(())
+    }
+
+    fn collect_repr(&self, collector: &mut String) {
+        collector.push_str(&starlark_configured_providers_label_str(&self.label));
     }
 }
 
@@ -548,6 +557,17 @@ mod tests {
             })
         }
 
+        fn bzlmod_configured_providers_label() -> starlark::Result<StarlarkConfiguredProvidersLabel>
+        {
+            let cell_name = bzlmod_cell_name("rules_python+");
+            Ok(StarlarkConfiguredProvidersLabel {
+                label: ConfiguredProvidersLabel::default_for(ConfiguredTargetLabel::testing_parse(
+                    &format!("{cell_name}//python/config_settings:add_srcs_to_runfiles"),
+                    ConfigurationData::testing_new(),
+                )),
+            })
+        }
+
         fn command_line_option_label() -> starlark::Result<StarlarkProvidersLabel> {
             Ok(StarlarkProvidersLabel {
                 label: ProvidersLabel::default_for(TargetLabel::testing_parse(
@@ -568,8 +588,7 @@ mod tests {
         let mut a = Assert::new();
         a.globals_add(register_test_providers_label);
         a.eq(
-            &"'\"foo//bar:baz[qux][quux] (<CFG>)\"'"
-                .replace("<CFG>", &ConfigurationData::testing_new().to_string()),
+            "'\"foo//bar:baz[qux][quux]\"'",
             "json.encode(configured_providers_label())",
         );
     }
@@ -626,6 +645,22 @@ mod tests {
     }
 
     #[test]
+    fn test_bzlmod_configured_providers_label_str() {
+        register_bzlmod_cell_canonical_repo_name("rules_python+");
+
+        let mut a = Assert::new();
+        a.globals_add(register_test_providers_label);
+        a.eq(
+            "'@@rules_python+//python/config_settings:add_srcs_to_runfiles'",
+            "str(bzlmod_configured_providers_label())",
+        );
+        a.eq(
+            "'\"@@rules_python+//python/config_settings:add_srcs_to_runfiles\"'",
+            "json.encode(bzlmod_configured_providers_label())",
+        );
+    }
+
+    #[test]
     fn test_command_line_option_label_str() {
         let mut a = Assert::new();
         a.globals_add(register_test_providers_label);
@@ -640,8 +675,7 @@ mod tests {
         let mut a = Assert::new();
         a.globals_add(register_test_providers_label);
         a.eq(
-            &"'foo//bar:package.json (<CFG>)'"
-                .replace("<CFG>", &ConfigurationData::testing_new().to_string()),
+            "'foo//bar:package.json'",
             "str(configured_providers_label().same_package_label('package.json'))",
         );
     }
@@ -661,13 +695,11 @@ mod tests {
         let mut a = Assert::new();
         a.globals_add(register_test_providers_label);
         a.eq(
-            &"'foo//bar:patches/fix.patch (<CFG>)'"
-                .replace("<CFG>", &ConfigurationData::testing_new().to_string()),
+            "'foo//bar:patches/fix.patch'",
             "str(configured_providers_label().relative('patches/fix.patch'))",
         );
         a.eq(
-            &"'foo//other/pkg:file.txt (<CFG>)'"
-                .replace("<CFG>", &ConfigurationData::testing_new().to_string()),
+            "'foo//other/pkg:file.txt'",
             "str(configured_providers_label().relative('//other/pkg:file.txt'))",
         );
     }

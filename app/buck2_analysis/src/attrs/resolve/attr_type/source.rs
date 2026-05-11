@@ -15,7 +15,6 @@ use buck2_core::provider::label::ConfiguredProvidersLabel;
 use buck2_node::attrs::attr_type::source::SourceAttrType;
 use buck2_node::attrs::coerced_path::CoercedPath;
 use starlark::values::Value;
-use starlark::values::list::ListRef;
 
 use crate::attrs::resolve::ctx::AttrResolutionContext;
 
@@ -47,12 +46,7 @@ pub(crate) trait SourceAttrTypeExt {
         label: &ConfiguredProvidersLabel,
     ) -> buck2_error::Result<Vec<Value<'v>>> {
         let dep = ctx.get_dep(label)?;
-        let default_outputs = dep.default_info()?.default_outputs_raw();
-        let res = ListRef::from_frozen_value(default_outputs)
-            .unwrap()
-            .iter()
-            .collect();
-        Ok(res)
+        dep.default_info()?.default_output_values()
     }
 
     fn resolve_single_label<'v>(

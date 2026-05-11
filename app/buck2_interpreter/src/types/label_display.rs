@@ -9,8 +9,8 @@
  */
 
 use buck2_core::cells::external::bzlmod_canonical_repo_name_for_cell;
+use buck2_core::provider::label::ConfiguredProvidersLabel;
 use buck2_core::provider::label::ProvidersLabel;
-use buck2_core::provider::label::ProvidersName;
 use buck2_core::target::label::label::TargetLabel;
 
 fn bazel_repo_prefix_for_cell(cell_name: &str) -> Option<String> {
@@ -34,10 +34,11 @@ pub(crate) fn bazel_label_string_for_target(label: &TargetLabel) -> Option<Strin
 }
 
 pub(crate) fn starlark_providers_label_str(label: &ProvidersLabel) -> String {
-    match label.name() {
-        ProvidersName::Default => {
-            bazel_label_string_for_target(label.target()).unwrap_or_else(|| label.to_string())
-        }
-        ProvidersName::NonDefault(_) => label.to_string(),
-    }
+    let target =
+        bazel_label_string_for_target(label.target()).unwrap_or_else(|| label.target().to_string());
+    format!("{target}{}", label.name())
+}
+
+pub(crate) fn starlark_configured_providers_label_str(label: &ConfiguredProvidersLabel) -> String {
+    starlark_providers_label_str(&label.unconfigured())
 }

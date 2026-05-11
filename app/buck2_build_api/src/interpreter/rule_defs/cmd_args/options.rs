@@ -103,6 +103,8 @@ pub(crate) enum ParamFileFormat {
     Shell,
     Multiline,
     FlagPerLine,
+    GccQuoted,
+    Windows,
 }
 
 impl ParamFileFormat {
@@ -122,6 +124,8 @@ impl Display for ParamFileFormat {
             Self::Shell => write!(f, "shell"),
             Self::Multiline => write!(f, "multiline"),
             Self::FlagPerLine => write!(f, "flag_per_line"),
+            Self::GccQuoted => write!(f, "gcc_quoted"),
+            Self::Windows => write!(f, "windows"),
         }
     }
 }

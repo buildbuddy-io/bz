@@ -245,8 +245,9 @@ impl Tester {
         loaded_modules: LoadedModules,
     ) -> buck2_error::Result<LoadedModule> {
         let interpreter = self.interpreter()?;
-        let ParseData(ast, _) =
-            interpreter.parse(StarlarkPath::LoadFile(path), content.to_owned())??;
+        let ast = interpreter
+            .parse(StarlarkPath::LoadFile(path), content.to_owned())??
+            .ast;
         let provider =
             StarlarkEvaluatorProvider::passthrough(StarlarkEvalKind::Unknown("testing".into()));
         let mut buckconfigs =
@@ -293,8 +294,9 @@ impl Tester {
         package_listing: PackageListing,
     ) -> buck2_error::Result<EvaluationResult> {
         let interpreter = self.interpreter()?;
-        let ParseData(ast, _) =
-            interpreter.parse(StarlarkPath::BuildFile(path), content.to_owned())??;
+        let ast = interpreter
+            .parse(StarlarkPath::BuildFile(path), content.to_owned())??
+            .ast;
         let provider =
             StarlarkEvaluatorProvider::passthrough(StarlarkEvalKind::Unknown("testing".into()));
         let mut buckconfigs =

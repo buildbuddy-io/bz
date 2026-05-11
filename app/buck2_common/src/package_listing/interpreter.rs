@@ -108,10 +108,45 @@ pub struct InterpreterPackageListingResolver<'c, 'd> {
     ctx: &'c mut DiceComputations<'d>,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum PackageListingMode {
+#[derive(
+    Clone,
+    Debug,
+    Eq,
+    PartialEq,
+    Hash,
+    allocative::Allocative,
+    pagable::Pagable
+)]
+pub enum PackageListingStrategy {
     Recursive,
     Shallow,
+    Selective(Vec<PackageRelativePathBuf>),
+}
+
+impl PackageListingStrategy {
+    pub fn selective(mut prefixes: Vec<PackageRelativePathBuf>) -> Self {
+        if prefixes.iter().any(|prefix| prefix.is_empty()) {
+            return Self::Recursive;
+        }
+        prefixes.sort();
+        prefixes.dedup();
+        if prefixes.is_empty() {
+            Self::Shallow
+        } else {
+            Self::Selective(prefixes)
+        }
+    }
+
+    fn should_recurse_into(&self, child: &PackageRelativePath) -> bool {
+        match self {
+            Self::Recursive => true,
+            Self::Shallow => false,
+            Self::Selective(prefixes) => prefixes.iter().any(|prefix| {
+                let prefix: &PackageRelativePath = prefix.as_ref();
+                prefix.starts_with(child) || child.starts_with(prefix)
+            }),
+        }
+    }
 }
 
 #[derive(Debug, buck2_error::Error)]
@@ -386,6 +421,14 @@ impl<'c, 'd> InterpreterPackageListingResolver<'c, 'd> {
     ) -> Result<PackageListing, GatherPackageListingError> {
         gather_package_listing_impl(self.ctx, root).await
     }
+
+    pub async fn gather_package_listing_with_strategy(
+        &mut self,
+        root: PackageLabel,
+        strategy: PackageListingStrategy,
+    ) -> Result<PackageListing, GatherPackageListingError> {
+        gather_package_listing_with_strategy_impl(self.ctx, root, strategy).await
+    }
 }
 
 struct Directory {
@@ -421,7 +464,7 @@ impl Directory {
         root: CellPathRef<'_>,
         path: &PackageRelativePath,
         is_root: bool,
-        mode: PackageListingMode,
+        strategy: &PackageListingStrategy,
     ) -> Result<Option<Directory>, GatherPackageListingError> {
         let cell_path = root.join(path.as_forward_rel_path());
         let entries = DiceFileComputations::read_dir_ext(ctx, cell_path.as_ref())
@@ -455,14 +498,35 @@ impl Directory {
             }
         }
 
-        let (subdirs, subpackages) = match mode {
-            PackageListingMode::Recursive => {
-                Self::gather_subdirs(ctx, buildfile_candidates, root, child_dirs, mode).await?
+        let (subdirs, subpackages) = match strategy {
+            PackageListingStrategy::Recursive => {
+                Self::gather_subdirs(ctx, buildfile_candidates, root, child_dirs, strategy).await?
             }
-            PackageListingMode::Shallow => (
+            PackageListingStrategy::Shallow => (
                 child_dirs.into_iter().map(Self::shallow).collect(),
                 Vec::new(),
             ),
+            PackageListingStrategy::Selective(_) => {
+                let mut recursive_child_dirs = Vec::new();
+                let mut shallow_subdirs = Vec::new();
+                for child_dir in child_dirs {
+                    if strategy.should_recurse_into(&child_dir) {
+                        recursive_child_dirs.push(child_dir);
+                    } else {
+                        shallow_subdirs.push(Self::shallow(child_dir));
+                    }
+                }
+                let (mut subdirs, subpackages) = Self::gather_subdirs(
+                    ctx,
+                    buildfile_candidates,
+                    root,
+                    recursive_child_dirs,
+                    strategy,
+                )
+                .await?;
+                subdirs.extend(shallow_subdirs);
+                (subdirs, subpackages)
+            }
         };
 
         let mut recursive_files_count = files.len();
@@ -491,7 +555,7 @@ impl Directory {
         buildfile_candidates: &'a [FileNameBuf],
         root: CellPathRef<'a>,
         subdirs: Vec<PackageRelativePathBuf>,
-        mode: PackageListingMode,
+        strategy: &'a PackageListingStrategy,
     ) -> BoxFuture<
         'a,
         Result<(Vec<Directory>, Vec<ArcS<PackageRelativePath>>), GatherPackageListingError>,
@@ -503,9 +567,15 @@ impl Directory {
             for res in ctx
                 .compute_join(subdirs, |ctx: &mut DiceComputations, path| {
                     async move {
-                        let res =
-                            Directory::gather(ctx, buildfile_candidates, root, &path, false, mode)
-                                .await?;
+                        let res = Directory::gather(
+                            ctx,
+                            buildfile_candidates,
+                            root,
+                            &path,
+                            false,
+                            strategy,
+                        )
+                        .await?;
                         Ok((path, res))
                     }
                     .boxed()
@@ -570,30 +640,52 @@ async fn gather_package_listing_impl(
     let buildfile_candidates = DiceFileComputations::buildfiles(ctx, root.cell_name())
         .await
         .map_err(|e| GatherPackageListingError::error(cell_path, e))?;
-    let mode = package_listing_mode(ctx, cell_path, &buildfile_candidates).await?;
+    let strategy = package_listing_strategy(ctx, cell_path, &buildfile_candidates).await?;
+    gather_package_listing_with_buildfiles(ctx, root, &buildfile_candidates, strategy).await
+}
+
+async fn gather_package_listing_with_strategy_impl(
+    ctx: &mut DiceComputations<'_>,
+    root: PackageLabel,
+    strategy: PackageListingStrategy,
+) -> Result<PackageListing, GatherPackageListingError> {
+    let cell_path = root.as_cell_path();
+    let buildfile_candidates = DiceFileComputations::buildfiles(ctx, root.cell_name())
+        .await
+        .map_err(|e| GatherPackageListingError::error(cell_path, e))?;
+    gather_package_listing_with_buildfiles(ctx, root, &buildfile_candidates, strategy).await
+}
+
+async fn gather_package_listing_with_buildfiles(
+    ctx: &mut DiceComputations<'_>,
+    root: PackageLabel,
+    buildfile_candidates: &[FileNameBuf],
+    strategy: PackageListingStrategy,
+) -> Result<PackageListing, GatherPackageListingError> {
+    let cell_path = root.as_cell_path();
     Ok(Directory::gather(
         ctx,
         &buildfile_candidates,
         cell_path,
         PackageRelativePath::empty(),
         true,
-        mode,
+        &strategy,
     )
     .await?
     .unwrap()
     .flatten())
 }
 
-async fn package_listing_mode(
+async fn package_listing_strategy(
     ctx: &mut DiceComputations<'_>,
     package: CellPathRef<'_>,
     buildfile_candidates: &[FileNameBuf],
-) -> Result<PackageListingMode, GatherPackageListingError> {
+) -> Result<PackageListingStrategy, GatherPackageListingError> {
     if !bazel_compat_package_listing_enabled(ctx, package.cell())
         .await
         .map_err(|e| GatherPackageListingError::error(package, e))?
     {
-        return Ok(PackageListingMode::Recursive);
+        return Ok(PackageListingStrategy::Recursive);
     }
 
     let entries = DiceFileComputations::read_dir_ext(ctx, package)
@@ -601,7 +693,7 @@ async fn package_listing_mode(
         .map_err(|e| GatherPackageListingError::from_read_dir(package, e))?
         .included;
     let Some(buildfile) = find_buildfile(buildfile_candidates, &entries) else {
-        return Ok(PackageListingMode::Recursive);
+        return Ok(PackageListingStrategy::Recursive);
     };
     let buildfile_path = package.join(buildfile);
     let contents = DiceFileComputations::read_file_if_exists(ctx, buildfile_path.as_ref())
@@ -609,12 +701,14 @@ async fn package_listing_mode(
         .map_err(|e| GatherPackageListingError::error(package, e))?;
 
     match contents {
-        Some(contents) if !build_file_may_call_glob(&contents) => Ok(PackageListingMode::Shallow),
-        _ => Ok(PackageListingMode::Recursive),
+        Some(contents) if !build_file_may_call_glob(&contents) => {
+            Ok(PackageListingStrategy::Shallow)
+        }
+        _ => Ok(PackageListingStrategy::Recursive),
     }
 }
 
-async fn bazel_compat_package_listing_enabled(
+pub async fn bazel_compat_package_listing_enabled(
     ctx: &mut DiceComputations<'_>,
     cell_name: CellName,
 ) -> buck2_error::Result<bool> {

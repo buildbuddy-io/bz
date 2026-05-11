@@ -22,6 +22,7 @@ use starlark::environment::GlobalsBuilder;
 use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
 use starlark::environment::MethodsStatic;
+use starlark::values::Demand;
 use starlark::values::Freeze;
 use starlark::values::FrozenHeap;
 use starlark::values::FrozenValue;
@@ -29,6 +30,7 @@ use starlark::values::Heap;
 use starlark::values::NoSerialize;
 use starlark::values::StarlarkValue;
 use starlark::values::Trace;
+use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark::values::ValueLike;
 use starlark::values::dict::DictRef;
@@ -38,7 +40,16 @@ use starlark::values::none::NoneOr;
 use starlark::values::starlark_value;
 use starlark::values::structs::StructRef;
 use starlark::values::tuple::TupleRef;
+use starlark::values::type_repr::StarlarkTypeRepr;
 
+use crate::interpreter::rule_defs::cmd_args::ArtifactPathMapper;
+use crate::interpreter::rule_defs::cmd_args::CommandLineArgLike;
+use crate::interpreter::rule_defs::cmd_args::CommandLineArtifactVisitor;
+use crate::interpreter::rule_defs::cmd_args::CommandLineBuilder;
+use crate::interpreter::rule_defs::cmd_args::CommandLineContext;
+use crate::interpreter::rule_defs::cmd_args::WriteToFileMacroVisitor;
+use crate::interpreter::rule_defs::cmd_args::command_line_arg_like_type::command_line_arg_like_impl;
+use crate::interpreter::rule_defs::cmd_args::value_as::ValueAsCommandLineLike;
 use crate::interpreter::rule_defs::provider::ValueAsProviderLike;
 
 #[derive(Debug, buck2_error::Error)]
@@ -55,6 +66,10 @@ enum BazelDepsetError {
     TransitiveNotDepset(String),
     #[error("depset elements must all have the same type: got `{actual}` after `{expected}`")]
     ElementTypeMismatch { expected: String, actual: String },
+}
+
+fn command_line_depset_error(error: starlark::Error) -> buck2_error::Error {
+    buck2_error::buck2_error!(buck2_error::ErrorTag::Input, "{}", error)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Allocative)]
@@ -180,6 +195,57 @@ impl<'v, V: ValueLike<'v>> BazelDepsetGen<'v, V> {
                 depset_from_value(transitive.to_value()).map_or(false, BazelDepsetGen::is_empty)
             })
     }
+
+    fn for_each_command_line_value(
+        &self,
+        values: &mut SmallSet<Value<'v>>,
+        depsets: &mut SmallSet<Value<'v>>,
+        visitor: &mut dyn FnMut(Value<'v>) -> buck2_error::Result<()>,
+    ) -> buck2_error::Result<()> {
+        match self.order {
+            BazelDepsetOrder::Default | BazelDepsetOrder::Postorder => {
+                self.for_each_transitive_command_line_value(values, depsets, visitor)?;
+                self.for_each_direct_command_line_value(values, visitor)?;
+            }
+            BazelDepsetOrder::Preorder | BazelDepsetOrder::Topological => {
+                self.for_each_direct_command_line_value(values, visitor)?;
+                self.for_each_transitive_command_line_value(values, depsets, visitor)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn for_each_transitive_command_line_value(
+        &self,
+        values: &mut SmallSet<Value<'v>>,
+        depsets: &mut SmallSet<Value<'v>>,
+        visitor: &mut dyn FnMut(Value<'v>) -> buck2_error::Result<()>,
+    ) -> buck2_error::Result<()> {
+        for transitive in &self.transitive {
+            let transitive = transitive.to_value();
+            if depsets.insert_hashed(bazel_depset_identity_hash(transitive)) {
+                depset_from_value(transitive)
+                    .map_err(command_line_depset_error)?
+                    .for_each_command_line_value(values, depsets, visitor)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn for_each_direct_command_line_value(
+        &self,
+        seen: &mut SmallSet<Value<'v>>,
+        visitor: &mut dyn FnMut(Value<'v>) -> buck2_error::Result<()>,
+    ) -> buck2_error::Result<()> {
+        for value in &self.direct {
+            let value = value.to_value();
+            let hash = bazel_depset_hash(value).map_err(command_line_depset_error)?;
+            if seen.insert_hashed(Hashed::new_unchecked(hash, value)) {
+                visitor(value)?;
+            }
+        }
+        Ok(())
+    }
 }
 
 impl<'v, V: ValueLike<'v>> fmt::Display for BazelDepsetGen<'v, V> {
@@ -197,6 +263,86 @@ impl<'v, V: ValueLike<'v>> fmt::Display for BazelDepsetGen<'v, V> {
     }
 }
 
+impl<'v, V: ValueLike<'v>> CommandLineArgLike<'v> for BazelDepsetGen<'v, V> {
+    fn register_me(&self) {
+        command_line_arg_like_impl!(BazelDepset::starlark_type_repr());
+    }
+
+    fn add_to_command_line(
+        &self,
+        cli: &mut dyn CommandLineBuilder,
+        context: &mut dyn CommandLineContext,
+        artifact_path_mapping: &dyn ArtifactPathMapper,
+    ) -> buck2_error::Result<()> {
+        let mut seen_values = SmallSet::new();
+        let mut seen_depsets = SmallSet::new();
+        self.for_each_command_line_value(&mut seen_values, &mut seen_depsets, &mut |value| {
+            ValueAsCommandLineLike::unpack_value_err(value)?
+                .0
+                .add_to_command_line(cli, context, artifact_path_mapping)
+        })
+    }
+
+    fn add_to_command_line_expanding_directories(
+        &self,
+        cli: &mut dyn CommandLineBuilder,
+        context: &mut dyn CommandLineContext,
+        artifact_path_mapping: &dyn ArtifactPathMapper,
+    ) -> buck2_error::Result<()> {
+        let mut seen_values = SmallSet::new();
+        let mut seen_depsets = SmallSet::new();
+        self.for_each_command_line_value(&mut seen_values, &mut seen_depsets, &mut |value| {
+            ValueAsCommandLineLike::unpack_value_err(value)?
+                .0
+                .add_to_command_line_expanding_directories(cli, context, artifact_path_mapping)
+        })
+    }
+
+    fn visit_artifacts(
+        &self,
+        visitor: &mut dyn CommandLineArtifactVisitor<'v>,
+    ) -> buck2_error::Result<()> {
+        let mut seen_values = SmallSet::new();
+        let mut seen_depsets = SmallSet::new();
+        self.for_each_command_line_value(&mut seen_values, &mut seen_depsets, &mut |value| {
+            ValueAsCommandLineLike::unpack_value_err(value)?
+                .0
+                .visit_artifacts(visitor)
+        })
+    }
+
+    fn contains_arg_attr(&self) -> bool {
+        let mut seen_values = SmallSet::new();
+        let mut seen_depsets = SmallSet::new();
+        let mut contains = false;
+        let _ignored =
+            self.for_each_command_line_value(&mut seen_values, &mut seen_depsets, &mut |value| {
+                if ValueAsCommandLineLike::unpack_value_err(value)?
+                    .0
+                    .contains_arg_attr()
+                {
+                    contains = true;
+                }
+                Ok(())
+            });
+        contains
+    }
+
+    fn visit_write_to_file_macros(
+        &self,
+        visitor: &mut dyn WriteToFileMacroVisitor,
+        artifact_path_mapping: &dyn ArtifactPathMapper,
+    ) -> buck2_error::Result<()> {
+        let mut seen_values = SmallSet::new();
+        let mut seen_depsets = SmallSet::new();
+        self.for_each_command_line_value(&mut seen_values, &mut seen_depsets, &mut |value| {
+            ValueAsCommandLineLike::unpack_value_err(value)?
+                .0
+                .visit_write_to_file_macros(visitor, artifact_path_mapping)
+        })
+    }
+}
+
 #[starlark_value(type = "depset")]
 impl<'v, V: ValueLike<'v>> StarlarkValue<'v> for BazelDepsetGen<'v, V>
 where
@@ -209,6 +355,10 @@ where
 
     fn to_bool(&self) -> bool {
         !self.is_empty()
+    }
+
+    fn provide(&'v self, demand: &mut Demand<'_, 'v>) {
+        demand.provide_value::<&dyn CommandLineArgLike<'v>>(self);
     }
 }
 

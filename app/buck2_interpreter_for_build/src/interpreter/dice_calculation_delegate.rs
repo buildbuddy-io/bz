@@ -19,6 +19,8 @@ use buck2_common::file_ops::error::FileReadErrorContext;
 use buck2_common::legacy_configs::dice::HasLegacyConfigs;
 use buck2_common::legacy_configs::dice::OpaqueLegacyBuckConfigOnDice;
 use buck2_common::package_boundary::HasPackageBoundaryExceptions;
+use buck2_common::package_listing::PackageListingStrategy;
+use buck2_common::package_listing::bazel_compat_package_listing_enabled;
 use buck2_common::package_listing::dice::DicePackageListingResolver;
 use buck2_common::package_listing::listing::PackageListing;
 use buck2_core::build_file_path::BuildFilePath;
@@ -252,13 +254,21 @@ impl<'c, 'd: 'c> DiceCalculationDelegate<'c, 'd> {
         &mut self,
         starlark_file: StarlarkPath<'_>,
     ) -> buck2_error::Result<(AstModule, ModuleDeps)> {
-        let ParseData(ast, imports) = self.parse_file(starlark_file).await??;
+        let (parse_data, deps) = self.prepare_eval_with_parse_data(starlark_file).await?;
+        Ok((parse_data.ast, deps))
+    }
+
+    async fn prepare_eval_with_parse_data(
+        &mut self,
+        starlark_file: StarlarkPath<'_>,
+    ) -> buck2_error::Result<(ParseData, ModuleDeps)> {
+        let parse_data = self.parse_file(starlark_file).await??;
         let deps = CycleGuard::<LoadCycleDescriptor>::new(self.ctx)?
-            .guard_this(Self::eval_deps(self.ctx, &imports))
+            .guard_this(Self::eval_deps(self.ctx, &parse_data.imports))
             .await
             .into_result(self.ctx)
             .await???;
-        Ok((ast, deps))
+        Ok((parse_data, deps))
     }
 
     pub fn prepare_eval_with_content(
@@ -664,6 +674,24 @@ impl<'c, 'd: 'c> DiceCalculationDelegate<'c, 'd> {
         .await
     }
 
+    async fn resolve_package_listing_with_strategy(
+        ctx: &mut DiceComputations<'_>,
+        package: PackageLabel,
+        strategy: PackageListingStrategy,
+    ) -> buck2_error::Result<PackageListing> {
+        span_async_simple(
+            buck2_data::LoadPackageStart {
+                path: package.as_cell_path().to_string(),
+            },
+            DicePackageListingResolver(ctx)
+                .resolve_package_listing_with_strategy(package.dupe(), strategy),
+            buck2_data::LoadPackageEnd {
+                path: package.as_cell_path().to_string(),
+            },
+        )
+        .await
+    }
+
     pub async fn eval_build_file(
         &mut self,
         package: PackageLabel,
@@ -672,19 +700,50 @@ impl<'c, 'd: 'c> DiceCalculationDelegate<'c, 'd> {
         let mut now = None;
         let eval_kind = StarlarkEvalKind::LoadBuildFile(package.dupe());
         let eval_result: buck2_error::Result<_> = try {
-            let ((), listing) = self
+            let package_cell = package.cell_name();
+            let ((), bazel_compat_listing) = self
                 .ctx
                 .try_compute2(
                     |ctx| check_starlark_stack_size(ctx).boxed(),
-                    |ctx| Self::resolve_package_listing(ctx, package.dupe()).boxed(),
+                    |ctx| {
+                        async move { bazel_compat_package_listing_enabled(ctx, package_cell).await }
+                            .boxed()
+                    },
                 )
                 .await?;
 
-            let build_file_path =
-                BuildFilePath::new(package.dupe(), listing.buildfile().to_owned());
-            let (ast, deps) = self
-                .prepare_eval(StarlarkPath::BuildFile(&build_file_path))
+            let (listing, build_file_path, ast, deps) = if bazel_compat_listing {
+                let shallow_listing = Self::resolve_package_listing_with_strategy(
+                    self.ctx,
+                    package.dupe(),
+                    PackageListingStrategy::Shallow,
+                )
                 .await?;
+                let build_file_path =
+                    BuildFilePath::new(package.dupe(), shallow_listing.buildfile().to_owned());
+                let (parse_data, deps) = self
+                    .prepare_eval_with_parse_data(StarlarkPath::BuildFile(&build_file_path))
+                    .await?;
+                let strategy = parse_data
+                    .bazel_package_listing_strategy
+                    .clone()
+                    .unwrap_or(PackageListingStrategy::Recursive);
+                let listing = if strategy == PackageListingStrategy::Shallow {
+                    shallow_listing
+                } else {
+                    Self::resolve_package_listing_with_strategy(self.ctx, package.dupe(), strategy)
+                        .await?
+                };
+                (listing, build_file_path, parse_data.ast, deps)
+            } else {
+                let listing = Self::resolve_package_listing(self.ctx, package.dupe()).await?;
+                let build_file_path =
+                    BuildFilePath::new(package.dupe(), listing.buildfile().to_owned());
+                let (ast, deps) = self
+                    .prepare_eval(StarlarkPath::BuildFile(&build_file_path))
+                    .await?;
+                (listing, build_file_path, ast, deps)
+            };
             let super_package = self
                 .eval_package_file_for_build_file(package.dupe(), &listing)
                 .await?;

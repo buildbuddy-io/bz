@@ -19,6 +19,7 @@ filegroup(
         "//bazel_tools/tools/build_defs/repo:pkg_sources",
         "//bazel_tools/tools/cpp:pkg_sources",
         "//bazel_tools/tools/jdk:pkg_sources",
+        "//bazel_tools/tools/objc:pkg_sources",
         "//bazel_tools/tools/osx:pkg_sources",
         "//bazel_tools/tools/proto:pkg_sources",
     ],

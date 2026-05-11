@@ -531,6 +531,15 @@ impl FrozenDefaultInfo {
         self.default_outputs.get()
     }
 
+    pub fn default_output_values<'v>(&self) -> buck2_error::Result<Vec<Value<'v>>> {
+        let default_outputs = ListRef::from_frozen_value(self.default_outputs.get())
+            .ok_or_else(|| internal_error!("Should be list of artifacts"))?;
+        if !default_outputs.is_empty() {
+            return Ok(default_outputs.iter().collect());
+        }
+        Ok(bazel_depset_to_list(self.files.get().to_value())?)
+    }
+
     pub fn files_raw(&self) -> FrozenValue {
         self.files.get()
     }
@@ -588,7 +597,7 @@ impl FrozenDefaultInfo {
         &self,
         processor: &mut dyn FnMut(Artifact),
     ) -> buck2_error::Result<()> {
-        self.for_each_in_list(self.default_outputs.get(), |value| {
+        self.for_each_default_output_value(|value| {
             processor(
                 ValueAsInputArtifactLike::unpack_value_err(value)?
                     .0
@@ -602,7 +611,7 @@ impl FrozenDefaultInfo {
         &self,
         processor: &mut dyn FnMut(ArtifactGroup),
     ) -> buck2_error::Result<()> {
-        self.for_each_in_list(self.default_outputs.get(), |value| {
+        self.for_each_default_output_value(|value| {
             let others = ValueAsInputArtifactLike::unpack_value_err(value)?
                 .0
                 .get_associated_artifacts();
@@ -649,6 +658,25 @@ impl FrozenDefaultInfo {
         self.for_each_default_output_artifact_only(&mut |a| processor(ArtifactGroup::Artifact(a)))?;
         self.for_each_default_output_other_artifacts_only(processor)?;
         self.for_each_other_output(processor)
+    }
+
+    fn for_each_default_output_value(
+        &self,
+        mut processor: impl FnMut(Value) -> buck2_error::Result<()>,
+    ) -> buck2_error::Result<()> {
+        let default_outputs = ListRef::from_frozen_value(self.default_outputs.get())
+            .ok_or_else(|| internal_error!("Should be list of artifacts"))?;
+        if !default_outputs.is_empty() {
+            for value in default_outputs.iter() {
+                processor(value)?;
+            }
+            return Ok(());
+        }
+
+        for value in bazel_depset_to_list(self.files.get().to_value())? {
+            processor(value)?;
+        }
+        Ok(())
     }
 
     fn for_each_in_list(
@@ -757,9 +785,7 @@ fn default_info_creator(builder: &mut GlobalsBuilder) {
                 )
             }
             (None, None, Some(files), _) => (
-                ValueOfUnchecked::<ListType<_>>::new(
-                    heap.alloc(AllocList(bazel_depset_to_list(files.value)?)),
-                ),
+                ValueOfUnchecked::<ListType<_>>::new(heap.alloc(AllocList::EMPTY)),
                 ValueOfUnchecked::<FrozenBazelDepset>::new(files.value),
             ),
             (None, None, None, None) => (

@@ -9,6 +9,8 @@
  */
 
 use std::fmt;
+use std::hash::Hash;
+use std::hash::Hasher;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -416,16 +418,7 @@ pub struct BzlmodRepositoryRuleInvocationSetup {
     pub label_deps: Arc<Vec<Arc<str>>>,
 }
 
-#[derive(
-    Debug,
-    Clone,
-    Dupe,
-    allocative::Allocative,
-    PartialEq,
-    Eq,
-    Hash,
-    Pagable
-)]
+#[derive(Debug, Clone, Dupe, allocative::Allocative, Pagable)]
 pub struct BzlmodModuleExtensionRepoSetup {
     pub parent_canonical_repo_name: Arc<str>,
     pub parent_is_root: bool,
@@ -434,7 +427,44 @@ pub struct BzlmodModuleExtensionRepoSetup {
     pub extension_bzl_path: Arc<str>,
     pub extension_name: Arc<str>,
     pub repo_name: Arc<str>,
+    pub extension_usages_key: Arc<str>,
     pub extension_usages_json: Arc<str>,
+}
+
+impl BzlmodModuleExtensionRepoSetup {
+    pub fn extension_usages_key_from_json(extension_usages_json: &str) -> String {
+        blake3::hash(extension_usages_json.as_bytes())
+            .to_hex()
+            .to_string()
+    }
+}
+
+impl PartialEq for BzlmodModuleExtensionRepoSetup {
+    fn eq(&self, other: &Self) -> bool {
+        self.parent_canonical_repo_name == other.parent_canonical_repo_name
+            && self.parent_is_root == other.parent_is_root
+            && self.extension_bzl_file == other.extension_bzl_file
+            && self.extension_bzl_cell == other.extension_bzl_cell
+            && self.extension_bzl_path == other.extension_bzl_path
+            && self.extension_name == other.extension_name
+            && self.repo_name == other.repo_name
+            && self.extension_usages_key == other.extension_usages_key
+    }
+}
+
+impl Eq for BzlmodModuleExtensionRepoSetup {}
+
+impl Hash for BzlmodModuleExtensionRepoSetup {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.parent_canonical_repo_name.hash(state);
+        self.parent_is_root.hash(state);
+        self.extension_bzl_file.hash(state);
+        self.extension_bzl_cell.hash(state);
+        self.extension_bzl_path.hash(state);
+        self.extension_name.hash(state);
+        self.repo_name.hash(state);
+        self.extension_usages_key.hash(state);
+    }
 }
 
 impl fmt::Display for ExternalCellOrigin {

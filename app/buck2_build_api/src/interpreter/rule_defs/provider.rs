@@ -57,11 +57,10 @@
 use std::convert::Infallible;
 // TODO(cjhopman): That last one would be more discoverable if we moved it onto the
 // `FrozenProviderCollectionValue` itself so you could do `collection.get::<MyProvider>()`.
-use std::fmt::Debug;
 use std::sync::Arc;
 
 use buck2_core::provider::id::ProviderId;
-use starlark::any::ProvidesStaticType;
+pub use buck2_interpreter::types::provider::callable::ProviderLike;
 use starlark::typing::Ty;
 use starlark::values::StarlarkValue;
 use starlark::values::UnpackValue;
@@ -85,22 +84,9 @@ pub mod test_provider;
 pub mod ty;
 pub(crate) mod user;
 
-/// Implemented by providers (builtin or user defined).
-pub trait ProviderLike<'v>: Debug {
-    /// The ID. Guaranteed to be set on the `ProviderCallable` before constructing this object
-    fn id(&self) -> &Arc<ProviderId>;
-    /// Returns a list of all the keys and values.
-    // TODO(cjhopman): I'd rather return an iterator. I couldn't get that to work, though.
-    fn items(&self) -> Vec<(&str, Value<'v>)>;
-}
-
 /// Implemented by frozen builtin providers.
 pub trait FrozenBuiltinProviderLike: ProviderLike<'static> + for<'v> StarlarkValue<'v> {
     fn builtin_provider_id() -> &'static Arc<ProviderId>;
-}
-
-unsafe impl<'v> ProvidesStaticType<'v> for &'v dyn ProviderLike<'v> {
-    type StaticType = &'static dyn ProviderLike<'static>;
 }
 
 pub struct ValueAsProviderLike<'v>(pub(crate) &'v dyn ProviderLike<'v>);

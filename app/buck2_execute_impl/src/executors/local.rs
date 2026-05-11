@@ -1952,8 +1952,14 @@ pub async fn materialize_inputs(
                 }
             }
             CommandExecutionInput::ArtifactPathAlias {
-                source_path, path, ..
+                source_path,
+                source_requires_materialization,
+                path,
+                ..
             } => {
+                if *source_requires_materialization {
+                    paths.push(source_path.clone());
+                }
                 artifact_path_aliases.push((source_path.clone(), path.clone()));
             }
             CommandExecutionInput::ActionMetadata(metadata) => {

@@ -1698,6 +1698,7 @@ dependencies = [
  "rand 0.10.1",
  "ref-cast",
  "regex",
+ "ring",
  "rusqlite",
  "serde",
  "serde_json",

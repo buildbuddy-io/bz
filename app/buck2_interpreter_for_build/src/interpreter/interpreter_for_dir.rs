@@ -19,6 +19,7 @@ use std::sync::Arc;
 use allocative::Allocative;
 use buck2_common::legacy_configs::configs::LegacyBuckConfig;
 use buck2_common::legacy_configs::key::BuckconfigKeyRef;
+use buck2_common::package_listing::PackageListingStrategy;
 use buck2_common::package_listing::listing::PackageListing;
 use buck2_core::build_file_path::BuildFilePath;
 use buck2_core::bxl::BxlFilePath;
@@ -27,6 +28,7 @@ use buck2_core::cells::build_file_cell::BuildFileCell;
 use buck2_core::cells::cell_path::CellPath;
 use buck2_core::cells::cell_path_with_allowed_relative_dir::CellPathWithAllowedRelativeDir;
 use buck2_core::cells::paths::CellRelativePathBuf;
+use buck2_core::package::package_relative_path::PackageRelativePathBuf;
 use buck2_error::BuckErrorContext;
 use buck2_error::conversion::from_any_with_tag;
 use buck2_error::internal_error;
@@ -64,6 +66,10 @@ use pagable::PagablePanic;
 use starlark::codemap::FileSpan;
 use starlark::environment::FrozenModule;
 use starlark::syntax::AstModule;
+use starlark::syntax::ast::Argument;
+use starlark::syntax::ast::AstExpr;
+use starlark::syntax::ast::AstLiteral;
+use starlark::syntax::ast::Expr;
 use starlark::values::any_complex::StarlarkAnyComplex;
 
 use crate::interpreter::buckconfig::BuckConfigsViewForStarlark;
@@ -99,10 +105,11 @@ enum StarlarkPeakMemoryError {
 ///
 /// The imports are under a separate Arc so that that can be shared with
 /// the evaluation result (which needs the imports but no longer needs the AST).
-pub struct ParseData(
-    pub AstModule,
-    pub Arc<Vec<(Option<FileSpan>, OwnedStarlarkModulePath)>>,
-);
+pub struct ParseData {
+    pub ast: AstModule,
+    pub imports: Arc<Vec<(Option<FileSpan>, OwnedStarlarkModulePath)>>,
+    pub bazel_package_listing_strategy: Option<PackageListingStrategy>,
+}
 
 pub type ParseResult = Result<ParseData, buck2_error::Error>;
 
@@ -111,6 +118,7 @@ impl ParseData {
         ast: AstModule,
         implicit_imports: Vec<OwnedStarlarkModulePath>,
         resolver: &dyn LoadResolver,
+        is_build_file: bool,
     ) -> buck2_error::Result<Self> {
         let mut loads = implicit_imports.into_map(|x| (None, x));
         for x in ast.loads() {
@@ -124,15 +132,167 @@ impl ParseData {
                 })?;
             loads.push((Some(x.span), path));
         }
-        Ok(Self(ast, Arc::new(loads)))
+        let bazel_package_listing_strategy =
+            is_build_file.then(|| bazel_package_listing_strategy_from_ast(&ast));
+        Ok(Self {
+            ast,
+            imports: Arc::new(loads),
+            bazel_package_listing_strategy,
+        })
     }
 
     pub fn ast(&self) -> &AstModule {
-        &self.0
+        &self.ast
     }
 
     pub fn imports(&self) -> &Arc<Vec<(Option<FileSpan>, OwnedStarlarkModulePath)>> {
-        &self.1
+        &self.imports
+    }
+}
+
+fn bazel_package_listing_strategy_from_ast(ast: &AstModule) -> PackageListingStrategy {
+    struct Visitor {
+        unknown_glob_use: bool,
+        prefixes: Vec<PackageRelativePathBuf>,
+    }
+
+    impl Visitor {
+        fn visit_expr(&mut self, node: &AstExpr) {
+            match &node.node {
+                Expr::Call(callee, arguments) if is_direct_glob_callee(callee) => {
+                    match literal_glob_include_patterns(arguments.args.as_slice()) {
+                        Some(patterns) => {
+                            for pattern in patterns {
+                                match glob_listing_prefix(&pattern) {
+                                    GlobListingPrefix::Shallow => {}
+                                    GlobListingPrefix::Prefix(prefix) => self.prefixes.push(prefix),
+                                    GlobListingPrefix::Recursive => {
+                                        self.unknown_glob_use = true;
+                                    }
+                                }
+                            }
+                        }
+                        None => self.unknown_glob_use = true,
+                    }
+                    for argument in &arguments.args {
+                        visit_argument_exprs(argument, |expr| self.visit_expr(expr));
+                    }
+                }
+                Expr::Identifier(ident)
+                    if ident.node.ident == "glob" || ident.node.ident == "sub_packages" =>
+                {
+                    self.unknown_glob_use = true;
+                }
+                Expr::Dot(_, field) if field.node == "glob" => {
+                    self.unknown_glob_use = true;
+                }
+                _ => node.visit_expr(|expr| self.visit_expr(expr)),
+            }
+        }
+    }
+
+    let mut visitor = Visitor {
+        unknown_glob_use: false,
+        prefixes: Vec::new(),
+    };
+    ast.statement().visit_expr(|expr| visitor.visit_expr(expr));
+    if visitor.unknown_glob_use {
+        PackageListingStrategy::Recursive
+    } else {
+        PackageListingStrategy::selective(visitor.prefixes)
+    }
+}
+
+fn is_direct_glob_callee(callee: &AstExpr) -> bool {
+    match &callee.node {
+        Expr::Identifier(ident) => ident.node.ident == "glob",
+        Expr::Dot(_, field) => field.node == "glob",
+        _ => false,
+    }
+}
+
+fn visit_argument_exprs(
+    argument: &starlark::syntax::ast::AstArgument,
+    mut f: impl FnMut(&AstExpr),
+) {
+    match &argument.node {
+        Argument::Positional(expr)
+        | Argument::Named(_, expr)
+        | Argument::Args(expr)
+        | Argument::KwArgs(expr) => f(expr),
+    }
+}
+
+fn literal_glob_include_patterns(
+    arguments: &[starlark::syntax::ast::AstArgument],
+) -> Option<Vec<String>> {
+    let mut positional = arguments
+        .iter()
+        .filter_map(|argument| match &argument.node {
+            Argument::Positional(expr) => Some(expr),
+            _ => None,
+        });
+    if let Some(include) = positional.next() {
+        return literal_string_list(include);
+    }
+
+    arguments.iter().find_map(|argument| match &argument.node {
+        Argument::Named(name, expr) if name.node == "include" => literal_string_list(expr),
+        _ => None,
+    })
+}
+
+fn literal_string_list(expr: &AstExpr) -> Option<Vec<String>> {
+    match &expr.node {
+        Expr::List(items) | Expr::Tuple(items) => items
+            .iter()
+            .map(|item| match &item.node {
+                Expr::Literal(AstLiteral::String(value)) => Some(value.node.clone()),
+                _ => None,
+            })
+            .collect(),
+        _ => None,
+    }
+}
+
+enum GlobListingPrefix {
+    Shallow,
+    Prefix(PackageRelativePathBuf),
+    Recursive,
+}
+
+fn glob_listing_prefix(pattern: &str) -> GlobListingPrefix {
+    let Some(wildcard) = pattern.find(['*', '[', '?']) else {
+        return match pattern.rsplit_once('/') {
+            Some((parent, _)) if !parent.is_empty() => parse_glob_prefix(parent),
+            _ => GlobListingPrefix::Shallow,
+        };
+    };
+
+    let wildcard_suffix = &pattern[wildcard..];
+    let before_wildcard = &pattern[..wildcard];
+    let literal_prefix = before_wildcard.trim_end_matches('/');
+    if before_wildcard.ends_with('/') && !literal_prefix.is_empty() {
+        return parse_glob_prefix(literal_prefix);
+    }
+    let Some((parent, _)) = literal_prefix.rsplit_once('/') else {
+        return if wildcard_suffix.contains('/') {
+            GlobListingPrefix::Recursive
+        } else {
+            GlobListingPrefix::Shallow
+        };
+    };
+    if parent.is_empty() {
+        GlobListingPrefix::Shallow
+    } else {
+        parse_glob_prefix(parent)
+    }
+}
+
+fn parse_glob_prefix(prefix: &str) -> GlobListingPrefix {
+    match PackageRelativePathBuf::try_from(prefix.to_owned()) {
+        Ok(prefix) => GlobListingPrefix::Prefix(prefix),
+        Err(_) => GlobListingPrefix::Recursive,
     }
 }
 
@@ -556,7 +716,13 @@ impl InterpreterForDir {
                 implicit_imports.push(OwnedStarlarkModulePath::LoadFile(i));
             }
         }
-        ParseData::new(ast, implicit_imports, &self.load_resolver(import)).map(Ok)
+        ParseData::new(
+            ast,
+            implicit_imports,
+            &self.load_resolver(import),
+            matches!(import, StarlarkPath::BuildFile(_)),
+        )
+        .map(Ok)
     }
 
     pub(crate) fn resolve_path(

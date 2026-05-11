@@ -250,6 +250,7 @@ fn bazel_label_default<'v>(
     }
 
     let label = match (configuration_field.fragment(), configuration_field.name()) {
+        ("apple", "xcode_config_label") => Some("@bazel_tools//tools/objc:host_xcodes"),
         ("proto", "proto_compiler") => Some("@bazel_tools//tools/proto:protoc"),
         ("proto", "proto_toolchain_for_java") => Some("@bazel_tools//tools/proto:java_toolchain"),
         ("proto", "proto_toolchain_for_java_lite") => {

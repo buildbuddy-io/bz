@@ -177,7 +177,7 @@ impl IoRequest for BzlmodExtractIoRequest {
                 &self.cache_alias,
                 &self.cache_repo,
             )?;
-            prepare_bzlmod_external_cell_root(project_fs, &self.dest)?;
+            prepare_bzlmod_external_cell_root(project_fs, &self.cache_repo, &self.dest)?;
             return Ok(());
         }
 
@@ -225,7 +225,7 @@ impl IoRequest for BzlmodExtractIoRequest {
         }
 
         record_bzlmod_repo_contents_cache_alias(project_fs, &self.cache_alias, &self.cache_repo)?;
-        prepare_bzlmod_external_cell_root(project_fs, &self.dest)?;
+        prepare_bzlmod_external_cell_root(project_fs, &self.cache_repo, &self.dest)?;
 
         Ok(())
     }
@@ -240,7 +240,7 @@ struct BzlmodPrepareExternalCellRootIoRequest {
 impl IoRequest for BzlmodPrepareExternalCellRootIoRequest {
     fn execute(self: Box<Self>, project_fs: &ProjectRoot) -> buck2_error::Result<()> {
         record_bzlmod_repo_contents_cache_alias(project_fs, &self.cache_alias, &self.cache_repo)?;
-        prepare_bzlmod_external_cell_root(project_fs, &self.dest)
+        prepare_bzlmod_external_cell_root(project_fs, &self.cache_repo, &self.dest)
     }
 }
 
@@ -1591,11 +1591,22 @@ fn record_bzlmod_repo_contents_cache_alias(
 
 fn prepare_bzlmod_external_cell_root(
     project_fs: &ProjectRoot,
+    cache_repo: &ProjectRelativePath,
     dest: &ProjectRelativePath,
 ) -> buck2_error::Result<()> {
+    if bzlmod_external_cell_root_is_current(project_fs, cache_repo, dest)? {
+        return Ok(());
+    }
+
+    let stamp_path = project_fs.resolve(&bzlmod_external_cell_root_stamp_path(dest));
+    let stamp_content = bzlmod_external_cell_root_stamp_content(cache_repo);
+    let cache_repo = project_fs.resolve(cache_repo);
     let dest = project_fs.resolve(dest);
+    fs_util::remove_all(&stamp_path).categorize_internal()?;
     fs_util::remove_all(&dest).categorize_internal()?;
-    fs_util::create_dir_all(dest)
+    fs_util::create_dir_all(dest.clone())?;
+    copy_dir_contents(&cache_repo, &dest)?;
+    fs_util::write(stamp_path, stamp_content).categorize_internal()
 }
 
 fn bzlmod_generated_sibling_path(
@@ -1617,6 +1628,46 @@ fn bzlmod_generated_sibling_path_for_canonical(
         .map(|(parent, _)| parent)
         .unwrap_or("");
     ProjectRelativePathBuf::unchecked_new(format!("{}/{}.{}", parent, canonical_repo_name, suffix))
+}
+
+fn bzlmod_external_cell_root_stamp_path(dest: &ProjectRelativePath) -> ProjectRelativePathBuf {
+    ProjectRelativePathBuf::unchecked_new(format!("{}.materialization_stamp", dest.as_str()))
+}
+
+fn bzlmod_external_cell_root_stamp_content(cache_repo: &ProjectRelativePath) -> String {
+    let mut hasher = blake3::Hasher::new();
+    update_bzlmod_repo_contents_cache_key(&mut hasher, "buck2-bzlmod-external-cell-root-v1");
+    update_bzlmod_repo_contents_cache_key(&mut hasher, cache_repo.as_str());
+    format!("{}\n", hasher.finalize().to_hex())
+}
+
+fn bzlmod_external_cell_root_is_current(
+    project_fs: &ProjectRoot,
+    cache_repo: &ProjectRelativePath,
+    dest: &ProjectRelativePath,
+) -> buck2_error::Result<bool> {
+    let cache_repo_abs = project_fs.resolve(cache_repo);
+    if !matches!(
+        fs_util::symlink_metadata_if_exists(&cache_repo_abs)?,
+        Some(metadata) if metadata.is_dir()
+    ) {
+        return Ok(false);
+    }
+
+    let dest_abs = project_fs.resolve(dest);
+    if !matches!(
+        fs_util::symlink_metadata_if_exists(&dest_abs)?,
+        Some(metadata) if metadata.is_dir()
+    ) {
+        return Ok(false);
+    }
+
+    let stamp_path = project_fs.resolve(&bzlmod_external_cell_root_stamp_path(dest));
+    let stamp_content = bzlmod_external_cell_root_stamp_content(cache_repo);
+    Ok(matches!(
+        fs_util::read_to_string_if_exists(&stamp_path)?,
+        Some(content) if content == stamp_content
+    ))
 }
 
 fn update_bzlmod_repo_contents_cache_key_opt(hasher: &mut blake3::Hasher, field: Option<&str>) {
@@ -1713,7 +1764,7 @@ fn bzlmod_generated_materialization_stamp_content(setup: &BzlmodGeneratedCellSet
             update_bzlmod_repo_contents_cache_key(&mut hasher, &setup.extension_bzl_path);
             update_bzlmod_repo_contents_cache_key(&mut hasher, &setup.extension_name);
             update_bzlmod_repo_contents_cache_key(&mut hasher, &setup.repo_name);
-            update_bzlmod_repo_contents_cache_key(&mut hasher, &setup.extension_usages_json);
+            update_bzlmod_repo_contents_cache_key(&mut hasher, &setup.extension_usages_key);
         }
     }
     format!("{}\n", hasher.finalize().to_hex())
@@ -1724,25 +1775,20 @@ async fn bzlmod_generated_materialization_is_current(
     path: &ProjectRelativePath,
     setup: &BzlmodGeneratedCellSetup,
 ) -> buck2_error::Result<bool> {
-    let project_root = ctx.global_data().get_io_provider().project_root().dupe();
-    let repo_path = project_root.resolve(path);
-    let stamp_path =
-        project_root.resolve(&bzlmod_generated_materialization_stamp_path(setup, path));
+    let io = ctx.global_data().get_io_provider().dupe();
+    let repo_path = path.to_owned();
+    let stamp_path = bzlmod_generated_materialization_stamp_path(setup, path);
     let stamp_content = bzlmod_generated_materialization_stamp_content(setup);
-    ctx.get_blocking_executor()
-        .execute_io_inline(move || {
-            if !matches!(
-                fs_util::symlink_metadata_if_exists(&repo_path)?,
-                Some(metadata) if metadata.is_dir()
-            ) {
-                return Ok(false);
-            }
-            Ok(matches!(
-                fs_util::read_to_string_if_exists(&stamp_path)?,
-                Some(content) if content == stamp_content
-            ))
-        })
-        .await
+    if !matches!(
+        (&*io).read_path_metadata_if_exists(repo_path).await?,
+        Some(RawPathMetadata::Directory)
+    ) {
+        return Ok(false);
+    }
+    Ok(matches!(
+        (&*io).read_file_if_exists(stamp_path).await?,
+        Some(content) if content == stamp_content
+    ))
 }
 
 async fn write_bzlmod_generated_materialization_stamp(
@@ -1773,7 +1819,7 @@ fn bzlmod_module_extension_evaluation_cache_key(setup: &BzlmodModuleExtensionRep
     update_bzlmod_repo_contents_cache_key(&mut hasher, &setup.extension_bzl_cell);
     update_bzlmod_repo_contents_cache_key(&mut hasher, &setup.extension_bzl_path);
     update_bzlmod_repo_contents_cache_key(&mut hasher, &setup.extension_name);
-    update_bzlmod_repo_contents_cache_key(&mut hasher, &setup.extension_usages_json);
+    update_bzlmod_repo_contents_cache_key(&mut hasher, &setup.extension_usages_key);
     hasher.finalize().to_hex().to_string()
 }
 
@@ -1788,6 +1834,7 @@ fn bzlmod_module_extension_evaluation_setup(
         extension_bzl_path: setup.extension_bzl_path.dupe(),
         extension_name: setup.extension_name.dupe(),
         repo_name: Arc::from(""),
+        extension_usages_key: setup.extension_usages_key.dupe(),
         extension_usages_json: setup.extension_usages_json.dupe(),
     }
 }

@@ -38,7 +38,6 @@ use starlark::values::ValueLifetimeless;
 use starlark::values::ValueLike;
 use starlark::values::ValueOfUnchecked;
 use starlark::values::ValueOfUncheckedGeneric;
-use starlark::values::list::ListRef;
 use starlark::values::none::NoneOr;
 use starlark::values::starlark_value;
 use starlark_map::StarlarkHasher;
@@ -129,14 +128,9 @@ impl<'v> Dependency<'v> {
     }
 
     pub fn default_output_values(&self) -> buck2_error::Result<Vec<Value<'v>>> {
-        let default_outputs = self
-            .provider_collection
+        self.provider_collection
             .default_info()?
-            .default_outputs_raw();
-        let files = ListRef::from_frozen_value(default_outputs).ok_or_else(|| {
-            buck2_error::internal_error!("DefaultInfo.default_outputs is not a list")
-        })?;
-        Ok(files.iter().collect())
+            .default_output_values()
     }
 
     pub fn template_variable_info(

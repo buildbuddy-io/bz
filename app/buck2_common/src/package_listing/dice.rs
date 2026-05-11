@@ -25,6 +25,7 @@ use pagable::Pagable;
 use pagable::pagable_typetag;
 use smallvec::SmallVec;
 
+use crate::package_listing::PackageListingStrategy;
 use crate::package_listing::interpreter::InterpreterPackageListingResolver;
 use crate::package_listing::listing::PackageListing;
 use crate::package_listing::resolver::PackageListingResolver;
@@ -42,6 +43,23 @@ use crate::package_listing::resolver::PackageListingResolver;
 )]
 #[pagable_typetag(dice::DiceKeyDyn)]
 pub struct PackageListingKey(pub PackageLabel);
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq, Allocative, Pagable)]
+#[pagable_typetag(dice::DiceKeyDyn)]
+struct PackageListingWithStrategyKey {
+    package: PackageLabel,
+    strategy: PackageListingStrategy,
+}
+
+impl std::fmt::Display for PackageListingWithStrategyKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "PackageListingWithStrategyKey({:?}, {:?})",
+            self.package, self.strategy
+        )
+    }
+}
 
 pub struct PackageListingKeyActivationData {
     pub time_span: TimeSpan,
@@ -69,6 +87,42 @@ impl Key for PackageListingKey {
         })?;
 
         result
+    }
+
+    fn equality(x: &Self::Value, y: &Self::Value) -> bool {
+        match (x, y) {
+            (Ok(x), Ok(y)) => x == y,
+            _ => false,
+        }
+    }
+
+    fn value_serialize() -> impl ValueSerialize<Value = Self::Value> {
+        OkPagableValueSerialize::<Self::Value>::new()
+    }
+}
+
+#[async_trait]
+impl Key for PackageListingWithStrategyKey {
+    type Value = buck2_error::Result<PackageListing>;
+
+    async fn compute(
+        &self,
+        ctx: &mut DiceComputations,
+        _cancellations: &CancellationContext,
+    ) -> Self::Value {
+        let now = TimeSpan::start_now();
+        let (result, spans) = async_record_root_spans(
+            InterpreterPackageListingResolver::new(ctx)
+                .gather_package_listing_with_strategy(self.package.dupe(), self.strategy.clone()),
+        )
+        .await;
+
+        ctx.store_evaluation_data(PackageListingKeyActivationData {
+            time_span: now.end_now(),
+            spans,
+        })?;
+
+        result.map_err(Into::into)
     }
 
     fn equality(x: &Self::Value, y: &Self::Value) -> bool {
@@ -117,5 +171,15 @@ impl DicePackageListingResolver<'_, '_> {
         package: PackageLabel,
     ) -> buck2_error::Result<PackageListing> {
         self.resolve(package).await
+    }
+
+    pub async fn resolve_package_listing_with_strategy(
+        &mut self,
+        package: PackageLabel,
+        strategy: PackageListingStrategy,
+    ) -> buck2_error::Result<PackageListing> {
+        self.0
+            .compute(&PackageListingWithStrategyKey { package, strategy })
+            .await?
     }
 }

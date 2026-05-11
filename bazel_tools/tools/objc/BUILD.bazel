@@ -1,0 +1,29 @@
+load(":xcode_config.bzl", "xcode_config")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(glob(["**"]))
+
+filegroup(
+    name = "pkg_sources",
+    srcs = glob(["**"]),
+)
+
+filegroup(
+    name = "srcs",
+    srcs = glob(["**"]),
+)
+
+filegroup(
+    name = "gcov",
+    srcs = [":gcov_stub"],
+)
+
+filegroup(
+    name = "mcov",
+    srcs = [":mcov_stub"],
+)
+
+xcode_config(
+    name = "host_xcodes",
+)

@@ -149,5 +149,11 @@ mod tests {
                     .unwrap()
                     .contains("current_xcode_config")
         }));
+        assert!(c.files.iter().any(|file| {
+            file.path == "tools/objc/BUILD.bazel"
+                && std::str::from_utf8(file.contents)
+                    .unwrap()
+                    .contains("host_xcodes")
+        }));
     }
 }

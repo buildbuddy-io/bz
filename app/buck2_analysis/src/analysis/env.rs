@@ -733,6 +733,14 @@ async fn bazel_cpp_options(
             section: "bazel",
             property: "per_file_copt",
         })?),
+        macos_minimum_os: bazel_config_list(config.get(BuckconfigKeyRef {
+            section: "bazel",
+            property: "macos_minimum_os",
+        })?),
+        host_macos_minimum_os: bazel_config_list(config.get(BuckconfigKeyRef {
+            section: "bazel",
+            property: "host_macos_minimum_os",
+        })?),
     })
 }
 

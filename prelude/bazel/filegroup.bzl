@@ -6,19 +6,19 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
-def _collect_files(srcs: list[typing.Any]) -> list[Artifact]:
+def _collect_files(srcs: list[typing.Any]) -> list[typing.Any]:
     files = []
     for src in srcs:
-        files.extend(src.files.to_list())
+        files.append(src.files)
     return files
 
-def _collect_output_group(srcs: list[typing.Any], output_group: str) -> list[Artifact]:
+def _collect_output_group(srcs: list[typing.Any], output_group: str) -> list[typing.Any]:
     files = []
     for src in srcs:
         if OutputGroupInfo in src:
             group = src[OutputGroupInfo].groups.get(output_group)
             if group != None:
-                files.extend(group.to_list())
+                files.append(group)
     return files
 
 def _bazel_filegroup_impl(ctx):
@@ -26,8 +26,8 @@ def _bazel_filegroup_impl(ctx):
     if output_group.endswith("_INTERNAL_"):
         fail("Output group {} is not permitted for reference in filegroups.".format(output_group))
 
-    files = _collect_output_group(ctx.attr.srcs, output_group) if output_group else _collect_files(ctx.attr.srcs)
-    return [DefaultInfo(files = depset(files))]
+    transitive_files = _collect_output_group(ctx.attr.srcs, output_group) if output_group else _collect_files(ctx.attr.srcs)
+    return [DefaultInfo(files = depset(transitive = transitive_files))]
 
 bazel_filegroup = rule(
     implementation = _bazel_filegroup_impl,

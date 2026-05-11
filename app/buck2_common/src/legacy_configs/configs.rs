@@ -299,6 +299,8 @@ pub(crate) struct BazelCompatBazelrcOptions {
     pub(crate) host_conlyopt: Vec<String>,
     pub(crate) host_cxxopt: Vec<String>,
     pub(crate) per_file_copt: Vec<String>,
+    pub(crate) macos_minimum_os: Vec<String>,
+    pub(crate) host_macos_minimum_os: Vec<String>,
 }
 
 impl LegacyBuckConfig {
@@ -484,6 +486,11 @@ impl LegacyBuckConfig {
             ("host_conlyopt", &bazelrc_options.host_conlyopt),
             ("host_cxxopt", &bazelrc_options.host_cxxopt),
             ("per_file_copt", &bazelrc_options.per_file_copt),
+            ("macos_minimum_os", &bazelrc_options.macos_minimum_os),
+            (
+                "host_macos_minimum_os",
+                &bazelrc_options.host_macos_minimum_os,
+            ),
         ];
         if bazelrc_option_values
             .iter()

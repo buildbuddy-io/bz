@@ -4266,7 +4266,24 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
         let link = repository_ctx_path_from_value_relative_to(this, link_name, eval)?;
         let target_path = repository_path_for_read_abs_relative_to(&target, working_dir);
         let link_path = repository_path_for_write(&link)?;
-        if let Some(dep) = repository_ctx_external_input_tree_dep(&target_path) {
+        if let Some(dep) = repository_ctx_external_input_dep(&target_path) {
+            repository_ctx_record_path_dep(this, dep);
+        }
+        if repository_ctx_external_input_dep(&target_path).is_some()
+            && !repository_ctx_external_input_ready(&target_path)
+        {
+            return Err(
+                buck2_error::Error::from(BazelRepositoryError::RepositoryCtxSymlink {
+                    target,
+                    link,
+                    error: "external symlink target is not materialized".to_owned(),
+                })
+                .into(),
+            );
+        }
+        if target_path.is_dir()
+            && let Some(dep) = repository_ctx_external_input_tree_dep(&target_path)
+        {
             repository_ctx_record_path_dep(this, dep);
         }
         if let Some(parent) = link_path.parent() {

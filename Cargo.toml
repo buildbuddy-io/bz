@@ -286,6 +286,7 @@ rand_xoshiro = "0.8"
 ref-cast = "1.0.18"
 regex = "1.12.2"
 relative-path = { version = "1.7.0", features = ["serde"] }
+ring = "0.17.14"
 rusqlite = { version = "0.37.0", features = ["bundled"] }
 rustc-hash = { version = "2.1.1" }
 rustls = { package = "rustls", version = "0.23.37", features = ["aws-lc-rs", "ring"], default-features = false }

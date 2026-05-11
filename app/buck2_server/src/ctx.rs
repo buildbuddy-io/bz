@@ -940,10 +940,9 @@ impl DiceUpdater for DiceCommandUpdater<'_, '_> {
             }
 
             let mut preliminary_dice = ctx.commit_with_data(user_data).await;
-            let unique_bzlmod_module_extension_requests =
-                unique_bzlmod_module_extension_requests(
-                    &bzlmod_module_extension_evaluation_requests,
-                );
+            let unique_bzlmod_module_extension_requests = unique_bzlmod_module_extension_requests(
+                &bzlmod_module_extension_evaluation_requests,
+            );
             let mut bzlmod_module_extension_results_by_key = BTreeMap::new();
             let mut missing_bzlmod_module_extension_requests = Vec::new();
             for request in &unique_bzlmod_module_extension_requests {
@@ -951,10 +950,8 @@ impl DiceUpdater for DiceCommandUpdater<'_, '_> {
                     .read_bzlmod_cell_graph_module_extension_cache(&mut preliminary_dice, request)
                     .await?
                 {
-                    bzlmod_module_extension_results_by_key.insert(
-                        bzlmod_module_extension_request_key(request),
-                        cached_result,
-                    );
+                    bzlmod_module_extension_results_by_key
+                        .insert(bzlmod_module_extension_request_key(request), cached_result);
                 } else {
                     missing_bzlmod_module_extension_requests.push(*request);
                 }
@@ -1216,8 +1213,7 @@ impl DiceCommandUpdater<'_, '_> {
         ctx: &mut DiceComputations<'_>,
         request: &BzlmodModuleExtensionEvaluationRequest,
     ) -> buck2_error::Result<Option<BzlmodEvaluatedModuleExtension>> {
-        let cache_key =
-            bzlmod_cell_graph_module_extension_cache_key(std::slice::from_ref(request));
+        let cache_key = bzlmod_cell_graph_module_extension_cache_key(std::slice::from_ref(request));
         let cache_path = bzlmod_cell_graph_module_extension_cache_path(&cache_key);
         let project_root = self.cmd_ctx.base_context.project_root.dupe();
 
@@ -1240,8 +1236,7 @@ impl DiceCommandUpdater<'_, '_> {
         request: &BzlmodModuleExtensionEvaluationRequest,
         result: &BzlmodEvaluatedModuleExtension,
     ) -> buck2_error::Result<()> {
-        let cache_key =
-            bzlmod_cell_graph_module_extension_cache_key(std::slice::from_ref(request));
+        let cache_key = bzlmod_cell_graph_module_extension_cache_key(std::slice::from_ref(request));
         let cache_path = bzlmod_cell_graph_module_extension_cache_path(&cache_key);
         let project_root = self.cmd_ctx.base_context.project_root.dupe();
         let content = serde_json::to_string(result)
@@ -1264,6 +1259,9 @@ impl DiceCommandUpdater<'_, '_> {
         request: &BzlmodModuleExtensionEvaluationRequest,
         working_dir: ProjectRelativePathBuf,
     ) -> buck2_error::Result<Arc<BazelModuleExtensionEvaluationResult>> {
+        let extension_usages_key = BzlmodModuleExtensionRepoSetup::extension_usages_key_from_json(
+            &request.extension_usages_json,
+        );
         ctx.compute(&BzlmodCellGraphModuleExtensionEvaluationKey {
             setup: BzlmodModuleExtensionRepoSetup {
                 parent_canonical_repo_name: request.parent_canonical_repo_name.dupe(),
@@ -1273,6 +1271,7 @@ impl DiceCommandUpdater<'_, '_> {
                 extension_bzl_path: request.extension_bzl_path.dupe(),
                 extension_name: request.extension_name.dupe(),
                 repo_name: Arc::from(""),
+                extension_usages_key: Arc::from(extension_usages_key),
                 extension_usages_json: request.extension_usages_json.dupe(),
             },
             working_dir,

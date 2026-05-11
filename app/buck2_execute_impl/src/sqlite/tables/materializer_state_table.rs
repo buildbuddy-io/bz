@@ -515,8 +515,15 @@ impl MaterializerStateSqliteTable {
                 "INSERT INTO {STATE_TABLE_NAME} (path, artifact_type, digest_size, entry_hash, entry_hash_kind, file_is_executable, symlink_target, last_access_time, parent_path) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)"
             )
         });
+        static DELETE_SQL: Lazy<String> = Lazy::new(|| {
+            format!("DELETE FROM {STATE_TABLE_NAME} WHERE path = ?1 OR parent_path = ?1")
+        });
         let mut conn = self.connection.lock();
         let tx = conn.transaction()?;
+        tx.execute(&DELETE_SQL, rusqlite::params![path.as_str()])
+            .with_buck_error_context(|| {
+                format!("removing previous `{path}` rows from sqlite table {STATE_TABLE_NAME}")
+            })?;
         for entry in entries {
             tracing::trace!(sql = %*SQL, entry = ?entry, "inserting into table");
             tx.execute(

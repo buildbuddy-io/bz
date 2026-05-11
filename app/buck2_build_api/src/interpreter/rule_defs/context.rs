@@ -173,6 +173,8 @@ pub struct BazelCppOptions {
     pub host_conlyopt: Vec<String>,
     pub host_cxxopt: Vec<String>,
     pub per_file_copt: Vec<String>,
+    pub macos_minimum_os: Vec<String>,
+    pub host_macos_minimum_os: Vec<String>,
 }
 
 impl BazelCppOptions {
@@ -195,6 +197,12 @@ impl BazelCppOptions {
 
     fn cxxopt(&self, is_exec: bool) -> &[String] {
         self.opts_for(is_exec, &self.cxxopt, &self.host_cxxopt)
+    }
+
+    fn macos_minimum_os(&self, is_exec: bool) -> Option<&str> {
+        self.opts_for(is_exec, &self.macos_minimum_os, &self.host_macos_minimum_os)
+            .last()
+            .map(String::as_str)
     }
 }
 
@@ -553,6 +561,14 @@ pub struct AnalysisContext<'v> {
     rule_kind_name: Option<String>,
     bazel_info_file: RefCell<Option<ValueTyped<'v, StarlarkDeclaredArtifact<'v>>>>,
     bazel_version_file: RefCell<Option<ValueTyped<'v, StarlarkDeclaredArtifact<'v>>>>,
+    bazel_file_structs: RefCell<Option<BazelFileStructs<'v>>>,
+}
+
+#[derive(Clone, Debug, Trace, Allocative)]
+struct BazelFileStructs<'v> {
+    file: ValueOfUnchecked<'v, StructRef<'static>>,
+    files: ValueOfUnchecked<'v, StructRef<'static>>,
+    executable: ValueOfUnchecked<'v, StructRef<'static>>,
 }
 
 impl<'v> Display for AnalysisContext<'v> {
@@ -609,6 +625,7 @@ impl<'v> AnalysisContext<'v> {
             rule_kind_name,
             bazel_info_file: RefCell::new(None),
             bazel_version_file: RefCell::new(None),
+            bazel_file_structs: RefCell::new(None),
         }
     }
 
@@ -803,19 +820,40 @@ struct BazelCppConfiguration {
     is_exec: bool,
 }
 
+#[derive(Debug, ProvidesStaticType, NoSerialize, Allocative)]
+struct BazelAppleConfiguration {
+    options: BazelCppOptions,
+    is_exec: bool,
+}
+
 impl fmt::Display for BazelCppConfiguration {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("<cpp fragment>")
     }
 }
 
+impl fmt::Display for BazelAppleConfiguration {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("<apple fragment>")
+    }
+}
+
 starlark::starlark_simple_value!(BazelCppConfiguration);
+starlark::starlark_simple_value!(BazelAppleConfiguration);
 
 #[starlark_value(type = "cpp")]
 impl<'v> StarlarkValue<'v> for BazelCppConfiguration {
     fn get_methods() -> Option<&'static Methods> {
         static RES: MethodsStatic = MethodsStatic::new();
         RES.methods_for_type::<Self::Canonical>(bazel_cpp_configuration_methods)
+    }
+}
+
+#[starlark_value(type = "apple")]
+impl<'v> StarlarkValue<'v> for BazelAppleConfiguration {
+    fn get_methods() -> Option<&'static Methods> {
+        static RES: MethodsStatic = MethodsStatic::new();
+        RES.methods_for_type::<Self::Canonical>(bazel_apple_configuration_methods)
     }
 }
 
@@ -827,6 +865,70 @@ fn bazel_string_list<'v>(heap: Heap<'v>, values: &[String]) -> Value<'v> {
     heap.alloc(AllocList(
         values.iter().map(|value| heap.alloc_str(value).to_value()),
     ))
+}
+
+fn bazel_apple_platform<'v>(heap: Heap<'v>) -> Value<'v> {
+    heap.alloc(AllocStruct([
+        ("name", heap.alloc_str("macos").to_value()),
+        ("platform_type", heap.alloc_str("macos").to_value()),
+        ("is_device", Value::new_bool(true)),
+        ("name_in_plist", heap.alloc_str("MacOSX").to_value()),
+    ]))
+}
+
+fn bazel_apple_minimum_os<'v>(
+    heap: Heap<'v>,
+    options: &BazelCppOptions,
+    is_exec: bool,
+) -> Value<'v> {
+    options
+        .macos_minimum_os(is_exec)
+        .map(|value| heap.alloc_str(value).to_value())
+        .unwrap_or_else(Value::new_none)
+}
+
+#[starlark_module]
+fn bazel_apple_configuration_methods(builder: &mut MethodsBuilder) {
+    #[starlark(attribute)]
+    fn single_arch_platform<'v>(
+        #[starlark(this)] this: &BazelAppleConfiguration,
+        heap: Heap<'v>,
+    ) -> starlark::Result<Value<'v>> {
+        let _ = this;
+        Ok(bazel_apple_platform(heap))
+    }
+
+    #[starlark(attribute)]
+    fn ios_minimum_os_flag<'v>(
+        #[starlark(this)] this: &BazelAppleConfiguration,
+    ) -> starlark::Result<Value<'v>> {
+        let _ = this;
+        Ok(Value::new_none())
+    }
+
+    #[starlark(attribute)]
+    fn macos_minimum_os_flag<'v>(
+        #[starlark(this)] this: &BazelAppleConfiguration,
+        heap: Heap<'v>,
+    ) -> starlark::Result<Value<'v>> {
+        Ok(bazel_apple_minimum_os(heap, &this.options, this.is_exec))
+    }
+
+    #[starlark(attribute)]
+    fn tvos_minimum_os_flag<'v>(
+        #[starlark(this)] this: &BazelAppleConfiguration,
+    ) -> starlark::Result<Value<'v>> {
+        let _ = this;
+        Ok(Value::new_none())
+    }
+
+    #[starlark(attribute)]
+    fn watchos_minimum_os_flag<'v>(
+        #[starlark(this)] this: &BazelAppleConfiguration,
+    ) -> starlark::Result<Value<'v>> {
+        let _ = this;
+        Ok(Value::new_none())
+    }
 }
 
 #[starlark_module]
@@ -1220,12 +1322,20 @@ fn bazel_fragments<'v>(
     label: Option<ValueTyped<'v, StarlarkConfiguredProvidersLabel>>,
     bazel_cpp_options: BazelCppOptions,
 ) -> Value<'v> {
+    let is_exec = bazel_is_exec_configuration(label);
     heap.alloc(AllocStruct([
+        (
+            "apple",
+            heap.alloc(BazelAppleConfiguration {
+                options: bazel_cpp_options.clone(),
+                is_exec,
+            }),
+        ),
         (
             "cpp",
             heap.alloc(BazelCppConfiguration {
                 options: bazel_cpp_options,
-                is_exec: bazel_is_exec_configuration(label),
+                is_exec,
             }),
         ),
         ("proto", heap.alloc(BazelProtoConfiguration)),
@@ -1371,7 +1481,7 @@ fn bazel_files_from_attr_value<'v>(value: Value<'v>) -> buck2_error::Result<Vec<
     Ok(files)
 }
 
-fn analysis_context_bazel_file_structs<'v>(
+fn analysis_context_bazel_file_structs_from_attrs<'v>(
     heap: Heap<'v>,
     attrs: ValueOfUnchecked<'v, StructRef<'static>>,
 ) -> buck2_error::Result<(
@@ -1401,6 +1511,25 @@ fn analysis_context_bazel_file_structs<'v>(
         ValueOfUnchecked::new(heap.alloc(AllocStruct(files_fields))),
         ValueOfUnchecked::new(heap.alloc(AllocStruct(executable_fields))),
     ))
+}
+
+fn analysis_context_bazel_file_structs<'v>(
+    ctx: &AnalysisContext<'v>,
+    heap: Heap<'v>,
+) -> buck2_error::Result<BazelFileStructs<'v>> {
+    if let Some(structs) = ctx.bazel_file_structs.borrow().as_ref() {
+        return Ok(structs.clone());
+    }
+
+    let attrs = analysis_context_attrs(ctx)?;
+    let (file, files, executable) = analysis_context_bazel_file_structs_from_attrs(heap, attrs)?;
+    let structs = BazelFileStructs {
+        file,
+        files,
+        executable,
+    };
+    *ctx.bazel_file_structs.borrow_mut() = Some(structs.clone());
+    Ok(structs)
 }
 
 fn bazel_collect_runfiles_from_attr_value<'v>(
@@ -2109,9 +2238,7 @@ fn analysis_context_methods(builder: &mut MethodsBuilder) {
         this: RefAnalysisContext<'v>,
         heap: Heap<'v>,
     ) -> starlark::Result<ValueOfUnchecked<'v, StructRef<'static>>> {
-        let attrs = analysis_context_attrs(this.0)?;
-        let (file, _, _) = analysis_context_bazel_file_structs(heap, attrs)?;
-        Ok(file)
+        Ok(analysis_context_bazel_file_structs(this.0, heap)?.file)
     }
 
     /// Bazel files-to-build view of label attributes.
@@ -2120,9 +2247,7 @@ fn analysis_context_methods(builder: &mut MethodsBuilder) {
         this: RefAnalysisContext<'v>,
         heap: Heap<'v>,
     ) -> starlark::Result<ValueOfUnchecked<'v, StructRef<'static>>> {
-        let attrs = analysis_context_attrs(this.0)?;
-        let (_, files, _) = analysis_context_bazel_file_structs(heap, attrs)?;
-        Ok(files)
+        Ok(analysis_context_bazel_file_structs(this.0, heap)?.files)
     }
 
     /// Bazel executable view of executable label attributes.
@@ -2131,9 +2256,7 @@ fn analysis_context_methods(builder: &mut MethodsBuilder) {
         this: RefAnalysisContext<'v>,
         heap: Heap<'v>,
     ) -> starlark::Result<ValueOfUnchecked<'v, StructRef<'static>>> {
-        let attrs = analysis_context_attrs(this.0)?;
-        let (_, _, executable) = analysis_context_bazel_file_structs(heap, attrs)?;
-        Ok(executable)
+        Ok(analysis_context_bazel_file_structs(this.0, heap)?.executable)
     }
 
     /// The current target's Bazel-compatible build configuration view.

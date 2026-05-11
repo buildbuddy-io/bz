@@ -94,8 +94,9 @@ starlark::starlark_simple_value!(BazelFeatureConfiguration);
 #[derive(Debug, Clone, Allocative)]
 struct BazelSelectable {
     name: String,
-    enabled: bool,
+    requires: Vec<Vec<String>>,
     implies: Vec<String>,
+    provides: Vec<String>,
 }
 
 #[derive(Debug, Clone, Allocative)]
@@ -377,6 +378,19 @@ fn parse_with_feature_set<'v>(
     })
 }
 
+fn parse_requires<'v>(
+    value: Value<'v>,
+    heap: starlark::values::Heap<'v>,
+) -> starlark::Result<Vec<Vec<String>>> {
+    let Some(requires) = value.get_attr("requires", heap)? else {
+        return Ok(Vec::new());
+    };
+    sequence_values(requires, "requires")?
+        .into_iter()
+        .map(|feature_set| string_sequence_attr(feature_set, "features", heap))
+        .collect()
+}
+
 fn parse_tool<'v>(
     action_name: &str,
     tool: Value<'v>,
@@ -525,8 +539,9 @@ fn add_legacy_action_config(
     };
     selectables.push(BazelSelectable {
         name: action_name.to_owned(),
-        enabled: false,
+        requires: Vec::new(),
         implies: Vec::new(),
+        provides: Vec::new(),
     });
     action_tools.push(legacy_action_tool(action_name, tool_path));
 }
@@ -591,8 +606,9 @@ fn parse_toolchain_features<'v>(
             }
             selectables.push(BazelSelectable {
                 name,
-                enabled,
+                requires: parse_requires(feature, heap)?,
                 implies: string_sequence_attr(feature, "implies", heap)?,
+                provides: string_sequence_attr(feature, "provides", heap)?,
             });
         }
     }
@@ -610,8 +626,9 @@ fn parse_toolchain_features<'v>(
             }
             selectables.push(BazelSelectable {
                 name: action_name.clone(),
-                enabled,
+                requires: Vec::new(),
                 implies: string_sequence_attr(action_config, "implies", heap)?,
+                provides: Vec::new(),
             });
 
             if let Some(tools) = action_config.get_attr("tools", heap)? {
@@ -629,6 +646,8 @@ fn parse_toolchain_features<'v>(
 
     let artifact_name_patterns = parse_artifact_name_patterns(toolchain_config_info, heap)?;
 
+    validate_selectables(&selectables)?;
+
     Ok(BazelCcToolchainFeatures {
         selectables,
         default_selectables,
@@ -640,35 +659,152 @@ fn parse_toolchain_features<'v>(
 
 fn enabled_selectables(
     selectables: &[BazelSelectable],
-    defaults: &[String],
     requested_features: &[String],
-) -> Vec<String> {
+) -> starlark::Result<Vec<String>> {
     let mut enabled = Vec::new();
-    for selectable in selectables {
-        if selectable.enabled {
-            push_unique(&mut enabled, selectable.name.clone());
+    let mut requested = Vec::new();
+    for requested_feature in requested_features {
+        if let Some(index) = selectable_index(selectables, requested_feature) {
+            push_unique_index(&mut requested, index);
+            enable_all_implied_by(selectables, &mut enabled, index);
         }
-    }
-    for selectable in defaults {
-        push_unique(&mut enabled, selectable.clone());
-    }
-    for requested in requested_features {
-        push_unique(&mut enabled, requested.clone());
     }
 
     loop {
         let mut changed = false;
-        for selectable in selectables {
-            if enabled.iter().any(|enabled| enabled == &selectable.name) {
-                for implied in &selectable.implies {
-                    changed |= push_unique(&mut enabled, implied.clone());
-                }
+        for index in 0..selectables.len() {
+            if !enabled.contains(&index) {
+                continue;
+            }
+            if !is_selectable_satisfied(selectables, &enabled, &requested, index) {
+                enabled.retain(|enabled_index| *enabled_index != index);
+                changed = true;
             }
         }
         if !changed {
-            return enabled;
+            break;
         }
     }
+
+    check_provides_conflicts(selectables, &enabled)?;
+
+    Ok(selectables
+        .iter()
+        .enumerate()
+        .filter_map(|(index, selectable)| enabled.contains(&index).then(|| selectable.name.clone()))
+        .collect())
+}
+
+fn selectable_index(selectables: &[BazelSelectable], name: &str) -> Option<usize> {
+    selectables
+        .iter()
+        .position(|selectable| selectable.name == name)
+}
+
+fn push_unique_index(values: &mut Vec<usize>, value: usize) -> bool {
+    if values.contains(&value) {
+        false
+    } else {
+        values.push(value);
+        true
+    }
+}
+
+fn enable_all_implied_by(selectables: &[BazelSelectable], enabled: &mut Vec<usize>, index: usize) {
+    if !push_unique_index(enabled, index) {
+        return;
+    }
+    for implied in &selectables[index].implies {
+        if let Some(implied_index) = selectable_index(selectables, implied) {
+            enable_all_implied_by(selectables, enabled, implied_index);
+        }
+    }
+}
+
+fn is_selectable_satisfied(
+    selectables: &[BazelSelectable],
+    enabled: &[usize],
+    requested: &[usize],
+    index: usize,
+) -> bool {
+    (requested.contains(&index)
+        || selectables
+            .iter()
+            .enumerate()
+            .any(|(other_index, selectable)| {
+                enabled.contains(&other_index)
+                    && selectable
+                        .implies
+                        .iter()
+                        .any(|implied| implied == &selectables[index].name)
+            }))
+        && selectables[index].implies.iter().all(|implied| {
+            selectable_index(selectables, implied)
+                .is_some_and(|implied_index| enabled.contains(&implied_index))
+        })
+        && (selectables[index].requires.is_empty()
+            || selectables[index].requires.iter().any(|required_set| {
+                required_set.iter().all(|required| {
+                    selectable_index(selectables, required)
+                        .is_some_and(|required_index| enabled.contains(&required_index))
+                })
+            }))
+}
+
+fn validate_selectables(selectables: &[BazelSelectable]) -> starlark::Result<()> {
+    for (index, selectable) in selectables.iter().enumerate() {
+        if selectables[..index]
+            .iter()
+            .any(|existing| existing.name == selectable.name)
+        {
+            return Err(bazel_cc_error(format!(
+                "Invalid toolchain configuration: feature or action config '{}' was specified multiple times.",
+                selectable.name
+            )));
+        }
+        for implied in &selectable.implies {
+            if selectable_index(selectables, implied).is_none() {
+                return Err(bazel_cc_error(format!(
+                    "Invalid toolchain configuration: '{}' implies unknown feature or action config '{}'.",
+                    selectable.name, implied
+                )));
+            }
+        }
+        for required_set in &selectable.requires {
+            for required in required_set {
+                if selectable_index(selectables, required).is_none() {
+                    return Err(bazel_cc_error(format!(
+                        "Invalid toolchain configuration: '{}' requires unknown feature or action config '{}'.",
+                        selectable.name, required
+                    )));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn check_provides_conflicts(
+    selectables: &[BazelSelectable],
+    enabled: &[usize],
+) -> starlark::Result<()> {
+    let mut provided = Vec::<(&str, &str)>::new();
+    for index in enabled {
+        let selectable = &selectables[*index];
+        for provides in &selectable.provides {
+            if let Some((_, existing)) = provided
+                .iter()
+                .find(|(provided_name, _)| *provided_name == provides.as_str())
+            {
+                return Err(bazel_cc_error(format!(
+                    "Invalid toolchain configuration: features '{}' and '{}' both provide '{}'.",
+                    existing, selectable.name, provides
+                )));
+            }
+            provided.push((provides, selectable.name.as_str()));
+        }
+    }
+    Ok(())
 }
 
 impl BazelWithFeatureSet {
@@ -994,11 +1130,7 @@ fn bazel_cc_toolchain_features_methods(builder: &mut MethodsBuilder) {
         requested_features: UnpackList<String>,
     ) -> starlark::Result<BazelFeatureConfiguration> {
         let requested_features = requested_features.into_iter().collect::<Vec<_>>();
-        let enabled_selectables = enabled_selectables(
-            &this.selectables,
-            &this.default_selectables,
-            &requested_features,
-        );
+        let enabled_selectables = enabled_selectables(&this.selectables, &requested_features)?;
         Ok(BazelFeatureConfiguration {
             requested_features,
             enabled_selectables,
@@ -1236,7 +1368,7 @@ fn bazel_cc_internal_methods(builder: &mut MethodsBuilder) {
 
     fn exec_os<'v>(
         #[starlark(this)] _this: &BazelCcInternal,
-        #[starlark(require = named)] ctx: Value<'v>,
+        ctx: Value<'v>,
     ) -> starlark::Result<&'static str> {
         let _unused = ctx;
         Ok(bazel_cc_exec_os())

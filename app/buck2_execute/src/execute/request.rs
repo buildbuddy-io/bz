@@ -89,6 +89,7 @@ pub enum CommandExecutionInput {
     Artifact(Box<dyn ArtifactGroupValuesDyn>),
     ArtifactPathAlias {
         source_path: ProjectRelativePathBuf,
+        source_requires_materialization: bool,
         path: ProjectRelativePathBuf,
         value: ArtifactValue,
     },
