@@ -17,6 +17,7 @@ use std::sync::OnceLock;
 
 use allocative::Allocative;
 use buck2_core::cells::external::bzlmod_canonical_repo_name_for_cell;
+use buck2_core::cells::external::bzlmod_cell_aliases_for_cell;
 use buck2_core::configuration::data::BazelBuildSettingValue;
 use buck2_core::fs::buck_out_path::BuckOutPathKind;
 use buck2_core::provider::label::ConfiguredProvidersLabel;
@@ -824,6 +825,12 @@ struct BazelAppleConfiguration {
     is_exec: bool,
 }
 
+#[derive(Debug, ProvidesStaticType, NoSerialize, Allocative)]
+struct BazelPlatformConfiguration {
+    platform: String,
+    host_platform: String,
+}
+
 impl fmt::Display for BazelCppConfiguration {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("<cpp fragment>")
@@ -836,8 +843,15 @@ impl fmt::Display for BazelAppleConfiguration {
     }
 }
 
+impl fmt::Display for BazelPlatformConfiguration {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("<platform fragment>")
+    }
+}
+
 starlark::starlark_simple_value!(BazelCppConfiguration);
 starlark::starlark_simple_value!(BazelAppleConfiguration);
+starlark::starlark_simple_value!(BazelPlatformConfiguration);
 
 #[starlark_value(type = "cpp")]
 impl<'v> StarlarkValue<'v> for BazelCppConfiguration {
@@ -852,6 +866,14 @@ impl<'v> StarlarkValue<'v> for BazelAppleConfiguration {
     fn get_methods() -> Option<&'static Methods> {
         static RES: MethodsStatic = MethodsStatic::new();
         RES.methods_for_type::<Self::Canonical>(bazel_apple_configuration_methods)
+    }
+}
+
+#[starlark_value(type = "platform")]
+impl<'v> StarlarkValue<'v> for BazelPlatformConfiguration {
+    fn get_methods() -> Option<&'static Methods> {
+        static RES: MethodsStatic = MethodsStatic::new();
+        RES.methods_for_type::<Self::Canonical>(bazel_platform_configuration_methods)
     }
 }
 
@@ -883,6 +905,33 @@ fn bazel_apple_minimum_os<'v>(
         .macos_minimum_os(is_exec)
         .map(|value| heap.alloc_str(value).to_value())
         .unwrap_or_else(Value::new_none)
+}
+
+#[starlark_module]
+fn bazel_platform_configuration_methods(builder: &mut MethodsBuilder) {
+    #[starlark(attribute)]
+    fn platform<'v>(
+        #[starlark(this)] this: &BazelPlatformConfiguration,
+        heap: Heap<'v>,
+    ) -> starlark::Result<Value<'v>> {
+        Ok(heap.alloc_str(&this.platform).to_value())
+    }
+
+    #[starlark(attribute)]
+    fn host_platform<'v>(
+        #[starlark(this)] this: &BazelPlatformConfiguration,
+        heap: Heap<'v>,
+    ) -> starlark::Result<Value<'v>> {
+        Ok(heap.alloc_str(&this.host_platform).to_value())
+    }
+
+    #[starlark(attribute)]
+    fn platforms<'v>(
+        #[starlark(this)] this: &BazelPlatformConfiguration,
+        heap: Heap<'v>,
+    ) -> starlark::Result<Value<'v>> {
+        Ok(heap.alloc(AllocList([heap.alloc_str(&this.platform).to_value()])))
+    }
 }
 
 #[starlark_module]
@@ -1315,12 +1364,21 @@ fn bazel_is_exec_configuration(
     label.is_some_and(|label| label.label().target().cfg().is_marked_as_exec_platform())
 }
 
+fn bazel_platform_label(
+    label: Option<ValueTyped<'_, StarlarkConfiguredProvidersLabel>>,
+) -> String {
+    label
+        .and_then(|label| label.label().target().cfg().label().ok().map(str::to_owned))
+        .unwrap_or_else(|| "@@platforms//host:host".to_owned())
+}
+
 fn bazel_fragments<'v>(
     heap: Heap<'v>,
     label: Option<ValueTyped<'v, StarlarkConfiguredProvidersLabel>>,
     bazel_cpp_options: BazelCppOptions,
 ) -> Value<'v> {
     let is_exec = bazel_is_exec_configuration(label);
+    let platform = bazel_platform_label(label);
     heap.alloc(AllocStruct([
         (
             "apple",
@@ -1334,6 +1392,13 @@ fn bazel_fragments<'v>(
             heap.alloc(BazelCppConfiguration {
                 options: bazel_cpp_options,
                 is_exec,
+            }),
+        ),
+        (
+            "platform",
+            heap.alloc(BazelPlatformConfiguration {
+                platform,
+                host_platform: "@@platforms//host:host".to_owned(),
             }),
         ),
         ("proto", heap.alloc(BazelProtoConfiguration)),
@@ -1634,14 +1699,20 @@ fn bazel_location_label_keys_for_target<'v>(
         }
     }
     if cell != "root" {
-        if package_path.is_empty() {
-            keys.push(format!("@{}//:{name}", bazel_workspace_name_for_cell(cell)));
-        } else {
-            keys.push(format!(
-                "@{}//{}:{name}",
-                bazel_workspace_name_for_cell(cell),
-                package_path
-            ));
+        bazel_push_external_location_label_key(
+            &mut keys,
+            &bazel_workspace_name_for_cell(cell),
+            package_path,
+            name,
+        );
+    }
+
+    if let Some(current) = ctx.label {
+        let current_cell = current.label().target().pkg().cell_name();
+        for (alias, destination) in bzlmod_cell_aliases_for_cell(current_cell.as_str()) {
+            if destination == cell {
+                bazel_push_external_location_label_key(&mut keys, &alias, package_path, name);
+            }
         }
     }
 
@@ -1655,6 +1726,19 @@ fn bazel_location_label_keys_for_target<'v>(
     }
 
     keys
+}
+
+fn bazel_push_external_location_label_key(
+    keys: &mut Vec<String>,
+    repo: &str,
+    package_path: &str,
+    name: &str,
+) {
+    if package_path.is_empty() {
+        keys.push(format!("@{repo}//:{name}"));
+    } else {
+        keys.push(format!("@{repo}//{package_path}:{name}"));
+    }
 }
 
 fn bazel_rlocation_path_for_artifact<'v>(
