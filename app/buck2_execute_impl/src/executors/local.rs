@@ -1456,13 +1456,6 @@ impl PreparedCommandOptionalExecutor for LocalExecutor {
             .await
         {
             Ok(LocalActionCacheMetadataLookup::Hit(outputs)) => {
-                let manager = manager
-                    .with_execution_kind(CommandExecutionKind::LocalActionCache {
-                        digest: action_digest.dupe(),
-                    })
-                    .claim()
-                    .boxed()
-                    .await;
                 let time_span = start.end_now();
                 let timing = CommandExecutionMetadata {
                     time_span,
@@ -1477,7 +1470,7 @@ impl PreparedCommandOptionalExecutor for LocalExecutor {
                     suspend_count: None,
                 };
 
-                return ControlFlow::Break(manager.success(
+                return ControlFlow::Break(manager.success_without_claim(
                     CommandExecutionKind::LocalActionCache {
                         digest: action_digest,
                     },
@@ -1555,13 +1548,6 @@ impl PreparedCommandOptionalExecutor for LocalExecutor {
             .keys()
             .any(CommandExecutionOutput::has_content_based_path)
         {
-            let manager = manager
-                .with_execution_kind(CommandExecutionKind::LocalActionCache {
-                    digest: action_digest.dupe(),
-                })
-                .claim()
-                .boxed()
-                .await;
             let time_span = start.end_now();
             let timing = CommandExecutionMetadata {
                 time_span,
@@ -1576,7 +1562,7 @@ impl PreparedCommandOptionalExecutor for LocalExecutor {
                 suspend_count: None,
             };
 
-            return ControlFlow::Break(manager.success(
+            return ControlFlow::Break(manager.success_without_claim(
                 CommandExecutionKind::LocalActionCache {
                     digest: action_digest,
                 },
@@ -1626,13 +1612,6 @@ impl PreparedCommandOptionalExecutor for LocalExecutor {
             return ControlFlow::Continue(manager);
         }
 
-        let manager = manager
-            .with_execution_kind(CommandExecutionKind::LocalActionCache {
-                digest: action_digest.dupe(),
-            })
-            .claim()
-            .boxed()
-            .await;
         let time_span = start.end_now();
         let timing = CommandExecutionMetadata {
             time_span,
@@ -1647,7 +1626,7 @@ impl PreparedCommandOptionalExecutor for LocalExecutor {
             suspend_count: None,
         };
 
-        ControlFlow::Break(manager.success(
+        ControlFlow::Break(manager.success_without_claim(
             CommandExecutionKind::LocalActionCache {
                 digest: action_digest,
             },

@@ -1261,6 +1261,7 @@ async fn resolve_bazel_toolchain_deps(
     ctx: &mut DiceComputations<'_>,
     target_label: &ConfiguredTargetLabel,
     target_node: &TargetNode,
+    execution_platform_cfg: &ConfigurationNoExec,
     exec_constraints: &BTreeSet<String>,
 ) -> buck2_error::Result<(Vec<ConfiguredTargetNode>, Vec<BazelResolvedToolchain>)> {
     if target_node.bazel_toolchains().is_empty() || !target_label.cfg().is_bound() {
@@ -1309,7 +1310,10 @@ async fn resolve_bazel_toolchain_deps(
         else {
             continue;
         };
-        let configured = toolchain_impl.configure(target_label.cfg().dupe());
+        let configured = toolchain_impl.configure_with_exec(
+            target_label.cfg().dupe(),
+            execution_platform_cfg.cfg().dupe(),
+        );
         let provider_label =
             ConfiguredProvidersLabel::new(configured.dupe(), ProvidersName::Default);
         let dep = ctx
@@ -1479,6 +1483,7 @@ async fn compute_configured_target_node_no_transition(
                 ctx,
                 &bazel_target_label,
                 &bazel_target_node,
+                execution_platform_cfg,
                 &bazel_exec_constraints,
             )
             .await;
@@ -1586,7 +1591,7 @@ async fn compute_configured_target_node(
                 ToolchainDepError::ToolchainRuleUsedAsNormalDep(key.0.unconfigured().dupe()).into(),
             );
         }
-        Some(_) if !target_node.is_toolchain_rule() => {
+        Some(_) if !target_node.is_toolchain_rule() && !target_node.is_bazel_rule() => {
             return ResultMaybeCompatible::Err(
                 ToolchainDepError::NonToolchainRuleUsedAsToolchainDep(key.0.unconfigured().dupe())
                     .into(),

@@ -168,6 +168,8 @@ Completed:
 - Generated bzlmod repository materialization now writes Bazel-style setup stamps beside generated repos and reuses matching already-materialized repos across daemon restarts. The stamp is outside the repo tree, is cleared before re-materialization, and is written only after successful materialization.
 - Bazel-compatible roots now start buckd from a minimal startup config and defer full bzlmod/module-extension resolution to command update, so daemon startup no longer performs repository resolution before the client connects.
 - Bzlmod cell-graph module-extension results are persisted under `buck-out/v2/cache` per extension, matching Bazel's independent module-extension values. Fresh daemons reuse unchanged extension results and evaluate only the extensions whose usage key changed.
+- Local action-cache hits now return successful command results without acquiring output claims. This matches Bazel's action-cache hit model, where `ActionCacheChecker` returns without an execution token and injects cached output metadata instead of reserving a writer for outputs that will not be mutated.
+- Bazel `cfg = "exec"` and resolved Bazel toolchain implementations now use the Bazel host execution platform when Buck execution platforms are not configured. Resolved Bazel toolchain implementations carry the parent exec configuration even when the implementation target is an ordinary Starlark rule, matching Bazel's `native.toolchain(toolchain = ...)` model rather than Buck's native-only toolchain rule invariant.
 - BuildBuddy's current server target now builds with Buck2 actions:
 
 ```sh
@@ -192,6 +194,8 @@ All BuildBuddy measurements below were taken on `/Users/siggi/Code/buildbuddy` f
 | Full server build | Buck2 final cutover | cold fresh isolation | 282.66s | 4:32.0 | 3738 targets analyzed, 2357 local actions |
 | Full server build | Buck2 final cutover | first warm same daemon/isolation | 5.78s | 5.8s | 0 targets analyzed, 0 actions |
 | Full server build | Buck2 final cutover | steady warm same daemon/isolation | 1.18s | 1.2s | 0 targets analyzed, 0 actions |
+| Full server build | Buck2 with Bazel exec-config toolchains | warm same daemon/isolation | 1.44s | 1.4s | 0 targets analyzed, 0 actions |
+| Full server build | Buck2 with Bazel exec-config toolchains | cold same-state daemon restart | 17.44s | 16.6s | 3642 targets analyzed, 2691 cached actions, 0 local |
 | Leaf edit: `server/util/bytebufferpool/bytebufferpool.go` | Bazel 9.1.0 | warm leaf edit | 11.23s | - | 44 actions, 9 cache hits, 42 sandboxed processes |
 | Leaf edit: `server/util/bytebufferpool/bytebufferpool.go` | Bazel 9.1.0 | cold leaf edit after seeded output base | 15.57s | - | 44 processes, 4475 action cache hits |
 | Leaf edit: `server/util/bytebufferpool/bytebufferpool.go` | Buck2 before local action cache | cold leaf edit after seeded isolation | 546.75s | - | 2357 local actions, 0 cached |
@@ -330,7 +334,25 @@ outputs from disk on every persistent hit after daemon restart, which put multi-
 Go actions on the critical path. Buck now asks the persisted materializer for declared output
 `ArtifactValue`s, validates those values against the local action-cache fingerprint, and only falls
 back to disk output calculation when metadata is missing. The cold same-state command duration is now
-comparable to Bazel's cold reverse command time.
+comparable to Bazel's cold reverse command time. The follow-up cutover also stopped acquiring output
+claims for local action-cache hits, because those hits do not write, materialize, or declare outputs.
+Bazel similarly does not issue an execution token on action-cache hits; it validates/injects cached
+metadata and returns.
+
+The next concrete action-shape mismatch was Bazel toolchain execution configuration. Bazel's
+`ExecutionTransitionFactory` uses the resolved execution platform for `cfg = "exec"` attrs, and
+Bazel `native.toolchain(toolchain = ...)` implementations can be ordinary Starlark targets. Buck was
+keeping resolved Bazel toolchain implementations in the target configuration, which left rules_go's
+SDK `package_list` on the target config in the final `GoLink` params. Buck now uses the Bazel host
+platform as the legacy execution platform for Bazel rules, carries the parent exec config into
+resolved Bazel toolchain implementations, and honors that exec config when reconstructing a legacy
+execution platform. The BuildBuddy link params now use
+`buck-out/bin/ea51ba9d79d086eb/external/rules_go++go_sdk+main___download_0/packages.txt` for
+`-package_list`, matching Bazel's exec-config SDK input shape. The first run after this cutover
+reconfigured outputs and rebuilt 2688 local actions, but the steady state is back to Bazel-like:
+1.44s warm no-op in the same daemon and 17.44s wall / 16.6s command after daemon restart with 2691
+local-action-cache hits and zero local actions. The fresh-daemon critical path now has only 0.89s of
+action time; the remaining time is analysis and scheduler waiting.
 
 The next cold external-module profile showed the remaining gap was no longer action execution but
 monolithic bzlmod module-extension result caching: changing the `go_deps` usage key missed the full
