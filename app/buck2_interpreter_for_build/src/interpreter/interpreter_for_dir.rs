@@ -151,6 +151,13 @@ impl ParseData {
 }
 
 fn bazel_package_listing_strategy_from_ast(ast: &AstModule) -> PackageListingStrategy {
+    if !ast.loads().is_empty() {
+        // Bazel exposes native.glob to loaded macros. A BUILD file can therefore
+        // need recursive package contents even when the BUILD file AST itself has
+        // no glob call.
+        return PackageListingStrategy::Recursive;
+    }
+
     struct Visitor {
         unknown_glob_use: bool,
         prefixes: Vec<PackageRelativePathBuf>,

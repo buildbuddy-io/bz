@@ -94,8 +94,6 @@ use buck2_hash::BuckIndexSet;
 enum AnalysisContextError {
     #[error("attempting to access `build_setting_value` of non-build setting {0}")]
     NonBuildSetting(String),
-    #[error("ctx.runfiles argument `{0}` is not supported yet")]
-    UnsupportedRunfilesArgument(&'static str),
     #[error("{0}")]
     MakeVariableExpansion(String),
 }
@@ -2445,12 +2443,7 @@ fn analysis_context_methods(builder: &mut MethodsBuilder) {
         #[starlark(require = named, default = false)] skip_conflict_checking: bool,
         heap: Heap<'v>,
     ) -> starlark::Result<BazelRunfiles<'v>> {
-        if skip_conflict_checking {
-            return Err(buck2_error::Error::from(
-                AnalysisContextError::UnsupportedRunfilesArgument("skip_conflict_checking"),
-            )
-            .into());
-        }
+        let _ = skip_conflict_checking;
         let explicit = bazel_runfiles_from_files(
             heap,
             files.into_option().unwrap_or_default().items,

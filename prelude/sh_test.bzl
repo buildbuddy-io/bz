@@ -62,16 +62,19 @@ def sh_test_impl(ctx: AnalysisContext) -> list[Provider]:
 
     # TODO support default info and runinfo properly by writing a sh script that invokes the command properly
 
+    labels = ctx.attrs.labels + getattr(ctx.attrs, "tags", [])
+
     return inject_test_run_info(
         ctx,
         ExternalRunnerTestInfo(
             type = ctx.attrs.type or "custom",
             command = command,
             env = ctx.attrs.env,
-            labels = ctx.attrs.labels,
+            labels = labels,
             contacts = ctx.attrs.contacts,
             default_executor = re_executor,
             executor_overrides = executor_overrides,
+            network_access = ctx.attrs.network_access,
             run_from_project_root = run_from_project_root,
             use_project_relative_paths = run_from_project_root,
         ),

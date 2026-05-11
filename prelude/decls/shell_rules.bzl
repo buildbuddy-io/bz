@@ -6,10 +6,8 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
-load("@prelude//decls:test_common.bzl", "test_common")
 load("@prelude//transitions:constraint_overrides.bzl", "constraint_overrides")
 load(":common.bzl", "buck", "prelude_rule")
-load(":re_test_common.bzl", "re_test_common")
 
 sh_binary = prelude_rule(
     name = "sh_binary",
@@ -186,6 +184,10 @@ sh_test = prelude_rule(
                  The values can contain `string parameter macros`
                 such as the location of a generated binary to be used by the test script.
             """),
+            "env_inherit": attrs.list(attrs.string(), default = [], doc = """
+                Bazel-compatible list of environment variable names inherited by the test runner.
+            """),
+            "network_access": attrs.option(attrs.enum(["all", "none"]), default = None),
             "type": attrs.option(attrs.string(), default = None, doc = """
                 If provided, this will be sent to any configured `.buckconfig`
             """),
@@ -197,14 +199,12 @@ sh_test = prelude_rule(
             "run_env": attrs.dict(key = attrs.string(), value = attrs.string(), sorted = False, default = {}),
             "run_test_separately": attrs.bool(default = False),
             "size": attrs.option(attrs.string(), default = None),
+            "timeout": attrs.option(attrs.enum(["short", "moderate", "long", "eternal"]), default = None),
             "test_rule_timeout_ms": attrs.option(attrs.int(), default = None),
         } |
         buck.licenses_arg() |
         buck.labels_arg() |
-        buck.contacts_arg() |
-        test_common.attributes() |
-        re_test_common.test_args() |
-        test_common.attributes()
+        buck.contacts_arg()
     ),
     cfg = constraint_overrides.transition,
 )

@@ -194,6 +194,7 @@ The first successful run executed 4721 commands with 1159 cache hits and 3562 lo
 - Bazel label attrs with `allow_files` now coerce package-relative strings as labels in Bazel-compatible cells, so generated output file labels such as `zlib/include/deflate.h` and `server/util/bb:bb-bin` resolve through Bazel-style output-file targets instead of missing source artifacts.
 - `py_internal.is_singleton_depset(...)` is implemented using a bounded depset traversal, matching the Bazel `PyBuiltins` API reached by rules_python runtime analysis.
 - BuildBuddy's `server/util/...` package scope now builds with the Bazel-built Buck2 binary. The validated warm run completed with 10,202/10,202 cache hits and skipped only the expected incompatible `server/util/fastcopy:fastcopy_benchmark_test` target.
+- BuildBuddy's `tools/dev_qa_test/...` package scope now builds with the Bazel-built Buck2 binary, using downloaded `rules_shell` instead of Buck-advertised native `sh_*` rules. This required Bazel-compatible loaded-macro package listing, bundled `@bazel_tools//tools/bash/runfiles` package aliases, Bazel shell-test attrs, and acceptance of Bazel's private `ctx.runfiles(skip_conflict_checking = ...)` parameter.
 
 ### Benchmark Summary
 

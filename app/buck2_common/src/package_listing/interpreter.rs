@@ -701,7 +701,7 @@ async fn package_listing_strategy(
         .map_err(|e| GatherPackageListingError::error(package, e))?;
 
     match contents {
-        Some(contents) if !build_file_may_call_glob(&contents) => {
+        Some(contents) if !build_file_requires_recursive_listing(&contents) => {
             Ok(PackageListingStrategy::Shallow)
         }
         _ => Ok(PackageListingStrategy::Recursive),
@@ -742,17 +742,24 @@ fn bazel_compat_enabled(
         .unwrap_or(false))
 }
 
-fn build_file_may_call_glob(contents: &str) -> bool {
+fn build_file_requires_recursive_listing(contents: &str) -> bool {
+    // Bazel's globber is available to loaded macros as well as directly in BUILD
+    // files, so any load can hide a native.glob call from the BUILD file text.
+    may_contain_starlark_identifier(contents, "glob")
+        || may_contain_starlark_identifier(contents, "load")
+}
+
+fn may_contain_starlark_identifier(contents: &str, needle: &str) -> bool {
     let mut rest = contents;
-    while let Some(index) = rest.find("glob") {
+    while let Some(index) = rest.find(needle) {
         let before = rest[..index].chars().next_back();
-        let after = rest[index + "glob".len()..].chars().next();
+        let after = rest[index + needle.len()..].chars().next();
         if !before.is_some_and(is_starlark_identifier_char)
             && !after.is_some_and(is_starlark_identifier_char)
         {
             return true;
         }
-        rest = &rest[index + "glob".len()..];
+        rest = &rest[index + needle.len()..];
     }
     false
 }
@@ -763,14 +770,16 @@ fn is_starlark_identifier_char(c: char) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::build_file_may_call_glob;
+    use super::build_file_requires_recursive_listing;
 
     #[test]
-    fn test_build_file_may_call_glob() {
-        assert!(build_file_may_call_glob("srcs = glob([\"*.go\"])"));
-        assert!(build_file_may_call_glob("g = glob\ng([\"**\"])"));
-        assert!(build_file_may_call_glob("native.glob([\"*\"])"));
-        assert!(!build_file_may_call_glob("go_library(name = \"globular\")"));
-        assert!(!build_file_may_call_glob("my_glob_helper(name = \"x\")"));
+    fn test_build_file_requires_recursive_listing() {
+        assert!(build_file_requires_recursive_listing("srcs = glob([\"*.go\"])"));
+        assert!(build_file_requires_recursive_listing("g = glob\ng([\"**\"])"));
+        assert!(build_file_requires_recursive_listing("native.glob([\"*\"])"));
+        assert!(build_file_requires_recursive_listing("load(\":defs.bzl\", \"macro\")"));
+        assert!(!build_file_requires_recursive_listing("go_library(name = \"globular\")"));
+        assert!(!build_file_requires_recursive_listing("my_glob_helper(name = \"x\")"));
+        assert!(!build_file_requires_recursive_listing("genrule(name = \"upload\")"));
     }
 }
