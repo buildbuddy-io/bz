@@ -1059,6 +1059,28 @@ def _impl(ctx):
     }
 
     #[test]
+    fn test_repository_ctx_command_path_preserves_external_assignment_prefix() {
+        let working_dir =
+            "buck-out/v2/external_cells/bzlmod_generated/gazelle++deps+tools.repository_ctx";
+        let rewritten = repository_ctx_command_path(
+            "GOROOT=/repo/buck-out/buildbuddy-source-file-1/external_cells/bzlmod_generated/rules_go++go_sdk+main___download_0",
+            working_dir,
+        );
+        assert!(rewritten.starts_with("GOROOT="));
+        assert!(rewritten.contains(
+            "/buck-out/v2/external_cells/bzlmod_generated/rules_go++go_sdk+main___download_0"
+        ));
+
+        let rewritten = repository_ctx_command_path(
+            "/repo/buck-out/buildbuddy-source-file-1/external_cells/bzlmod_generated/rules_go++go_sdk+main___download_0/bin/go",
+            working_dir,
+        );
+        assert!(rewritten.ends_with(
+            "/buck-out/v2/external_cells/bzlmod_generated/rules_go++go_sdk+main___download_0/bin/go"
+        ));
+    }
+
+    #[test]
     fn test_repository_rule_string_literals() {
         assert_eq!(
             repository_rule_string_literals(
@@ -3488,7 +3510,59 @@ pub(crate) fn take_repository_ctx_files<'v>(
                 repository_ctx.get_type()
             )
         })?;
-    Ok(repository_ctx.take_files())
+    repository_ctx_current_generated_files(&repository_ctx.working_dir, repository_ctx.take_files())
+}
+
+fn repository_ctx_current_generated_files(
+    working_dir: &str,
+    files: Vec<BazelRepositoryGeneratedFile>,
+) -> starlark::Result<Vec<BazelRepositoryGeneratedFile>> {
+    let mut seen = BTreeSet::new();
+    let mut refreshed = Vec::new();
+    for file in files.into_iter().rev() {
+        if !seen.insert(file.path.clone()) {
+            continue;
+        }
+        let path = Path::new(working_dir).join(&file.path);
+        let metadata = match fs::symlink_metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                return Err(buck2_error::buck2_error!(
+                    buck2_error::ErrorTag::Tier0,
+                    "repository_ctx could not stat generated file `{}`: {}",
+                    path.to_string_lossy(),
+                    error
+                )
+                .into());
+            }
+        };
+        if !metadata.file_type().is_file() {
+            continue;
+        }
+        let content = match fs::read(&path) {
+            Ok(content) => content,
+            Err(error) => {
+                return Err(buck2_error::buck2_error!(
+                    buck2_error::ErrorTag::Tier0,
+                    "repository_ctx could not read generated file `{}`: {}",
+                    path.to_string_lossy(),
+                    error
+                )
+                .into());
+            }
+        };
+        let Ok(content) = String::from_utf8(content) else {
+            continue;
+        };
+        refreshed.push(BazelRepositoryGeneratedFile {
+            path: file.path,
+            content,
+            executable: repository_path_is_executable(&path),
+        });
+    }
+    refreshed.reverse();
+    Ok(refreshed)
 }
 
 pub(crate) fn take_repository_ctx_path_label_deps<'v>(
@@ -3750,22 +3824,34 @@ fn repository_ctx_command_env(value: &str, working_dir: &str) -> String {
 }
 
 fn repository_ctx_command_path(path: &str, working_dir: &str) -> String {
+    if let Some(path) = repository_ctx_command_assignment_path(path, working_dir) {
+        return path;
+    }
     if let Some(path) = repository_ctx_command_external_path(path, working_dir) {
         return path;
     }
-    if let Some((prefix, value)) = path.split_once('=')
-        && !prefix.is_empty()
-        && let Some(value) = repository_ctx_command_external_path(value, working_dir)
-    {
-        return format!("{prefix}={value}");
-    }
-    if let Some((prefix, value)) = path.rsplit_once('=')
-        && !prefix.is_empty()
-        && let Some(value) = repository_ctx_command_external_path(value, working_dir)
-    {
-        return format!("{prefix}={value}");
-    }
     path.to_owned()
+}
+
+fn repository_ctx_command_assignment_path(path: &str, working_dir: &str) -> Option<String> {
+    if let Some(path) =
+        repository_ctx_command_assignment_path_with_split(working_dir, path.split_once('='))
+    {
+        return Some(path);
+    }
+    repository_ctx_command_assignment_path_with_split(working_dir, path.rsplit_once('='))
+}
+
+fn repository_ctx_command_assignment_path_with_split(
+    working_dir: &str,
+    split: Option<(&str, &str)>,
+) -> Option<String> {
+    let (prefix, value) = split?;
+    if prefix.is_empty() || prefix.contains('/') || prefix.contains('\\') {
+        return None;
+    }
+    let value = repository_ctx_command_external_path(value, working_dir)?;
+    Some(format!("{prefix}={value}"))
 }
 
 fn repository_ctx_command_external_path(path: &str, working_dir: &str) -> Option<String> {

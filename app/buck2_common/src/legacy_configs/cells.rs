@@ -179,6 +179,43 @@ pub struct BzlmodEvaluatedModuleExtension {
     pub repository_rules: Vec<BzlmodEvaluatedRepositoryRule>,
 }
 
+impl BzlmodEvaluatedModuleExtension {
+    pub fn matches_request(&self, request: &BzlmodModuleExtensionEvaluationRequest) -> bool {
+        self.parent_canonical_repo_name.as_ref() == request.parent_canonical_repo_name.as_ref()
+            && self.parent_is_root == request.parent_is_root
+            && self.extension_bzl_file.as_ref() == request.extension_bzl_file.as_ref()
+            && self.extension_bzl_cell.as_ref() == request.extension_bzl_cell.as_ref()
+            && self.extension_bzl_path.as_ref() == request.extension_bzl_path.as_ref()
+            && self.extension_unique_name.as_ref() == request.extension_unique_name.as_ref()
+            && self.extension_name.as_ref() == request.extension_name.as_ref()
+            && self.extension_usages_json.as_ref() == request.extension_usages_json.as_ref()
+    }
+
+    pub fn has_same_extension_id_as_request(
+        &self,
+        request: &BzlmodModuleExtensionEvaluationRequest,
+    ) -> bool {
+        self.extension_bzl_cell.as_ref() == request.extension_bzl_cell.as_ref()
+            && self.extension_bzl_path.as_ref() == request.extension_bzl_path.as_ref()
+            && self.extension_name.as_ref() == request.extension_name.as_ref()
+    }
+}
+
+fn sort_bzlmod_module_extension_results(results: &mut [BzlmodEvaluatedModuleExtension]) {
+    results.sort_by(|a, b| {
+        (
+            &a.extension_bzl_cell,
+            &a.extension_bzl_path,
+            &a.extension_name,
+        )
+            .cmp(&(
+                &b.extension_bzl_cell,
+                &b.extension_bzl_path,
+                &b.extension_name,
+            ))
+    });
+}
+
 #[derive(
     Debug,
     Clone,
@@ -243,22 +280,27 @@ impl ExternalBuckconfigData {
                 continue;
             }
 
-            let result = self.bzlmod_module_extension_results.iter().find(|result| {
-                result.parent_canonical_repo_name.as_ref()
-                    == request.parent_canonical_repo_name.as_ref()
-                    && result.parent_is_root == request.parent_is_root
-                    && result.extension_bzl_file.as_ref() == request.extension_bzl_file.as_ref()
-                    && result.extension_bzl_cell.as_ref() == request.extension_bzl_cell.as_ref()
-                    && result.extension_bzl_path.as_ref() == request.extension_bzl_path.as_ref()
-                    && result.extension_unique_name.as_ref()
-                        == request.extension_unique_name.as_ref()
-                    && result.extension_name.as_ref() == request.extension_name.as_ref()
-                    && result.extension_usages_json.as_ref()
-                        == request.extension_usages_json.as_ref()
-            })?;
+            let result = self
+                .bzlmod_module_extension_results
+                .iter()
+                .find(|result| result.matches_request(request))?;
             results.push(result.clone());
         }
 
+        sort_bzlmod_module_extension_results(&mut results);
+        Some(results)
+    }
+
+    pub fn matching_complete_bzlmod_module_extension_results(
+        &self,
+        requests: &[BzlmodModuleExtensionEvaluationRequest],
+    ) -> Option<Vec<BzlmodEvaluatedModuleExtension>> {
+        if !self.bzlmod_module_extension_results_complete {
+            return None;
+        }
+        self.matching_bzlmod_module_extension_results(requests)?;
+        let mut results = self.bzlmod_module_extension_results.clone();
+        sort_bzlmod_module_extension_results(&mut results);
         Some(results)
     }
 
@@ -278,14 +320,14 @@ impl ExternalBuckconfigData {
                 continue;
             }
 
-            let result = self.bzlmod_module_extension_results.iter().find(|result| {
-                result.extension_bzl_cell.as_ref() == request.extension_bzl_cell.as_ref()
-                    && result.extension_bzl_path.as_ref() == request.extension_bzl_path.as_ref()
-                    && result.extension_name.as_ref() == request.extension_name.as_ref()
-            })?;
+            let result = self
+                .bzlmod_module_extension_results
+                .iter()
+                .find(|result| result.has_same_extension_id_as_request(request))?;
             results.push(result.clone());
         }
 
+        sort_bzlmod_module_extension_results(&mut results);
         Some(results)
     }
 

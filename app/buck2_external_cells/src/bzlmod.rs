@@ -395,6 +395,7 @@ fn write_repository_rule_repo(
         if let Some(parent) = path.parent() {
             fs_util::create_dir_all(parent)?;
         }
+        fs_util::remove_all(&path).categorize_internal()?;
         fs_util::write(&path, file.content).categorize_internal()?;
         if file.executable {
             fs_util::set_executable(&path, true).categorize_internal()?;
@@ -1636,7 +1637,7 @@ fn bzlmod_external_cell_root_stamp_path(dest: &ProjectRelativePath) -> ProjectRe
 
 fn bzlmod_external_cell_root_stamp_content(cache_repo: &ProjectRelativePath) -> String {
     let mut hasher = blake3::Hasher::new();
-    update_bzlmod_repo_contents_cache_key(&mut hasher, "buck2-bzlmod-external-cell-root-v1");
+    update_bzlmod_repo_contents_cache_key(&mut hasher, "buck2-bzlmod-external-cell-root-v2");
     update_bzlmod_repo_contents_cache_key(&mut hasher, cache_repo.as_str());
     format!("{}\n", hasher.finalize().to_hex())
 }
@@ -1670,6 +1671,47 @@ fn bzlmod_external_cell_root_is_current(
     ))
 }
 
+fn bzlmod_generated_repo_symlink_targets_exist(path: &AbsNormPath) -> buck2_error::Result<bool> {
+    for entry in fs_util::read_dir(path).categorize_internal()? {
+        let entry = entry?;
+        let entry_path = entry.path();
+        let file_type = entry.file_type()?;
+        if file_type.is_dir() {
+            if !bzlmod_generated_repo_symlink_targets_exist(&entry_path)? {
+                return Ok(false);
+            }
+        } else if file_type.is_symlink() {
+            let target = fs_util::read_link(&entry_path).categorize_internal()?;
+            let target_path = if target.is_absolute() {
+                target
+            } else {
+                entry_path
+                    .as_path()
+                    .parent()
+                    .map(|parent| parent.join(&target))
+                    .unwrap_or(target)
+            };
+            match fs::metadata(&target_path) {
+                Ok(_) => {}
+                Err(error)
+                    if matches!(error.kind(), ErrorKind::NotFound | ErrorKind::NotADirectory) =>
+                {
+                    return Ok(false);
+                }
+                Err(error) => {
+                    return Err(buck2_error::buck2_error!(
+                        buck2_error::ErrorTag::Tier0,
+                        "Error checking generated bzlmod symlink target `{}`: {}",
+                        target_path.display(),
+                        error
+                    ));
+                }
+            }
+        }
+    }
+    Ok(true)
+}
+
 fn update_bzlmod_repo_contents_cache_key_opt(hasher: &mut blake3::Hasher, field: Option<&str>) {
     match field {
         Some(field) => {
@@ -1689,7 +1731,7 @@ fn bzlmod_generated_materialization_stamp_path(
 
 fn bzlmod_generated_materialization_stamp_content(setup: &BzlmodGeneratedCellSetup) -> String {
     let mut hasher = blake3::Hasher::new();
-    update_bzlmod_repo_contents_cache_key(&mut hasher, "buck2-bzlmod-generated-materialization-v1");
+    update_bzlmod_repo_contents_cache_key(&mut hasher, "buck2-bzlmod-generated-materialization-v2");
     update_bzlmod_repo_contents_cache_key(&mut hasher, std::env::consts::OS);
     update_bzlmod_repo_contents_cache_key(&mut hasher, std::env::consts::ARCH);
     update_bzlmod_repo_contents_cache_key(&mut hasher, &setup.canonical_repo_name);
@@ -1785,10 +1827,18 @@ async fn bzlmod_generated_materialization_is_current(
     ) {
         return Ok(false);
     }
-    Ok(matches!(
+    let stamp_matches = matches!(
         (&*io).read_file_if_exists(stamp_path).await?,
         Some(content) if content == stamp_content
-    ))
+    );
+    if !stamp_matches {
+        return Ok(false);
+    }
+    let project_root = ctx.global_data().get_io_provider().project_root().dupe();
+    let path = project_root.resolve(path);
+    ctx.get_blocking_executor()
+        .execute_io_inline(move || bzlmod_generated_repo_symlink_targets_exist(&path))
+        .await
 }
 
 async fn write_bzlmod_generated_materialization_stamp(
@@ -2033,6 +2083,7 @@ async fn download_impl(
     let archive = bzlmod_path(setup, "source.archive");
     let temp = bzlmod_path(setup, "extract-tmp");
     let patch_dir = bzlmod_path(setup, "patches");
+    let stamp = bzlmod_external_cell_root_stamp_path(dest);
     let patch_files: Vec<_> = setup
         .patches
         .iter()
@@ -2044,6 +2095,7 @@ async fn download_impl(
         Box::new(
             buck2_execute::execute::clean_output_paths::CleanOutputPaths {
                 paths: vec![
+                    stamp,
                     dest.to_owned(),
                     archive.clone(),
                     temp.clone(),
