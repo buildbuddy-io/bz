@@ -181,18 +181,13 @@ fn bazel_native_module(builder: &mut GlobalsBuilder) {
         #[starlark(args)] toolchains: UnpackTuple<Value<'v>>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<NoneType> {
-        let build_context = BuildContext::from_context(eval)?;
-        if let Some(recorder) = build_context.bazel_repository_rule_recorder {
-            for toolchain in toolchains.items {
-                let Some(pattern) = toolchain.unpack_str() else {
-                    return Err(buck2_error::Error::from(
-                        BazelNativeError::RegisterToolchainsNonString(
-                            toolchain.get_type().to_owned(),
-                        ),
-                    )
-                    .into());
-                };
-                recorder.record_registered_toolchain(pattern.to_owned());
+        let _build_context = BuildContext::from_context(eval)?;
+        for toolchain in toolchains.items {
+            if toolchain.unpack_str().is_none() {
+                return Err(buck2_error::Error::from(
+                    BazelNativeError::RegisterToolchainsNonString(toolchain.get_type().to_owned()),
+                )
+                .into());
             }
         }
         Ok(NoneType)

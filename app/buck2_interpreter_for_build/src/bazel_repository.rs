@@ -39,7 +39,6 @@ use buck2_core::cells::build_file_cell::BuildFileCell;
 use buck2_core::cells::cell_path::CellPath;
 use buck2_core::cells::external::BzlmodModuleExtensionRepoSetup;
 use buck2_core::cells::external::BzlmodRepositoryRuleInvocationSetup;
-use buck2_core::cells::external::ExternalCellOrigin;
 use buck2_core::cells::external::bzlmod_canonical_repo_name_for_cell;
 use buck2_core::cells::external::bzlmod_cell_name;
 use buck2_core::cells::name::CellName;
@@ -280,7 +279,6 @@ fn record_repository_rule_invocation<'v>(
 
     let mut name = None;
     let mut attrs = Vec::new();
-    let mut label_deps = BTreeSet::new();
     for (attr_name, attr_value) in args.names_map()? {
         let attr_name = attr_name.as_str();
         if attr_name == NAME_ATTRIBUTE_FIELD {
@@ -294,11 +292,6 @@ fn record_repository_rule_invocation<'v>(
             };
             name = Some(name_value.to_owned());
         } else {
-            collect_repository_rule_label_deps(
-                attr_value,
-                &mut label_deps,
-                build_context.cell_info().cell_alias_resolver(),
-            )?;
             attrs.push((
                 attr_name.to_owned(),
                 repository_rule_attr_expression(attr_value)?,
@@ -314,7 +307,6 @@ fn record_repository_rule_invocation<'v>(
         original_name: name.clone(),
         name,
         attrs,
-        label_deps: label_deps.into_iter().collect(),
     });
 
     Ok(Value::new_none())
@@ -395,371 +387,6 @@ fn repository_rule_label_attr_expression(
     ))
 }
 
-fn collect_repository_rule_label_deps(
-    value: Value<'_>,
-    label_deps: &mut BTreeSet<String>,
-    cell_alias_resolver: &CellAliasResolver,
-) -> starlark::Result<()> {
-    if let Some(label) = StarlarkProvidersLabel::from_value(value) {
-        label_deps.insert(label.label().target().pkg().cell_name().as_str().to_owned());
-        return Ok(());
-    }
-    if value.unpack_str().is_some() {
-        return Ok(());
-    }
-    if let Some(dict) = DictRef::from_value(value) {
-        for (key, value) in dict.iter() {
-            collect_repository_rule_label_deps(key, label_deps, cell_alias_resolver)?;
-            collect_repository_rule_label_deps(value, label_deps, cell_alias_resolver)?;
-        }
-        return Ok(());
-    }
-    if let Some(list) = ListRef::from_value(value) {
-        for value in list.iter() {
-            collect_repository_rule_label_deps(value, label_deps, cell_alias_resolver)?;
-        }
-        return Ok(());
-    }
-    if let Some(tuple) = TupleRef::from_value(value) {
-        for value in tuple.iter() {
-            collect_repository_rule_label_deps(value, label_deps, cell_alias_resolver)?;
-        }
-    }
-    Ok(())
-}
-
-fn collect_repository_rule_string_label_dep(
-    value: &str,
-    label_deps: &mut BTreeSet<String>,
-    cell_alias_resolver: &CellAliasResolver,
-) {
-    let Some((canonical, repo_name)) = repository_rule_string_repo_name(value) else {
-        collect_repository_rule_string_label_template_deps(value, label_deps, cell_alias_resolver);
-        return;
-    };
-    if canonical || repo_name.contains('+') {
-        label_deps.insert(bzlmod_cell_name(repo_name));
-        return;
-    }
-    if let Ok(cell_name) = cell_alias_resolver.resolve(repo_name) {
-        label_deps.insert(cell_name.as_str().to_owned());
-    }
-}
-
-fn collect_repository_rule_string_label_template_deps(
-    value: &str,
-    label_deps: &mut BTreeSet<String>,
-    cell_alias_resolver: &CellAliasResolver,
-) {
-    let Some((canonical, repo_template)) = repository_rule_string_repo_name_template(value) else {
-        return;
-    };
-    if canonical {
-        return;
-    }
-    collect_repository_rule_repo_template_label_deps(
-        repo_template,
-        label_deps,
-        cell_alias_resolver,
-    );
-}
-
-fn collect_repository_rule_repo_template_label_deps(
-    repo_template: &str,
-    label_deps: &mut BTreeSet<String>,
-    cell_alias_resolver: &CellAliasResolver,
-) {
-    for (alias, cell_name) in cell_alias_resolver.mappings() {
-        if repository_rule_repo_template_matches(repo_template, alias.as_str()) {
-            label_deps.insert(cell_name.as_str().to_owned());
-        }
-    }
-}
-
-fn collect_repository_rule_string_label_deps_from_expression(
-    expression: &str,
-    label_deps: &mut BTreeSet<String>,
-    cell_alias_resolver: &CellAliasResolver,
-) {
-    for value in repository_rule_string_literals(expression) {
-        collect_repository_rule_string_label_dep(&value, label_deps, cell_alias_resolver);
-    }
-}
-
-fn repository_rule_string_literals(expression: &str) -> Vec<String> {
-    let bytes = expression.as_bytes();
-    let mut values = Vec::new();
-    let mut index = 0usize;
-    while index < bytes.len() {
-        let quote = bytes[index];
-        if quote != b'"' && quote != b'\'' {
-            index += 1;
-            continue;
-        }
-        index += 1;
-        let mut value = String::new();
-        while index < bytes.len() {
-            let byte = bytes[index];
-            index += 1;
-            if byte == quote {
-                values.push(value);
-                break;
-            }
-            if byte == b'\\' && index < bytes.len() {
-                value.push(bytes[index] as char);
-                index += 1;
-            } else {
-                value.push(byte as char);
-            }
-        }
-    }
-    values
-}
-
-fn repository_rule_string_repo_name(value: &str) -> Option<(bool, &str)> {
-    if value.chars().any(char::is_whitespace) {
-        return None;
-    }
-    let (canonical, rest) = if let Some(rest) = value.strip_prefix("@@") {
-        (true, rest)
-    } else if let Some(rest) = value.strip_prefix('@') {
-        (false, rest)
-    } else {
-        return None;
-    };
-    let repo_name = rest
-        .split_once("//")
-        .map_or(rest, |(repo_name, _)| repo_name);
-    if repo_name.is_empty() {
-        return None;
-    }
-    if !repo_name
-        .chars()
-        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | '.' | '+'))
-    {
-        return None;
-    }
-    Some((canonical, repo_name))
-}
-
-fn repository_rule_string_repo_name_template(value: &str) -> Option<(bool, &str)> {
-    if value.chars().any(char::is_whitespace) {
-        return None;
-    }
-    let (canonical, rest) = if let Some(rest) = value.strip_prefix("@@") {
-        (true, rest)
-    } else if let Some(rest) = value.strip_prefix('@') {
-        (false, rest)
-    } else {
-        return None;
-    };
-    let repo_name = rest.split_once("//")?.0;
-    if repo_name.is_empty() || !repo_name.contains('{') || !repo_name.contains('}') {
-        return None;
-    }
-    if !repo_name
-        .chars()
-        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | '.' | '+' | '{' | '}'))
-    {
-        return None;
-    }
-    Some((canonical, repo_name))
-}
-
-#[derive(Debug)]
-struct RepositoryRuleRepoTemplate {
-    segments: Vec<String>,
-    starts_with_wildcard: bool,
-    ends_with_wildcard: bool,
-}
-
-fn repository_rule_repo_template(value: &str) -> Option<RepositoryRuleRepoTemplate> {
-    let mut segments = Vec::new();
-    let mut segment = String::new();
-    let mut chars = value.chars().peekable();
-    let mut starts_with_wildcard = false;
-    let mut ends_with_wildcard = false;
-    let mut saw_wildcard = false;
-    let mut saw_literal = false;
-
-    while let Some(ch) = chars.next() {
-        match ch {
-            '{' => {
-                if matches!(chars.peek(), Some('{')) {
-                    chars.next();
-                    segment.push('{');
-                    saw_literal = true;
-                    ends_with_wildcard = false;
-                    continue;
-                }
-                if segments.is_empty() && segment.is_empty() {
-                    starts_with_wildcard = true;
-                }
-                segments.push(std::mem::take(&mut segment));
-                saw_wildcard = true;
-                ends_with_wildcard = true;
-                let mut closed = false;
-                for placeholder_ch in chars.by_ref() {
-                    if placeholder_ch == '}' {
-                        closed = true;
-                        break;
-                    }
-                }
-                if !closed {
-                    return None;
-                }
-            }
-            '}' => {
-                if matches!(chars.peek(), Some('}')) {
-                    chars.next();
-                    segment.push('}');
-                    saw_literal = true;
-                    ends_with_wildcard = false;
-                } else {
-                    return None;
-                }
-            }
-            _ => {
-                segment.push(ch);
-                saw_literal = true;
-                ends_with_wildcard = false;
-            }
-        }
-    }
-    segments.push(segment);
-
-    if !saw_wildcard || !saw_literal {
-        return None;
-    }
-
-    Some(RepositoryRuleRepoTemplate {
-        segments,
-        starts_with_wildcard,
-        ends_with_wildcard,
-    })
-}
-
-fn repository_rule_repo_template_matches(template: &str, repo_name: &str) -> bool {
-    let Some(template) = repository_rule_repo_template(template) else {
-        return false;
-    };
-    let mut offset = 0usize;
-    let mut first_literal = true;
-
-    for segment in template
-        .segments
-        .iter()
-        .filter(|segment| !segment.is_empty())
-    {
-        if first_literal && !template.starts_with_wildcard {
-            let Some(rest) = repo_name[offset..].strip_prefix(segment) else {
-                return false;
-            };
-            offset = repo_name.len() - rest.len();
-        } else {
-            let Some(found) = repo_name[offset..].find(segment) else {
-                return false;
-            };
-            offset += found + segment.len();
-        }
-        first_literal = false;
-    }
-
-    template.ends_with_wildcard || offset == repo_name.len()
-}
-
-fn repository_rule_dynamic_label_attr_names(source: &str) -> BTreeSet<String> {
-    let mut names = BTreeSet::new();
-    collect_repository_rule_attr_names_after(source, "Label(ctx.attr.", &mut names);
-    collect_repository_rule_attr_names_after(source, "ctx.path(ctx.attr.", &mut names);
-    names
-}
-
-fn repository_rule_dynamic_repo_name_attr_names(source: &str) -> BTreeSet<String> {
-    let mut names = BTreeSet::new();
-    let mut alias_locals = BTreeSet::new();
-    collect_repository_rule_repo_name_label_attr_names(source, &mut names, &mut alias_locals);
-    if !alias_locals.is_empty() {
-        collect_repository_rule_ctx_attr_alias_attrs(source, &alias_locals, &mut names);
-    }
-    names
-}
-
-fn collect_repository_rule_repo_name_label_attr_names(
-    source: &str,
-    names: &mut BTreeSet<String>,
-    alias_locals: &mut BTreeSet<String>,
-) {
-    let bytes = source.as_bytes();
-    let mut offset = 0usize;
-    while let Some(found) = source[offset..].find("Label") {
-        let mut index = offset + found + "Label".len();
-        if !repository_rule_parse_label_repo_name_prefix(bytes, &mut index) {
-            offset = index;
-            continue;
-        }
-        if let Some((attr, end)) = repository_rule_parse_ctx_attr_name(source, index) {
-            names.insert(attr);
-            offset = end;
-            continue;
-        }
-        if let Some((local, end)) = repository_rule_parse_identifier(source, index) {
-            alias_locals.insert(local.to_owned());
-            offset = end;
-            continue;
-        }
-        offset = index;
-    }
-}
-
-fn repository_rule_parse_label_repo_name_prefix(bytes: &[u8], index: &mut usize) -> bool {
-    repository_rule_skip_ascii_whitespace(bytes, index);
-    if !repository_rule_consume_byte(bytes, index, b'(') {
-        return false;
-    }
-    repository_rule_skip_ascii_whitespace(bytes, index);
-    let Some(quote @ (b'"' | b'\'')) = bytes.get(*index).copied() else {
-        return false;
-    };
-    *index += 1;
-    if !repository_rule_consume_byte(bytes, index, b'@') {
-        return false;
-    }
-    let _canonical = repository_rule_consume_byte(bytes, index, b'@');
-    if !repository_rule_consume_byte(bytes, index, quote) {
-        return false;
-    }
-    repository_rule_skip_ascii_whitespace(bytes, index);
-    if !repository_rule_consume_byte(bytes, index, b'+') {
-        return false;
-    }
-    repository_rule_skip_ascii_whitespace(bytes, index);
-    true
-}
-
-fn repository_rule_parse_ctx_attr_name(source: &str, mut index: usize) -> Option<(String, usize)> {
-    let bytes = source.as_bytes();
-    repository_rule_skip_ascii_whitespace(bytes, &mut index);
-    if !repository_rule_consume_keyword(source, &mut index, "ctx") {
-        return None;
-    }
-    repository_rule_skip_ascii_whitespace(bytes, &mut index);
-    if !repository_rule_consume_byte(bytes, &mut index, b'.') {
-        return None;
-    }
-    repository_rule_skip_ascii_whitespace(bytes, &mut index);
-    if !repository_rule_consume_keyword(source, &mut index, "attr") {
-        return None;
-    }
-    repository_rule_skip_ascii_whitespace(bytes, &mut index);
-    if !repository_rule_consume_byte(bytes, &mut index, b'.') {
-        return None;
-    }
-    repository_rule_skip_ascii_whitespace(bytes, &mut index);
-    let (name, index) = repository_rule_parse_identifier(source, index)?;
-    Some((name.to_owned(), index))
-}
-
 fn repository_rule_source_uses_unresolved_dynamic_label(source: &str) -> bool {
     let bytes = source.as_bytes();
     let mut offset = 0usize;
@@ -802,86 +429,6 @@ fn repository_rule_consume_byte(bytes: &[u8], index: &mut usize, expected: u8) -
     }
 }
 
-fn repository_rule_consume_keyword(source: &str, index: &mut usize, keyword: &str) -> bool {
-    let Some(rest) = source.get(*index..) else {
-        return false;
-    };
-    let Some(after) = rest.strip_prefix(keyword) else {
-        return false;
-    };
-    if after
-        .chars()
-        .next()
-        .is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_')
-    {
-        return false;
-    }
-    *index += keyword.len();
-    true
-}
-
-fn repository_rule_parse_identifier(source: &str, index: usize) -> Option<(&str, usize)> {
-    let rest = source.get(index..)?;
-    let mut chars = rest.char_indices();
-    let (_, first) = chars.next()?;
-    if !first.is_ascii_alphabetic() && first != '_' {
-        return None;
-    }
-    let mut end = index + first.len_utf8();
-    for (offset, ch) in chars {
-        if !ch.is_ascii_alphanumeric() && ch != '_' {
-            return Some((&source[index..index + offset], index + offset));
-        }
-        end = index + offset + ch.len_utf8();
-    }
-    Some((&source[index..end], end))
-}
-
-fn collect_repository_rule_ctx_attr_alias_attrs(
-    source: &str,
-    alias_locals: &BTreeSet<String>,
-    names: &mut BTreeSet<String>,
-) {
-    if alias_locals.is_empty() {
-        return;
-    }
-    for line in source.lines() {
-        let line = line.trim();
-        let Some((left, right)) = line.split_once('=') else {
-            continue;
-        };
-        let left = left.trim();
-        if !alias_locals.contains(left) {
-            continue;
-        }
-        let right = right.trim();
-        let Some((attr, _end)) = repository_rule_parse_ctx_attr_name(right, 0) else {
-            continue;
-        };
-        names.insert(attr);
-    }
-}
-
-fn collect_repository_rule_attr_names_after(
-    source: &str,
-    pattern: &str,
-    names: &mut BTreeSet<String>,
-) {
-    let mut offset = 0usize;
-    while let Some(found) = source[offset..].find(pattern) {
-        let start = offset + found + pattern.len();
-        let name = source[start..]
-            .chars()
-            .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_')
-            .collect::<String>();
-        let name_len = name.len();
-        if !name.is_empty() {
-            names.insert(name);
-        }
-        offset = start.saturating_add(name_len);
-    }
-}
-
 fn empty_dict_value<'v>(heap: Heap<'v>) -> Value<'v> {
     heap.alloc(AllocDict(Vec::<(Value<'v>, Value<'v>)>::new()))
 }
@@ -906,66 +453,6 @@ fn host_environ<'v>(heap: Heap<'v>) -> Value<'v> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use buck2_hash::StdBuckHashMap;
-
-    #[test]
-    fn test_repository_rule_string_repo_name() {
-        assert_eq!(
-            repository_rule_string_repo_name("@@rules_go++go_sdk+main___download_0//:ROOT"),
-            Some((true, "rules_go++go_sdk+main___download_0"))
-        );
-        assert_eq!(
-            repository_rule_string_repo_name("@rules_go++go_sdk+main___download_0"),
-            Some((false, "rules_go++go_sdk+main___download_0"))
-        );
-        assert_eq!(repository_rule_string_repo_name("@types/node"), None);
-        assert_eq!(
-            repository_rule_string_repo_name("https://example.com/@repo"),
-            None
-        );
-        assert_eq!(
-            repository_rule_string_repo_name_template("@yq_{}//:yq{}"),
-            Some((false, "yq_{}"))
-        );
-        assert!(repository_rule_repo_template_matches(
-            "yq_{}",
-            "yq_darwin_arm64"
-        ));
-        assert!(!repository_rule_repo_template_matches(
-            "yq_{}",
-            "nodejs_darwin_arm64"
-        ));
-        assert!(!repository_rule_repo_template_matches("{}", "anything"));
-    }
-
-    #[test]
-    fn test_repository_rule_string_label_template_deps() {
-        let mut aliases = StdBuckHashMap::default();
-        aliases.insert(
-            NonEmptyCellAlias::new("yq_darwin_arm64".to_owned()).unwrap(),
-            CellName::testing_new("bzlmod_yq_darwin_arm64"),
-        );
-        aliases.insert(
-            NonEmptyCellAlias::new("yq_linux_amd64".to_owned()).unwrap(),
-            CellName::testing_new("bzlmod_yq_linux_amd64"),
-        );
-        aliases.insert(
-            NonEmptyCellAlias::new("nodejs_darwin_arm64".to_owned()).unwrap(),
-            CellName::testing_new("bzlmod_nodejs_darwin_arm64"),
-        );
-        let resolver = CellAliasResolver::new(CellName::testing_new("current"), aliases).unwrap();
-        let mut label_deps = BTreeSet::new();
-
-        collect_bzlmod_module_extension_string_label_deps(
-            r#"host_yq = Label("@yq_{}//:yq{}".format(platform, extension))"#,
-            &mut label_deps,
-            &resolver,
-        );
-
-        assert!(label_deps.contains("bzlmod_yq_darwin_arm64"));
-        assert!(label_deps.contains("bzlmod_yq_linux_amd64"));
-        assert!(!label_deps.contains("bzlmod_nodejs_darwin_arm64"));
-    }
 
     #[test]
     fn test_repository_rule_source_uses_unresolved_dynamic_label() {
@@ -978,29 +465,6 @@ mod tests {
         assert!(!repository_rule_source_uses_unresolved_dynamic_label(
             r#"Label("@yq_{}//:yq{}".format(platform, extension))"#
         ));
-    }
-
-    #[test]
-    fn test_repository_rule_dynamic_label_attr_names() {
-        let source = r#"
-def _impl(ctx):
-    root = Label(ctx.attr.root_files[platform])
-    config = ctx.path(ctx.attr.config)
-    go_sdk_name = ctx.attr.go_sdk_name
-    go_sdk_label = Label("@" + go_sdk_name + "//:ROOT")
-    direct = Label("@@" + ctx.attr.direct_repo + "//:ROOT")
-    spaced = Label ( "@@" + ctx . attr . spaced_repo + "//:ROOT")
-    ctx.file("go_tools.bzl", "GO_TOOLS = {k: Label(v) for k, v in %r}" % ctx.attr.tool_targets)
-"#;
-        let names = repository_rule_dynamic_label_attr_names(source);
-        assert!(names.contains("root_files"));
-        assert!(names.contains("config"));
-        assert!(!names.contains("tool_targets"));
-        let names = repository_rule_dynamic_repo_name_attr_names(source);
-        assert!(names.contains("go_sdk_name"));
-        assert!(names.contains("direct_repo"));
-        assert!(names.contains("spaced_repo"));
-        assert!(!names.contains("tool_targets"));
     }
 
     #[test]
@@ -1080,21 +544,6 @@ def _impl(ctx):
         assert!(rewritten.ends_with(
             "/buck-out/v2/external_cells/bzlmod_generated/rules_go++go_sdk+main___download_0/bin/go"
         ));
-    }
-
-    #[test]
-    fn test_repository_rule_string_literals() {
-        assert_eq!(
-            repository_rule_string_literals(
-                r#"{"host": "@@rules_go++go_sdk+download_0//:ROOT", "plain": "value"}"#
-            ),
-            vec![
-                "host".to_owned(),
-                "@@rules_go++go_sdk+download_0//:ROOT".to_owned(),
-                "plain".to_owned(),
-                "value".to_owned()
-            ]
-        );
     }
 
     #[test]
@@ -1217,7 +666,7 @@ pub async fn evaluate_bzlmod_module_extension_repo(
     ctx: &mut DiceComputations<'_>,
     setup: &BzlmodModuleExtensionRepoSetup,
     module_ctx_working_dir: &str,
-    current_canonical_repo_name: Option<&str>,
+    _current_canonical_repo_name: Option<&str>,
     cancellation: &CancellationContext,
 ) -> buck2_error::Result<BazelModuleExtensionEvaluationResult> {
     let extension_cell_path = CellPath::new(
@@ -1225,22 +674,9 @@ pub async fn evaluate_bzlmod_module_extension_repo(
         CellRelativePathBuf::try_from(setup.extension_bzl_path.to_string())?,
     );
     let extension_path = ImportPath::new_same_cell(extension_cell_path)?;
-    materialize_bzlmod_module_extension_source_label_deps(
-        ctx,
-        &extension_path,
-        setup,
-        current_canonical_repo_name,
-    )
-    .await?;
     let extension_module = ctx
         .get_loaded_module(StarlarkModulePath::LoadFile(&extension_path))
         .await?;
-    materialize_bzlmod_module_extension_loaded_module_label_deps(
-        ctx,
-        &extension_path,
-        current_canonical_repo_name,
-    )
-    .await?;
     let mut materialized_path_label_deps = BTreeSet::new();
     loop {
         let mut interpreter = ctx
@@ -1272,108 +708,11 @@ pub async fn evaluate_bzlmod_module_extension_repo(
                         error
                     ));
                 }
-                materialize_repository_rule_path_label_deps(
-                    ctx,
-                    &new_label_deps,
-                    LabelDepMaterialization::AllExternal,
-                )
-                .await?;
+                materialize_repository_rule_path_label_deps(ctx, &new_label_deps).await?;
                 repository_ctx_clean_working_dir(module_ctx_working_dir)?;
             }
         }
     }
-}
-
-async fn materialize_bzlmod_module_extension_source_label_deps(
-    ctx: &mut DiceComputations<'_>,
-    extension_path: &ImportPath,
-    setup: &BzlmodModuleExtensionRepoSetup,
-    current_canonical_repo_name: Option<&str>,
-) -> buck2_error::Result<()> {
-    let scan = repository_rule_source_label_dep_scan_for_path(ctx, extension_path).await?;
-    let extension_cell_alias_resolver = ctx
-        .get_cell_alias_resolver(extension_path.path().cell())
-        .await?;
-    let mut label_deps = BTreeSet::new();
-    collect_repository_rule_label_literal_deps(
-        &scan.labels,
-        &mut label_deps,
-        &extension_cell_alias_resolver,
-    );
-
-    let config: BzlmodModuleExtensionEvaluationConfig =
-        serde_json::from_str(&setup.extension_usages_json).map_err(|e| {
-            buck2_error::Error::from(BazelRepositoryError::InvalidModuleExtensionUsageData)
-                .context(format!("JSON parse error: {e}"))
-        })?;
-    for module in config.modules {
-        let module_cell = bzlmod_module_cell_name_from_config(ctx, &module).await?;
-        let module_alias_resolver = ctx.get_cell_alias_resolver(module_cell).await?;
-        for (_name, expression) in &module.constants {
-            collect_repository_rule_string_label_deps_from_expression(
-                expression,
-                &mut label_deps,
-                &module_alias_resolver,
-            );
-        }
-        for tag in &module.tags {
-            for (_name, expression) in &tag.bindings {
-                collect_repository_rule_string_label_deps_from_expression(
-                    expression,
-                    &mut label_deps,
-                    &module_alias_resolver,
-                );
-            }
-            for (_name, expression) in &tag.kwargs {
-                collect_repository_rule_string_label_deps_from_expression(
-                    expression,
-                    &mut label_deps,
-                    &module_alias_resolver,
-                );
-            }
-        }
-    }
-    if let Some(current_canonical_repo_name) = current_canonical_repo_name {
-        // A concrete generated repo can be mentioned by its own extension source. It
-        // cannot be materialized before the extension has emitted its repository_rule.
-        label_deps.remove(&bzlmod_cell_name(current_canonical_repo_name));
-    }
-    let label_deps = label_deps.into_iter().collect::<Vec<_>>();
-    materialize_repository_rule_label_deps(
-        ctx,
-        &label_deps,
-        LabelDepMaterialization::NonGeneratedExternalOnly,
-    )
-    .await
-}
-
-async fn materialize_bzlmod_module_extension_loaded_module_label_deps(
-    ctx: &mut DiceComputations<'_>,
-    extension_path: &ImportPath,
-    current_canonical_repo_name: Option<&str>,
-) -> buck2_error::Result<()> {
-    let loaded_paths = repository_rule_loaded_module_load_paths(ctx, extension_path).await?;
-
-    let mut label_deps = BTreeSet::new();
-    for path in loaded_paths.iter() {
-        let scan = repository_rule_source_label_dep_scan_for_path(ctx, path).await?;
-        let cell_alias_resolver = ctx.get_cell_alias_resolver(path.path().cell()).await?;
-        collect_repository_rule_label_literal_deps(
-            &scan.labels,
-            &mut label_deps,
-            &cell_alias_resolver,
-        );
-    }
-    if let Some(current_canonical_repo_name) = current_canonical_repo_name {
-        label_deps.remove(&bzlmod_cell_name(current_canonical_repo_name));
-    }
-    let label_deps = label_deps.into_iter().collect::<Vec<_>>();
-    materialize_repository_rule_label_deps(
-        ctx,
-        &label_deps,
-        LabelDepMaterialization::NonGeneratedExternalOnly,
-    )
-    .await
 }
 
 fn collect_loaded_module_load_paths(
@@ -1400,46 +739,6 @@ fn repository_rule_should_scan_loaded_module_cell(cell_name: &str) -> bool {
     cell_name != "prelude"
 }
 
-async fn bzlmod_module_cell_name_from_config(
-    ctx: &mut DiceComputations<'_>,
-    module_config: &BzlmodModuleExtensionModuleConfig,
-) -> buck2_error::Result<CellName> {
-    if module_config.is_root {
-        return Ok(ctx.get_cell_resolver().await?.root_cell());
-    }
-    if module_config.canonical_repo_name == "bazel_tools" {
-        return CellName::unchecked_new("bazel_tools");
-    }
-    CellName::unchecked_new(&bzlmod_cell_name(&module_config.canonical_repo_name))
-}
-
-#[cfg(test)]
-fn collect_bzlmod_module_extension_string_label_deps(
-    source: &str,
-    label_deps: &mut BTreeSet<String>,
-    cell_alias_resolver: &CellAliasResolver,
-) {
-    for label in repository_rule_label_literals(source) {
-        match label {
-            RepositoryRuleLabelLiteral::Apparent(repo_name) => {
-                if let Ok(cell_name) = cell_alias_resolver.resolve(&repo_name) {
-                    label_deps.insert(cell_name.as_str().to_owned());
-                }
-            }
-            RepositoryRuleLabelLiteral::ApparentTemplate(repo_template) => {
-                collect_repository_rule_repo_template_label_deps(
-                    &repo_template,
-                    label_deps,
-                    cell_alias_resolver,
-                );
-            }
-            RepositoryRuleLabelLiteral::Canonical(canonical_repo_name) => {
-                label_deps.insert(bzlmod_cell_name(&canonical_repo_name));
-            }
-        }
-    }
-}
-
 pub async fn evaluate_bzlmod_repository_rule(
     ctx: &mut DiceComputations<'_>,
     invocation: &BazelRepositoryRuleInvocation,
@@ -1455,17 +754,9 @@ pub async fn evaluate_bzlmod_repository_rule(
             .into());
         }
     };
-    materialize_repository_rule_label_deps(
-        ctx,
-        &invocation.label_deps,
-        LabelDepMaterialization::AllExternal,
-    )
-    .await?;
-    materialize_repository_rule_source_label_deps(ctx, rule_path, invocation).await?;
     let rule_module = ctx
         .get_loaded_module(StarlarkModulePath::LoadFile(rule_path))
         .await?;
-    materialize_repository_rule_loaded_module_label_deps(ctx, rule_path, invocation).await?;
     let mut materialized_path_label_deps = BTreeSet::new();
     loop {
         let mut interpreter = ctx
@@ -1495,12 +786,7 @@ pub async fn evaluate_bzlmod_repository_rule(
                         error
                     ));
                 }
-                materialize_repository_rule_path_label_deps(
-                    ctx,
-                    &new_label_deps,
-                    LabelDepMaterialization::AllExternal,
-                )
-                .await?;
+                materialize_repository_rule_path_label_deps(ctx, &new_label_deps).await?;
                 repository_ctx_clean_working_dir(repository_ctx_working_dir)?;
             }
         }
@@ -1532,64 +818,6 @@ pub async fn repository_rule_uses_unresolved_dynamic_label(
         }
     }
     Ok(false)
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Allocative)]
-enum RepositoryRuleLabelLiteral {
-    Apparent(String),
-    ApparentTemplate(String),
-    Canonical(String),
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Allocative)]
-struct RepositoryRuleSourceLabelDepScan {
-    labels: Vec<RepositoryRuleLabelLiteral>,
-    dynamic_label_attr_names: Vec<String>,
-}
-
-#[derive(Clone, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable)]
-#[display("repository rule source label dependency scan for {}", path)]
-#[pagable_typetag(dice::DiceKeyDyn)]
-struct RepositoryRuleSourceLabelDepScanKey {
-    path: CellPath,
-}
-
-#[async_trait::async_trait]
-impl Key for RepositoryRuleSourceLabelDepScanKey {
-    type Value = buck2_error::Result<Arc<RepositoryRuleSourceLabelDepScan>>;
-
-    async fn compute(
-        &self,
-        ctx: &mut DiceComputations,
-        _cancellations: &CancellationContext,
-    ) -> Self::Value {
-        let source = DiceFileComputations::read_file(ctx, self.path.as_ref())
-            .await
-            .with_package_context_information(self.path.path().to_string())?;
-        Ok(Arc::new(repository_rule_source_label_dep_scan(&source)))
-    }
-
-    fn equality(_x: &Self::Value, _y: &Self::Value) -> bool {
-        false
-    }
-
-    fn validity(x: &Self::Value) -> bool {
-        x.is_ok()
-    }
-
-    fn value_serialize() -> impl ValueSerialize<Value = Self::Value> {
-        NoValueSerialize::<Self::Value>::new()
-    }
-}
-
-async fn repository_rule_source_label_dep_scan_for_path(
-    ctx: &mut DiceComputations<'_>,
-    path: &ImportPath,
-) -> buck2_error::Result<Arc<RepositoryRuleSourceLabelDepScan>> {
-    ctx.compute(&RepositoryRuleSourceLabelDepScanKey {
-        path: path.path().clone(),
-    })
-    .await?
 }
 
 #[derive(Clone, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable)]
@@ -1637,195 +865,9 @@ async fn repository_rule_loaded_module_load_paths(
         .await?
 }
 
-async fn materialize_repository_rule_source_label_deps(
-    ctx: &mut DiceComputations<'_>,
-    rule_path: &ImportPath,
-    invocation: &BazelRepositoryRuleInvocation,
-) -> buck2_error::Result<()> {
-    let scan = repository_rule_source_label_dep_scan_for_path(ctx, rule_path).await?;
-    let cell_alias_resolver = ctx.get_cell_alias_resolver(rule_path.path().cell()).await?;
-    let attrs = repository_rule_attr_expressions_by_name(&invocation.attrs);
-    let mut label_deps = BTreeSet::new();
-    collect_repository_rule_source_scan_label_deps(
-        &scan,
-        &attrs,
-        &mut label_deps,
-        &cell_alias_resolver,
-    );
-    let label_deps = label_deps.into_iter().collect::<Vec<_>>();
-    materialize_repository_rule_label_deps(
-        ctx,
-        &label_deps,
-        LabelDepMaterialization::NonGeneratedExternalOnly,
-    )
-    .await
-}
-
-async fn materialize_repository_rule_loaded_module_label_deps(
-    ctx: &mut DiceComputations<'_>,
-    rule_path: &ImportPath,
-    invocation: &BazelRepositoryRuleInvocation,
-) -> buck2_error::Result<()> {
-    let loaded_paths = repository_rule_loaded_module_load_paths(ctx, rule_path).await?;
-    let attrs = repository_rule_attr_expressions_by_name(&invocation.attrs);
-    let mut label_deps = BTreeSet::new();
-    for path in loaded_paths.iter() {
-        let scan = repository_rule_source_label_dep_scan_for_path(ctx, path).await?;
-        let cell_alias_resolver = ctx.get_cell_alias_resolver(path.path().cell()).await?;
-        collect_repository_rule_source_scan_label_deps(
-            &scan,
-            &attrs,
-            &mut label_deps,
-            &cell_alias_resolver,
-        );
-    }
-    let label_deps = label_deps.into_iter().collect::<Vec<_>>();
-    materialize_repository_rule_label_deps(
-        ctx,
-        &label_deps,
-        LabelDepMaterialization::NonGeneratedExternalOnly,
-    )
-    .await
-}
-
-fn collect_repository_rule_source_scan_label_deps(
-    scan: &RepositoryRuleSourceLabelDepScan,
-    attrs: &BTreeMap<&str, &str>,
-    label_deps: &mut BTreeSet<String>,
-    cell_alias_resolver: &CellAliasResolver,
-) {
-    collect_repository_rule_label_literal_deps(&scan.labels, label_deps, cell_alias_resolver);
-    for attr_name in &scan.dynamic_label_attr_names {
-        let Some(expression) = attrs.get(attr_name.as_str()) else {
-            continue;
-        };
-        collect_repository_rule_string_label_deps_from_expression(
-            expression,
-            label_deps,
-            cell_alias_resolver,
-        );
-    }
-}
-
-fn collect_repository_rule_label_literal_deps(
-    labels: &[RepositoryRuleLabelLiteral],
-    label_deps: &mut BTreeSet<String>,
-    cell_alias_resolver: &CellAliasResolver,
-) {
-    for label in labels {
-        let cell_name = match label {
-            RepositoryRuleLabelLiteral::Apparent(repo_name) => {
-                match cell_alias_resolver.resolve(repo_name) {
-                    Ok(cell_name) => cell_name.to_string(),
-                    Err(_) => continue,
-                }
-            }
-            RepositoryRuleLabelLiteral::ApparentTemplate(repo_template) => {
-                collect_repository_rule_repo_template_label_deps(
-                    repo_template,
-                    label_deps,
-                    cell_alias_resolver,
-                );
-                continue;
-            }
-            RepositoryRuleLabelLiteral::Canonical(canonical_repo_name) => {
-                bzlmod_cell_name(canonical_repo_name)
-            }
-        };
-        label_deps.insert(cell_name);
-    }
-}
-
-fn repository_rule_attr_expressions_by_name(attrs: &[(String, String)]) -> BTreeMap<&str, &str> {
-    attrs
-        .iter()
-        .map(|(name, expression)| (name.as_str(), expression.as_str()))
-        .collect()
-}
-
-fn repository_rule_source_label_dep_scan(source: &str) -> RepositoryRuleSourceLabelDepScan {
-    let mut dynamic_label_attr_names = repository_rule_dynamic_label_attr_names(source);
-    dynamic_label_attr_names.extend(repository_rule_dynamic_repo_name_attr_names(source));
-    RepositoryRuleSourceLabelDepScan {
-        labels: repository_rule_label_literals(source),
-        dynamic_label_attr_names: dynamic_label_attr_names.into_iter().collect(),
-    }
-}
-
-fn repository_rule_label_literals(source: &str) -> Vec<RepositoryRuleLabelLiteral> {
-    let mut labels = Vec::new();
-    let mut offset = 0usize;
-    while let Some(label_offset) = source[offset..].find("Label(") {
-        let mut index = offset + label_offset + "Label(".len();
-        let bytes = source.as_bytes();
-        while index < bytes.len() && bytes[index].is_ascii_whitespace() {
-            index += 1;
-        }
-        if index >= bytes.len() || (bytes[index] != b'"' && bytes[index] != b'\'') {
-            offset = index;
-            continue;
-        }
-        index += 1;
-        if index >= bytes.len() || bytes[index] != b'@' {
-            offset = index;
-            continue;
-        }
-        index += 1;
-        let canonical = if index < bytes.len() && bytes[index] == b'@' {
-            index += 1;
-            true
-        } else {
-            false
-        };
-        let repo_start = index;
-        while index + 1 < bytes.len() && !(bytes[index] == b'/' && bytes[index + 1] == b'/') {
-            index += 1;
-        }
-        if index + 1 >= bytes.len() || index == repo_start {
-            offset = index;
-            continue;
-        }
-        let repo_name = &source[repo_start..index];
-        labels.push(if canonical {
-            if repository_rule_repo_template(repo_name).is_some() {
-                offset = index + 2;
-                continue;
-            }
-            RepositoryRuleLabelLiteral::Canonical(repo_name.to_owned())
-        } else if repository_rule_repo_template(repo_name).is_some() {
-            RepositoryRuleLabelLiteral::ApparentTemplate(repo_name.to_owned())
-        } else {
-            RepositoryRuleLabelLiteral::Apparent(repo_name.to_owned())
-        });
-        offset = index + 2;
-    }
-    labels
-}
-
-#[derive(Clone, Copy)]
-enum LabelDepMaterialization {
-    AllExternal,
-    // Static source scans are speculative. Generated repos are emitted by module
-    // extensions and should materialize only from concrete attrs or runtime paths.
-    NonGeneratedExternalOnly,
-}
-
-async fn materialize_repository_rule_label_deps(
-    ctx: &mut DiceComputations<'_>,
-    label_deps: &[String],
-    materialization: LabelDepMaterialization,
-) -> buck2_error::Result<()> {
-    let label_deps = label_deps
-        .iter()
-        .map(|cell_name| RepositoryPathLabelDep::cell(cell_name.clone()))
-        .collect::<Vec<_>>();
-    materialize_repository_rule_path_label_deps(ctx, &label_deps, materialization).await
-}
-
 async fn materialize_repository_rule_path_label_deps(
     ctx: &mut DiceComputations<'_>,
     label_deps: &[RepositoryPathLabelDep],
-    materialization: LabelDepMaterialization,
 ) -> buck2_error::Result<()> {
     let mut seen = BTreeSet::new();
     for dep in label_deps {
@@ -1836,13 +878,7 @@ async fn materialize_repository_rule_path_label_deps(
         let should_materialize = {
             let cell_resolver = ctx.get_cell_resolver().await?;
             match cell_resolver.get(cell_name) {
-                Ok(cell) => match cell.external() {
-                    Some(ExternalCellOrigin::BzlmodGenerated(_)) => {
-                        matches!(materialization, LabelDepMaterialization::AllExternal)
-                    }
-                    Some(_) => true,
-                    None => false,
-                },
+                Ok(cell) => cell.external().is_some(),
                 Err(_) => false,
             }
         };
@@ -1936,11 +972,6 @@ pub fn bzlmod_repository_rule_invocation_from_setup(
             .attrs
             .iter()
             .map(|(key, value)| (key.to_string(), value.to_string()))
-            .collect(),
-        label_deps: setup
-            .label_deps
-            .iter()
-            .map(|cell_name| cell_name.to_string())
             .collect(),
     })
 }

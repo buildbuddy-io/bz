@@ -1824,10 +1824,6 @@ fn bzlmod_generated_materialization_stamp_content(setup: &BzlmodGeneratedCellSet
                 update_bzlmod_repo_contents_cache_key(&mut hasher, key);
                 update_bzlmod_repo_contents_cache_key(&mut hasher, value);
             }
-            update_bzlmod_repo_contents_cache_key(&mut hasher, &setup.label_deps.len().to_string());
-            for dep in setup.label_deps.iter() {
-                update_bzlmod_repo_contents_cache_key(&mut hasher, dep);
-            }
         }
         BzlmodGeneratedCellGenerator::ModuleExtensionRepo(setup) => {
             update_bzlmod_repo_contents_cache_key(&mut hasher, "module_extension_repo");

@@ -10,7 +10,6 @@
 
 //! Calculations relating to 'TargetNode's that runs on Dice
 
-use std::collections::BTreeSet;
 use std::iter;
 use std::sync::Arc;
 
@@ -73,6 +72,7 @@ use buck2_node::attrs::spec::internal::INCOMING_TRANSITION_ATTRIBUTE;
 use buck2_node::attrs::spec::internal::LEGACY_TARGET_COMPATIBLE_WITH_ATTRIBUTE;
 use buck2_node::attrs::spec::internal::TARGET_COMPATIBLE_WITH_ATTRIBUTE;
 use buck2_node::configuration::calculation::CellNameForConfigurationResolution;
+use buck2_node::configuration::resolved::ConfigurationSettingKey;
 use buck2_node::configuration::resolved::MatchedConfigurationSettingKeys;
 use buck2_node::configuration::resolved::MatchedConfigurationSettingKeysWithCfg;
 use buck2_node::nodes::configured::BazelResolvedToolchain;
@@ -105,6 +105,7 @@ use starlark_map::small_map::SmallMap;
 use starlark_map::small_set::SmallSet;
 
 use crate::configuration::compute_platform_cfgs;
+use crate::configuration::get_matched_cfg_keys;
 use crate::configuration::get_matched_cfg_keys_for_node;
 use crate::cycle::ConfiguredGraphCycleDescriptor;
 use crate::execution::configure_exec_dep_with_modifiers;
@@ -1024,6 +1025,21 @@ fn attr_target_labels(attr: &CoercedAttr) -> Vec<TargetLabel> {
     }
 }
 
+fn attr_configuration_setting_keys(attr: &CoercedAttr) -> Vec<ConfigurationSettingKey> {
+    attr_target_labels(attr)
+        .into_iter()
+        .map(|label| ConfigurationSettingKey(ProvidersLabel::default_for(label)))
+        .collect()
+}
+
+fn attr_bool(attr: &CoercedAttr) -> Option<bool> {
+    match attr {
+        CoercedAttr::Bool(value) => Some(value.0),
+        CoercedAttr::OneOf(inner, _) => attr_bool(inner),
+        _ => None,
+    }
+}
+
 fn is_bazel_relative_target_shorthand(value: &str) -> bool {
     !value.is_empty()
         && !value.starts_with(['@', ':', '/', '.'])
@@ -1079,73 +1095,82 @@ fn parse_bazel_nodep_label(
     }
 }
 
-fn configuration_constraint_labels(
+async fn configuration_settings_match(
+    ctx: &mut DiceComputations<'_>,
     cfg: &ConfigurationData,
-) -> buck2_error::Result<BTreeSet<String>> {
+    target_cell: CellNameForConfigurationResolution,
+    keys: &[ConfigurationSettingKey],
+) -> buck2_error::Result<bool> {
+    if keys.is_empty() {
+        return Ok(true);
+    }
+    if !cfg.is_bound() {
+        return Ok(false);
+    }
+
+    let matched = get_matched_cfg_keys(ctx, cfg, target_cell, keys.iter()).await?;
+    for key in keys {
+        if matched.settings().setting_matches(key).is_none() {
+            return Ok(false);
+        }
+    }
+
+    Ok(true)
+}
+
+fn cfg_constraint_keys(
+    cfg: &ConfigurationData,
+) -> buck2_error::Result<Vec<ConfigurationSettingKey>> {
     Ok(cfg
         .data()?
         .constraints
         .values()
-        .map(|constraint| constraint.0.target().to_string())
+        .map(|constraint| ConfigurationSettingKey(constraint.0.dupe()))
         .collect())
-}
-
-async fn constraint_label_matches(
-    ctx: &mut DiceComputations<'_>,
-    label: &TargetLabel,
-    constraints: &BTreeSet<String>,
-) -> buck2_error::Result<bool> {
-    let mut pending = vec![label.dupe()];
-    let mut seen = BTreeSet::new();
-
-    while let Some(label) = pending.pop() {
-        let key = label.to_string();
-        if constraints.contains(&key) {
-            return Ok(true);
-        }
-        if !seen.insert(key) {
-            continue;
-        }
-
-        let node = ctx.get_target_node(&label).await?;
-        if node.rule_type().name() != "alias" {
-            continue;
-        }
-        if let Some(actual) = node
-            .attr_or_none("actual", AttrInspectOptions::All)
-            .and_then(|attr| attr_target_label(&attr.value).map(|label| label.dupe()))
-        {
-            pending.push(actual);
-        }
-    }
-
-    Ok(false)
 }
 
 async fn toolchain_constraints_match(
     ctx: &mut DiceComputations<'_>,
     target_node: &TargetNode,
-    target_constraints: &BTreeSet<String>,
-    exec_constraints: &BTreeSet<String>,
+    target_cfg: &ConfigurationData,
+    exec_cfg: &ConfigurationData,
 ) -> buck2_error::Result<bool> {
+    let toolchain_cell = CellNameForConfigurationResolution(target_node.label().pkg().cell_name());
+
+    let target_settings = target_node
+        .attr_or_none("target_settings", AttrInspectOptions::All)
+        .map(|attr| attr_configuration_setting_keys(&attr.value))
+        .unwrap_or_default();
+    if !configuration_settings_match(ctx, target_cfg, toolchain_cell, &target_settings).await? {
+        return Ok(false);
+    }
+
+    let use_target_platform_constraints = target_node
+        .attr_or_none("use_target_platform_constraints", AttrInspectOptions::All)
+        .and_then(|attr| attr_bool(&attr.value))
+        .unwrap_or(false);
+    if use_target_platform_constraints {
+        let target_constraints = cfg_constraint_keys(target_cfg)?;
+        return configuration_settings_match(ctx, exec_cfg, toolchain_cell, &target_constraints)
+            .await;
+    }
+
     let target_compatible_with = target_node
         .known_attr_or_none(TARGET_COMPATIBLE_WITH_ATTRIBUTE.id, AttrInspectOptions::All)
-        .map(|attr| attr_target_labels(&attr.value))
+        .map(|attr| attr_configuration_setting_keys(&attr.value))
         .unwrap_or_default();
-    for label in &target_compatible_with {
-        if !constraint_label_matches(ctx, label, target_constraints).await? {
-            return Ok(false);
-        }
+    if !configuration_settings_match(ctx, target_cfg, toolchain_cell, &target_compatible_with)
+        .await?
+    {
+        return Ok(false);
     }
 
     let exec_compatible_with = target_node
         .known_attr_or_none(EXEC_COMPATIBLE_WITH_ATTRIBUTE.id, AttrInspectOptions::All)
-        .map(|attr| attr_target_labels(&attr.value))
+        .map(|attr| attr_configuration_setting_keys(&attr.value))
         .unwrap_or_default();
-    for label in &exec_compatible_with {
-        if !constraint_label_matches(ctx, label, exec_constraints).await? {
-            return Ok(false);
-        }
+    if !configuration_settings_match(ctx, exec_cfg, toolchain_cell, &exec_compatible_with).await? {
+        return Ok(false);
     }
 
     Ok(true)
@@ -1262,7 +1287,6 @@ async fn resolve_bazel_toolchain_deps(
     target_label: &ConfiguredTargetLabel,
     target_node: &TargetNode,
     execution_platform_cfg: &ConfigurationNoExec,
-    exec_constraints: &BTreeSet<String>,
 ) -> buck2_error::Result<(Vec<ConfiguredTargetNode>, Vec<BazelResolvedToolchain>)> {
     if target_node.bazel_toolchains().is_empty() || !target_label.cfg().is_bound() {
         return Ok((Vec::new(), Vec::new()));
@@ -1272,8 +1296,6 @@ async fn resolve_bazel_toolchain_deps(
     if registered.is_empty() {
         return Ok((Vec::new(), Vec::new()));
     }
-
-    let target_constraints = configuration_constraint_labels(target_label.cfg())?;
 
     let mut deps = Vec::new();
     let mut resolved = Vec::new();
@@ -1287,8 +1309,8 @@ async fn resolve_bazel_toolchain_deps(
             if toolchain_constraints_match(
                 ctx,
                 &candidate.node,
-                &target_constraints,
-                &exec_constraints,
+                target_label.cfg(),
+                execution_platform_cfg.cfg(),
             )
             .await?
             {
@@ -1456,13 +1478,6 @@ async fn compute_configured_target_node_no_transition(
     let exec_deps = &gathered_deps.exec_deps;
     let bazel_target_label = target_label.dupe();
     let bazel_target_node = target_node.dupe();
-    let bazel_exec_constraints =
-        if target_node.bazel_toolchains().is_empty() || !execution_platform_cfg.cfg().is_bound() {
-            BTreeSet::new()
-        } else {
-            configuration_constraint_labels(execution_platform_cfg.cfg())?
-        };
-
     let get_toolchain_deps = DiceComputations::declare_closure(move |ctx| {
         async move {
             let toolchain_dep_results = ctx
@@ -1484,7 +1499,6 @@ async fn compute_configured_target_node_no_transition(
                 &bazel_target_label,
                 &bazel_target_node,
                 execution_platform_cfg,
-                &bazel_exec_constraints,
             )
             .await;
             (toolchain_dep_results, bazel_toolchain_result)

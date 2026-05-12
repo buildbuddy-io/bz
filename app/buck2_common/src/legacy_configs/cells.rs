@@ -176,7 +176,6 @@ pub struct BzlmodEvaluatedModuleExtension {
     pub extension_name: Arc<str>,
     pub extension_usages_json: Arc<str>,
     pub repo_names: Vec<Arc<str>>,
-    pub registered_toolchains: Vec<Arc<str>>,
     pub repository_rules: Vec<BzlmodEvaluatedRepositoryRule>,
 }
 
@@ -236,8 +235,6 @@ pub struct BzlmodEvaluatedRepositoryRule {
     pub rule_bzl_build_file_cell: String,
     pub rule_name: String,
     pub attrs: Vec<(String, String)>,
-    #[serde(default)]
-    pub label_deps: Vec<String>,
 }
 
 impl ExternalBuckconfigData {
@@ -1138,7 +1135,6 @@ impl BuckConfigBasedCells {
                     rule_bzl_build_file_cell,
                     rule_name,
                     attrs,
-                    label_deps,
                 } => BzlmodGeneratedCellGenerator::RepositoryRuleInvocation(
                     BzlmodRepositoryRuleInvocationSetup {
                         repo_name: Arc::from(repo_name),
@@ -1152,7 +1148,6 @@ impl BuckConfigBasedCells {
                                 .map(|(key, value)| (Arc::from(key), Arc::from(value)))
                                 .collect(),
                         ),
-                        label_deps: Arc::new(label_deps.into_iter().map(Arc::from).collect()),
                     },
                 ),
                 BzlmodGeneratedRepoConfig::ModuleExtensionRepo {
@@ -1853,8 +1848,6 @@ enum BzlmodGeneratedRepoConfig {
         rule_bzl_build_file_cell: String,
         rule_name: String,
         attrs: Vec<(String, String)>,
-        #[serde(default)]
-        label_deps: Vec<String>,
     },
     ModuleExtensionRepo {
         parent_canonical_repo_name: String,
@@ -2583,7 +2576,6 @@ fn resolve_bcr_modules_from_discovered(
         &selected_keys_for_generated,
         &canonical_repo_names_by_key,
         &cell_aliases_by_cell,
-        bzlmod_module_extension_results,
     )?;
     Ok(BcrResolution {
         external_modules: resolved,
@@ -3436,7 +3428,6 @@ fn bzlmod_module_extension_repo_config(
                 rule_bzl_build_file_cell: invocation.rule_bzl_build_file_cell.clone(),
                 rule_name: invocation.rule_name.clone(),
                 attrs: invocation.attrs.clone(),
-                label_deps: invocation.label_deps.clone(),
             });
         }
 
@@ -3599,11 +3590,6 @@ fn resolve_bzlmod_use_repo_rule_generated_repos(
             &invocation.rule_name,
             &invocation.repo_name,
         );
-        let label_deps = bzlmod_repository_rule_invocation_label_deps(
-            parent_cell_name,
-            &invocation.attrs,
-            cell_aliases_by_cell,
-        );
         let generator_json =
             serde_json::to_string(&BzlmodGeneratedRepoConfig::RepositoryRuleInvocation {
                 repo_name: invocation.repo_name.clone(),
@@ -3612,7 +3598,6 @@ fn resolve_bzlmod_use_repo_rule_generated_repos(
                 rule_bzl_build_file_cell: parent_cell_name.to_owned(),
                 rule_name: invocation.rule_name.clone(),
                 attrs: invocation.attrs.clone(),
-                label_deps,
             })
             .buck_error_context("Error serializing use_repo_rule repository configuration")?;
         add_generated_bzlmod_repo(
@@ -3640,61 +3625,6 @@ fn bzlmod_use_repo_rule_canonical_repo_name(
         format!("{parent_canonical_repo_name}+{rule_name}")
     };
     bzlmod_extension_unique_repo_canonical_repo_name(&extension_unique_name, repo_name)
-}
-
-fn bzlmod_repository_rule_invocation_label_deps(
-    current_cell_name: &str,
-    attrs: &[(String, String)],
-    cell_aliases_by_cell: &BzlmodCellAliasesByCell,
-) -> Vec<String> {
-    let mut label_deps = BTreeSet::new();
-    for (_, expression) in attrs {
-        let Some(label) = bzl_label_expression_value(expression) else {
-            continue;
-        };
-        let Some(cell_name) =
-            bzlmod_label_dep_cell_name(current_cell_name, &label, cell_aliases_by_cell)
-        else {
-            continue;
-        };
-        label_deps.insert(cell_name);
-    }
-    label_deps.into_iter().collect()
-}
-
-fn bzl_label_expression_value(expression: &str) -> Option<String> {
-    let expression = expression.trim();
-    let args = expression
-        .strip_prefix("Label(")
-        .and_then(|value| value.strip_suffix(')'))?;
-    bzl_string_literal_value(args.trim())
-}
-
-fn bzlmod_label_dep_cell_name(
-    current_cell_name: &str,
-    label: &str,
-    cell_aliases_by_cell: &BzlmodCellAliasesByCell,
-) -> Option<String> {
-    if let Some(rest) = label.strip_prefix("@@") {
-        let (canonical_repo_name, _) = rest.split_once("//")?;
-        return Some(if canonical_repo_name == "bazel_tools" {
-            "bazel_tools".to_owned()
-        } else {
-            bzlmod_cell_name(canonical_repo_name)
-        });
-    }
-    if let Some(rest) = label.strip_prefix('@') {
-        let (alias, _) = rest.split_once("//")?;
-        if alias == "bazel_tools" {
-            return Some("bazel_tools".to_owned());
-        }
-        return bzlmod_cell_alias_target(cell_aliases_by_cell, current_cell_name, alias)
-            .map(str::to_owned);
-    }
-    if label.starts_with("//") || label.starts_with(':') {
-        return Some(current_cell_name.to_owned());
-    }
-    None
 }
 
 fn bzlmod_extension_tag_repo_names(usage: &BzlmodExtensionUsage) -> Vec<String> {
@@ -3942,7 +3872,6 @@ fn resolve_bzlmod_registered_toolchains(
     selected_keys: &BTreeSet<(String, String)>,
     canonical_repo_names_by_key: &BTreeMap<(String, String), String>,
     cell_aliases_by_cell: &BzlmodCellAliasesByCell,
-    bzlmod_module_extension_results: &[BzlmodEvaluatedModuleExtension],
 ) -> buck2_error::Result<Vec<String>> {
     let mut registered_toolchains = Vec::new();
     for key in selected_keys {
@@ -3963,69 +3892,9 @@ fn resolve_bzlmod_registered_toolchains(
             )?);
         }
     }
-    for result in bzlmod_module_extension_results {
-        for pattern in &result.registered_toolchains {
-            registered_toolchains.push(qualify_bzlmod_extension_registered_toolchain(
-                pattern,
-                result,
-                cell_aliases_by_cell,
-            )?);
-        }
-    }
     registered_toolchains.sort_unstable();
     registered_toolchains.dedup();
     Ok(registered_toolchains)
-}
-
-fn qualify_bzlmod_extension_registered_toolchain(
-    pattern: &str,
-    result: &BzlmodEvaluatedModuleExtension,
-    cell_aliases_by_cell: &BzlmodCellAliasesByCell,
-) -> buck2_error::Result<String> {
-    let parent_cell_name = if result.parent_is_root {
-        "root".to_owned()
-    } else {
-        bzlmod_cell_name(&result.parent_canonical_repo_name)
-    };
-    if let Some(repo_relative) = pattern.strip_prefix('@') {
-        let Some((repo_name, package_and_target)) = repo_relative.split_once("//") else {
-            return Err(buck2_error!(
-                buck2_error::ErrorTag::Input,
-                "bzlmod module extension registered toolchain pattern `{}` is not an absolute target pattern",
-                pattern
-            ));
-        };
-        if !result
-            .repo_names
-            .iter()
-            .any(|emitted_repo_name| emitted_repo_name.as_ref() == repo_name)
-        {
-            return qualify_bzlmod_registered_toolchain(
-                pattern,
-                &parent_cell_name,
-                cell_aliases_by_cell,
-            );
-        }
-        let canonical_repo_name = bzlmod_extension_unique_repo_canonical_repo_name(
-            &result.extension_unique_name,
-            repo_name,
-        );
-        return Ok(format!(
-            "{}//{}",
-            bzlmod_cell_name(&canonical_repo_name),
-            package_and_target
-        ));
-    }
-
-    if let Some(package_and_target) = pattern.strip_prefix("//") {
-        return Ok(format!("{parent_cell_name}//{package_and_target}"));
-    }
-
-    Err(buck2_error!(
-        buck2_error::ErrorTag::Input,
-        "bzlmod module extension registered toolchain pattern `{}` is not an absolute target pattern",
-        pattern
-    ))
 }
 
 fn qualify_bzlmod_registered_toolchain(
@@ -7494,7 +7363,6 @@ mod tests {
                 Arc::from("coreutils_toolchains"),
                 Arc::from("coreutils_darwin_arm64"),
             ],
-            registered_toolchains: Vec::new(),
             repository_rules: Vec::new(),
         }];
 

@@ -1328,7 +1328,6 @@ impl DiceCommandUpdater<'_, '_> {
                 rule_bzl_build_file_cell: rule_path.build_file_cell().name().as_str().to_owned(),
                 rule_name: invocation.rule_id.name.clone(),
                 attrs: invocation.attrs.clone(),
-                label_deps: invocation.label_deps.clone(),
             });
         }
 
@@ -1340,13 +1339,6 @@ impl DiceCommandUpdater<'_, '_> {
         repo_names.dedup();
         repository_rules.sort_by(|a, b| a.repo_name.cmp(&b.repo_name));
         repository_rules.dedup_by(|a, b| a.repo_name == b.repo_name);
-        let mut registered_toolchains = evaluation
-            .registered_toolchains
-            .iter()
-            .map(|toolchain| Arc::from(toolchain.as_str()))
-            .collect::<Vec<Arc<str>>>();
-        registered_toolchains.sort();
-        registered_toolchains.dedup();
         Ok(BzlmodEvaluatedModuleExtension {
             parent_canonical_repo_name: request.parent_canonical_repo_name.dupe(),
             parent_is_root: request.parent_is_root,
@@ -1357,7 +1349,6 @@ impl DiceCommandUpdater<'_, '_> {
             extension_name: request.extension_name.dupe(),
             extension_usages_json: request.extension_usages_json.dupe(),
             repo_names,
-            registered_toolchains,
             repository_rules,
         })
     }
