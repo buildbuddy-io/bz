@@ -14,18 +14,24 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use allocative::Allocative;
+use async_compression::tokio::bufread::GzipDecoder;
 use buck2_common::cas_digest::CasDigestConfig;
 use buck2_common::cas_digest::DigestAlgorithmFamily;
 use buck2_common::cas_digest::SHA1_SIZE;
 use buck2_common::cas_digest::SHA256_SIZE;
 use buck2_common::file_ops::metadata::FileDigest;
 use buck2_common::file_ops::metadata::TrackedFileDigest;
+use buck2_core::cells::external::BAZEL_REPOSITORY_ACCEPT_ENCODING;
+use buck2_core::cells::external::BAZEL_REPOSITORY_ACCEPT_ENCODING_HEADER;
+use buck2_core::cells::external::BAZEL_REPOSITORY_USER_AGENT_HEADER;
+use buck2_core::cells::external::bazel_repository_user_agent;
 use buck2_core::fs::project::ProjectRoot;
 use buck2_core::fs::project_rel_path::ProjectRelativePath;
 use buck2_error::BuckErrorContext;
 use buck2_fs::error::IoResultExt;
 use buck2_fs::fs_util;
 use buck2_http::HttpClient;
+use buck2_http::ResponseFinalUri;
 use buck2_http::retries::HttpError;
 use buck2_http::retries::HttpErrorForRetry;
 use buck2_http::retries::IntoBuck2Error;
@@ -33,7 +39,7 @@ use buck2_http::retries::http_retry;
 use bytes::Bytes;
 use digest::DynDigest;
 use dupe::Dupe;
-use futures::StreamExt;
+use futures::TryStreamExt;
 use futures::stream::Stream;
 use hyper::Response;
 use pagable::Pagable;
@@ -41,6 +47,9 @@ use sha1::Digest;
 use sha1::Sha1;
 use sha2::Sha256;
 use smallvec::SmallVec;
+use tokio::io::AsyncRead;
+use tokio::io::AsyncReadExt;
+use tokio_util::io::StreamReader;
 
 use crate::digest_config::DigestConfig;
 
@@ -260,6 +269,51 @@ pub async fn http_download(
     checksum: &Checksum,
     executable: bool,
 ) -> buck2_error::Result<TrackedFileDigest> {
+    http_download_with_headers(
+        client,
+        fs,
+        digest_config,
+        path,
+        url,
+        checksum,
+        executable,
+        &[],
+    )
+    .await
+}
+
+pub fn bazel_repository_download_headers(
+    headers: impl IntoIterator<Item = (String, String)>,
+) -> Vec<(String, String)> {
+    let mut result = Vec::new();
+    for (name, value) in headers {
+        if !name.eq_ignore_ascii_case(BAZEL_REPOSITORY_ACCEPT_ENCODING_HEADER)
+            && !name.eq_ignore_ascii_case(BAZEL_REPOSITORY_USER_AGENT_HEADER)
+        {
+            result.push((name, value));
+        }
+    }
+    result.push((
+        BAZEL_REPOSITORY_ACCEPT_ENCODING_HEADER.to_owned(),
+        BAZEL_REPOSITORY_ACCEPT_ENCODING.to_owned(),
+    ));
+    result.push((
+        BAZEL_REPOSITORY_USER_AGENT_HEADER.to_owned(),
+        bazel_repository_user_agent(),
+    ));
+    result
+}
+
+pub async fn http_download_with_headers(
+    client: &HttpClient,
+    fs: &ProjectRoot,
+    digest_config: DigestConfig,
+    path: &ProjectRelativePath,
+    url: &str,
+    checksum: &Checksum,
+    executable: bool,
+    headers: &[(String, String)],
+) -> buck2_error::Result<TrackedFileDigest> {
     let abs_path = fs.resolve(path);
     if let Some(dir) = abs_path.parent() {
         fs_util::create_dir_all(dir)?;
@@ -267,8 +321,9 @@ pub async fn http_download(
 
     Ok(http_retry(
         || async {
+            let request_headers = bazel_repository_request_headers_for_url(url, headers);
             let response = client
-                .get(url)
+                .get_with_headers(url, request_headers.into_iter())
                 .await
                 .map_err(|e| HttpDownloadError::Client(HttpError::Client(e)))?;
 
@@ -306,12 +361,65 @@ pub async fn http_download(
     .map_err(|e| e.into_final())?)
 }
 
+fn bazel_repository_request_headers_for_url<'a>(
+    url: &str,
+    headers: &'a [(String, String)],
+) -> Vec<(&'a str, &'a str)> {
+    let compressed_url = url_has_bazel_compressed_extension(url);
+    headers
+        .iter()
+        .filter(|(name, _)| {
+            !compressed_url || !name.eq_ignore_ascii_case(BAZEL_REPOSITORY_ACCEPT_ENCODING_HEADER)
+        })
+        .map(|(name, value)| (&**name, &**value))
+        .collect()
+}
+
 /// Copy a stream into a writer while producing its digest and checksumming it.
 async fn copy_and_hash(
     url: &str,
     head: Option<http::response::Parts>,
     abs_path: &(impl std::fmt::Display + ?Sized),
-    mut stream: impl Stream<Item = Result<Bytes, hyper::Error>> + Unpin,
+    stream: impl Stream<Item = Result<Bytes, hyper::Error>> + Unpin,
+    writer: impl Write,
+    digest_config: CasDigestConfig,
+    checksum: &Checksum,
+    is_vpnless: bool,
+) -> Result<FileDigest, HttpDownloadError> {
+    let gunzip = response_should_gunzip(url, head.as_ref());
+    let reader = StreamReader::new(stream.map_err(std::io::Error::other));
+    if gunzip {
+        copy_and_hash_from_reader(
+            url,
+            head,
+            abs_path,
+            GzipDecoder::new(reader),
+            writer,
+            digest_config,
+            checksum,
+            is_vpnless,
+        )
+        .await
+    } else {
+        copy_and_hash_from_reader(
+            url,
+            head,
+            abs_path,
+            reader,
+            writer,
+            digest_config,
+            checksum,
+            is_vpnless,
+        )
+        .await
+    }
+}
+
+async fn copy_and_hash_from_reader(
+    url: &str,
+    head: Option<http::response::Parts>,
+    abs_path: &(impl std::fmt::Display + ?Sized),
+    mut reader: impl AsyncRead + Unpin,
     mut writer: impl Write,
     digest_config: CasDigestConfig,
     checksum: &Checksum,
@@ -350,25 +458,30 @@ async fn copy_and_hash(
     }
 
     let mut buff = DebugBuffer::new(512);
+    let mut read_buffer = vec![0u8; 64 * 1024];
 
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|source| HttpError::Transfer {
-            received: digester.bytes_read(),
-            url: url.to_owned(),
-            source,
-        })?;
+    loop {
+        let bytes_read = reader
+            .read(&mut read_buffer)
+            .await
+            .with_buck_error_context(|| format!("read({url})"))
+            .map_err(HttpDownloadError::IoError)?;
+        if bytes_read == 0 {
+            break;
+        }
+        let chunk = &read_buffer[..bytes_read];
 
-        buff.peek(&chunk);
+        buff.peek(chunk);
 
         writer
-            .write(&chunk)
+            .write_all(chunk)
             .with_buck_error_context(|| format!("write({abs_path})"))
             .map_err(HttpDownloadError::IoError)?;
 
-        digester.update(&chunk);
+        digester.update(chunk);
         for (validator, _expected, _kind) in validators.iter_mut() {
             if let Validator::ExtraDigest(hasher) = validator {
-                hasher.update(&chunk);
+                hasher.update(chunk);
             }
         }
     }
@@ -414,6 +527,52 @@ async fn copy_and_hash(
     }
 
     Ok(digest)
+}
+
+fn response_should_gunzip(url: &str, head: Option<&http::response::Parts>) -> bool {
+    let Some(head) = head else {
+        return false;
+    };
+    let Some(content_encoding) = head.headers.get(http::header::CONTENT_ENCODING) else {
+        return false;
+    };
+    let Ok(content_encoding) = content_encoding.to_str() else {
+        return false;
+    };
+    if !content_encoding
+        .split(',')
+        .map(str::trim)
+        .any(|encoding| matches!(encoding, "gzip" | "x-gzip"))
+    {
+        return false;
+    }
+    if url_has_gzipped_extension(url) {
+        return false;
+    }
+    if let Some(final_uri) = head.extensions.get::<ResponseFinalUri>()
+        && url_has_gzipped_extension(final_uri.as_str())
+    {
+        return false;
+    }
+    true
+}
+
+fn url_has_bazel_compressed_extension(url: &str) -> bool {
+    matches!(
+        url_extension(url),
+        Some("bz2" | "gz" | "jar" | "tgz" | "war" | "xz" | "zip")
+    )
+}
+
+fn url_has_gzipped_extension(url: &str) -> bool {
+    matches!(url_extension(url), Some("gz" | "tgz"))
+}
+
+fn url_extension(url: &str) -> Option<&str> {
+    let path = url.split_once('?').map_or(url, |(path, _)| path);
+    let path = path.split_once('#').map_or(path, |(path, _)| path);
+    let path = path.rsplit_once('/').map_or(path, |(_, basename)| basename);
+    path.rsplit_once('.').map(|(_, extension)| extension)
 }
 
 struct DebugBuffer {

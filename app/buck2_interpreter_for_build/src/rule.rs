@@ -92,6 +92,8 @@ use starlark::values::typing::StarlarkCallable;
 use starlark::values::typing::StarlarkCallableChecked;
 use starlark_map::small_map::SmallMap;
 
+use crate::attrs::starlark_attribute::BazelComputedDefault;
+use crate::attrs::starlark_attribute::FrozenBazelComputedDefault;
 use crate::attrs::starlark_attribute::StarlarkAttribute;
 use crate::bazel_aspect::frozen_aspect_implementation;
 use crate::interpreter::build_context::BuildContext;
@@ -301,6 +303,8 @@ pub struct StarlarkRuleCallable<'v> {
     bazel_initializer_attrs: Vec<String>,
     /// Bazel aspects attached to this rule's label-like attrs.
     bazel_attr_aspects: SmallMap<String, Vec<Value<'v>>>,
+    /// Bazel Starlark computed defaults keyed by attr name.
+    bazel_computed_defaults: SmallMap<String, BazelComputedDefault<'v>>,
     /// This kind of the rule, e.g. whether it can be used in configuration context.
     rule_kind: RuleKind,
     /// The raw docstring for this rule
@@ -705,12 +709,16 @@ impl<'v> StarlarkRuleCallable<'v> {
         let mut bazel_output_attrs = Vec::new();
         let attr_entries = attrs.entries;
         let mut bazel_attr_aspects = SmallMap::new();
+        let mut bazel_computed_defaults = SmallMap::new();
         for (name, value) in &attr_entries {
             if !value.bazel_aspects().is_empty() {
                 bazel_attr_aspects.insert(
                     (*name).to_owned(),
                     value.bazel_aspects().iter().copied().collect(),
                 );
+            }
+            if let Some(computed_default) = value.bazel_computed_default() {
+                bazel_computed_defaults.insert((*name).to_owned(), computed_default.clone());
             }
         }
         let mut sorted_validated_attrs = attr_entries
@@ -804,6 +812,7 @@ impl<'v> StarlarkRuleCallable<'v> {
             bazel_initializer,
             bazel_initializer_attrs,
             bazel_attr_aspects,
+            bazel_computed_defaults,
             docs: Some(doc.to_owned()),
             ignore_attrs_for_profiling: build_context.ignore_attrs_for_profiling,
             artifact_promise_mappings,
@@ -1019,6 +1028,11 @@ impl<'v> Freeze for StarlarkRuleCallable<'v> {
                 Ok((name, aspects))
             })
             .collect::<FreezeResult<SmallMap<_, _>>>()?;
+        let bazel_computed_defaults = self
+            .bazel_computed_defaults
+            .into_iter()
+            .map(|(name, computed_default)| Ok((name, computed_default.freeze(freezer)?)))
+            .collect::<FreezeResult<SmallMap<_, _>>>()?;
 
         Ok(FrozenStarlarkRuleCallable {
             rule: Arc::new(Rule {
@@ -1043,6 +1057,7 @@ impl<'v> Freeze for StarlarkRuleCallable<'v> {
             bazel_initializer,
             bazel_initializer_attrs: self.bazel_initializer_attrs,
             bazel_attr_aspects,
+            bazel_computed_defaults,
         })
     }
 }
@@ -1064,6 +1079,7 @@ pub struct FrozenStarlarkRuleCallable {
     bazel_initializer: Option<FrozenValue>,
     bazel_initializer_attrs: Vec<String>,
     bazel_attr_aspects: SmallMap<String, Vec<FrozenValue>>,
+    bazel_computed_defaults: SmallMap<String, FrozenBazelComputedDefault>,
 }
 starlark_simple_value!(FrozenStarlarkRuleCallable);
 
@@ -1244,17 +1260,31 @@ impl<'v> StarlarkValue<'v> for FrozenStarlarkRuleCallable {
         } else {
             None
         };
-        if self.bazel_initializer.is_some() {
+        if self.bazel_initializer.is_some() || !self.bazel_computed_defaults.is_empty() {
+            if self.bazel_initializer.is_none() && args.positions(eval.heap())?.next().is_some() {
+                return Err(
+                    buck2_error::Error::from(RuleError::BazelInitializerPositionalArgs).into(),
+                );
+            }
             let named = self.apply_bazel_initializer(args, eval)?;
-            let internals = ModuleInternals::from_context(eval, self.rule.rule_type.name())?;
-            let target_node = TargetNode::from_named_values(
-                self.rule.dupe(),
-                internals.package(),
-                internals,
-                &named,
-                self.ignore_attrs_for_profiling,
-                call_stack,
-            )?;
+            let internals = ModuleInternals::from_context(eval, self.rule.rule_type.name())?
+                as *const ModuleInternals;
+            // Computed defaults are evaluated while the BUILD-file evaluator is active. The
+            // ModuleInternals pointer is stored in the evaluator's stable extra state; Rust cannot
+            // express borrowing that state while also calling back into the evaluator.
+            let target_node = unsafe {
+                TargetNode::from_named_values_with_bazel_computed_defaults(
+                    self.rule.dupe(),
+                    (&*internals).package(),
+                    &*internals,
+                    &named,
+                    &self.bazel_computed_defaults,
+                    eval,
+                    self.ignore_attrs_for_profiling,
+                    call_stack,
+                )?
+            };
+            let internals = unsafe { &*internals };
             let output_file_targets = bazel_output_file_targets(&target_node, internals)?;
             internals.record(target_node)?;
             for output_file_target in output_file_targets {

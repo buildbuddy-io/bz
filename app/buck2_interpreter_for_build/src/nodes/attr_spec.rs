@@ -21,6 +21,7 @@ use buck2_node::attrs::attr_type::bool::BoolLiteral;
 use buck2_node::attrs::attr_type::string::StringLiteral;
 use buck2_node::attrs::coerced_attr::CoercedAttr;
 use buck2_node::attrs::configurable::AttrIsConfigurable;
+use buck2_node::attrs::fmt_context::AttrFmtContext;
 use buck2_node::attrs::inspect_options::AttrInspectOptions;
 use buck2_node::attrs::spec::AttributeId;
 use buck2_node::attrs::spec::AttributeSpec;
@@ -32,6 +33,7 @@ use buck2_node::attrs::values::AttrValues;
 use buck2_util::arc_str::ArcStr;
 use dupe::Dupe;
 use starlark::docs::DocString;
+use starlark::eval::Evaluator;
 use starlark::eval::ParametersParser;
 use starlark::eval::ParametersSpec;
 use starlark::eval::ParametersSpecParam;
@@ -42,11 +44,15 @@ use starlark::typing::TyFunction;
 use starlark::values::StringValue;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
+use starlark::values::dict::AllocDict;
+use starlark::values::list::AllocList;
 use starlark_map::small_map::SmallMap;
 
 use crate::attrs::AttributeCoerceExt;
+use crate::attrs::starlark_attribute::FrozenBazelComputedDefault;
 use crate::interpreter::module_internals::ModuleInternals;
 use crate::nodes::check_within_view::check_within_view;
+use buck2_interpreter::types::configured_providers_label::StarlarkProvidersLabel;
 
 #[derive(Debug, buck2_error::Error)]
 #[buck2(tag = Input)]
@@ -57,6 +63,14 @@ enum AttributeSpecParseError {
     UnknownAttribute(String, String),
     #[error("Expected string value for `name`, got `{0}`")]
     ExpectedStringName(String),
+    #[error("Bazel computed default for attribute `{0}` depends on computed attribute `{1}`")]
+    ComputedDefaultDependsOnComputedAttribute(String, String),
+    #[error("Bazel computed default for attribute `{0}` depends on unknown attribute `{1}`")]
+    ComputedDefaultUnknownDependency(String, String),
+    #[error(
+        "Bazel computed default for attribute `{0}` selected a default but the attribute has no default"
+    )]
+    ComputedDefaultMissingFallback(String),
 }
 
 fn coerce_attr_value(
@@ -94,6 +108,201 @@ fn package_default_testonly_attr(
     }
 }
 
+fn alloc_coerced_attr_value<'v>(
+    value: &CoercedAttr,
+    eval: &mut Evaluator<'v, '_, '_>,
+) -> starlark::Result<Value<'v>> {
+    match value {
+        CoercedAttr::Label(label)
+        | CoercedAttr::SourceLabel(label)
+        | CoercedAttr::Dep(label)
+        | CoercedAttr::ConfigurationDep(label)
+        | CoercedAttr::SplitTransitionDep(label) => {
+            return Ok(eval
+                .heap()
+                .alloc(StarlarkProvidersLabel::new(label.clone())));
+        }
+        CoercedAttr::List(list) => {
+            let values = list
+                .iter()
+                .map(|item| alloc_coerced_attr_value(item, eval))
+                .collect::<starlark::Result<Vec<_>>>()?;
+            return Ok(eval.heap().alloc(AllocList(values)));
+        }
+        CoercedAttr::Tuple(tuple) => {
+            let values = tuple
+                .iter()
+                .map(|item| alloc_coerced_attr_value(item, eval))
+                .collect::<starlark::Result<Vec<_>>>()?;
+            return Ok(eval.heap().alloc(AllocList(values)));
+        }
+        CoercedAttr::Dict(dict) => {
+            let values = dict
+                .iter()
+                .map(|(key, value)| {
+                    Ok((
+                        alloc_coerced_attr_value(key, eval)?,
+                        alloc_coerced_attr_value(value, eval)?,
+                    ))
+                })
+                .collect::<starlark::Result<Vec<_>>>()?;
+            return Ok(eval.heap().alloc(AllocDict(values)));
+        }
+        CoercedAttr::OneOf(value, _) => return alloc_coerced_attr_value(value, eval),
+        CoercedAttr::None => return Ok(Value::new_none()),
+        _ => {}
+    }
+    let json = value
+        .to_json(&AttrFmtContext::NO_CONTEXT)
+        .map_err(starlark::Error::from)?;
+    Ok(eval.heap().alloc(json))
+}
+
+fn named_values_contains(named: &SmallMap<StringValue<'_>, Value<'_>>, attr_name: &str) -> bool {
+    named.iter().any(|(name, _)| name.as_str() == attr_name)
+}
+
+fn attr_spec_entry<'a>(
+    spec: &'a AttributeSpec,
+    attr_name: &str,
+) -> Option<(&'a str, AttributeId, &'a Attribute)> {
+    spec.attr_specs().find(|(name, _, _)| *name == attr_name)
+}
+
+fn computed_default_depends_on_computed_attr(
+    computed_defaults: &SmallMap<String, FrozenBazelComputedDefault>,
+    dependency: &str,
+) -> bool {
+    computed_defaults
+        .iter()
+        .any(|(name, _)| name.as_str() == dependency)
+}
+
+fn apply_bazel_computed_defaults<'v>(
+    spec: &AttributeSpec,
+    attr_values: AttrValues,
+    named: &SmallMap<StringValue<'v>, Value<'v>>,
+    internals: &ModuleInternals,
+    computed_defaults: &SmallMap<String, FrozenBazelComputedDefault>,
+    eval: &mut Evaluator<'v, '_, '_>,
+) -> buck2_error::Result<AttrValues> {
+    if computed_defaults.is_empty() {
+        return Ok(attr_values);
+    }
+
+    let mut computed_values = Vec::new();
+    for (attr_name, computed_default) in computed_defaults {
+        let Some((_, attr_idx, attribute)) = attr_spec_entry(spec, attr_name) else {
+            continue;
+        };
+        if named_values_contains(named, attr_name) || attr_values.get(attr_idx).is_some() {
+            continue;
+        }
+
+        let mut positional = Vec::with_capacity(computed_default.dependencies().len());
+        for dependency in computed_default.dependencies() {
+            if computed_default_depends_on_computed_attr(computed_defaults, dependency) {
+                return Err(
+                    AttributeSpecParseError::ComputedDefaultDependsOnComputedAttribute(
+                        attr_name.to_owned(),
+                        dependency.to_owned(),
+                    )
+                    .into(),
+                );
+            }
+            let value = spec
+                .attrs(&attr_values, AttrInspectOptions::All)
+                .find(|attr| attr.name == dependency)
+                .ok_or_else(|| {
+                    AttributeSpecParseError::ComputedDefaultUnknownDependency(
+                        attr_name.to_owned(),
+                        dependency.to_owned(),
+                    )
+                })?;
+            positional.push(
+                alloc_coerced_attr_value(value.value, eval).map_err(buck2_error::Error::from)?,
+            );
+        }
+
+        let raw_value = eval
+            .eval_function(computed_default.callback().to_value(), &positional, &[])
+            .map_err(buck2_error::Error::from)?;
+        let coerced = coerce_attr_value(
+            attr_name,
+            attribute,
+            attr_is_configurable(attr_name),
+            internals,
+            raw_value,
+        )
+        .with_buck_error_context(|| {
+            format!("Error coercing Bazel computed default for attribute `{attr_name}`")
+        })?;
+        match coerced {
+            CoercedValue::Custom(value) => {
+                computed_values.push((attr_idx, attr_name.clone(), value));
+            }
+            CoercedValue::Default => {
+                if attribute.default().is_none() {
+                    return Err(AttributeSpecParseError::ComputedDefaultMissingFallback(
+                        attr_name.clone(),
+                    )
+                    .into());
+                }
+            }
+        }
+    }
+
+    if computed_values.is_empty() {
+        return Ok(attr_values);
+    }
+
+    computed_values.sort_by_key(|(attr_idx, _, _)| *attr_idx);
+
+    if let Some(within_view) = attr_values.get(WITHIN_VIEW_ATTRIBUTE.id) {
+        let within_view = match within_view {
+            CoercedAttr::WithinView(within_view) => within_view,
+            _ => return Err(internal_error!("`within_view` coerced incorrectly")),
+        };
+        for (attr_idx, attr_name, value) in &computed_values {
+            let Some((_, _, attribute)) = spec.attr_specs().find(|(_, idx, _)| idx == attr_idx)
+            else {
+                continue;
+            };
+            check_within_view(
+                value,
+                internals.buildfile_path().package(),
+                attribute.coercer(),
+                within_view,
+                None,
+            )
+            .with_buck_error_context(|| {
+                format!(
+                    "checking `within_view` for Bazel computed default attribute `{}`",
+                    attr_name,
+                )
+            })?;
+        }
+    }
+
+    let mut merged = AttrValues::with_capacity(spec.len());
+    let mut computed_values = computed_values.into_iter().peekable();
+    for (_, attr_idx, _) in spec.attr_specs() {
+        if let Some(value) = attr_values.get(attr_idx) {
+            merged.push_sorted(attr_idx, value.clone());
+        } else if computed_values
+            .peek()
+            .is_some_and(|(computed_idx, _, _)| *computed_idx == attr_idx)
+        {
+            let (_, _, value) = computed_values
+                .next()
+                .expect("computed value exists after peek");
+            merged.push_sorted(attr_idx, value);
+        }
+    }
+    merged.shrink_to_fit();
+    Ok(merged)
+}
+
 pub trait AttributeSpecExt {
     fn start_parse<'a, 'v>(
         &'a self,
@@ -120,6 +329,15 @@ pub trait AttributeSpecExt {
         named: &SmallMap<StringValue<'v>, Value<'v>>,
         internals: &ModuleInternals,
         rule_name: &str,
+    ) -> buck2_error::Result<(&'v TargetNameRef, AttrValues)>;
+
+    fn parse_named_values_with_bazel_computed_defaults<'v>(
+        &self,
+        named: &SmallMap<StringValue<'v>, Value<'v>>,
+        internals: &ModuleInternals,
+        rule_name: &str,
+        computed_defaults: &SmallMap<String, FrozenBazelComputedDefault>,
+        eval: &mut Evaluator<'v, '_, '_>,
     ) -> buck2_error::Result<(&'v TargetNameRef, AttrValues)>;
 
     /// Returns a starlark Parameters for the rule callable, but not default values.
@@ -398,6 +616,26 @@ impl AttributeSpecExt for AttributeSpec {
             }
         }
 
+        Ok((name, attr_values))
+    }
+
+    fn parse_named_values_with_bazel_computed_defaults<'v>(
+        &self,
+        named: &SmallMap<StringValue<'v>, Value<'v>>,
+        internals: &ModuleInternals,
+        rule_name: &str,
+        computed_defaults: &SmallMap<String, FrozenBazelComputedDefault>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> buck2_error::Result<(&'v TargetNameRef, AttrValues)> {
+        let (name, attr_values) = self.parse_named_values(named, internals, rule_name)?;
+        let attr_values = apply_bazel_computed_defaults(
+            self,
+            attr_values,
+            named,
+            internals,
+            computed_defaults,
+            eval,
+        )?;
         Ok((name, attr_values))
     }
 

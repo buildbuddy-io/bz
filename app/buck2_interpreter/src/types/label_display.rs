@@ -19,7 +19,9 @@ fn bazel_repo_prefix_for_cell(cell_name: &str) -> Option<String> {
     } else if cell_name == "bazel_tools" {
         Some("@@bazel_tools".to_owned())
     } else {
-        bzlmod_canonical_repo_name_for_cell(cell_name).map(|repo| format!("@@{repo}"))
+        bzlmod_canonical_repo_name_for_cell(cell_name)
+            .or_else(|| cell_name.strip_prefix("bzlmod_").map(str::to_owned))
+            .map(|repo| format!("@@{repo}"))
     }
 }
 

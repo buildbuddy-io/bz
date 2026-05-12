@@ -8,6 +8,7 @@
  * above-listed licenses.
  */
 
+use std::fmt;
 use std::hash::Hash;
 
 use allocative::Allocative;
@@ -21,7 +22,6 @@ use buck2_core::provider::label::ProvidersName;
 use buck2_core::target::label::label::TargetLabel;
 use buck2_core::target::name::TargetNameRef;
 use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
-use derive_more::Display;
 use dupe::Dupe;
 use pagable::Pagable;
 use serde::Serialize;
@@ -41,6 +41,7 @@ use starlark::values::StarlarkValue;
 use starlark::values::StringValue;
 use starlark::values::Trace;
 use starlark::values::Value;
+use starlark::values::ValueError;
 use starlark::values::none::NoneOr;
 use starlark::values::starlark_value;
 
@@ -113,19 +114,23 @@ impl StarlarkConfiguredProvidersLabel {
 #[derive(
     Clone,
     Debug,
-    Display,
     Trace,
     Freeze,
     ProvidesStaticType,
     Allocative,
     StarlarkPagable
 )]
-#[display("{}", label)]
 #[repr(C)]
 pub struct StarlarkConfiguredProvidersLabel {
     #[freeze(identity)]
     #[starlark_pagable(pagable)]
     label: ConfiguredProvidersLabel,
+}
+
+impl fmt::Display for StarlarkConfiguredProvidersLabel {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&starlark_configured_providers_label_str(&self.label))
+    }
 }
 
 starlark_simple_value!(StarlarkConfiguredProvidersLabel);
@@ -173,6 +178,14 @@ where
     fn write_hash(&self, hasher: &mut StarlarkHasher) -> starlark::Result<()> {
         self.label.hash(hasher);
         Ok(())
+    }
+
+    fn compare(&self, other: Value<'v>) -> starlark::Result<std::cmp::Ordering> {
+        if let Some(other) = StarlarkConfiguredProvidersLabel::from_value(other) {
+            Ok(self.label.cmp(&other.label))
+        } else {
+            ValueError::unsupported_with(self, "compare", other)
+        }
     }
 
     fn collect_repr(&self, collector: &mut String) {
@@ -333,7 +346,6 @@ impl StarlarkProvidersLabel {
 #[derive(
     Clone,
     Debug,
-    Display,
     Trace,
     Freeze,
     ProvidesStaticType,
@@ -342,13 +354,18 @@ impl StarlarkProvidersLabel {
     Pagable,
     StarlarkPagable
 )]
-#[display("{}", label)]
 #[repr(C)]
 #[serde(transparent)]
 pub struct StarlarkProvidersLabel {
     #[freeze(identity)]
     #[starlark_pagable(pagable)]
     label: ProvidersLabel,
+}
+
+impl fmt::Display for StarlarkProvidersLabel {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&starlark_providers_label_str(&self.label))
+    }
 }
 
 starlark_simple_value!(StarlarkProvidersLabel);
@@ -380,6 +397,14 @@ where
     fn write_hash(&self, hasher: &mut StarlarkHasher) -> starlark::Result<()> {
         self.label.hash(hasher);
         Ok(())
+    }
+
+    fn compare(&self, other: Value<'v>) -> starlark::Result<std::cmp::Ordering> {
+        if let Some(other) = StarlarkProvidersLabel::from_value(other) {
+            Ok(self.label.cmp(&other.label))
+        } else {
+            ValueError::unsupported_with(self, "compare", other)
+        }
     }
 
     fn collect_repr(&self, collector: &mut String) {
@@ -576,6 +601,14 @@ mod tests {
             })
         }
 
+        fn unregistered_bzlmod_providers_label() -> starlark::Result<StarlarkProvidersLabel> {
+            Ok(StarlarkProvidersLabel {
+                label: ProvidersLabel::default_for(TargetLabel::testing_parse(
+                    "bzlmod_unknown_root_upb//:defs.bzl",
+                )),
+            })
+        }
+
         fn root_label() -> starlark::Result<StarlarkProvidersLabel> {
             Ok(StarlarkProvidersLabel {
                 label: ProvidersLabel::default_for(TargetLabel::testing_parse("root//:go.mod")),
@@ -641,6 +674,16 @@ mod tests {
         a.eq(
             "'@@rules_python+//python/config_settings:add_srcs_to_runfiles'",
             "str(bzlmod_providers_label())",
+        );
+    }
+
+    #[test]
+    fn test_unregistered_bzlmod_providers_label_str() {
+        let mut a = Assert::new();
+        a.globals_add(register_test_providers_label);
+        a.eq(
+            "'@@unknown_root_upb//:defs.bzl'",
+            "str(unregistered_bzlmod_providers_label())",
         );
     }
 

@@ -83,7 +83,7 @@ pub(crate) fn dict_methods(registry: &mut MethodsBuilder) {
     fn get<'v>(
         this: DictRef<'v>,
         #[starlark(require = pos)] key: Value<'v>,
-        #[starlark(require = pos)] default: Option<Value<'v>>,
+        default: Option<Value<'v>>,
     ) -> starlark::Result<Value<'v>> {
         match this.get(key)? {
             None => Ok(default.unwrap_or_else(Value::new_none)),

@@ -31,14 +31,87 @@ use starlark::values::NoSerialize;
 use starlark::values::StarlarkValue;
 use starlark::values::Trace;
 use starlark::values::Value;
+use starlark::values::ValueLifetimeless;
 use starlark::values::ValueLike;
 use starlark::values::starlark_value;
+use starlark::values::typing::StarlarkCallable;
 
 #[derive(Debug, buck2_error::Error)]
 #[buck2(tag = Input)]
 enum StarlarkAttributeError {
     #[error("`attrs.default_only()` cannot be used in nested attributes")]
     DefaultOnlyInNested,
+    #[error("Bazel computed default must be a Starlark function with known parameters, got `{0}`")]
+    UnsupportedBazelComputedDefault(String),
+}
+
+#[derive(Debug, Allocative, Trace, Clone)]
+#[allocative(bound = "")]
+#[repr(C)]
+pub struct BazelComputedDefaultGen<'v, V: ValueLike<'v>> {
+    callback: V,
+    dependencies: Vec<String>,
+    _marker: std::marker::PhantomData<&'v ()>,
+}
+
+pub type BazelComputedDefault<'v> = BazelComputedDefaultGen<'v, Value<'v>>;
+pub type FrozenBazelComputedDefault =
+    BazelComputedDefaultGen<'static, starlark::values::FrozenValue>;
+
+unsafe impl<'v, FromV, ToV> Coerce<BazelComputedDefaultGen<'v, ToV>>
+    for BazelComputedDefaultGen<'v, FromV>
+where
+    FromV: ValueLifetimeless + ValueLike<'v> + Coerce<ToV>,
+    ToV: ValueLifetimeless + ValueLike<'v>,
+{
+}
+
+impl<'v> Freeze for BazelComputedDefault<'v> {
+    type Frozen = FrozenBazelComputedDefault;
+
+    fn freeze(self, freezer: &Freezer) -> FreezeResult<Self::Frozen> {
+        Ok(FrozenBazelComputedDefault {
+            callback: self.callback.freeze(freezer)?,
+            dependencies: self.dependencies,
+            _marker: std::marker::PhantomData,
+        })
+    }
+}
+
+impl<'v> BazelComputedDefault<'v> {
+    pub(crate) fn from_value(value: Value<'v>) -> buck2_error::Result<Option<Self>> {
+        if <StarlarkCallable<'v> as starlark::values::UnpackValue<'v>>::unpack_value_opt(value)
+            .is_none()
+        {
+            return Ok(None);
+        }
+        let Some(parameters) = value.parameters_spec() else {
+            return Err(
+                StarlarkAttributeError::UnsupportedBazelComputedDefault(value.to_repr()).into(),
+            );
+        };
+        Ok(Some(BazelComputedDefault {
+            callback: value,
+            dependencies: parameters
+                .parameter_names()
+                .map(str::to_owned)
+                .collect::<Vec<_>>(),
+            _marker: std::marker::PhantomData,
+        }))
+    }
+}
+
+impl<'v, V: ValueLike<'v>> BazelComputedDefaultGen<'v, V> {
+    pub(crate) fn callback(&self) -> V
+    where
+        V: Copy,
+    {
+        self.callback
+    }
+
+    pub(crate) fn dependencies(&self) -> &[String] {
+        &self.dependencies
+    }
 }
 
 #[derive(
@@ -57,6 +130,7 @@ pub struct StarlarkAttributeGen<'v, V: ValueLike<'v>> {
     bazel_output_kind: Option<BazelOutputAttrKind>,
     is_bazel: bool,
     bazel_aspects: Vec<V>,
+    bazel_computed_default: Vec<BazelComputedDefaultGen<'v, V>>,
     _marker: std::marker::PhantomData<&'v ()>,
 }
 
@@ -74,6 +148,11 @@ impl<'v> Freeze for StarlarkAttribute<'v> {
                 .bazel_aspects
                 .into_iter()
                 .map(|aspect| aspect.freeze(freezer))
+                .collect::<FreezeResult<Vec<_>>>()?,
+            bazel_computed_default: self
+                .bazel_computed_default
+                .into_iter()
+                .map(|computed_default| computed_default.freeze(freezer))
                 .collect::<FreezeResult<Vec<_>>>()?,
             _marker: std::marker::PhantomData,
         })
@@ -103,6 +182,7 @@ impl<'v> StarlarkAttribute<'v> {
             bazel_output_kind: None,
             is_bazel: false,
             bazel_aspects: Vec::new(),
+            bazel_computed_default: Vec::new(),
             _marker: std::marker::PhantomData,
         }
     }
@@ -112,11 +192,20 @@ impl<'v> StarlarkAttribute<'v> {
     }
 
     pub fn new_bazel_with_aspects(attr: Attribute, bazel_aspects: Vec<Value<'v>>) -> Self {
+        Self::new_bazel_with_aspects_and_computed(attr, bazel_aspects, None)
+    }
+
+    pub fn new_bazel_with_aspects_and_computed(
+        attr: Attribute,
+        bazel_aspects: Vec<Value<'v>>,
+        bazel_computed_default: Option<BazelComputedDefault<'v>>,
+    ) -> Self {
         Self {
             attr,
             bazel_output_kind: None,
             is_bazel: true,
             bazel_aspects,
+            bazel_computed_default: bazel_computed_default.into_iter().collect(),
             _marker: std::marker::PhantomData,
         }
     }
@@ -127,6 +216,7 @@ impl<'v> StarlarkAttribute<'v> {
             bazel_output_kind: Some(kind),
             is_bazel: true,
             bazel_aspects: Vec::new(),
+            bazel_computed_default: Vec::new(),
             _marker: std::marker::PhantomData,
         }
     }
@@ -147,6 +237,10 @@ impl<'v, V: ValueLike<'v>> StarlarkAttributeGen<'v, V> {
 
     pub fn bazel_aspects(&self) -> &[V] {
         &self.bazel_aspects
+    }
+
+    pub fn bazel_computed_default(&self) -> Option<&BazelComputedDefaultGen<'v, V>> {
+        self.bazel_computed_default.first()
     }
 
     /// Coercer to put into higher lever coercer (e. g. for `attrs.list(xxx)`).

@@ -104,15 +104,60 @@ fn bazel_transition_input_value<'v>(
         } else {
             Ok(eval.heap().alloc(conf.label()?).to_value())
         }
-    } else if let Some(value) = conf
-        .data()?
-        .build_settings
-        .get(&transition.bazel_canonical_build_setting_key(key))
-        .or_else(|| defaults.get(&transition.bazel_canonical_build_setting_key(key)))
-    {
-        Ok(bazel_build_setting_value_to_starlark(value, eval))
     } else {
-        Ok(Value::new_none())
+        let canonical_key = transition.bazel_canonical_build_setting_key(key);
+        let command_line_default = bazel_command_line_option_default(key);
+        if let Some(value) = conf
+            .data()?
+            .build_settings
+            .get(&canonical_key)
+            .or_else(|| defaults.get(&canonical_key))
+            .or(command_line_default.as_ref())
+        {
+            Ok(bazel_build_setting_value_to_starlark(value, eval))
+        } else {
+            Ok(Value::new_none())
+        }
+    }
+}
+
+fn bazel_command_line_option_default(key: &str) -> Option<BazelBuildSettingValue> {
+    let option = key.strip_prefix("//command_line_option:")?;
+    let value = match option {
+        "cpu" | "host_cpu" => BazelBuildSettingValue::String(bazel_auto_cpu().to_owned()),
+        "compilation_mode" => BazelBuildSettingValue::String("fastbuild".to_owned()),
+        "host_compilation_mode" => BazelBuildSettingValue::String("opt".to_owned()),
+        "java_language_version" | "tool_java_language_version" => {
+            BazelBuildSettingValue::String(String::new())
+        }
+        "java_runtime_version" => BazelBuildSettingValue::String("local_jdk".to_owned()),
+        "tool_java_runtime_version" => BazelBuildSettingValue::String("remotejdk_11".to_owned()),
+        "ios_multi_cpus" | "macos_cpus" | "tvos_cpus" | "visionos_cpus" | "watchos_cpus" => {
+            BazelBuildSettingValue::StringList(Vec::new())
+        }
+        "stamp" => BazelBuildSettingValue::Bool(false),
+        _ => return None,
+    };
+    Some(value)
+}
+
+fn bazel_auto_cpu() -> &'static str {
+    match (std::env::consts::OS, std::env::consts::ARCH) {
+        ("macos", "x86_64") => "darwin_x86_64",
+        ("macos", "aarch64") => "darwin_arm64",
+        ("freebsd", _) => "freebsd",
+        ("openbsd", _) => "openbsd",
+        ("windows", "x86_64") => "x64_windows",
+        ("windows", "aarch64") => "arm64_windows",
+        ("linux", "x86" | "i386" | "i486" | "i586" | "i686" | "i786") => "piii",
+        ("linux", "x86_64") => "k8",
+        ("linux", "power" | "powerpc" | "powerpc64" | "powerpc64le") => "ppc",
+        ("linux", "arm" | "armv7" | "armv7l") => "arm",
+        ("linux", "aarch64") => "aarch64",
+        ("linux", "s390x") => "s390x",
+        ("linux", "mips64") => "mips64",
+        ("linux", "riscv64") => "riscv64",
+        _ => "unknown",
     }
 }
 
@@ -770,5 +815,46 @@ impl TransitionCalculation for TransitionCalculationImpl {
         };
 
         ctx.compute(&key).await?
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bazel_command_line_option_defaults_match_core_options() {
+        assert_eq!(
+            bazel_command_line_option_default("//command_line_option:cpu"),
+            Some(BazelBuildSettingValue::String(bazel_auto_cpu().to_owned()))
+        );
+        assert_eq!(
+            bazel_command_line_option_default("//command_line_option:host_cpu"),
+            Some(BazelBuildSettingValue::String(bazel_auto_cpu().to_owned()))
+        );
+        assert_eq!(
+            bazel_command_line_option_default("//command_line_option:compilation_mode"),
+            Some(BazelBuildSettingValue::String("fastbuild".to_owned()))
+        );
+        assert_eq!(
+            bazel_command_line_option_default("//command_line_option:java_runtime_version"),
+            Some(BazelBuildSettingValue::String("local_jdk".to_owned()))
+        );
+        assert_eq!(
+            bazel_command_line_option_default("//command_line_option:tool_java_runtime_version"),
+            Some(BazelBuildSettingValue::String("remotejdk_11".to_owned()))
+        );
+        assert_eq!(
+            bazel_command_line_option_default("//command_line_option:java_language_version"),
+            Some(BazelBuildSettingValue::String(String::new()))
+        );
+        assert_eq!(
+            bazel_command_line_option_default("//command_line_option:macos_cpus"),
+            Some(BazelBuildSettingValue::StringList(Vec::new()))
+        );
+        assert_eq!(
+            bazel_command_line_option_default("//command_line_option:unknown"),
+            None
+        );
     }
 }

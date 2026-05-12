@@ -53,7 +53,7 @@ pub(crate) fn parse_bazel_canonical_providers_label(
         CellName::unchecked_new(&bzlmod_cell_name(repo_name))?
     };
     let package = PackageLabel::new(cell_name, CellRelativePathBuf::try_from(package)?.as_ref())?;
-    let target = TargetNameRef::new(&target)?;
+    let target = TargetNameRef::new_bazel(&target)?;
     Ok(Some(ProvidersLabel::new(
         TargetLabel::new(package, target),
         ProvidersName::Default,

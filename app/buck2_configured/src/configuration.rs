@@ -223,10 +223,13 @@ fn bazel_command_line_option_default(setting: &str) -> Option<&'static str> {
         "compilation_mode" => Some("fastbuild"),
         "experimental_proto_descriptor_sets_include_source_info" => Some("false"),
         "host_compilation_mode" => Some("opt"),
+        "java_language_version" | "tool_java_language_version" => Some(""),
+        "java_runtime_version" => Some("local_jdk"),
         "stamp" => Some("false"),
         "strict_proto_deps" => Some("error"),
         "strict_public_imports" => Some("off"),
         "strip" => Some("sometimes"),
+        "tool_java_runtime_version" => Some("remotejdk_11"),
         _ => None,
     }
 }

@@ -976,9 +976,10 @@ impl DiceUpdater for DiceCommandUpdater<'_, '_> {
             return Ok((final_ctx, final_user_data));
         }
 
-        // Bazel can discover the complete repository set while evaluating a module extension.
-        // Buck2's cell graph is still finalized up front, so un-lockfiled module extension repos
-        // are evaluated above before we freeze the command cell resolver.
+        // Bazel discovers module-extension repositories through the demand-driven repository
+        // definition path. Buck's cell graph is still finalized up front, so it only contains
+        // repositories visible from static MODULE.bazel data or the lockfile. The generated repo
+        // itself evaluates the extension on first materialization.
         Ok((ctx, user_data))
     }
 }

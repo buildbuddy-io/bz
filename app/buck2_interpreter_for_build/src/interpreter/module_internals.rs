@@ -26,9 +26,9 @@ use buck2_core::cells::paths::CellRelativePathBuf;
 use buck2_core::package::PackageLabel;
 use buck2_core::package::package_relative_path::PackageRelativePath;
 use buck2_core::pattern::pattern::ParsedPattern;
-use buck2_core::pattern::pattern_type::TargetPatternExtra;
 use buck2_core::provider::label::ProvidersLabel;
 use buck2_core::provider::label::ProvidersName;
+use buck2_core::target::label::label::TargetLabel;
 use buck2_core::target::name::TargetName;
 use buck2_core::target::name::TargetNameRef;
 use buck2_events::dispatch::console_message;
@@ -43,6 +43,9 @@ use buck2_node::nodes::unconfigured::TargetNode;
 use buck2_node::nodes::unconfigured::TargetNodeRef;
 use buck2_node::oncall::Oncall;
 use buck2_node::package::Package;
+use buck2_node::package::PackageGroup;
+use buck2_node::package::PackageGroupContents;
+use buck2_node::package::PackageGroupSpec;
 use buck2_node::super_package::SuperPackage;
 use buck2_node::visibility::VisibilitySpecification;
 use dupe::Dupe;
@@ -185,7 +188,7 @@ impl<'a> CoercedAttrTraversal<'a> for BazelInputFileLabelCollector {
         input: buck2_core::package::source_path::SourcePathRef,
     ) -> buck2_error::Result<()> {
         if input.package() == self.package
-            && let Ok(name) = TargetName::new(input.path().as_str())
+            && let Ok(name) = TargetName::new_bazel(input.path().as_str())
         {
             self.labels.insert(name.to_owned());
         }
@@ -209,14 +212,21 @@ impl BazelInputFileLabelCollector {
 fn collect_bazel_package_group_patterns(
     package: &Package,
     node: TargetNodeRef<'_>,
-) -> buck2_error::Result<Vec<ParsedPattern<TargetPatternExtra>>> {
-    let mut patterns = Vec::new();
+) -> buck2_error::Result<PackageGroup> {
+    let mut packages = PackageGroupContents::default();
     for package_spec in string_list_attr(node, "packages")? {
-        if let Some(pattern) = parse_bazel_package_group_spec(package, &package_spec)? {
-            patterns.push(pattern);
+        if let Some((negative, pattern)) = parse_bazel_package_group_spec(package, &package_spec)? {
+            if negative {
+                packages.negatives.push(pattern);
+            } else {
+                packages.positives.push(pattern);
+            }
         }
     }
-    Ok(patterns)
+    Ok(PackageGroup {
+        packages,
+        includes: target_label_list_attr(node, "includes")?,
+    })
 }
 
 fn string_list_attr(node: TargetNodeRef<'_>, attr: &str) -> buck2_error::Result<Vec<String>> {
@@ -245,37 +255,104 @@ fn string_list_attr(node: TargetNodeRef<'_>, attr: &str) -> buck2_error::Result<
     }
 }
 
+fn target_label_list_attr(
+    node: TargetNodeRef<'_>,
+    attr: &str,
+) -> buck2_error::Result<Vec<TargetLabel>> {
+    let Some(attr) = node.attr_or_none(attr, AttrInspectOptions::All) else {
+        return Ok(Vec::new());
+    };
+    match attr.value {
+        CoercedAttr::List(values) => values
+            .iter()
+            .map(|value| match value {
+                CoercedAttr::Label(value)
+                | CoercedAttr::Dep(value)
+                | CoercedAttr::SourceLabel(value) => Ok(value.target().dupe()),
+                value => Err(buck2_error::buck2_error!(
+                    buck2_error::ErrorTag::Input,
+                    "Expected package_group `{}` item to be a label, got `{:?}`",
+                    attr.name,
+                    value
+                )),
+            })
+            .collect(),
+        value => Err(buck2_error::buck2_error!(
+            buck2_error::ErrorTag::Input,
+            "Expected package_group `{}` to be a label list, got `{:?}`",
+            attr.name,
+            value
+        )),
+    }
+}
+
 fn parse_bazel_package_group_spec(
     package: &Package,
     spec: &str,
-) -> buck2_error::Result<Option<ParsedPattern<TargetPatternExtra>>> {
-    if spec.starts_with('-') {
-        return Ok(None);
+) -> buck2_error::Result<Option<(bool, PackageGroupSpec)>> {
+    let (negative, spec) = match spec.strip_prefix('-') {
+        Some(spec) => (true, spec),
+        None => (false, spec),
+    };
+
+    match spec {
+        "public" => {
+            if negative {
+                return Err(buck2_error::buck2_error!(
+                    buck2_error::ErrorTag::Input,
+                    "Cannot negate `public` package specification"
+                ));
+            }
+            return Ok(Some((false, PackageGroupSpec::AllPackages)));
+        }
+        "private" => {
+            if negative {
+                return Err(buck2_error::buck2_error!(
+                    buck2_error::ErrorTag::Input,
+                    "Cannot negate `private` package specification"
+                ));
+            }
+            return Ok(None);
+        }
+        _ => {}
     }
 
     let Some(package_path) = spec.strip_prefix("//") else {
-        return Ok(None);
+        return Err(buck2_error::buck2_error!(
+            buck2_error::ErrorTag::Input,
+            "Invalid package_group package specification `{}`: must start with `//` or be `public` or `private`",
+            spec
+        ));
     };
     let cell = package.buildfile_path.cell();
 
     if package_path == "..." {
-        return Ok(Some(ParsedPattern::Recursive(CellPath::new(
-            cell,
-            CellRelativePathBuf::try_from(String::new())?,
-        ))));
+        return Ok(Some((
+            negative,
+            PackageGroupSpec::Pattern(ParsedPattern::Recursive(CellPath::new(
+                cell,
+                CellRelativePathBuf::try_from(String::new())?,
+            ))),
+        )));
     }
 
     if let Some(package_path) = package_path.strip_suffix("/...") {
-        return Ok(Some(ParsedPattern::Recursive(CellPath::new(
-            cell,
-            CellRelativePathBuf::try_from(package_path.to_owned())?,
-        ))));
+        return Ok(Some((
+            negative,
+            PackageGroupSpec::Pattern(ParsedPattern::Recursive(CellPath::new(
+                cell,
+                CellRelativePathBuf::try_from(package_path.to_owned())?,
+            ))),
+        )));
     }
 
-    Ok(Some(ParsedPattern::Package(PackageLabel::new(
-        cell,
-        CellRelativePathBuf::try_from(package_path.to_owned())?.as_ref(),
-    )?)))
+    Ok(Some((
+        negative,
+        PackageGroupSpec::Pattern(ParsedPattern::Package(PackageLabel::new(
+            cell,
+            CellRelativePathBuf::try_from(package_path.to_owned())?.as_ref(),
+        )?)),
+    )))
 }
 
 #[derive(Debug, Default)]

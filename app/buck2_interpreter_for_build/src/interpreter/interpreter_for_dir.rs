@@ -698,11 +698,11 @@ impl InterpreterForDir {
 
         let disable_starlark_types =
             self.global_state.disable_starlark_types || is_bazel_compat_path;
-        let ast = match AstModule::parse(
-            project_relative_path.as_str(),
-            content,
-            &import.file_type().dialect(disable_starlark_types),
-        ) {
+        let mut dialect = import.file_type().dialect(disable_starlark_types);
+        if is_bazel_compat_path {
+            dialect.enable_tabs_as_whitespace = true;
+        }
+        let ast = match AstModule::parse(project_relative_path.as_str(), content, &dialect) {
             Ok(ast) => ast,
             Err(e) => {
                 return Ok(Err(buck2_error::Error::from(e).context(format!(

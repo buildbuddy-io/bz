@@ -82,10 +82,11 @@ pub struct Lexer<'a> {
     parens: isize, // Number of parens we have seen
     lexer: logos::Lexer<'a, Token>,
     done: bool,
+    enable_tabs_as_whitespace: bool,
 }
 
 impl<'a> Lexer<'a> {
-    pub fn new(input: &'a str, _dialect: &Dialect, codemap: CodeMap) -> Self {
+    pub fn new(input: &'a str, dialect: &Dialect, codemap: CodeMap) -> Self {
         let lexer = Token::lexer(input);
         let mut lexer2 = Self {
             codemap,
@@ -95,6 +96,7 @@ impl<'a> Lexer<'a> {
             lexer,
             parens: 0,
             done: false,
+            enable_tabs_as_whitespace: dialect.enable_tabs_as_whitespace,
         };
         if let Err(e) = lexer2.calculate_indent() {
             lexer2.buffer.push_back(Err(e));
@@ -459,6 +461,9 @@ impl<'a> Lexer<'a> {
                             }
                             Some(Ok(token)) => match token {
                                 Token::Tabs => {
+                                    if self.enable_tabs_as_whitespace {
+                                        continue;
+                                    }
                                     self.buffer.push_back(
                                         self.err_pos(
                                             LexemeError::InvalidTab,

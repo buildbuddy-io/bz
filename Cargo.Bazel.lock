@@ -2096,6 +2096,7 @@ dependencies = [
  "allocative",
  "anyhow",
  "assert_matches",
+ "async-compression",
  "async-recursion",
  "async-trait",
  "buck2_action_metadata_proto",
@@ -2542,6 +2543,7 @@ name = "buck2_interpreter_for_build"
 version = "0.1.0"
 dependencies = [
  "allocative",
+ "async-compression",
  "async-trait",
  "base64",
  "buck2_build_api",
@@ -2573,6 +2575,7 @@ dependencies = [
  "glob",
  "hashbrown 0.17.0",
  "hex",
+ "http",
  "indoc",
  "itertools 0.14.0",
  "maplit",
@@ -2587,6 +2590,7 @@ dependencies = [
  "starlark",
  "starlark_map",
  "tokio",
+ "tokio-util 0.7.18",
  "toml",
  "tracing",
  "twox-hash 1.6.3",

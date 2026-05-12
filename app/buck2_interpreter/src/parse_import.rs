@@ -101,10 +101,13 @@ fn parse_import_cell_path_parts(
     } else if alias.is_empty() {
         ImportCell::Alias(alias)
     } else if !alias.starts_with('@') {
-        if !allow_missing_at_symbol {
+        if alias.starts_with("bzlmod_") {
+            ImportCell::Canonical(CellName::unchecked_new(alias).ok()?)
+        } else if !allow_missing_at_symbol {
             return None;
+        } else {
+            ImportCell::Alias(alias)
         }
-        ImportCell::Alias(alias)
     } else {
         ImportCell::Alias(&alias[1..])
     };
@@ -343,6 +346,28 @@ mod tests {
                     ),
                 },
                 "@@rules_go+0.57.0//go:def.bzl"
+            )?
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn bzlmod_internal_cell_package() -> buck2_error::Result<()> {
+        assert_eq!(
+            path(
+                "bzlmod_unknown_bzlmod_googleapis_cc__protobuf",
+                "bazel",
+                "cc_proto_library.bzl"
+            ),
+            parse_import(
+                &resolver(),
+                RelativeImports::Allow {
+                    current_dir_with_allowed_relative: &CellPathWithAllowedRelativeDir::new(
+                        CellPath::testing_new("root//"),
+                        None,
+                    ),
+                },
+                "bzlmod_unknown_bzlmod_googleapis_cc__protobuf//bazel:cc_proto_library.bzl"
             )?
         );
         Ok(())

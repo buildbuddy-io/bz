@@ -10,6 +10,7 @@
 
 //! Generate source file containing buck2/prelude tree with contents.
 
+use std::collections::BTreeSet;
 use std::io;
 use std::path::Path;
 use std::path::PathBuf;
@@ -157,8 +158,12 @@ fn write_include_file(
             ));
         }
 
-        for (path, contents_path) in files {
-            write_include_entry(&mut include_file, &path, &contents_path, &contents_path)?;
+        let files = files
+            .into_iter()
+            .map(|(path, contents_path)| (path, contents_path.clone(), contents_path));
+        let files = normalize_bazel_tools_embedded_files(source_tree.module, files);
+        for (path, contents_path, metadata_path) in files {
+            write_include_entry(&mut include_file, &path, &contents_path, &metadata_path)?;
         }
 
         write_include_module_footer(&mut include_file)?;
@@ -177,6 +182,7 @@ where
     I: IntoIterator<Item = (String, PathBuf, PathBuf)>,
 {
     let mut files: Vec<_> = files.into_iter().collect();
+    files = normalize_bazel_tools_embedded_files(module, files);
     files.sort_by(|(a, _, _), (b, _, _)| a.cmp(b));
 
     if !files.iter().any(|(path, _, _)| path == sentinel) {
@@ -194,6 +200,52 @@ where
         write_include_entry(&mut include_file, &path, &contents_path, &metadata_path)?;
     }
     write_include_module_footer(&mut include_file)
+}
+
+fn normalize_bazel_tools_embedded_files<I>(
+    module: &str,
+    files: I,
+) -> Vec<(String, PathBuf, PathBuf)>
+where
+    I: IntoIterator<Item = (String, PathBuf, PathBuf)>,
+{
+    let files = files.into_iter().collect::<Vec<_>>();
+    if module != "bazel_tools" {
+        return files;
+    }
+
+    let build_tools_dirs = files
+        .iter()
+        .filter_map(|(path, _, _)| path.strip_suffix("BUILD.tools"))
+        .map(|prefix| prefix.to_owned())
+        .collect::<BTreeSet<_>>();
+
+    files
+        .into_iter()
+        .filter_map(|(path, contents_path, metadata_path)| {
+            if let Some(prefix) = path.strip_suffix("BUILD.tools") {
+                return Some((format!("{prefix}BUILD"), contents_path, metadata_path));
+            }
+            if let Some(prefix) = path.strip_suffix("MODULE.tools") {
+                return Some((
+                    format!("{prefix}MODULE.bazel"),
+                    contents_path,
+                    metadata_path,
+                ));
+            }
+            if let Some(prefix) = path.strip_suffix(".bzl.tools") {
+                return Some((format!("{prefix}.bzl"), contents_path, metadata_path));
+            }
+            for build_tools_dir in &build_tools_dirs {
+                if path == format!("{build_tools_dir}BUILD")
+                    || path == format!("{build_tools_dir}BUILD.bazel")
+                {
+                    return None;
+                }
+            }
+            Some((path, contents_path, metadata_path))
+        })
+        .collect()
 }
 
 fn write_include_file_from_runfiles_manifest(

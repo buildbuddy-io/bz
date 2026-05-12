@@ -58,5 +58,7 @@ rust_library(
         "BUCK",
         "Cargo.toml",
         "fuzz/**",
-    ]),
+    ]) + [
+        "//bazel_tools:MODULE.tools",
+    ],
 )

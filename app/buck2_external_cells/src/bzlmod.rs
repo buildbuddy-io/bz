@@ -42,8 +42,6 @@ use buck2_core::cells::external::BzlmodGeneratedCellGenerator;
 use buck2_core::cells::external::BzlmodGeneratedCellSetup;
 use buck2_core::cells::external::BzlmodHostPlatformSetup;
 use buck2_core::cells::external::BzlmodHttpArchiveSetup;
-use buck2_core::cells::external::BzlmodJavaLocalJdkSetup;
-use buck2_core::cells::external::BzlmodLocalConfigPlatformSetup;
 use buck2_core::cells::external::BzlmodModuleExtensionRepoSetup;
 use buck2_core::cells::external::BzlmodPythonHubSetup;
 use buck2_core::cells::external::BzlmodRepositoryRuleInvocationSetup;
@@ -68,7 +66,8 @@ use buck2_execute::entry::build_entry_from_disk;
 use buck2_execute::execute::blocking::HasBlockingExecutor;
 use buck2_execute::execute::blocking::IoRequest;
 use buck2_execute::materialize::http::Checksum;
-use buck2_execute::materialize::http::http_download;
+use buck2_execute::materialize::http::bazel_repository_download_headers;
+use buck2_execute::materialize::http::http_download_with_headers;
 use buck2_execute::materialize::materializer::DeclareArtifactPayload;
 use buck2_execute::materialize::materializer::HasMaterializer;
 use buck2_execute::materialize::materializer::Materializer;
@@ -76,7 +75,6 @@ use buck2_fs::error::IoResultExt;
 use buck2_fs::fs_util;
 use buck2_fs::paths::abs_norm_path::AbsNormPath;
 use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
-use buck2_interpreter_for_build::bazel_repository::BazelRepositoryGeneratedFile;
 use buck2_interpreter_for_build::bazel_repository::bzlmod_repository_rule_invocation_from_setup;
 use buck2_interpreter_for_build::bazel_repository::evaluate_bzlmod_module_extension_repo;
 use buck2_interpreter_for_build::bazel_repository::evaluate_bzlmod_repository_rule;
@@ -330,9 +328,6 @@ impl IoRequest for BzlmodGeneratedIoRequest {
             BzlmodGeneratedCellGenerator::HostPlatform(setup) => {
                 write_host_platform_repo(&dest, setup)?;
             }
-            BzlmodGeneratedCellGenerator::LocalConfigPlatform(setup) => {
-                write_local_config_platform_repo(&dest, setup)?;
-            }
             BzlmodGeneratedCellGenerator::CcAutoconfToolchains(setup) => {
                 write_cc_autoconf_toolchains_repo(project_fs, &self.dest, &dest, setup)?;
             }
@@ -344,9 +339,6 @@ impl IoRequest for BzlmodGeneratedIoRequest {
             }
             BzlmodGeneratedCellGenerator::HttpArchive(setup) => {
                 write_generated_module_file(&dest, &setup.repo_name)?;
-            }
-            BzlmodGeneratedCellGenerator::JavaLocalJdk(setup) => {
-                write_java_local_jdk_repo(&dest, setup)?;
             }
             BzlmodGeneratedCellGenerator::PythonHub(setup) => {
                 write_python_hub_repo(&dest, setup)?;
@@ -424,35 +416,6 @@ fn write_repository_rule_repo(
             fs_util::set_executable(&path, true).categorize_internal()?;
         }
     }
-    Ok(())
-}
-
-fn write_local_config_platform_repo(
-    dest: &AbsNormPath,
-    _setup: &BzlmodLocalConfigPlatformSetup,
-) -> buck2_error::Result<()> {
-    write_generated_module_file(dest, "local_config_platform")?;
-    fs_util::write(
-        dest.join(ForwardRelativePath::new("BUILD.bazel")?),
-        "# DO NOT EDIT: automatically generated BUILD file\nexports_files([\"constraints.bzl\"])\n",
-    )
-    .categorize_internal()?;
-
-    let mut constraints = Vec::new();
-    if let Some(cpu) = host_platform_cpu_constraint() {
-        constraints.push(format!("    Label('@platforms//cpu:{cpu}'),"));
-    }
-    if let Some(os) = host_platform_os_constraint() {
-        constraints.push(format!("    Label('@platforms//os:{os}'),"));
-    }
-    fs_util::write(
-        dest.join(ForwardRelativePath::new("constraints.bzl")?),
-        format!(
-            "# DO NOT EDIT: automatically generated constraints list\nHOST_CONSTRAINTS = [\n{}\n]\n",
-            constraints.join("\n")
-        ),
-    )
-    .categorize_internal()?;
     Ok(())
 }
 
@@ -997,28 +960,6 @@ fn write_shell_config_repo(
         "load(\"@rules_shell//shell/toolchains:sh_toolchain.bzl\", \"sh_toolchain\")\n\n{}\n",
         toolchains.join("\n\n")
     );
-    fs_util::write(dest.join(ForwardRelativePath::new("BUILD.bazel")?), build)
-        .categorize_internal()?;
-    Ok(())
-}
-
-fn write_java_local_jdk_repo(
-    dest: &AbsNormPath,
-    _setup: &BzlmodJavaLocalJdkSetup,
-) -> buck2_error::Result<()> {
-    write_generated_module_file(dest, "local_jdk")?;
-    let build = r#"toolchain(
-    name = "runtime_toolchain_definition",
-    toolchain = ":runtime",
-    toolchain_type = "@bazel_tools//tools/jdk:runtime_toolchain_type",
-)
-
-toolchain(
-    name = "bootstrap_runtime_toolchain_definition",
-    toolchain = ":bootstrap_runtime",
-    toolchain_type = "@bazel_tools//tools/jdk:runtime_toolchain_type",
-)
-"#;
     fs_util::write(dest.join(ForwardRelativePath::new("BUILD.bazel")?), build)
         .categorize_internal()?;
     Ok(())
@@ -1780,9 +1721,6 @@ fn bzlmod_generated_materialization_stamp_content(setup: &BzlmodGeneratedCellSet
         BzlmodGeneratedCellGenerator::HostPlatform(_) => {
             update_bzlmod_repo_contents_cache_key(&mut hasher, "host_platform");
         }
-        BzlmodGeneratedCellGenerator::LocalConfigPlatform(_) => {
-            update_bzlmod_repo_contents_cache_key(&mut hasher, "local_config_platform");
-        }
         BzlmodGeneratedCellGenerator::CcAutoconfToolchains(setup) => {
             update_bzlmod_repo_contents_cache_key(&mut hasher, "cc_autoconf_toolchains");
             update_bzlmod_repo_contents_cache_key(&mut hasher, &setup.parent_canonical_repo_name);
@@ -1800,9 +1738,6 @@ fn bzlmod_generated_materialization_stamp_content(setup: &BzlmodGeneratedCellSet
             update_bzlmod_repo_contents_cache_key(&mut hasher, &setup.sha256);
             update_bzlmod_repo_contents_cache_key_opt(&mut hasher, setup.strip_prefix.as_deref());
             update_bzlmod_repo_contents_cache_key_opt(&mut hasher, setup.archive_type.as_deref());
-        }
-        BzlmodGeneratedCellGenerator::JavaLocalJdk(_) => {
-            update_bzlmod_repo_contents_cache_key(&mut hasher, "java_local_jdk");
         }
         BzlmodGeneratedCellGenerator::PythonHub(_) => {
             update_bzlmod_repo_contents_cache_key(&mut hasher, "python_hub");
@@ -2018,28 +1953,6 @@ async fn evaluate_and_materialize_bzlmod_repository_rule(
     invocation: &BazelRepositoryRuleInvocation,
     cancellations: &CancellationContext,
 ) -> buck2_error::Result<()> {
-    let repository_ctx_path =
-        bzlmod_generated_sibling_path_for_canonical(canonical_repo_name, path, "repository_ctx");
-    ctx.get_blocking_executor()
-        .execute_io(
-            Box::new(
-                buck2_execute::execute::clean_output_paths::CleanOutputPaths {
-                    paths: vec![repository_ctx_path.clone()],
-                },
-            ),
-            cancellations,
-        )
-        .await?;
-    let mut files = evaluate_bzlmod_repository_rule(
-        ctx,
-        invocation,
-        repository_ctx_path.as_str(),
-        cancellations,
-    )
-    .await?;
-    remap_repository_ctx_paths(&mut files, repository_ctx_path.as_ref(), path);
-    let files_json = serde_json::to_string(&files)
-        .buck_error_context("Error serializing evaluated repository_rule file manifest")?;
     ctx.get_blocking_executor()
         .execute_io(
             Box::new(
@@ -2050,6 +1963,10 @@ async fn evaluate_and_materialize_bzlmod_repository_rule(
             cancellations,
         )
         .await?;
+    let files =
+        evaluate_bzlmod_repository_rule(ctx, invocation, path.as_str(), cancellations).await?;
+    let files_json = serde_json::to_string(&files)
+        .buck_error_context("Error serializing evaluated repository_rule file manifest")?;
     ctx.get_blocking_executor()
         .execute_io(
             Box::new(BzlmodGeneratedIoRequest {
@@ -2058,7 +1975,7 @@ async fn evaluate_and_materialize_bzlmod_repository_rule(
                     generator: BzlmodGeneratedCellGenerator::RepositoryRule(
                         BzlmodRepositoryRuleSetup {
                             files_json: Arc::from(files_json),
-                            source_dir: Some(Arc::from(repository_ctx_path.as_str())),
+                            source_dir: None,
                         },
                     ),
                 },
@@ -2067,23 +1984,6 @@ async fn evaluate_and_materialize_bzlmod_repository_rule(
             cancellations,
         )
         .await
-}
-
-fn remap_repository_ctx_paths(
-    files: &mut [BazelRepositoryGeneratedFile],
-    repository_ctx_path: &ProjectRelativePath,
-    materialized_repo_path: &ProjectRelativePath,
-) {
-    let from = repository_ctx_path.as_str();
-    let to = materialized_repo_path.as_str();
-    if from == to {
-        return;
-    }
-    for file in files {
-        if file.content.contains(from) {
-            file.content = file.content.replace(from, to);
-        }
-    }
 }
 
 async fn download_impl(
@@ -2157,8 +2057,9 @@ async fn download_impl(
     let project_root = io_provider.project_root();
     let digest_config = ctx.global_data().get_digest_config();
     let client = ctx.per_transaction_data().get_http_client();
+    let bazel_download_headers = bazel_repository_download_headers(std::iter::empty());
     let archive_checksum = Checksum::new(None, Some(&integrity_to_sha256_hex(&setup.integrity)?))?;
-    http_download(
+    http_download_with_headers(
         &client,
         project_root,
         digest_config.dupe(),
@@ -2166,6 +2067,7 @@ async fn download_impl(
         &setup.url,
         &archive_checksum,
         false,
+        &bazel_download_headers,
     )
     .await?;
 
@@ -2174,7 +2076,7 @@ async fn download_impl(
             continue;
         }
         let checksum = Checksum::new(None, Some(&integrity_to_sha256_hex(&patch.integrity)?))?;
-        http_download(
+        http_download_with_headers(
             &client,
             project_root,
             digest_config.dupe(),
@@ -2182,13 +2084,14 @@ async fn download_impl(
             &patch.url,
             &checksum,
             false,
+            &bazel_download_headers,
         )
         .await?;
     }
 
     for (overlay, output) in setup.overlays.iter().zip(&overlay_files) {
         let checksum = Checksum::new(None, Some(&integrity_to_sha256_hex(&overlay.integrity)?))?;
-        http_download(
+        http_download_with_headers(
             &client,
             project_root,
             digest_config.dupe(),
@@ -2196,6 +2099,7 @@ async fn download_impl(
             &overlay.url,
             &checksum,
             false,
+            &bazel_download_headers,
         )
         .await?;
     }
@@ -2469,8 +2373,10 @@ async fn materialize_generated(
                     let project_root = io_provider.project_root();
                     let digest_config = ctx.global_data().get_digest_config();
                     let client = ctx.per_transaction_data().get_http_client();
+                    let bazel_download_headers =
+                        bazel_repository_download_headers(std::iter::empty());
                     let archive_checksum = Checksum::new(None, Some(&*http_archive.sha256))?;
-                    http_download(
+                    http_download_with_headers(
                         &client,
                         project_root,
                         digest_config.dupe(),
@@ -2478,6 +2384,7 @@ async fn materialize_generated(
                         &http_archive.url,
                         &archive_checksum,
                         false,
+                        &bazel_download_headers,
                     )
                     .await?;
                     ctx.get_blocking_executor()

@@ -40,11 +40,13 @@ use buck2_util::arc_str::ArcStr;
 use dupe::Dupe;
 use dupe::OptionDupedExt;
 use starlark::eval::CallStack;
+use starlark::eval::Evaluator;
 use starlark::eval::ParametersParser;
 use starlark::values::StringValue;
 use starlark::values::Value;
 use starlark_map::small_map::SmallMap;
 
+use crate::attrs::starlark_attribute::FrozenBazelComputedDefault;
 use crate::call_stack::StarlarkCallStackWrapper;
 use crate::interpreter::module_internals::ModuleInternals;
 use crate::nodes::attr_spec::AttributeSpecExt;
@@ -72,6 +74,17 @@ pub trait TargetNodeExt: Sized {
         package: Arc<Package>,
         internals: &ModuleInternals,
         named: &SmallMap<StringValue<'v>, Value<'v>>,
+        ignore_attrs_for_profiling: bool,
+        call_stack: Option<CallStack>,
+    ) -> buck2_error::Result<Self>;
+
+    fn from_named_values_with_bazel_computed_defaults<'v>(
+        rule: Arc<Rule>,
+        package: Arc<Package>,
+        internals: &ModuleInternals,
+        named: &SmallMap<StringValue<'v>, Value<'v>>,
+        computed_defaults: &SmallMap<String, FrozenBazelComputedDefault>,
+        eval: &mut Evaluator<'v, '_, '_>,
         ignore_attrs_for_profiling: bool,
         call_stack: Option<CallStack>,
     ) -> buck2_error::Result<Self>;
@@ -489,6 +502,53 @@ impl TargetNodeExt for TargetNode {
         let (target_name, attr_values) =
             rule.attributes
                 .parse_named_values(named, internals, rule.rule_type.name())?;
+        let package_name = internals.buildfile_path().package();
+        let label = TargetLabel::new(package_name.dupe(), target_name);
+        let mut deps_cache = CoercedDepsCollector::new();
+
+        for a in rule.attributes.attrs(&attr_values, AttrInspectOptions::All) {
+            a.traverse(label.pkg(), &mut deps_cache)?;
+        }
+
+        let super_package = internals.super_package();
+        let package_cfg_modifiers = super_package.cfg_modifiers().duped();
+        let test_config_unification_rollout = super_package.test_config_unification_rollout();
+        drop(super_package);
+
+        Ok(TargetNode::new(
+            rule,
+            package,
+            label,
+            attr_values,
+            CoercedDeps::from(deps_cache),
+            call_stack
+                .map(StarlarkCallStackWrapper)
+                .map(StarlarkCallStack::new),
+            package_cfg_modifiers,
+            test_config_unification_rollout,
+        ))
+    }
+
+    fn from_named_values_with_bazel_computed_defaults<'v>(
+        rule: Arc<Rule>,
+        package: Arc<Package>,
+        internals: &ModuleInternals,
+        named: &SmallMap<StringValue<'v>, Value<'v>>,
+        computed_defaults: &SmallMap<String, FrozenBazelComputedDefault>,
+        eval: &mut Evaluator<'v, '_, '_>,
+        ignore_attrs_for_profiling: bool,
+        call_stack: Option<CallStack>,
+    ) -> buck2_error::Result<Self> {
+        let _ = ignore_attrs_for_profiling;
+        let (target_name, attr_values) = rule
+            .attributes
+            .parse_named_values_with_bazel_computed_defaults(
+                named,
+                internals,
+                rule.rule_type.name(),
+                computed_defaults,
+                eval,
+            )?;
         let package_name = internals.buildfile_path().package();
         let label = TargetLabel::new(package_name.dupe(), target_name);
         let mut deps_cache = CoercedDepsCollector::new();

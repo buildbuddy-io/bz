@@ -26,6 +26,7 @@ use std::time::Duration;
 use std::time::SystemTime;
 
 use allocative::Allocative;
+use async_compression::tokio::bufread::GzipDecoder;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use buck2_common::dice::cells::HasCellResolver;
@@ -37,13 +38,18 @@ use buck2_core::cells::CellAliasResolver;
 use buck2_core::cells::alias::NonEmptyCellAlias;
 use buck2_core::cells::build_file_cell::BuildFileCell;
 use buck2_core::cells::cell_path::CellPath;
+use buck2_core::cells::external::BAZEL_REPOSITORY_ACCEPT_ENCODING;
+use buck2_core::cells::external::BAZEL_REPOSITORY_ACCEPT_ENCODING_HEADER;
+use buck2_core::cells::external::BAZEL_REPOSITORY_USER_AGENT_HEADER;
 use buck2_core::cells::external::BzlmodModuleExtensionRepoSetup;
 use buck2_core::cells::external::BzlmodRepositoryRuleInvocationSetup;
+use buck2_core::cells::external::bazel_repository_user_agent;
 use buck2_core::cells::external::bzlmod_canonical_repo_name_for_cell;
 use buck2_core::cells::external::bzlmod_cell_name;
 use buck2_core::cells::name::CellName;
 use buck2_core::cells::paths::CellRelativePathBuf;
 use buck2_core::target::label::interner::ConcurrentTargetLabelInterner;
+use buck2_hash::StdBuckHashMap;
 use buck2_interpreter::file_loader::LoadedModule;
 use buck2_interpreter::load_module::InterpreterCalculation;
 use buck2_interpreter::paths::module::StarlarkModulePath;
@@ -63,7 +69,7 @@ use dice::Key;
 use dice::NoValueSerialize;
 use dice::ValueSerialize;
 use dupe::Dupe;
-use futures::StreamExt;
+use futures::TryStreamExt;
 use itertools::Itertools;
 use pagable::Pagable;
 use pagable::pagable_typetag;
@@ -120,6 +126,9 @@ use starlark::values::structs::AllocStruct;
 use starlark::values::tuple::TupleRef;
 use starlark::values::typing::StarlarkCallable;
 use starlark_map::small_map::SmallMap;
+use tokio::io::AsyncRead;
+use tokio::io::AsyncReadExt;
+use tokio_util::io::StreamReader;
 
 use crate::attrs::AttributeCoerceExt;
 use crate::attrs::coerce::ctx::BuildAttrCoercionContext;
@@ -230,6 +239,12 @@ pub(crate) enum BazelRepositoryError {
     ModuleCtxDownloadNoUrls,
     #[error("module_ctx.download `{field}` is not implemented")]
     ModuleCtxDownloadUnsupportedField { field: &'static str },
+    #[error("module_ctx.download `headers` keys must be strings, got `{0}`")]
+    ModuleCtxDownloadHeaderKeyUnsupportedValue(String),
+    #[error(
+        "module_ctx.download `headers[{header}]` must be a string or iterable of strings, got `{got}`"
+    )]
+    ModuleCtxDownloadHeaderValueUnsupportedValue { header: String, got: String },
     #[error("module_ctx.download failed for {urls:?}: {error}")]
     ModuleCtxDownloadFailed { urls: Vec<String>, error: String },
     #[error("module_ctx.download expected either `sha256` or `integrity`, but not both")]
@@ -591,9 +606,9 @@ struct BzlmodModuleExtensionEvaluationConfig {
 struct BzlmodModuleExtensionModuleConfig {
     name: String,
     version: String,
-    #[allow(dead_code)]
     canonical_repo_name: String,
     is_root: bool,
+    cell_aliases: Vec<(String, String)>,
     constants: Vec<(String, String)>,
     tags: Vec<BzlmodModuleExtensionTagConfig>,
 }
@@ -1144,15 +1159,20 @@ fn bzlmod_module_attr_coercion_context(
         module_config.is_root,
         eval,
     )?;
-    let cell_alias_resolver = if module_config.is_root {
-        cell_resolver.root_cell_cell_alias_resolver().dupe()
-    } else {
-        CellAliasResolver::new_for_non_root_cell(
-            cell_name,
-            cell_resolver.root_cell_cell_alias_resolver(),
-            std::iter::empty::<(NonEmptyCellAlias, NonEmptyCellAlias)>(),
-        )?
-    };
+    let mut aliases = StdBuckHashMap::default();
+    for alias in ["root", "prelude", "bazel_tools"] {
+        let alias = NonEmptyCellAlias::new(alias.to_owned())?;
+        let destination = CellName::unchecked_new(alias.as_str())?;
+        cell_resolver.get(destination)?;
+        aliases.insert(alias, destination);
+    }
+    for (alias, target_cell_name) in &module_config.cell_aliases {
+        let alias = NonEmptyCellAlias::new(alias.to_owned())?;
+        let destination = CellName::unchecked_new(target_cell_name.as_str())?;
+        cell_resolver.get(destination)?;
+        aliases.insert(alias, destination);
+    }
+    let cell_alias_resolver = CellAliasResolver::new(cell_name, aliases)?;
     Ok(BuildAttrCoercionContext::new_no_package(
         cell_resolver,
         cell_name,
@@ -3035,6 +3055,80 @@ fn repository_ctx_download_options_are_empty(
         .all(|(_, value)| repository_ctx_download_option_is_empty(*value))
 }
 
+fn module_ctx_download_header_value_to_strings(
+    header: &str,
+    value: Value<'_>,
+) -> starlark::Result<Vec<String>> {
+    if let Some(value) = value.unpack_str() {
+        return Ok(vec![value.to_owned()]);
+    }
+
+    let values = if let Some(list) = ListRef::from_value(value) {
+        list.iter().collect::<Vec<_>>()
+    } else if let Some(tuple) = TupleRef::from_value(value) {
+        tuple.iter().collect::<Vec<_>>()
+    } else {
+        return Err(buck2_error::Error::from(
+            BazelRepositoryError::ModuleCtxDownloadHeaderValueUnsupportedValue {
+                header: header.to_owned(),
+                got: value.get_type().to_owned(),
+            },
+        )
+        .into());
+    };
+
+    let mut strings = Vec::with_capacity(values.len());
+    for value in values {
+        let Some(value) = value.unpack_str() else {
+            return Err(buck2_error::Error::from(
+                BazelRepositoryError::ModuleCtxDownloadHeaderValueUnsupportedValue {
+                    header: header.to_owned(),
+                    got: value.get_type().to_owned(),
+                },
+            )
+            .into());
+        };
+        strings.push(value.to_owned());
+    }
+    Ok(strings)
+}
+
+fn module_ctx_download_headers_from_entries(
+    entries: &UnpackDictEntries<Value<'_>, Value<'_>>,
+) -> starlark::Result<Vec<(String, String)>> {
+    let mut headers = Vec::new();
+    for (name, value) in entries.entries.iter() {
+        let Some(name) = name.unpack_str() else {
+            return Err(buck2_error::Error::from(
+                BazelRepositoryError::ModuleCtxDownloadHeaderKeyUnsupportedValue(
+                    name.get_type().to_owned(),
+                ),
+            )
+            .into());
+        };
+        if name.eq_ignore_ascii_case(BAZEL_REPOSITORY_ACCEPT_ENCODING_HEADER)
+            || name.eq_ignore_ascii_case(BAZEL_REPOSITORY_USER_AGENT_HEADER)
+        {
+            continue;
+        }
+        for value in module_ctx_download_header_value_to_strings(name, *value)? {
+            headers.push((name.to_owned(), value));
+        }
+    }
+
+    // Bazel appends these after user-provided headers, so Starlark rules cannot
+    // override the repository downloader identity or content-encoding behavior.
+    headers.push((
+        BAZEL_REPOSITORY_ACCEPT_ENCODING_HEADER.to_owned(),
+        BAZEL_REPOSITORY_ACCEPT_ENCODING.to_owned(),
+    ));
+    headers.push((
+        BAZEL_REPOSITORY_USER_AGENT_HEADER.to_owned(),
+        bazel_repository_user_agent(),
+    ));
+    Ok(headers)
+}
+
 fn repository_ctx_download_to_path<'v>(
     urls: Vec<String>,
     output_path: String,
@@ -3043,6 +3137,7 @@ fn repository_ctx_download_to_path<'v>(
     allow_fail: bool,
     integrity: &str,
     canonical_id: &str,
+    headers: &[(String, String)],
     eval: &mut Evaluator<'v, '_, '_>,
 ) -> starlark::Result<(Value<'v>, bool)> {
     let expected_checksum = match module_ctx_expected_checksum(sha256, integrity) {
@@ -3069,6 +3164,7 @@ fn repository_ctx_download_to_path<'v>(
         expected_checksum.as_ref(),
         canonical_id,
         executable,
+        headers,
     ) {
         Ok(checksums) => checksums,
         Err(error) => {
@@ -3578,12 +3674,7 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
             )
             .into());
         }
-        if !repository_ctx_download_options_are_empty(&headers) {
-            return Err(buck2_error::Error::from(
-                BazelRepositoryError::ModuleCtxDownloadUnsupportedField { field: "headers" },
-            )
-            .into());
-        }
+        let download_headers = module_ctx_download_headers_from_entries(&headers)?;
 
         let urls = module_ctx_urls_from_value(url, eval.heap())?;
         let output_path = repository_path_from_value_relative_to(
@@ -3599,6 +3690,7 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
             allow_fail,
             integrity,
             canonical_id,
+            &download_headers,
             eval,
         )?;
         Ok(module_ctx_pending_download(block, result, eval))
@@ -3647,12 +3739,7 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
             )
             .into());
         }
-        if !repository_ctx_download_options_are_empty(&headers) {
-            return Err(buck2_error::Error::from(
-                BazelRepositoryError::ModuleCtxDownloadUnsupportedField { field: "headers" },
-            )
-            .into());
-        }
+        let download_headers = module_ctx_download_headers_from_entries(&headers)?;
         if !rename_files.entries.is_empty() {
             return Err(buck2_error::Error::from(
                 BazelRepositoryError::ModuleCtxDownloadUnsupportedField {
@@ -3670,6 +3757,7 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
             allow_fail,
             integrity,
             canonical_id,
+            &download_headers,
             eval,
         )?;
         if !success {
@@ -3750,6 +3838,7 @@ impl<'v> StarlarkValue<'v> for StarlarkModuleExtensionContext<'v> {
         vec![
             "facts".to_owned(),
             "execute".to_owned(),
+            "file".to_owned(),
             "modules".to_owned(),
             "os".to_owned(),
             "report_progress".to_owned(),
@@ -3819,6 +3908,7 @@ impl<'v> StarlarkValue<'v> for FrozenStarlarkModuleExtensionContext {
         vec![
             "facts".to_owned(),
             "execute".to_owned(),
+            "file".to_owned(),
             "modules".to_owned(),
             "os".to_owned(),
             "report_progress".to_owned(),
@@ -4289,16 +4379,21 @@ async fn module_ctx_download_url_to_path(
     destination: &Path,
     expected_checksum: Option<&ModuleCtxChecksum>,
     executable: bool,
+    headers: &[(String, String)],
 ) -> Result<(Option<String>, String), ModuleCtxDownloadAttemptError> {
-    let response = client.get(url).await.map_err(|error| {
-        let retryable = module_ctx_download_error_is_retryable(&error);
-        let error = error.to_string();
-        if retryable {
-            ModuleCtxDownloadAttemptError::Retryable(error)
-        } else {
-            ModuleCtxDownloadAttemptError::NonRetryable(error)
-        }
-    })?;
+    let request_headers = module_ctx_download_request_headers_for_url(url, headers);
+    let response = client
+        .get_with_headers(url, request_headers.into_iter())
+        .await
+        .map_err(|error| {
+            let retryable = module_ctx_download_error_is_retryable(&error);
+            let error = error.to_string();
+            if retryable {
+                ModuleCtxDownloadAttemptError::Retryable(error)
+            } else {
+                ModuleCtxDownloadAttemptError::NonRetryable(error)
+            }
+        })?;
 
     if let Some(parent) = destination.parent() {
         fs::create_dir_all(parent).map_err(|error| {
@@ -4313,21 +4408,19 @@ async fn module_ctx_download_url_to_path(
         .map(|checksum| checksum.kind)
         .unwrap_or(ModuleCtxChecksumKind::Sha256);
     let mut hasher = ModuleCtxChecksumHasher::new(checksum_kind);
-    let mut body = response.into_body();
-
-    while let Some(chunk) = body.next().await {
-        let chunk = chunk.map_err(|error| {
-            module_ctx_remove_partial_download(destination);
-            ModuleCtxDownloadAttemptError::Retryable(error.to_string())
-        })?;
-        hasher.update(&chunk);
-        file.write_all(&chunk).map_err(|error| {
-            module_ctx_remove_partial_download(destination);
-            ModuleCtxDownloadAttemptError::Fatal(module_ctx_download_write_error(
-                destination,
-                error,
-            ))
-        })?;
+    let (head, body) = response.into_parts();
+    let gunzip = module_ctx_download_response_should_gunzip(url, &head);
+    let reader = StreamReader::new(body.map_err(std::io::Error::other));
+    if gunzip {
+        module_ctx_download_copy_response(
+            destination,
+            GzipDecoder::new(reader),
+            &mut file,
+            &mut hasher,
+        )
+        .await?;
+    } else {
+        module_ctx_download_copy_response(destination, reader, &mut file, &mut hasher).await?;
     }
 
     file.flush().map_err(|error| {
@@ -4363,11 +4456,98 @@ async fn module_ctx_download_url_to_path(
         .map_err(ModuleCtxDownloadAttemptError::Fatal)
 }
 
+fn module_ctx_download_request_headers_for_url<'a>(
+    url: &str,
+    headers: &'a [(String, String)],
+) -> Vec<(&'a str, &'a str)> {
+    let compressed_url = module_ctx_download_url_has_bazel_compressed_extension(url);
+    headers
+        .iter()
+        .filter(|(name, _)| {
+            !compressed_url || !name.eq_ignore_ascii_case(BAZEL_REPOSITORY_ACCEPT_ENCODING_HEADER)
+        })
+        .map(|(name, value)| (&**name, &**value))
+        .collect()
+}
+
+async fn module_ctx_download_copy_response(
+    destination: &Path,
+    mut reader: impl AsyncRead + Unpin,
+    file: &mut fs::File,
+    hasher: &mut ModuleCtxChecksumHasher,
+) -> Result<(), ModuleCtxDownloadAttemptError> {
+    let mut read_buffer = vec![0u8; 64 * 1024];
+    loop {
+        let bytes_read = reader.read(&mut read_buffer).await.map_err(|error| {
+            module_ctx_remove_partial_download(destination);
+            ModuleCtxDownloadAttemptError::Retryable(error.to_string())
+        })?;
+        if bytes_read == 0 {
+            break;
+        }
+
+        let chunk = &read_buffer[..bytes_read];
+        hasher.update(chunk);
+        file.write_all(chunk).map_err(|error| {
+            module_ctx_remove_partial_download(destination);
+            ModuleCtxDownloadAttemptError::Fatal(module_ctx_download_write_error(
+                destination,
+                error,
+            ))
+        })?;
+    }
+    Ok(())
+}
+
+fn module_ctx_download_response_should_gunzip(url: &str, head: &http::response::Parts) -> bool {
+    let Some(content_encoding) = head.headers.get(http::header::CONTENT_ENCODING) else {
+        return false;
+    };
+    let Ok(content_encoding) = content_encoding.to_str() else {
+        return false;
+    };
+    if !content_encoding
+        .split(',')
+        .map(str::trim)
+        .any(|encoding| matches!(encoding, "gzip" | "x-gzip"))
+    {
+        return false;
+    }
+    if module_ctx_download_url_has_gzipped_extension(url) {
+        return false;
+    }
+    if let Some(final_uri) = head.extensions.get::<buck2_http::ResponseFinalUri>()
+        && module_ctx_download_url_has_gzipped_extension(final_uri.as_str())
+    {
+        return false;
+    }
+    true
+}
+
+fn module_ctx_download_url_has_bazel_compressed_extension(url: &str) -> bool {
+    matches!(
+        module_ctx_download_url_extension(url),
+        Some("bz2" | "gz" | "jar" | "tgz" | "war" | "xz" | "zip")
+    )
+}
+
+fn module_ctx_download_url_has_gzipped_extension(url: &str) -> bool {
+    matches!(module_ctx_download_url_extension(url), Some("gz" | "tgz"))
+}
+
+fn module_ctx_download_url_extension(url: &str) -> Option<&str> {
+    let path = url.split_once('?').map_or(url, |(path, _)| path);
+    let path = path.split_once('#').map_or(path, |(path, _)| path);
+    let path = path.rsplit_once('/').map_or(path, |(_, basename)| basename);
+    path.rsplit_once('.').map(|(_, extension)| extension)
+}
+
 async fn module_ctx_download_to_path_uncached(
     urls: &[String],
     destination: &Path,
     expected_checksum: Option<&ModuleCtxChecksum>,
     executable: bool,
+    headers: &[(String, String)],
 ) -> buck2_error::Result<(Option<String>, String)> {
     const MAX_ATTEMPTS: usize = 8;
 
@@ -4397,6 +4577,7 @@ async fn module_ctx_download_to_path_uncached(
                 destination,
                 expected_checksum,
                 executable,
+                headers,
             )
             .await;
             drop(_permit);
@@ -4431,10 +4612,12 @@ fn module_ctx_download_to_path_uncached_blocking(
     destination: &Path,
     expected_checksum: Option<&ModuleCtxChecksum>,
     executable: bool,
+    headers: &[(String, String)],
 ) -> buck2_error::Result<(Option<String>, String)> {
     let urls = urls.to_owned();
     let destination = destination.to_owned();
     let expected_checksum = expected_checksum.cloned();
+    let headers = headers.to_owned();
     std::thread::spawn(move || {
         tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -4452,6 +4635,7 @@ fn module_ctx_download_to_path_uncached_blocking(
                     &destination,
                     expected_checksum.as_ref(),
                     executable,
+                    &headers,
                 )
                 .await
             })
@@ -4698,6 +4882,7 @@ fn module_ctx_download_to_path_blocking(
     expected_checksum: Option<&ModuleCtxChecksum>,
     canonical_id: &str,
     executable: bool,
+    headers: &[(String, String)],
 ) -> buck2_error::Result<(Option<String>, String)> {
     if let Some(expected_checksum) = expected_checksum {
         if destination.is_file()
@@ -4739,13 +4924,19 @@ fn module_ctx_download_to_path_blocking(
             destination,
             Some(expected_checksum),
             executable,
+            headers,
         )?;
         module_ctx_download_cache_put_verified(expected_checksum, canonical_id, destination)?;
         return module_ctx_download_result_checksums_verified(expected_checksum);
     }
 
-    let checksums =
-        module_ctx_download_to_path_uncached_blocking(urls, destination, None, executable)?;
+    let checksums = module_ctx_download_to_path_uncached_blocking(
+        urls,
+        destination,
+        None,
+        executable,
+        headers,
+    )?;
     if let Some(sha256) = &checksums.0 {
         module_ctx_download_cache_put_verified(
             &ModuleCtxChecksum {
@@ -5119,6 +5310,23 @@ fn module_extension_context_methods(builder: &mut MethodsBuilder) {
         }
     }
 
+    fn file<'v>(
+        this: ValueTypedComplex<'v, StarlarkModuleExtensionContext<'v>>,
+        #[starlark(require = pos)] path: Value<'v>,
+        #[starlark(default = "")] content: &str,
+        #[starlark(default = true)] executable: bool,
+        #[starlark(require = named, default = false)] _legacy_utf8: bool,
+    ) -> starlark::Result<NoneType> {
+        let working_dir = module_ctx_working_dir(this);
+        let path = repository_ctx_output_path_from_value(path, working_dir)?;
+        let full_path = Path::new(working_dir)
+            .join(&path)
+            .to_string_lossy()
+            .into_owned();
+        repository_ctx_write_bytes(&full_path, content.as_bytes(), executable)?;
+        Ok(NoneType)
+    }
+
     fn path<'v>(
         this: ValueTypedComplex<'v, StarlarkModuleExtensionContext<'v>>,
         #[starlark(require = pos)] path: Value<'v>,
@@ -5279,12 +5487,7 @@ fn module_extension_context_methods(builder: &mut MethodsBuilder) {
             )
             .into());
         }
-        if !repository_ctx_download_options_are_empty(&headers) {
-            return Err(buck2_error::Error::from(
-                BazelRepositoryError::ModuleCtxDownloadUnsupportedField { field: "headers" },
-            )
-            .into());
-        }
+        let download_headers = module_ctx_download_headers_from_entries(&headers)?;
 
         let urls = module_ctx_urls_from_value(url, eval.heap())?;
         let output = output.unwrap_or_else(|| eval.heap().alloc(""));
@@ -5312,6 +5515,7 @@ fn module_extension_context_methods(builder: &mut MethodsBuilder) {
             expected_checksum.as_ref(),
             canonical_id,
             executable,
+            &download_headers,
         ) {
             Ok(checksums) => checksums,
             Err(error) => {

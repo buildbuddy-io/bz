@@ -69,6 +69,7 @@ use starlark::values::none::NoneOr;
 use starlark::values::starlark_value;
 use starlark::values::structs::AllocStruct;
 use starlark::values::structs::StructRef;
+use starlark::values::tuple::AllocTuple;
 use starlark::values::tuple::TupleRef;
 use starlark::values::type_repr::StarlarkTypeRepr;
 
@@ -81,6 +82,8 @@ use crate::interpreter::rule_defs::artifact::associated::AssociatedArtifacts;
 use crate::interpreter::rule_defs::artifact::starlark_artifact::StarlarkArtifact;
 use crate::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkArtifactLike;
 use crate::interpreter::rule_defs::artifact::starlark_declared_artifact::StarlarkDeclaredArtifact;
+use crate::interpreter::rule_defs::depset::BazelDepset;
+use crate::interpreter::rule_defs::depset::bazel_depset_to_list;
 use crate::interpreter::rule_defs::plugins::AnalysisPlugins;
 use crate::interpreter::rule_defs::provider::builtin::constraint_value_info::ConstraintValueInfo;
 use crate::interpreter::rule_defs::provider::builtin::default_info::BazelRunfiles;
@@ -213,6 +216,10 @@ impl Display for AnalysisToolchains<'_> {
 
 impl<'v> AnalysisToolchains<'v> {
     fn new(toolchains: Vec<String>, resolved: SmallMap<String, Value<'v>>) -> Self {
+        let toolchains = toolchains
+            .into_iter()
+            .map(|toolchain| Self::normalize_key(&toolchain))
+            .collect();
         Self {
             toolchains,
             resolved,
@@ -1966,6 +1973,120 @@ fn bazel_expand_location(
     Ok(result)
 }
 
+fn bazel_target_label_from_label_value(value: Value<'_>) -> Option<&TargetLabel> {
+    if let Some(label) = StarlarkProvidersLabel::from_value(value) {
+        return Some(label.label().target());
+    }
+    if let Some(label) = StarlarkConfiguredProvidersLabel::from_value(value) {
+        return Some(label.label().target().unconfigured());
+    }
+    if let Some(label) = StarlarkTargetLabel::from_value(value) {
+        return Some(label.label());
+    }
+    None
+}
+
+fn bazel_file_values_from_value<'v>(value: Value<'v>) -> starlark::Result<Vec<Value<'v>>> {
+    if let Some(list) = ListRef::from_value(value) {
+        return Ok(list.iter().collect());
+    }
+    if let Some(tuple) = TupleRef::from_value(value) {
+        return Ok(tuple.iter().collect());
+    }
+    if BazelDepset::from_value(value).is_some() {
+        return bazel_depset_to_list(value);
+    }
+    Ok(vec![value])
+}
+
+fn bazel_location_target_for_file_values<'v>(
+    files: Vec<Value<'v>>,
+    short_paths: bool,
+    heap: Heap<'v>,
+) -> starlark::Result<BazelLocationTarget> {
+    let mut exec_paths = Vec::new();
+    let mut rlocation_paths = Vec::new();
+    for file in files {
+        let Some(artifact) = <&dyn StarlarkArtifactLike<'v>>::unpack_value(file)? else {
+            continue;
+        };
+        let target = bazel_location_target_for_artifact(artifact, short_paths, heap)?;
+        exec_paths.extend(target.exec_paths);
+        rlocation_paths.extend(target.rlocation_paths);
+    }
+    Ok(BazelLocationTarget {
+        exec_paths,
+        rlocation_paths,
+    })
+}
+
+fn bazel_collect_location_targets_from_label_dict<'v>(
+    ctx: &AnalysisContext<'v>,
+    label_dict: DictRef<'v>,
+    short_paths: bool,
+    heap: Heap<'v>,
+    targets: &mut SmallMap<String, BazelLocationTarget>,
+) -> starlark::Result<()> {
+    for (label, files) in label_dict.iter() {
+        let Some(label) = bazel_target_label_from_label_value(label) else {
+            continue;
+        };
+        let target =
+            bazel_location_target_for_file_values(bazel_file_values_from_value(files)?, short_paths, heap)?;
+        for key in bazel_location_label_keys_for_target(ctx, label) {
+            if !targets.contains_key(&key) {
+                targets.insert(key, target.clone());
+            }
+        }
+    }
+    Ok(())
+}
+
+fn bazel_collect_resolved_command_inputs<'v>(
+    value: Value<'v>,
+    inputs: &mut Vec<Value<'v>>,
+) -> starlark::Result<()> {
+    if value.is_none() {
+        return Ok(());
+    }
+    if let Some(dep) = Dependency::from_value(value) {
+        if let Some(executable) = dep.files_to_run_executable()? {
+            inputs.push(executable);
+        }
+        inputs.extend(dep.default_output_values()?);
+        return Ok(());
+    }
+    if <&dyn StarlarkArtifactLike<'v>>::unpack_value(value)?.is_some() {
+        inputs.push(value);
+        return Ok(());
+    }
+    if let Some(list) = ListRef::from_value(value) {
+        for item in list.iter() {
+            bazel_collect_resolved_command_inputs(item, inputs)?;
+        }
+        return Ok(());
+    }
+    if let Some(tuple) = TupleRef::from_value(value) {
+        for item in tuple.iter() {
+            bazel_collect_resolved_command_inputs(item, inputs)?;
+        }
+        return Ok(());
+    }
+    if BazelDepset::from_value(value).is_some() {
+        for item in bazel_depset_to_list(value)? {
+            bazel_collect_resolved_command_inputs(item, inputs)?;
+        }
+        return Ok(());
+    }
+    if let Some(dict) = DictRef::from_value(value) {
+        for (key, value) in dict.iter() {
+            bazel_collect_resolved_command_inputs(key, inputs)?;
+            bazel_collect_resolved_command_inputs(value, inputs)?;
+        }
+    }
+    Ok(())
+}
+
 fn analysis_context_workspace_status_file<'v>(
     this: &AnalysisContext<'v>,
     kind: WorkspaceStatusKind,
@@ -2669,6 +2790,82 @@ fn analysis_context_methods(builder: &mut MethodsBuilder) {
             bazel_collect_location_targets(this.0, target, short_paths, heap, &mut target_map)?;
         }
         bazel_expand_location(input, &target_map)
+    }
+
+    /// Resolves a Bazel shell command into action inputs and argv.
+    fn resolve_command<'v>(
+        this: RefAnalysisContext<'v>,
+        #[starlark(require = named, default = "")] command: &str,
+        #[starlark(require = named, default = NoneOr::None)] attribute: NoneOr<&str>,
+        #[starlark(require = named, default = false)] expand_locations: bool,
+        #[starlark(require = named, default = NoneOr::None)] make_variables: NoneOr<
+            UnpackDictEntries<&'v str, Value<'v>>,
+        >,
+        #[starlark(require = named, default = UnpackListOrTuple::default())]
+        tools: UnpackListOrTuple<Value<'v>>,
+        #[starlark(require = named, default = NoneOr::None)] label_dict: NoneOr<DictRef<'v>>,
+        #[starlark(require = named, default = NoneOr::None)] execution_requirements: NoneOr<
+            DictRef<'v>,
+        >,
+        heap: Heap<'v>,
+    ) -> starlark::Result<Value<'v>> {
+        let _ = (attribute, execution_requirements);
+        let mut command = command.to_owned();
+
+        if expand_locations {
+            let mut target_map = SmallMap::new();
+            bazel_collect_location_targets_from_attrs(this.0, false, heap, &mut target_map)?;
+            if let Some(label_dict) = label_dict.into_option() {
+                bazel_collect_location_targets_from_label_dict(
+                    this.0,
+                    label_dict,
+                    false,
+                    heap,
+                    &mut target_map,
+                )?;
+            }
+            command = bazel_expand_location(&command, &target_map)?;
+        }
+
+        if let Some(make_variables) = make_variables.into_option() {
+            let substitutions = make_variables
+                .entries
+                .into_iter()
+                .map(|(key, value)| (key.to_owned(), value.to_str()))
+                .collect::<Vec<_>>();
+            let variables = analysis_context_make_variable_entries(this.0)?;
+            command = expand_bazel_make_variables_with_lookup(
+                &command,
+                &|name| {
+                    substitutions
+                        .iter()
+                        .find_map(|(key, value)| (key == name).then(|| value.clone()))
+                        .or_else(|| {
+                            variables
+                                .iter()
+                                .rev()
+                                .find_map(|(key, value)| (key == name).then(|| value.clone()))
+                        })
+                },
+                0,
+            )?;
+        }
+
+        let mut inputs = Vec::new();
+        for tool in tools.items {
+            bazel_collect_resolved_command_inputs(tool, &mut inputs)?;
+        }
+
+        let argv = [
+            heap.alloc_str("/bin/bash").to_value(),
+            heap.alloc_str("-c").to_value(),
+            heap.alloc_str(&command).to_value(),
+        ];
+        Ok(heap.alloc(AllocTuple([
+            heap.alloc(AllocList(inputs)).to_value(),
+            heap.alloc(AllocList(argv)).to_value(),
+            heap.alloc(AllocList::EMPTY).to_value(),
+        ])))
     }
 
     /// Bazel make-variable map for this rule.

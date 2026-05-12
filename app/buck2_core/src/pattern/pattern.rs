@@ -1093,12 +1093,17 @@ where
     T: PatternType,
 {
     let canonical_pattern;
+    let canonical_cell;
     let pattern = match bazel_canonical_label_pattern(pattern, cell_resolver)? {
-        Some(pattern) => {
+        Some((cell, pattern)) => {
+            canonical_cell = Some(cell);
             canonical_pattern = pattern;
             canonical_pattern.as_str()
         }
-        None => pattern,
+        None => {
+            canonical_cell = None;
+            pattern
+        }
     };
 
     let TargetParsingOptions {
@@ -1109,7 +1114,9 @@ where
 
     let lex = lex_target_pattern(pattern, strip_package_trailing_slash)?;
 
-    if let Some(target_alias_resolver) = relative.target_alias_resolver() {
+    if canonical_cell.is_none()
+        && let Some(target_alias_resolver) = relative.target_alias_resolver()
+    {
         if let Some(aliased) = resolve_target_alias(
             relative.cell(),
             cell_resolver,
@@ -1149,7 +1156,10 @@ where
     }
 
     // We ask for the cell, but if the pattern is relative we might not use it
-    let cell = cell_alias_resolver.resolve(cell_alias.unwrap_or_default())?;
+    let cell = match canonical_cell {
+        Some(cell) => cell,
+        None => cell_alias_resolver.resolve(cell_alias.unwrap_or_default())?,
+    };
 
     let package_path = pattern.package_path();
 
@@ -1188,7 +1198,7 @@ where
 fn bazel_canonical_label_pattern(
     pattern: &str,
     cell_resolver: &CellResolver,
-) -> buck2_error::Result<Option<String>> {
+) -> buck2_error::Result<Option<(CellName, String)>> {
     let Some(rest) = pattern.strip_prefix("@@") else {
         return Ok(None);
     };
@@ -1206,7 +1216,10 @@ fn bazel_canonical_label_pattern(
         CellName::unchecked_new(&bzlmod_cell_name(canonical_repo_name))?
     };
 
-    Ok(Some(format!("{}//{}", cell.as_str(), package_and_target)))
+    Ok(Some((
+        cell,
+        format!("{}//{}", cell.as_str(), package_and_target),
+    )))
 }
 
 #[derive(buck2_error::Error, Debug)]

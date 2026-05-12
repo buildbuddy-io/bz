@@ -58,6 +58,7 @@ use crate::nodes::attributes::PACKAGE;
 use crate::nodes::attributes::PACKAGE_CFG_MODIFIERS;
 use crate::nodes::attributes::TYPE;
 use crate::package::Package;
+use crate::package::PackageGroup;
 use crate::rule::Rule;
 use crate::rule_type::RuleType;
 use crate::visibility::VisibilitySpecification;
@@ -305,6 +306,17 @@ impl TargetNode {
         }
     }
 
+    pub fn bazel_package_group(&self) -> Option<&PackageGroup> {
+        if self.rule_type().name() != "bazel_package_group" {
+            return None;
+        }
+        self.0
+            .package
+            .package_groups
+            .get()?
+            .get(self.label().name())
+    }
+
     pub fn is_visible_to(&self, target: &TargetLabel) -> buck2_error::Result<bool> {
         if self.label().pkg() == target.pkg() {
             return Ok(true);
@@ -349,8 +361,8 @@ impl TargetNode {
                         buck2_core::pattern::pattern_type::TargetPatternExtra,
                     ) = &pattern.0
                         && package == &self.label().pkg()
-                        && let Some(group_patterns) = package_groups.get(group)
-                        && group_patterns.iter().any(|pattern| pattern.matches(target))
+                        && let Some(group) = package_groups.get(group)
+                        && group.contains_target(target)
                     {
                         return Ok(true);
                     }
@@ -378,10 +390,8 @@ impl TargetNode {
                         buck2_core::pattern::pattern_type::TargetPatternExtra,
                     ) = &pattern.0
                         && group_package == &self.label().pkg()
-                        && let Some(group_patterns) = package_groups.get(group)
-                        && group_patterns
-                            .iter()
-                            .any(|pattern| package_pattern_matches(pattern, package))
+                        && let Some(group) = package_groups.get(group)
+                        && group.contains_package(package)
                     {
                         return Ok(true);
                     }

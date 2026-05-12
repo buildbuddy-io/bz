@@ -16,14 +16,82 @@ use std::sync::OnceLock;
 
 use allocative::Allocative;
 use buck2_core::build_file_path::BuildFilePath;
+use buck2_core::package::PackageLabel;
 use buck2_core::pattern::pattern::ParsedPattern;
 use buck2_core::pattern::pattern_type::TargetPatternExtra;
+use buck2_core::target::label::label::TargetLabel;
 use buck2_core::target::name::TargetName;
 use pagable::Pagable;
 
 use crate::oncall::Oncall;
 
-pub type PackageGroups = BTreeMap<TargetName, Vec<ParsedPattern<TargetPatternExtra>>>;
+pub type PackageGroups = BTreeMap<TargetName, PackageGroup>;
+
+#[derive(Debug, Allocative, Pagable)]
+pub struct PackageGroup {
+    pub packages: PackageGroupContents,
+    pub includes: Vec<TargetLabel>,
+}
+
+impl PackageGroup {
+    pub fn contains_target(&self, target: &TargetLabel) -> bool {
+        self.packages.contains_target(target)
+    }
+
+    pub fn contains_package(&self, package: &PackageLabel) -> bool {
+        self.packages.contains_package(package)
+    }
+}
+
+#[derive(Debug, Default, Allocative, Pagable)]
+pub struct PackageGroupContents {
+    pub positives: Vec<PackageGroupSpec>,
+    pub negatives: Vec<PackageGroupSpec>,
+}
+
+impl PackageGroupContents {
+    pub fn contains_target(&self, target: &TargetLabel) -> bool {
+        self.contains_package(&target.pkg())
+    }
+
+    pub fn contains_package(&self, package: &PackageLabel) -> bool {
+        self.positives
+            .iter()
+            .any(|spec| spec.matches_package(package))
+            && !self
+                .negatives
+                .iter()
+                .any(|spec| spec.matches_package(package))
+    }
+}
+
+#[derive(Debug, Allocative, Pagable)]
+pub enum PackageGroupSpec {
+    AllPackages,
+    Pattern(ParsedPattern<TargetPatternExtra>),
+}
+
+impl PackageGroupSpec {
+    fn matches_package(&self, package: &PackageLabel) -> bool {
+        match self {
+            PackageGroupSpec::AllPackages => true,
+            PackageGroupSpec::Pattern(pattern) => package_pattern_matches(pattern, package),
+        }
+    }
+}
+
+fn package_pattern_matches(
+    pattern: &ParsedPattern<TargetPatternExtra>,
+    package: &PackageLabel,
+) -> bool {
+    match pattern {
+        ParsedPattern::Target(..) => false,
+        ParsedPattern::Package(pkg) => pkg == package,
+        ParsedPattern::Recursive(cell_path) => {
+            package.as_cell_path().starts_with(cell_path.as_ref())
+        }
+    }
+}
 
 /// Package-specific data for `TargetNode`.
 ///

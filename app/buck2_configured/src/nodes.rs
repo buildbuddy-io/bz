@@ -10,6 +10,7 @@
 
 //! Calculations relating to 'TargetNode's that runs on Dice
 
+use std::collections::BTreeSet;
 use std::iter;
 use std::sync::Arc;
 
@@ -85,6 +86,7 @@ use buck2_node::nodes::unconfigured::TargetNode;
 use buck2_node::nodes::unconfigured::TargetNodeRef;
 use buck2_node::rule::RuleIncomingTransition;
 use buck2_node::visibility::VisibilityError;
+use buck2_node::visibility::VisibilityPatternList;
 use buck2_util::arc_str::ArcStr;
 use derive_more::Display;
 use dice::Demand;
@@ -96,6 +98,7 @@ use dice::ValueSerialize;
 use dice_futures::cancellation::CancellationContext;
 use dupe::Dupe;
 use futures::FutureExt;
+use futures::future::BoxFuture;
 use itertools::Itertools;
 use pagable::Pagable;
 use pagable::StaticStr;
@@ -380,7 +383,7 @@ async fn check_plugin_deps(
             if dep_node.is_toolchain_rule() {
                 return Err(PluginDepError::PluginDepIsToolchainRule(dep_label.dupe()).into());
             }
-            if !dep_node.is_visible_to(target_label.unconfigured())? {
+            if !target_node_is_visible_to(ctx, &dep_node, target_label.unconfigured()).await? {
                 return Err(VisibilityError::NotVisibleTo(
                     dep_label.dupe(),
                     target_label.unconfigured().dupe(),
@@ -445,21 +448,21 @@ pub(crate) struct ErrorsAndIncompatibilities {
 }
 
 impl ErrorsAndIncompatibilities {
-    fn unpack_dep_into(
+    fn unpack_dep_no_visibility_into(
         &mut self,
         target_label: &TargetConfiguredTargetLabel,
         result: ResultMaybeCompatible<ConfiguredTargetNode>,
-        check_visibility: &CheckVisibility,
         list: &mut Vec<ConfiguredTargetNode>,
     ) {
-        list.extend(self.unpack_dep(target_label, result, check_visibility));
+        if let Some(dep) = self.unpack_dep_no_visibility(target_label, result) {
+            list.push(dep);
+        }
     }
 
-    fn unpack_dep(
+    fn unpack_dep_no_visibility(
         &mut self,
         target_label: &TargetConfiguredTargetLabel,
         result: ResultMaybeCompatible<ConfiguredTargetNode>,
-        check_visibility: &CheckVisibility,
     ) -> Option<ConfiguredTargetNode> {
         match result {
             ResultMaybeCompatible::Err(e) => {
@@ -471,30 +474,55 @@ impl ErrorsAndIncompatibilities {
                     cause: IncompatiblePlatformReasonCause::Dependency(reason.dupe()),
                 }));
             }
-            ResultMaybeCompatible::Compatible(dep) => {
-                if CheckVisibility::No == *check_visibility {
-                    return Some(dep);
+            ResultMaybeCompatible::Compatible(dep) => return Some(dep),
+        }
+        None
+    }
+
+    fn unpack_dep<'a>(
+        &'a mut self,
+        ctx: &'a mut DiceComputations<'_>,
+        target_label: &'a TargetConfiguredTargetLabel,
+        result: ResultMaybeCompatible<ConfiguredTargetNode>,
+        check_visibility: &'a CheckVisibility,
+    ) -> BoxFuture<'a, Option<ConfiguredTargetNode>> {
+        async move {
+            match result {
+                ResultMaybeCompatible::Err(e) => {
+                    self.errs.push(e);
                 }
-                match dependency_is_visible(&dep, target_label, check_visibility) {
-                    Ok(true) => {
+                ResultMaybeCompatible::Incompatible(reason) => {
+                    self.incompats.push(Arc::new(IncompatiblePlatformReason {
+                        target: target_label.inner().dupe(),
+                        cause: IncompatiblePlatformReasonCause::Dependency(reason.dupe()),
+                    }));
+                }
+                ResultMaybeCompatible::Compatible(dep) => {
+                    if CheckVisibility::No == *check_visibility {
                         return Some(dep);
                     }
-                    Ok(false) => {
-                        self.errs.push(
-                            VisibilityError::NotVisibleTo(
-                                dep.label().unconfigured().dupe(),
-                                target_label.unconfigured().dupe(),
-                            )
-                            .into(),
-                        );
-                    }
-                    Err(e) => {
-                        self.errs.push(e);
+                    match dependency_is_visible(ctx, &dep, target_label, check_visibility).await {
+                        Ok(true) => {
+                            return Some(dep);
+                        }
+                        Ok(false) => {
+                            self.errs.push(
+                                VisibilityError::NotVisibleTo(
+                                    dep.label().unconfigured().dupe(),
+                                    target_label.unconfigured().dupe(),
+                                )
+                                .into(),
+                            );
+                        }
+                        Err(e) => {
+                            self.errs.push(e);
+                        }
                     }
                 }
             }
+            None
         }
-        None
+        .boxed()
     }
 
     /// Returns an error/incompatibility to return, if any, and `None` otherwise
@@ -510,12 +538,31 @@ impl ErrorsAndIncompatibilities {
     }
 }
 
-fn dependency_is_visible(
+async fn dependency_is_visible(
+    ctx: &mut DiceComputations<'_>,
     dep: &ConfiguredTargetNode,
     target_label: &TargetConfiguredTargetLabel,
     check_visibility: &CheckVisibility,
 ) -> buck2_error::Result<bool> {
+    target_node_dependency_is_visible(ctx, dep.target_node(), target_label, check_visibility).await
+}
+
+async fn target_node_dependency_is_visible(
+    ctx: &mut DiceComputations<'_>,
+    dep: &TargetNode,
+    target_label: &TargetConfiguredTargetLabel,
+    check_visibility: &CheckVisibility,
+) -> buck2_error::Result<bool> {
     if dep.is_visible_to(target_label.unconfigured())? {
+        return Ok(true);
+    }
+    if target_node_visibility_matches_bazel_package_groups_for_target(
+        ctx,
+        dep,
+        target_label.unconfigured(),
+    )
+    .await?
+    {
         return Ok(true);
     }
 
@@ -526,10 +573,191 @@ fn dependency_is_visible(
                 if dep.is_visible_to_package(package)? {
                     return Ok(true);
                 }
+                if target_node_visibility_matches_bazel_package_groups_for_package(
+                    ctx,
+                    dep,
+                    package,
+                )
+                .await?
+                {
+                    return Ok(true);
+                }
             }
             Ok(false)
         }
     }
+}
+
+async fn precheck_exec_dep_visibility(
+    ctx: &mut DiceComputations<'_>,
+    target_label: &TargetConfiguredTargetLabel,
+    exec_deps: SmallMap<ConfiguredProvidersLabel, CheckVisibility>,
+    errors_and_incompats: &mut ErrorsAndIncompatibilities,
+) -> buck2_error::Result<SmallMap<ConfiguredProvidersLabel, CheckVisibility>> {
+    let mut checked = SmallMap::new();
+    for (dep, check_visibility) in exec_deps {
+        if check_visibility == CheckVisibility::No {
+            checked.insert(dep, check_visibility);
+            continue;
+        }
+        let dep_node = ctx
+            .get_target_node(dep.target().unconfigured())
+            .await
+            .with_buck_error_context(|| {
+                format!(
+                    "looking up unconfigured target node `{}`",
+                    dep.target().unconfigured()
+                )
+            })?;
+        match target_node_dependency_is_visible(ctx, &dep_node, target_label, &check_visibility)
+            .await
+        {
+            Ok(true) => {
+                checked.insert(dep, CheckVisibility::No);
+            }
+            Ok(false) => {
+                errors_and_incompats.errs.push(
+                    VisibilityError::NotVisibleTo(
+                        dep.target().unconfigured().dupe(),
+                        target_label.unconfigured().dupe(),
+                    )
+                    .into(),
+                );
+            }
+            Err(e) => errors_and_incompats.errs.push(e),
+        }
+    }
+    Ok(checked)
+}
+
+async fn precheck_toolchain_dep_visibility(
+    ctx: &mut DiceComputations<'_>,
+    target_label: &TargetConfiguredTargetLabel,
+    toolchain_deps: SmallSet<TargetConfiguredTargetLabel>,
+    errors_and_incompats: &mut ErrorsAndIncompatibilities,
+) -> buck2_error::Result<SmallSet<TargetConfiguredTargetLabel>> {
+    let mut checked = SmallSet::new();
+    for dep in toolchain_deps {
+        let dep_node = ctx
+            .get_target_node(dep.unconfigured())
+            .await
+            .with_buck_error_context(|| {
+                format!("looking up unconfigured target node `{}`", dep.unconfigured())
+            })?;
+        match target_node_dependency_is_visible(ctx, &dep_node, target_label, &CheckVisibility::Yes)
+            .await
+        {
+            Ok(true) => {
+                checked.insert(dep);
+            }
+            Ok(false) => {
+                errors_and_incompats.errs.push(
+                    VisibilityError::NotVisibleTo(
+                        dep.unconfigured().dupe(),
+                        target_label.unconfigured().dupe(),
+                    )
+                    .into(),
+                );
+            }
+            Err(e) => errors_and_incompats.errs.push(e),
+        }
+    }
+    Ok(checked)
+}
+
+async fn target_node_is_visible_to(
+    ctx: &mut DiceComputations<'_>,
+    dep: &TargetNode,
+    target: &TargetLabel,
+) -> buck2_error::Result<bool> {
+    if dep.is_visible_to(target)? {
+        return Ok(true);
+    }
+    target_node_visibility_matches_bazel_package_groups_for_target(ctx, dep, target).await
+}
+
+async fn target_node_visibility_matches_bazel_package_groups_for_target(
+    ctx: &mut DiceComputations<'_>,
+    dep: &TargetNode,
+    target: &TargetLabel,
+) -> buck2_error::Result<bool> {
+    let group_labels = bazel_package_group_visibility_labels(dep)?;
+    bazel_package_groups_allow_target(ctx, group_labels, target).await
+}
+
+async fn target_node_visibility_matches_bazel_package_groups_for_package(
+    ctx: &mut DiceComputations<'_>,
+    dep: &TargetNode,
+    package: &PackageLabel,
+) -> buck2_error::Result<bool> {
+    let group_labels = bazel_package_group_visibility_labels(dep)?;
+    bazel_package_groups_allow_package(ctx, group_labels, package).await
+}
+
+fn bazel_package_group_visibility_labels(
+    dep: &TargetNode,
+) -> buck2_error::Result<Vec<TargetLabel>> {
+    let mut labels = Vec::new();
+    if let VisibilityPatternList::List(patterns) = &dep.visibility()?.0 {
+        for pattern in patterns {
+            if let ParsedPattern::Target(package, name, TargetPatternExtra) = &pattern.0 {
+                labels.push(TargetLabel::new(package.dupe(), name.as_ref()));
+            }
+        }
+    }
+    Ok(labels)
+}
+
+async fn bazel_package_groups_allow_target(
+    ctx: &mut DiceComputations<'_>,
+    group_labels: Vec<TargetLabel>,
+    target: &TargetLabel,
+) -> buck2_error::Result<bool> {
+    let mut seen = BTreeSet::new();
+    let mut stack = group_labels;
+    while let Some(group_label) = stack.pop() {
+        if !seen.insert(group_label.dupe()) {
+            continue;
+        }
+        let group_node = ctx
+            .get_target_node(&group_label)
+            .await
+            .with_buck_error_context(|| format!("looking up package_group `{group_label}`"))?;
+        let Some(group) = group_node.bazel_package_group() else {
+            continue;
+        };
+        if group.contains_target(target) {
+            return Ok(true);
+        }
+        stack.extend(group.includes.iter().cloned());
+    }
+    Ok(false)
+}
+
+async fn bazel_package_groups_allow_package(
+    ctx: &mut DiceComputations<'_>,
+    group_labels: Vec<TargetLabel>,
+    package: &PackageLabel,
+) -> buck2_error::Result<bool> {
+    let mut seen = BTreeSet::new();
+    let mut stack = group_labels;
+    while let Some(group_label) = stack.pop() {
+        if !seen.insert(group_label.dupe()) {
+            continue;
+        }
+        let group_node = ctx
+            .get_target_node(&group_label)
+            .await
+            .with_buck_error_context(|| format!("looking up package_group `{group_label}`"))?;
+        let Some(group) = group_node.bazel_package_group() else {
+            continue;
+        };
+        if group.contains_package(package) {
+            return Ok(true);
+        }
+        stack.extend(group.includes.iter().cloned());
+    }
+    Ok(false)
 }
 
 #[derive(Default)]
@@ -632,7 +860,9 @@ pub(crate) async fn gather_deps(
     for (res, (_, (plugin_kind_sets, check_visibility))) in
         dep_results.into_iter().zip(traversal.deps)
     {
-        let Some(dep) = errors_and_incompats.unpack_dep(target_label, res, &check_visibility)
+        let Some(dep) = errors_and_incompats
+            .unpack_dep(ctx, target_label, res, &check_visibility)
+            .await
         else {
             continue;
         };
@@ -673,11 +903,22 @@ pub(crate) async fn gather_deps(
         }
     }
 
+    let exec_deps =
+        precheck_exec_dep_visibility(ctx, target_label, exec_deps, &mut errors_and_incompats)
+            .await?;
+    let toolchain_deps = precheck_toolchain_dep_visibility(
+        ctx,
+        target_label,
+        traversal.toolchain_deps,
+        &mut errors_and_incompats,
+    )
+    .await?;
+
     ResultMaybeCompatible::Compatible((
         GatheredDeps {
             deps,
             exec_deps,
-            toolchain_deps: traversal.toolchain_deps,
+            toolchain_deps,
             plugin_lists,
         },
         errors_and_incompats,
@@ -1534,18 +1775,16 @@ async fn compute_configured_target_node_no_transition(
     let mut exec_deps = Vec::with_capacity(gathered_deps.exec_deps.len());
 
     for dep in toolchain_dep_results {
-        errors_and_incompats.unpack_dep_into(
+        errors_and_incompats.unpack_dep_no_visibility_into(
             partial_target_label,
             dep,
-            &CheckVisibility::Yes,
             &mut deps,
         );
     }
-    for (dep, check_visibility) in exec_dep_results {
-        errors_and_incompats.unpack_dep_into(
+    for (dep, _check_visibility) in exec_dep_results {
+        errors_and_incompats.unpack_dep_no_visibility_into(
             partial_target_label,
             dep,
-            &check_visibility,
             &mut exec_deps,
         );
     }

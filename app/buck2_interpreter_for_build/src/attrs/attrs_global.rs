@@ -40,7 +40,6 @@ use starlark::environment::GlobalsBuilder;
 use starlark::eval::Evaluator;
 use starlark::starlark_module;
 use starlark::values::StringValue;
-use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::ValueTypedComplex;
@@ -51,10 +50,10 @@ use starlark::values::list_or_tuple::UnpackListOrTuple;
 use starlark::values::none::NoneOr;
 use starlark::values::tuple::TupleRef;
 use starlark::values::tuple::UnpackTuple;
-use starlark::values::typing::StarlarkCallable;
 
 use crate::attrs::coerce::attr_type::AttrTypeExt;
 use crate::attrs::coerce::ctx::BuildAttrCoercionContext;
+use crate::attrs::starlark_attribute::BazelComputedDefault;
 use crate::attrs::starlark_attribute::StarlarkAttribute;
 use crate::attrs::starlark_attribute::register_attr_type;
 use crate::bazel_config::bazel_exec_transition_from_value;
@@ -199,11 +198,15 @@ fn bazel_attr_with_allowed_values_and_aspects<'v>(
     allowed_values: Option<AttributeAllowedValues>,
     bazel_aspects: Vec<Value<'v>>,
 ) -> buck2_error::Result<StarlarkAttribute<'v>> {
+    let computed_default = match default {
+        Some(default) => BazelComputedDefault::from_value(default)?,
+        None => None,
+    };
     let default = if mandatory {
         None
     } else {
         Some(match default {
-            Some(default) if bazel_is_computed_default(default) => fallback,
+            Some(_) if computed_default.is_some() => fallback,
             Some(default) => default,
             None => fallback,
         })
@@ -220,14 +223,11 @@ fn bazel_attr_with_allowed_values_and_aspects<'v>(
                 .buck_error_context("Error coercing Bazel attribute default")?,
         )),
     };
-    Ok(StarlarkAttribute::new_bazel_with_aspects(
+    Ok(StarlarkAttribute::new_bazel_with_aspects_and_computed(
         Attribute::new_with_allowed_values(default, doc, coercer, allowed_values)?,
         bazel_aspects,
+        computed_default,
     ))
-}
-
-fn bazel_is_computed_default<'v>(value: Value<'v>) -> bool {
-    <StarlarkCallable<'v> as UnpackValue<'v>>::unpack_value_opt(value).is_some()
 }
 
 fn bazel_label_default<'v>(
@@ -268,6 +268,22 @@ fn bazel_label_default<'v>(
     Ok(Some(Value::new_none()))
 }
 
+fn bazel_label_list_default<'v>(
+    eval: &mut Evaluator<'v, '_, '_>,
+    default: Option<Value<'v>>,
+) -> buck2_error::Result<Option<Value<'v>>> {
+    let Some(default) = default else {
+        return Ok(None);
+    };
+    if BazelConfigurationField::from_value(default).is_none() {
+        return Ok(Some(default));
+    }
+
+    // Buck2 does not currently model Bazel fragment option values. For label-list attrs,
+    // unresolved late-bound defaults behave like an unset Bazel configuration field.
+    Ok(Some(eval.heap().alloc(AllocList::EMPTY)))
+}
+
 fn bazel_attr_required<'v>(
     _eval: &mut Evaluator<'v, '_, '_>,
     doc: &str,
@@ -295,7 +311,7 @@ fn bazel_dep_attr_type<'v>(
         }
         Some(cfg) => match cfg.unpack_str() {
             Some("target") => Ok(AttrType::dep(required_providers, PluginKindSet::EMPTY)),
-            Some("exec") => Ok(AttrType::exec_dep(required_providers)),
+            Some("exec") | Some("host") => Ok(AttrType::exec_dep(required_providers)),
             Some(other) => Err(AttrError::UnsupportedBazelAttrCfg(other.to_owned()).into()),
             None => Ok(AttrType::split_transition_dep(
                 required_providers,
@@ -1078,6 +1094,7 @@ fn bazel_attr_module(registry: &mut GlobalsBuilder) {
         );
         let coercer = bazel_label_attr_type(providers, allow_files, None, cfg, true, eval)?;
         let fallback = eval.heap().alloc(AllocList::EMPTY);
+        let default = bazel_label_list_default(eval, default)?;
         Ok(bazel_attr_with_allowed_values_and_aspects(
             eval,
             default,

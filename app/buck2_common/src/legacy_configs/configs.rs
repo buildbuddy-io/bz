@@ -398,7 +398,13 @@ impl LegacyBuckConfig {
                 )],
             ),
             ("bazel", &[("compatibility", "true")]),
-            ("buck2", &[("starlark_max_callstack_size", "1000")]),
+            (
+                "buck2",
+                &[
+                    ("file_watcher", "fs_hash_crawler"),
+                    ("starlark_max_callstack_size", "1000"),
+                ],
+            ),
         ];
 
         fn synthetic_config_value(raw_value: &str) -> ConfigValue {

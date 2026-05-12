@@ -69,7 +69,7 @@ impl IgnoreSet {
     /// the RecursivePathMatcher behavior by identifying non-globby things and appending
     /// a '/**'.
     ///
-    /// Always ignores `buck-out` if it is a `root_cell`.
+    /// Always ignores build output directories if it is a `root_cell`.
     pub fn from_ignore_spec(spec: &str, root_cell: bool) -> buck2_error::Result<Self> {
         // TODO(cjhopman): There's opportunity to greatly improve the performance of IgnoreSet by
         // constructing special cases for a couple of common patterns we see in ignore specs. We
@@ -79,8 +79,11 @@ impl IgnoreSet {
         // `**/*x*x*`: just some general glob on the filename alone, can merge these into one GlobSet that just needs to check against the filename.
         // `some/prefix/**`: a directory prefix. These can all be merged into one trie lookup.
         let mut patterns = Vec::new();
-        let buck_out = if root_cell { Some("buck-out") } else { None };
-        for val in buck_out.into_iter().chain(spec.split(',')) {
+        let root_output_dirs = root_cell
+            .then_some(["buck-out", "bazel-*", "bazel-*/**"])
+            .into_iter()
+            .flatten();
+        for val in root_output_dirs.chain(spec.split(',')) {
             let val = val.trim();
             if val.is_empty() {
                 continue;
@@ -160,6 +163,14 @@ mod tests {
         let set = IgnoreSet::from_ignore_spec("", true).unwrap();
         assert!(set.is_match(CellRelativePath::testing_new("buck-out/gen/src/file.txt")));
         assert!(set.is_match(CellRelativePath::testing_new("buck-out/art/src/file.txt")));
+        assert!(set.is_match(CellRelativePath::testing_new("bazel-bin")));
+        assert!(set.is_match(CellRelativePath::testing_new("bazel-bin/app/file")));
+        assert!(set.is_match(CellRelativePath::testing_new(
+            "bazel-out/darwin-fastbuild/bin"
+        )));
+        assert!(set.is_match(CellRelativePath::testing_new(
+            "bazel-my_workspace/external/repo"
+        )));
         assert!(!set.is_match(CellRelativePath::testing_new("src/file.txt")));
     }
 

@@ -26,6 +26,13 @@ use pagable::Pagable;
 use crate::cells::name::CellName;
 
 pub const BZLMOD_BAZEL_COMPAT_VERSION: &str = "9.1.0";
+pub const BAZEL_REPOSITORY_ACCEPT_ENCODING_HEADER: &str = "Accept-Encoding";
+pub const BAZEL_REPOSITORY_ACCEPT_ENCODING: &str = "gzip";
+pub const BAZEL_REPOSITORY_USER_AGENT_HEADER: &str = "User-Agent";
+
+pub fn bazel_repository_user_agent() -> String {
+    format!("Bazel/release {BZLMOD_BAZEL_COMPAT_VERSION}")
+}
 
 pub fn bzlmod_cell_name(canonical_repo_name: &str) -> String {
     let mut cell = String::with_capacity("bzlmod_".len() + canonical_repo_name.len());
@@ -260,12 +267,10 @@ pub enum BzlmodGeneratedCellGenerator {
     BazelFeaturesGlobals(BzlmodBazelFeaturesGlobalsSetup),
     BazelFeaturesVersion(BzlmodBazelFeaturesVersionSetup),
     HostPlatform(BzlmodHostPlatformSetup),
-    LocalConfigPlatform(BzlmodLocalConfigPlatformSetup),
     CcAutoconfToolchains(BzlmodCcAutoconfToolchainsSetup),
     CcAutoconf(BzlmodCcAutoconfSetup),
     ShellConfig(BzlmodShellConfigSetup),
     HttpArchive(BzlmodHttpArchiveSetup),
-    JavaLocalJdk(BzlmodJavaLocalJdkSetup),
     PythonHub(BzlmodPythonHubSetup),
     RepositoryRule(BzlmodRepositoryRuleSetup),
     RepositoryRuleInvocation(BzlmodRepositoryRuleInvocationSetup),
@@ -323,18 +328,6 @@ pub struct BzlmodHostPlatformSetup {}
     Hash,
     Pagable
 )]
-pub struct BzlmodLocalConfigPlatformSetup {}
-
-#[derive(
-    Debug,
-    Clone,
-    Dupe,
-    allocative::Allocative,
-    PartialEq,
-    Eq,
-    Hash,
-    Pagable
-)]
 pub struct BzlmodCcAutoconfToolchainsSetup {
     pub parent_canonical_repo_name: Arc<str>,
 }
@@ -380,18 +373,6 @@ pub struct BzlmodHttpArchiveSetup {
     pub strip_prefix: Option<Arc<str>>,
     pub archive_type: Option<Arc<str>>,
 }
-
-#[derive(
-    Debug,
-    Clone,
-    Dupe,
-    allocative::Allocative,
-    PartialEq,
-    Eq,
-    Hash,
-    Pagable
-)]
-pub struct BzlmodJavaLocalJdkSetup {}
 
 #[derive(
     Debug,

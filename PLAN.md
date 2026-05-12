@@ -674,6 +674,22 @@ Acceptance:
 - The build does not call `bazel build`.
 - The build does not depend on rules_go/proto/container/npm prelude shims.
 
+## Phase 8: Bazel Source
+
+Status: in progress.
+
+Current cutover:
+
+- Root-module extension lockfile keys now match Bazel's `MODULE.bazel.lock` format (`//:file.bzl%extension` instead of `@@//:file.bzl%extension`).
+- Empty lockfile `generatedRepoSpecs` entries are treated as authoritative, so extensions recorded as producing zero repos are not evaluated.
+- Unlocked module extensions are no longer evaluated during Buck cell-graph construction just to discover every generated sibling repo. Buck now registers statically visible repos from `use_repo`, tag `name` values, overrides, and lockfile entries, and lets the generated repo evaluate its extension on first materialization. This follows Bazel's demand-driven `RepoDefinitionFunction`/`RepositoryMappingFunction` path more closely and avoids pulling unrelated generated toolchain repos during command setup.
+- Root package listing now ignores Bazel convenience output links (`bazel-*`) in addition to Buck's own `buck-out`, matching Bazel's treatment of output paths as non-source package roots.
+
+Next focus:
+
+- Teach generated module-extension repos to use lockfile `generatedRepoSpecs` directly where available, avoiding extension re-evaluation before repository-rule execution.
+- Continue validating against `/Users/siggi/Code/bazel` with `src:bazel` and focused `bazel_tools` package targets.
+
 ## Validation Commands
 
 Use fresh isolation dirs for smoke tests:

@@ -85,6 +85,15 @@ impl PendingRequest {
     }
 }
 
+fn uri_has_bazel_compressed_extension(uri: &Uri) -> bool {
+    let path = uri.path();
+    let extension = path.rsplit_once('.').map(|(_, extension)| extension);
+    matches!(
+        extension,
+        Some("bz2" | "gz" | "jar" | "tgz" | "war" | "xz" | "zip")
+    )
+}
+
 /// A simple state machine that drives following redirects. Much of this is derived
 /// from how [`reqwest` handles redirects](https://docs.rs/reqwest/latest/src/reqwest/redirect.rs.html#1-337)
 /// as well as the [`follow-redirects`](https://github.com/srijs/rust-follow-redirects) crate.
@@ -182,6 +191,12 @@ impl<B> RedirectEngine<B> {
             .with_redirect(&redirect_location)?;
         let is_cross_host = redirect_uri.is_cross_host(&self.pending_request.uri);
         self.pending_request.uri = redirect_uri;
+
+        if uri_has_bazel_compressed_extension(&self.pending_request.uri) {
+            self.pending_request
+                .headers
+                .remove(hyper::header::ACCEPT_ENCODING);
+        }
 
         if is_cross_host {
             for sensitive_header in &[
