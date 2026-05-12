@@ -137,6 +137,8 @@ fn parse_providers_label<'v>(
         format!("{}{}", package, s)
     } else if let Some(root_label) = s.strip_prefix("@@root//") {
         format!("root//{root_label}")
+    } else if let Some(repo_label) = bazel_repo_only_label(s) {
+        repo_label
     } else if let Some(canonical_label) = parse_bazel_canonical_providers_label(s)? {
         return Ok(StarlarkProvidersLabel::new(canonical_label));
     } else {
@@ -167,6 +169,19 @@ fn parse_providers_label<'v>(
         }
     };
     Ok(StarlarkProvidersLabel::new(target))
+}
+
+fn bazel_repo_only_label(value: &str) -> Option<String> {
+    if !value.starts_with('@') || value.contains("//") {
+        return None;
+    }
+    let repo = value
+        .strip_prefix("@@")
+        .or_else(|| value.strip_prefix('@'))?;
+    if repo.is_empty() {
+        return None;
+    }
+    Some(format!("{value}//:__repo__"))
 }
 
 fn bazel_non_visible_repo_label(

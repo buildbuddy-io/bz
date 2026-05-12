@@ -56,6 +56,11 @@ assert_eq(add18(24), 42)
 }
 
 #[test]
+fn test_function_repr() {
+    assert::eq("def f(): pass\nstr(f)", r#""<function f from lhs.bzl>""#);
+}
+
+#[test]
 fn test_nested_def_1() {
     assert::is_true(
         "

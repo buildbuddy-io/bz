@@ -204,11 +204,13 @@ pub struct BzlmodCellSetup {
     pub module_name: Arc<str>,
     pub version: Arc<str>,
     pub canonical_repo_name: Arc<str>,
+    pub local_path: Option<Arc<str>>,
     pub url: Arc<str>,
     pub integrity: Arc<str>,
     pub strip_prefix: Option<Arc<str>>,
     pub archive_type: Option<Arc<str>>,
     pub patches: Arc<Vec<BzlmodPatch>>,
+    pub overlays: Arc<Vec<BzlmodOverlay>>,
     pub patch_strip: u32,
 }
 
@@ -218,6 +220,13 @@ pub struct BzlmodPatch {
     pub integrity: Arc<str>,
     pub path: Option<Arc<str>>,
     pub patch_strip: u32,
+}
+
+#[derive(Debug, Clone, allocative::Allocative, PartialEq, Eq, Hash, Pagable)]
+pub struct BzlmodOverlay {
+    pub path: Arc<str>,
+    pub url: Arc<str>,
+    pub integrity: Arc<str>,
 }
 
 #[derive(

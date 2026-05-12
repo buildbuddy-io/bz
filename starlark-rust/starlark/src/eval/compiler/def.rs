@@ -558,7 +558,12 @@ pub(crate) struct DefGen<V> {
 
 impl<V> Display for DefGen<V> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.parameters.signature())
+        write!(
+            f,
+            "<function {} from {}>",
+            self.def_info.name,
+            self.def_info.codemap.filename()
+        )
     }
 }
 

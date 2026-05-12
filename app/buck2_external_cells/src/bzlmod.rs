@@ -162,6 +162,7 @@ struct BzlmodExtractIoRequest {
     setup: BzlmodCellSetup,
     archive: ProjectRelativePathBuf,
     patch_files: Vec<BzlmodPatchFile>,
+    overlay_files: Vec<BzlmodOverlayFile>,
     temp: ProjectRelativePathBuf,
     cache_repo: ProjectRelativePathBuf,
     cache_tmp: ProjectRelativePathBuf,
@@ -172,6 +173,11 @@ struct BzlmodExtractIoRequest {
 struct BzlmodPatchFile {
     path: ProjectRelativePathBuf,
     patch_strip: u32,
+}
+
+struct BzlmodOverlayFile {
+    path: String,
+    file: ProjectRelativePathBuf,
 }
 
 impl IoRequest for BzlmodExtractIoRequest {
@@ -211,6 +217,16 @@ impl IoRequest for BzlmodExtractIoRequest {
 
         for patch in &self.patch_files {
             apply_patch(project_fs, &cache_tmp, &patch.path, patch.patch_strip)?;
+        }
+
+        for overlay in &self.overlay_files {
+            let overlay_path = ForwardRelativePath::new(&overlay.path)?;
+            let dest = cache_tmp.join(overlay_path);
+            if let Some(parent) = dest.parent() {
+                fs_util::create_dir_all(parent)?;
+            }
+            fs_util::remove_all(&dest).categorize_internal()?;
+            link_or_copy_file(&project_fs.resolve(&overlay.file), &dest)?;
         }
 
         if let Some(parent) = cache_repo.parent() {
@@ -274,11 +290,13 @@ impl IoRequest for BzlmodGeneratedHttpArchiveIoRequest {
             module_name: self.setup.repo_name.dupe(),
             version: Arc::from(""),
             canonical_repo_name: self.setup.repo_name.dupe(),
+            local_path: None,
             url: self.setup.url.dupe(),
             integrity: Arc::from(""),
             strip_prefix: self.setup.strip_prefix.dupe(),
             archive_type: self.setup.archive_type.dupe(),
             patches: Arc::new(Vec::new()),
+            overlays: Arc::new(Vec::new()),
             patch_strip: 0,
         };
         extract_archive(&extract_setup, &archive, &temp)?;
@@ -1547,6 +1565,7 @@ fn bzlmod_repo_contents_cache_key(setup: &BzlmodCellSetup) -> String {
     update_bzlmod_repo_contents_cache_key(&mut hasher, &setup.module_name);
     update_bzlmod_repo_contents_cache_key(&mut hasher, &setup.version);
     update_bzlmod_repo_contents_cache_key(&mut hasher, &setup.canonical_repo_name);
+    update_bzlmod_repo_contents_cache_key_opt(&mut hasher, setup.local_path.as_deref());
     update_bzlmod_repo_contents_cache_key(&mut hasher, &setup.url);
     update_bzlmod_repo_contents_cache_key(&mut hasher, &setup.integrity);
     update_bzlmod_repo_contents_cache_key(&mut hasher, setup.strip_prefix.as_deref().unwrap_or(""));
@@ -1558,6 +1577,12 @@ fn bzlmod_repo_contents_cache_key(setup: &BzlmodCellSetup) -> String {
         update_bzlmod_repo_contents_cache_key(&mut hasher, &patch.integrity);
         update_bzlmod_repo_contents_cache_key(&mut hasher, patch.path.as_deref().unwrap_or(""));
         update_bzlmod_repo_contents_cache_key(&mut hasher, &patch.patch_strip.to_string());
+    }
+    update_bzlmod_repo_contents_cache_key(&mut hasher, &setup.overlays.len().to_string());
+    for overlay in setup.overlays.iter() {
+        update_bzlmod_repo_contents_cache_key(&mut hasher, &overlay.path);
+        update_bzlmod_repo_contents_cache_key(&mut hasher, &overlay.url);
+        update_bzlmod_repo_contents_cache_key(&mut hasher, &overlay.integrity);
     }
     hasher.finalize().to_hex().to_string()
 }
@@ -2090,6 +2115,7 @@ async fn download_impl(
     let archive = bzlmod_path(setup, "source.archive");
     let temp = bzlmod_path(setup, "extract-tmp");
     let patch_dir = bzlmod_path(setup, "patches");
+    let overlay_dir = bzlmod_path(setup, "overlays");
     let stamp = bzlmod_external_cell_root_stamp_path(dest);
     let patch_files: Vec<_> = setup
         .patches
@@ -2103,6 +2129,15 @@ async fn download_impl(
             patch_strip: patch.patch_strip,
         })
         .collect();
+    let overlay_files: Vec<_> = setup
+        .overlays
+        .iter()
+        .enumerate()
+        .map(|(idx, overlay)| BzlmodOverlayFile {
+            path: overlay.path.to_string(),
+            file: overlay_dir.join(ForwardRelativePath::new(&format!("{idx}.overlay")).unwrap()),
+        })
+        .collect();
 
     io.execute_io(
         Box::new(
@@ -2113,6 +2148,7 @@ async fn download_impl(
                     archive.clone(),
                     temp.clone(),
                     patch_dir.clone(),
+                    overlay_dir.clone(),
                     cache_tmp.to_owned(),
                 ],
             },
@@ -2154,11 +2190,26 @@ async fn download_impl(
         .await?;
     }
 
+    for (overlay, output) in setup.overlays.iter().zip(&overlay_files) {
+        let checksum = Checksum::new(None, Some(&integrity_to_sha256_hex(&overlay.integrity)?))?;
+        http_download(
+            &client,
+            project_root,
+            digest_config.dupe(),
+            &output.file,
+            &overlay.url,
+            &checksum,
+            false,
+        )
+        .await?;
+    }
+
     io.execute_io(
         Box::new(BzlmodExtractIoRequest {
             setup: setup.dupe(),
             archive,
             patch_files,
+            overlay_files,
             temp,
             cache_repo: cache_repo.to_owned(),
             cache_tmp: cache_tmp.to_owned(),
@@ -2781,8 +2832,13 @@ pub(crate) async fn get_file_ops_delegate(
             cancellations: &CancellationContext,
         ) -> Self::Value {
             let artifact_fs = ctx.get_artifact_fs().await?;
-            let backing_base_path =
-                bzlmod_repo_contents_cache_path(&bzlmod_repo_contents_cache_key(&self.1), "repo");
+            let backing_base_path = match &self.1.local_path {
+                Some(local_path) => ProjectRelativePath::new(local_path.as_ref())?.to_buf(),
+                None => bzlmod_repo_contents_cache_path(
+                    &bzlmod_repo_contents_cache_key(&self.1),
+                    "repo",
+                ),
+            };
             let ops = BzlmodFileOpsDelegate {
                 buck_out_resolver: artifact_fs.buck_out_path_resolver().clone(),
                 cell: self.0,
@@ -2793,7 +2849,9 @@ pub(crate) async fn get_file_ops_delegate(
                     ctx.global_data().get_digest_config().cas_digest_config(),
                 ),
             };
-            download_and_materialize(ctx, &ops.get_base_path(), &self.1, cancellations).await?;
+            if self.1.local_path.is_none() {
+                download_and_materialize(ctx, &ops.get_base_path(), &self.1, cancellations).await?;
+            }
             Ok(Arc::new(ops))
         }
 

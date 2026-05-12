@@ -15,6 +15,7 @@ use std::env;
 use std::fmt;
 use std::fs;
 use std::io::Read;
+use std::io::Write;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
@@ -63,6 +64,7 @@ use dice::Key;
 use dice::NoValueSerialize;
 use dice::ValueSerialize;
 use dupe::Dupe;
+use futures::StreamExt;
 use itertools::Itertools;
 use pagable::Pagable;
 use pagable::pagable_typetag;
@@ -5187,6 +5189,9 @@ fn module_ctx_download_retry_delay(attempt: usize) -> Duration {
 }
 
 const MODULE_CTX_HTTP_MAX_PARALLEL_DOWNLOADS: usize = 8;
+const MODULE_CTX_HTTP_CONNECT_TIMEOUT: Duration = Duration::from_secs(1);
+const MODULE_CTX_HTTP_READ_TIMEOUT: Duration = Duration::from_secs(20);
+const MODULE_CTX_HTTP_WRITE_TIMEOUT: Duration = Duration::from_secs(20);
 
 static MODULE_CTX_HTTP_DOWNLOAD_SEMAPHORE: OnceLock<Arc<tokio::sync::Semaphore>> = OnceLock::new();
 
@@ -5200,57 +5205,189 @@ fn module_ctx_http_download_semaphore() -> &'static tokio::sync::Semaphore {
         .as_ref()
 }
 
-async fn module_ctx_download_url_bytes(
-    client: &buck2_http::HttpClient,
-    url: &str,
-) -> Result<Vec<u8>, String> {
-    const MAX_ATTEMPTS: usize = 8;
+#[derive(Debug)]
+enum ModuleCtxDownloadAttemptError {
+    Retryable(String),
+    NonRetryable(String),
+    Fatal(buck2_error::Error),
+}
 
-    for attempt in 0..MAX_ATTEMPTS {
-        let _permit = module_ctx_http_download_semaphore()
-            .acquire()
-            .await
-            .map_err(|error| error.to_string())?;
-        let result = match client.get(url).await {
-            Ok(response) => match buck2_http::to_bytes(response.into_body()).await {
-                Ok(body) => Ok(body.to_vec()),
-                Err(error) => Err((error.to_string(), true)),
-            },
-            Err(error) => Err((
-                error.to_string(),
-                module_ctx_download_error_is_retryable(&error),
-            )),
-        };
-        drop(_permit);
+enum ModuleCtxChecksumHasher {
+    Sha1(Sha1),
+    Sha256(Sha256),
+    Sha384(Sha384),
+    Sha512(Sha512),
+}
 
-        match result {
-            Ok(bytes) => return Ok(bytes),
-            Err((message, retryable)) => {
-                if attempt + 1 == MAX_ATTEMPTS || !retryable {
-                    return Err(message);
-                }
-                tokio::time::sleep(module_ctx_download_retry_delay(attempt)).await;
-            }
+impl ModuleCtxChecksumHasher {
+    fn new(kind: ModuleCtxChecksumKind) -> Self {
+        match kind {
+            ModuleCtxChecksumKind::Sha1 => Self::Sha1(Sha1::new()),
+            ModuleCtxChecksumKind::Sha256 => Self::Sha256(Sha256::new()),
+            ModuleCtxChecksumKind::Sha384 => Self::Sha384(Sha384::new()),
+            ModuleCtxChecksumKind::Sha512 => Self::Sha512(Sha512::new()),
         }
     }
 
-    unreachable!("module_ctx.download retry loop exits after success or final failure")
+    fn update(&mut self, bytes: &[u8]) {
+        match self {
+            Self::Sha1(hasher) => hasher.update(bytes),
+            Self::Sha256(hasher) => hasher.update(bytes),
+            Self::Sha384(hasher) => hasher.update(bytes),
+            Self::Sha512(hasher) => hasher.update(bytes),
+        }
+    }
+
+    fn finalize_hex(self) -> String {
+        match self {
+            Self::Sha1(hasher) => hex::encode(hasher.finalize()),
+            Self::Sha256(hasher) => hex::encode(hasher.finalize()),
+            Self::Sha384(hasher) => hex::encode(hasher.finalize()),
+            Self::Sha512(hasher) => hex::encode(hasher.finalize()),
+        }
+    }
 }
 
-async fn module_ctx_download_bytes(urls: &[String]) -> buck2_error::Result<Vec<u8>> {
+fn module_ctx_remove_partial_download(path: &Path) {
+    let _unused = fs::remove_file(path);
+}
+
+async fn module_ctx_download_url_to_path(
+    client: &buck2_http::HttpClient,
+    url: &str,
+    destination: &Path,
+    expected_checksum: Option<&ModuleCtxChecksum>,
+    executable: bool,
+) -> Result<(Option<String>, String), ModuleCtxDownloadAttemptError> {
+    let response = client.get(url).await.map_err(|error| {
+        let retryable = module_ctx_download_error_is_retryable(&error);
+        let error = error.to_string();
+        if retryable {
+            ModuleCtxDownloadAttemptError::Retryable(error)
+        } else {
+            ModuleCtxDownloadAttemptError::NonRetryable(error)
+        }
+    })?;
+
+    if let Some(parent) = destination.parent() {
+        fs::create_dir_all(parent).map_err(|error| {
+            ModuleCtxDownloadAttemptError::Fatal(module_ctx_download_write_error(parent, error))
+        })?;
+    }
+
+    let mut file = fs::File::create(destination).map_err(|error| {
+        ModuleCtxDownloadAttemptError::Fatal(module_ctx_download_write_error(destination, error))
+    })?;
+    let checksum_kind = expected_checksum
+        .map(|checksum| checksum.kind)
+        .unwrap_or(ModuleCtxChecksumKind::Sha256);
+    let mut hasher = ModuleCtxChecksumHasher::new(checksum_kind);
+    let mut body = response.into_body();
+
+    while let Some(chunk) = body.next().await {
+        let chunk = chunk.map_err(|error| {
+            module_ctx_remove_partial_download(destination);
+            ModuleCtxDownloadAttemptError::Retryable(error.to_string())
+        })?;
+        hasher.update(&chunk);
+        file.write_all(&chunk).map_err(|error| {
+            module_ctx_remove_partial_download(destination);
+            ModuleCtxDownloadAttemptError::Fatal(module_ctx_download_write_error(
+                destination,
+                error,
+            ))
+        })?;
+    }
+
+    file.flush().map_err(|error| {
+        module_ctx_remove_partial_download(destination);
+        ModuleCtxDownloadAttemptError::Fatal(module_ctx_download_write_error(destination, error))
+    })?;
+    drop(file);
+
+    let got = hasher.finalize_hex();
+    let checksum = if let Some(expected_checksum) = expected_checksum {
+        if expected_checksum.hex != got {
+            module_ctx_remove_partial_download(destination);
+            return Err(ModuleCtxDownloadAttemptError::NonRetryable(
+                BazelRepositoryError::ModuleCtxDownloadChecksumMismatch {
+                    path: destination.to_string_lossy().into_owned(),
+                    expected: expected_checksum.hex.clone(),
+                    got,
+                }
+                .to_string(),
+            ));
+        }
+        expected_checksum.clone()
+    } else {
+        ModuleCtxChecksum {
+            kind: ModuleCtxChecksumKind::Sha256,
+            hex: got,
+        }
+    };
+
+    module_ctx_set_executable(destination, executable)
+        .map_err(ModuleCtxDownloadAttemptError::Fatal)?;
+    module_ctx_download_result_checksums_verified(&checksum)
+        .map_err(ModuleCtxDownloadAttemptError::Fatal)
+}
+
+async fn module_ctx_download_to_path_uncached(
+    urls: &[String],
+    destination: &Path,
+    expected_checksum: Option<&ModuleCtxChecksum>,
+    executable: bool,
+) -> buck2_error::Result<(Option<String>, String)> {
+    const MAX_ATTEMPTS: usize = 8;
+
     let client = buck2_http::HttpClientBuilder::oss()
         .await?
         .with_max_redirects(10)
+        .with_connect_timeout(Some(MODULE_CTX_HTTP_CONNECT_TIMEOUT))
+        .with_read_timeout(Some(MODULE_CTX_HTTP_READ_TIMEOUT))
+        .with_write_timeout(Some(MODULE_CTX_HTTP_WRITE_TIMEOUT))
         .build();
     let mut last_error = None;
     for url in urls {
-        match module_ctx_download_url_bytes(&client, url).await {
-            Ok(bytes) => return Ok(bytes),
-            Err(error) => {
-                last_error = Some(error);
+        for attempt in 0..MAX_ATTEMPTS {
+            let _permit = module_ctx_http_download_semaphore()
+                .acquire()
+                .await
+                .map_err(|error| {
+                    buck2_error::buck2_error!(
+                        buck2_error::ErrorTag::Input,
+                        "could not acquire module_ctx.download semaphore: {}",
+                        error
+                    )
+                })?;
+            let result = module_ctx_download_url_to_path(
+                &client,
+                url,
+                destination,
+                expected_checksum,
+                executable,
+            )
+            .await;
+            drop(_permit);
+
+            match result {
+                Ok(checksums) => return Ok(checksums),
+                Err(ModuleCtxDownloadAttemptError::Fatal(error)) => return Err(error),
+                Err(ModuleCtxDownloadAttemptError::NonRetryable(error)) => {
+                    last_error = Some(error);
+                    break;
+                }
+                Err(ModuleCtxDownloadAttemptError::Retryable(error)) => {
+                    last_error = Some(error);
+                    if attempt + 1 == MAX_ATTEMPTS {
+                        break;
+                    }
+                    tokio::time::sleep(module_ctx_download_retry_delay(attempt)).await;
+                }
             }
         }
     }
+
     Err(BazelRepositoryError::ModuleCtxDownloadFailed {
         urls: urls.to_owned(),
         error: last_error.unwrap_or_else(|| "no URL attempted".to_owned()),
@@ -5258,8 +5395,15 @@ async fn module_ctx_download_bytes(urls: &[String]) -> buck2_error::Result<Vec<u
     .into())
 }
 
-fn module_ctx_download_bytes_uncached_blocking(urls: &[String]) -> buck2_error::Result<Vec<u8>> {
+fn module_ctx_download_to_path_uncached_blocking(
+    urls: &[String],
+    destination: &Path,
+    expected_checksum: Option<&ModuleCtxChecksum>,
+    executable: bool,
+) -> buck2_error::Result<(Option<String>, String)> {
     let urls = urls.to_owned();
+    let destination = destination.to_owned();
+    let expected_checksum = expected_checksum.cloned();
     std::thread::spawn(move || {
         tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -5271,7 +5415,15 @@ fn module_ctx_download_bytes_uncached_blocking(urls: &[String]) -> buck2_error::
                     e
                 )
             })?
-            .block_on(async move { module_ctx_download_bytes(&urls).await })
+            .block_on(async move {
+                module_ctx_download_to_path_uncached(
+                    &urls,
+                    &destination,
+                    expected_checksum.as_ref(),
+                    executable,
+                )
+                .await
+            })
     })
     .join()
     .map_err(|_| {
@@ -5430,19 +5582,6 @@ fn module_ctx_set_executable(path: &Path, executable: bool) -> buck2_error::Resu
     Ok(())
 }
 
-fn module_ctx_write_download_bytes(
-    path: &Path,
-    bytes: &[u8],
-    executable: bool,
-) -> buck2_error::Result<()> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|error| module_ctx_download_write_error(parent, error))?;
-    }
-    fs::write(path, bytes).map_err(|error| module_ctx_download_write_error(path, error))?;
-    module_ctx_set_executable(path, executable)
-}
-
 fn module_ctx_copy_download_file(
     source: &Path,
     destination: &Path,
@@ -5489,7 +5628,7 @@ fn module_ctx_download_cache_get_to_path(
 fn module_ctx_download_cache_put_verified(
     checksum: &ModuleCtxChecksum,
     canonical_id: &str,
-    bytes: &[u8],
+    source: &Path,
 ) -> buck2_error::Result<()> {
     let Some(entry) = module_ctx_repository_cache_entry_dir(checksum) else {
         return Ok(());
@@ -5502,7 +5641,7 @@ fn module_ctx_download_cache_put_verified(
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |duration| duration.as_nanos());
         let tmp = entry.join(format!("tmp-{}-{}", std::process::id(), nanos));
-        fs::write(&tmp, bytes)
+        fs::copy(source, &tmp)
             .map_err(|error| module_ctx_download_cache_io_error("write", &tmp, error))?;
         if let Err(error) = fs::rename(&tmp, &file) {
             let _unused = fs::remove_file(&tmp);
@@ -5515,6 +5654,10 @@ fn module_ctx_download_cache_put_verified(
         fs::write(&id_path, b"")
             .map_err(|error| module_ctx_download_cache_io_error("write", &id_path, error))?;
     }
+    let verification_key =
+        module_ctx_download_cache_verification_key(&file, checksum, canonical_id);
+    let metadata = module_ctx_download_cache_file_metadata(&file)?;
+    module_ctx_download_cache_record_verified(verification_key, metadata);
     Ok(())
 }
 
@@ -5560,20 +5703,18 @@ fn module_ctx_download_to_path_blocking(
             return module_ctx_download_result_checksums_verified(expected_checksum);
         }
 
-        let bytes = module_ctx_download_bytes_uncached_blocking(urls)?;
-        module_ctx_validate_download_checksum(
-            &destination.to_string_lossy(),
-            &bytes,
+        module_ctx_download_to_path_uncached_blocking(
+            urls,
+            destination,
             Some(expected_checksum),
+            executable,
         )?;
-        module_ctx_write_download_bytes(destination, &bytes, executable)?;
-        module_ctx_download_cache_put_verified(expected_checksum, canonical_id, &bytes)?;
+        module_ctx_download_cache_put_verified(expected_checksum, canonical_id, destination)?;
         return module_ctx_download_result_checksums_verified(expected_checksum);
     }
 
-    let bytes = module_ctx_download_bytes_uncached_blocking(urls)?;
-    let checksums = module_ctx_download_result_checksums(&bytes, None)?;
-    module_ctx_write_download_bytes(destination, &bytes, executable)?;
+    let checksums =
+        module_ctx_download_to_path_uncached_blocking(urls, destination, None, executable)?;
     if let Some(sha256) = &checksums.0 {
         module_ctx_download_cache_put_verified(
             &ModuleCtxChecksum {
@@ -5581,7 +5722,7 @@ fn module_ctx_download_to_path_blocking(
                 hex: sha256.clone(),
             },
             canonical_id,
-            &bytes,
+            destination,
         )?;
     }
     Ok(checksums)
@@ -5747,26 +5888,6 @@ fn module_ctx_integrity_from_checksum(checksum: &ModuleCtxChecksum) -> buck2_err
     ))
 }
 
-fn module_ctx_validate_download_checksum(
-    path: &str,
-    bytes: &[u8],
-    expected_checksum: Option<&ModuleCtxChecksum>,
-) -> buck2_error::Result<()> {
-    let Some(expected_checksum) = expected_checksum else {
-        return Ok(());
-    };
-    let got = module_ctx_checksum_hex(expected_checksum.kind, bytes);
-    if expected_checksum.hex == got {
-        return Ok(());
-    }
-    Err(BazelRepositoryError::ModuleCtxDownloadChecksumMismatch {
-        path: path.to_owned(),
-        expected: expected_checksum.hex.clone(),
-        got,
-    }
-    .into())
-}
-
 fn module_ctx_validate_download_file_checksum(
     path: &Path,
     expected_checksum: &ModuleCtxChecksum,
@@ -5789,21 +5910,6 @@ fn module_ctx_download_result_checksums_verified(
     let sha256 = (expected_checksum.kind == ModuleCtxChecksumKind::Sha256)
         .then(|| expected_checksum.hex.clone());
     let integrity = module_ctx_integrity_from_checksum(expected_checksum)?;
-    Ok((sha256, integrity))
-}
-
-fn module_ctx_download_result_checksums(
-    bytes: &[u8],
-    expected_checksum: Option<&ModuleCtxChecksum>,
-) -> buck2_error::Result<(Option<String>, String)> {
-    let checksum = expected_checksum
-        .cloned()
-        .unwrap_or_else(|| ModuleCtxChecksum {
-            kind: ModuleCtxChecksumKind::Sha256,
-            hex: module_ctx_checksum_hex(ModuleCtxChecksumKind::Sha256, bytes),
-        });
-    let sha256 = (checksum.kind == ModuleCtxChecksumKind::Sha256).then(|| checksum.hex.clone());
-    let integrity = module_ctx_integrity_from_checksum(&checksum)?;
     Ok((sha256, integrity))
 }
 

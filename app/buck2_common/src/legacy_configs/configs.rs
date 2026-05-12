@@ -163,11 +163,13 @@ pub(crate) struct BazelCompatRegistryModule {
     pub module_name: String,
     pub version: String,
     pub canonical_repo_name: String,
+    pub local_path: Option<String>,
     pub url: String,
     pub integrity: String,
     pub strip_prefix: Option<String>,
     pub archive_type: Option<String>,
     pub patches_json: String,
+    pub overlays_json: String,
     pub patch_strip: u32,
 }
 
@@ -530,6 +532,7 @@ impl LegacyBuckConfig {
                         ("url", module.url.as_str()),
                         ("integrity", module.integrity.as_str()),
                         ("patches", module.patches_json.as_str()),
+                        ("overlays", module.overlays_json.as_str()),
                     ] {
                         section_values
                             .entry(key.to_owned())
@@ -539,6 +542,11 @@ impl LegacyBuckConfig {
                         section_values
                             .entry("strip_prefix".to_owned())
                             .or_insert_with(|| synthetic_config_value(strip_prefix));
+                    }
+                    if let Some(local_path) = &module.local_path {
+                        section_values
+                            .entry("local_path".to_owned())
+                            .or_insert_with(|| synthetic_config_value(local_path));
                     }
                     if let Some(archive_type) = &module.archive_type {
                         section_values

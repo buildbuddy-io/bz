@@ -327,8 +327,8 @@ pub struct FrozenArtifactPromiseMappings {
 impl<'v> Display for StarlarkRuleCallable<'v> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &*self.id.borrow() {
-            Some(id) => write!(f, "{}()", id.name),
-            None => write!(f, "<unbound rule>"),
+            Some(id) => write!(f, "<rule {}>", id.name),
+            None => write!(f, "<rule>"),
         }
     }
 }
@@ -1048,7 +1048,7 @@ impl<'v> Freeze for StarlarkRuleCallable<'v> {
 }
 
 #[derive(Debug, Display, ProvidesStaticType, NoSerialize, Allocative)]
-#[display("{}()", rule.rule_type.name())]
+#[display("<rule {}>", rule.rule_type.name())]
 pub struct FrozenStarlarkRuleCallable {
     rule: Arc<Rule>,
     /// Identical to `rule.rule_type` but more specific type.
