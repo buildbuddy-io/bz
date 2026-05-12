@@ -156,6 +156,7 @@ pub struct AnalysisActions<'v> {
     pub attributes: Option<ValueOfUnchecked<'v, StructRef<'static>>>,
     pub plugins: Option<ValueTypedComplex<'v, AnalysisPlugins<'v>>>,
     pub build_file_path: Option<String>,
+    pub rule_kind_name: Option<String>,
     /// Digest configuration to use when interpreting digests passed in analysis.
     pub digest_config: DigestConfig,
 }
@@ -616,6 +617,7 @@ impl<'v> AnalysisContext<'v> {
             attributes: attrs,
             plugins,
             build_file_path: build_file_path.clone(),
+            rule_kind_name: rule_kind_name.clone(),
             digest_config,
         });
         Self {
@@ -1479,6 +1481,7 @@ pub fn analysis_actions_to_bazel_ctx<'v>(
         .build_file_path
         .clone()
         .unwrap_or_else(|| bazel_build_file_path_from_label(this.label));
+    let rule_kind = this.rule_kind_name.as_deref().unwrap_or("");
     heap.alloc(AllocStruct([
         ("actions", actions.to_value()),
         ("attr", attr),
@@ -1512,6 +1515,11 @@ pub fn analysis_actions_to_bazel_ctx<'v>(
         ("info_file", Value::new_none()),
         ("label", label),
         ("outputs", empty_struct),
+        (
+            "rule",
+            heap.alloc(AllocStruct([("kind", heap.alloc_str(rule_kind).to_value())])),
+        ),
+        ("rule_class", heap.alloc_str(rule_kind).to_value()),
         ("toolchains", this.toolchains.to_value()),
         ("version_file", Value::new_none()),
         (

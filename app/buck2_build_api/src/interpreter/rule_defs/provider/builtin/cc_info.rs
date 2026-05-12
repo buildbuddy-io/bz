@@ -2319,6 +2319,7 @@ impl<'v> StarlarkValue<'v> for BazelCcInternal {
             "intern_string_sequence_variable_value".to_owned(),
             "is_tree_artifact".to_owned(),
             "per_file_copts".to_owned(),
+            "rule_class".to_owned(),
             "wrap_link_actions".to_owned(),
         ]
     }
@@ -2971,6 +2972,26 @@ fn bazel_cc_internal_methods(builder: &mut MethodsBuilder) {
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {
         Ok(analysis_actions_to_bazel_ctx(actions, eval.heap()))
+    }
+
+    fn rule_class<'v>(
+        #[starlark(this)] _this: &BazelCcInternal,
+        ctx: Value<'v>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<String> {
+        if let Some(rule_class) = ctx.get_attr("rule_class", eval.heap())? {
+            if let Some(rule_class) = rule_class.unpack_str() {
+                return Ok(rule_class.to_owned());
+            }
+        }
+        if let Some(rule) = ctx.get_attr("rule", eval.heap())? {
+            if let Some(kind) = rule.get_attr("kind", eval.heap())? {
+                if let Some(kind) = kind.unpack_str() {
+                    return Ok(kind.to_owned());
+                }
+            }
+        }
+        Ok(String::new())
     }
 
     fn declare_compile_output_file<'v>(

@@ -51,8 +51,11 @@ def _label_keys(label):
 
     return keys
 
-def _record_location_paths(location_paths, value):
-    files = value.files.to_list()
+def _record_location_paths(location_paths, value, prefer_executable = False):
+    executable = None
+    if prefer_executable and hasattr(value, "files_to_run"):
+        executable = value.files_to_run.executable
+    files = [executable] if executable != None else value.files.to_list()
     if not files:
         return
 
@@ -158,9 +161,9 @@ def _bazel_genrule_impl(ctx):
     for value in ctx.attr.srcs:
         _record_location_paths(location_paths, value)
     for value in ctx.attr.tools:
-        _record_location_paths(location_paths, value)
+        _record_location_paths(location_paths, value, prefer_executable = True)
     for value in ctx.attr.exec_tools:
-        _record_location_paths(location_paths, value)
+        _record_location_paths(location_paths, value, prefer_executable = True)
 
     command = _selected_command(ctx)
     dollar_escape_placeholder = _dollar_escape_placeholder(command)
