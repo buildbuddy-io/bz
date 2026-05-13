@@ -1043,6 +1043,7 @@ impl BuckConfigBasedCells {
                             url: Arc::from(patch.url),
                             integrity: Arc::from(patch.integrity),
                             path: patch.path.map(Arc::from),
+                            content_sha256: patch.content_sha256.map(Arc::from),
                             patch_strip: patch.patch_strip.unwrap_or(module_patch_strip),
                         })
                         .collect(),
@@ -1903,6 +1904,8 @@ struct BzlmodPatchConfig {
     integrity: String,
     #[serde(default)]
     path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    content_sha256: Option<String>,
     #[serde(default)]
     patch_strip: Option<u32>,
 }
@@ -6132,6 +6135,7 @@ fn bzlmod_patch_configs(
             ),
             integrity: integrity.clone(),
             path: None,
+            content_sha256: None,
             patch_strip: source_json.patch_strip,
         })
         .collect::<Vec<_>>();
@@ -6144,6 +6148,7 @@ fn bzlmod_patch_configs(
                     url: String::new(),
                     integrity: String::new(),
                     path: Some(path.path.clone()),
+                    content_sha256: Some(hex::encode(Sha256::digest(path.content.as_bytes()))),
                     patch_strip: archive_override.patch_strip,
                 }),
         );
@@ -6157,6 +6162,7 @@ fn bzlmod_patch_configs(
                     url: String::new(),
                     integrity: String::new(),
                     path: Some(path.path.clone()),
+                    content_sha256: Some(hex::encode(Sha256::digest(path.content.as_bytes()))),
                     patch_strip: single_version_override.patch_strip,
                 }),
         );

@@ -9,6 +9,7 @@
  */
 
 use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::hash::Hash;
 use std::hash::Hasher;
 use std::sync::Arc;
@@ -34,12 +35,49 @@ pub struct PackageGroup {
 }
 
 impl PackageGroup {
-    pub fn contains_target(&self, target: &TargetLabel) -> bool {
-        self.packages.contains_target(target)
+    pub fn contains_target(
+        &self,
+        target: &TargetLabel,
+        group_package: &PackageLabel,
+        package_groups: &PackageGroups,
+    ) -> bool {
+        self.contains_package(&target.pkg(), group_package, package_groups)
     }
 
-    pub fn contains_package(&self, package: &PackageLabel) -> bool {
-        self.packages.contains_package(package)
+    pub fn contains_package(
+        &self,
+        package: &PackageLabel,
+        group_package: &PackageLabel,
+        package_groups: &PackageGroups,
+    ) -> bool {
+        self.contains_package_impl(package, group_package, package_groups, &mut BTreeSet::new())
+    }
+
+    fn contains_package_impl(
+        &self,
+        package: &PackageLabel,
+        group_package: &PackageLabel,
+        package_groups: &PackageGroups,
+        visited: &mut BTreeSet<TargetName>,
+    ) -> bool {
+        if self.packages.contains_package(package) {
+            return true;
+        }
+
+        for include in &self.includes {
+            if include.pkg() != *group_package {
+                continue;
+            }
+            let include_name = include.name().to_owned();
+            if visited.insert(include_name.clone())
+                && let Some(group) = package_groups.get(&include_name)
+                && group.contains_package_impl(package, group_package, package_groups, visited)
+            {
+                return true;
+            }
+        }
+
+        false
     }
 }
 
@@ -120,5 +158,89 @@ impl Hash for Package {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.buildfile_path.hash(state);
         self.oncall.hash(state);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use buck2_core::target::label::label::TargetLabel;
+
+    use super::*;
+
+    fn package_spec(package: &str) -> PackageGroupSpec {
+        PackageGroupSpec::Pattern(ParsedPattern::Package(PackageLabel::testing_parse(package)))
+    }
+
+    fn package_group(packages: Vec<PackageGroupSpec>, includes: Vec<TargetLabel>) -> PackageGroup {
+        PackageGroup {
+            packages: PackageGroupContents {
+                positives: packages,
+                negatives: Vec::new(),
+            },
+            includes,
+        }
+    }
+
+    #[test]
+    fn package_group_contains_packages_from_includes() {
+        let group_package = PackageLabel::testing_parse("root//vis");
+        let allowed_package = PackageLabel::testing_parse("root//app");
+        let mut groups = PackageGroups::new();
+        groups.insert(
+            TargetName::testing_new("base"),
+            package_group(vec![package_spec("root//app")], Vec::new()),
+        );
+
+        let derived = package_group(
+            Vec::new(),
+            vec![TargetLabel::testing_parse("root//vis:base")],
+        );
+
+        assert!(derived.contains_package(&allowed_package, &group_package, &groups));
+        assert!(derived.contains_target(
+            &TargetLabel::testing_parse("root//app:lib"),
+            &group_package,
+            &groups
+        ));
+    }
+
+    #[test]
+    fn package_group_includes_do_not_cross_package_boundaries() {
+        let group_package = PackageLabel::testing_parse("root//vis");
+        let allowed_package = PackageLabel::testing_parse("root//app");
+        let mut groups = PackageGroups::new();
+        groups.insert(
+            TargetName::testing_new("base"),
+            package_group(vec![package_spec("root//app")], Vec::new()),
+        );
+
+        let derived = package_group(
+            Vec::new(),
+            vec![TargetLabel::testing_parse("root//other:base")],
+        );
+
+        assert!(!derived.contains_package(&allowed_package, &group_package, &groups));
+    }
+
+    #[test]
+    fn package_group_include_cycles_terminate() {
+        let group_package = PackageLabel::testing_parse("root//vis");
+        let allowed_package = PackageLabel::testing_parse("root//app");
+        let mut groups = PackageGroups::new();
+        groups.insert(
+            TargetName::testing_new("a"),
+            package_group(Vec::new(), vec![TargetLabel::testing_parse("root//vis:b")]),
+        );
+        groups.insert(
+            TargetName::testing_new("b"),
+            package_group(Vec::new(), vec![TargetLabel::testing_parse("root//vis:a")]),
+        );
+
+        assert!(
+            !groups
+                .get(&TargetName::testing_new("a"))
+                .unwrap()
+                .contains_package(&allowed_package, &group_package, &groups)
+        );
     }
 }

@@ -1302,6 +1302,8 @@ fn parse_bazel_features_version_pair(value: &str) -> Option<(String, String)> {
 
 #[cfg(test)]
 mod tests {
+    use buck2_core::cells::external::BzlmodPatch;
+
     use super::*;
 
     #[test]
@@ -1318,6 +1320,48 @@ mod tests {
             parse_bazel_features_version_pair("(\"1.0.0\", \"2.0.0\")"),
             Some(("1.0.0".to_owned(), "2.0.0".to_owned()))
         );
+    }
+
+    #[test]
+    fn bzlmod_repo_contents_cache_key_includes_local_patch_content_sha256() {
+        fn setup(content_sha256: &str) -> BzlmodCellSetup {
+            BzlmodCellSetup {
+                module_name: Arc::from("module"),
+                version: Arc::from("1.0.0"),
+                canonical_repo_name: Arc::from("module~1.0.0"),
+                local_path: None,
+                url: Arc::from("https://example.com/source.tar.gz"),
+                integrity: Arc::from("sha256-YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXowMTIzNDU="),
+                strip_prefix: None,
+                archive_type: None,
+                patches: Arc::new(vec![BzlmodPatch {
+                    url: Arc::from(""),
+                    integrity: Arc::from(""),
+                    path: Some(Arc::from("patches/fix.patch")),
+                    content_sha256: Some(Arc::from(content_sha256)),
+                    patch_strip: 1,
+                }]),
+                overlays: Arc::new(Vec::new()),
+                patch_strip: 0,
+            }
+        }
+
+        assert_ne!(
+            bzlmod_repo_contents_cache_key(&setup(
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            )),
+            bzlmod_repo_contents_cache_key(&setup(
+                "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            ))
+        );
+    }
+
+    #[test]
+    fn checksum_from_integrity_allows_empty_integrity() {
+        assert!(matches!(
+            checksum_from_integrity("").unwrap(),
+            Checksum::None
+        ));
     }
 }
 
@@ -1489,6 +1533,14 @@ fn integrity_to_sha256_hex(integrity: &str) -> buck2_error::Result<String> {
     Ok(hex::encode(bytes))
 }
 
+fn checksum_from_integrity(integrity: &str) -> buck2_error::Result<Checksum> {
+    if integrity.is_empty() {
+        Ok(Checksum::none())
+    } else {
+        Checksum::new(None, Some(&integrity_to_sha256_hex(integrity)?))
+    }
+}
+
 fn bzlmod_path(setup: &BzlmodCellSetup, suffix: &str) -> ProjectRelativePathBuf {
     bzlmod_repo_contents_cache_path(&bzlmod_repo_contents_cache_key(setup), suffix)
 }
@@ -1517,6 +1569,9 @@ fn bzlmod_repo_contents_cache_key(setup: &BzlmodCellSetup) -> String {
         update_bzlmod_repo_contents_cache_key(&mut hasher, &patch.url);
         update_bzlmod_repo_contents_cache_key(&mut hasher, &patch.integrity);
         update_bzlmod_repo_contents_cache_key(&mut hasher, patch.path.as_deref().unwrap_or(""));
+        if let Some(content_sha256) = patch.content_sha256.as_deref() {
+            update_bzlmod_repo_contents_cache_key(&mut hasher, content_sha256);
+        }
         update_bzlmod_repo_contents_cache_key(&mut hasher, &patch.patch_strip.to_string());
     }
     update_bzlmod_repo_contents_cache_key(&mut hasher, &setup.overlays.len().to_string());
@@ -2071,7 +2126,7 @@ async fn download_impl(
     let digest_config = ctx.global_data().get_digest_config();
     let client = ctx.per_transaction_data().get_http_client();
     let bazel_download_headers = bazel_repository_download_headers(std::iter::empty());
-    let archive_checksum = Checksum::new(None, Some(&integrity_to_sha256_hex(&setup.integrity)?))?;
+    let archive_checksum = checksum_from_integrity(&setup.integrity)?;
     http_download_with_headers(
         &client,
         project_root,
@@ -2088,7 +2143,7 @@ async fn download_impl(
         if patch.path.is_some() {
             continue;
         }
-        let checksum = Checksum::new(None, Some(&integrity_to_sha256_hex(&patch.integrity)?))?;
+        let checksum = checksum_from_integrity(&patch.integrity)?;
         http_download_with_headers(
             &client,
             project_root,
@@ -2103,7 +2158,7 @@ async fn download_impl(
     }
 
     for (overlay, output) in setup.overlays.iter().zip(&overlay_files) {
-        let checksum = Checksum::new(None, Some(&integrity_to_sha256_hex(&overlay.integrity)?))?;
+        let checksum = checksum_from_integrity(&overlay.integrity)?;
         http_download_with_headers(
             &client,
             project_root,

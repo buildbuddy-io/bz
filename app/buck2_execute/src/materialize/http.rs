@@ -55,6 +55,7 @@ use crate::digest_config::DigestConfig;
 
 #[derive(Debug, Clone, Dupe, Allocative, Pagable)]
 pub enum Checksum {
+    None,
     Sha1(Arc<str>),
     Sha256(Arc<str>),
     Both { sha1: Arc<str>, sha256: Arc<str> },
@@ -82,6 +83,10 @@ enum DownloadFileError {
 }
 
 impl Checksum {
+    pub fn none() -> Self {
+        Self::None
+    }
+
     pub fn new(sha1: Option<&str>, sha256: Option<&str>) -> buck2_error::Result<Self> {
         fn is_hex_digit(x: char) -> bool {
             let x = x.to_ascii_lowercase();
@@ -131,6 +136,7 @@ impl Checksum {
 
     pub fn sha1(&self) -> Option<&str> {
         match self {
+            Self::None => None,
             Self::Sha1(sha1) => Some(sha1),
             Self::Sha256(..) => None,
             Self::Both { sha1, .. } => Some(sha1),
@@ -139,6 +145,7 @@ impl Checksum {
 
     pub fn sha256(&self) -> Option<&str> {
         match self {
+            Self::None => None,
             Self::Sha1(..) => None,
             Self::Sha256(sha256) => Some(sha256),
             Self::Both { sha256, .. } => Some(sha256),

@@ -226,6 +226,7 @@ pub struct BzlmodPatch {
     pub url: Arc<str>,
     pub integrity: Arc<str>,
     pub path: Option<Arc<str>>,
+    pub content_sha256: Option<Arc<str>>,
     pub patch_strip: u32,
 }
 

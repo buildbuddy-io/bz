@@ -366,7 +366,7 @@ impl TargetNode {
                     ) = &pattern.0
                         && package == &self.label().pkg()
                         && let Some(group) = package_groups.get(group)
-                        && group.contains_target(target)
+                        && group.contains_target(target, package, package_groups)
                     {
                         return Ok(true);
                     }
@@ -395,7 +395,7 @@ impl TargetNode {
                     ) = &pattern.0
                         && group_package == &self.label().pkg()
                         && let Some(group) = package_groups.get(group)
-                        && group.contains_package(package)
+                        && group.contains_package(package, group_package, package_groups)
                     {
                         return Ok(true);
                     }

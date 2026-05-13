@@ -432,17 +432,22 @@ impl Action for TemplateExpansionAction {
             (input.dupe(), input_value.dupe())
         };
 
-        let artifact_fs = ctx.fs();
-        let template_path = input.resolve_path(
-            artifact_fs,
-            if input.path_resolution_requires_artifact_value() {
-                Some(input_value.content_based_path_hash())
-            } else {
-                None
-            }
-            .as_ref(),
-        )?;
-        let template_path = artifact_fs.fs().resolve(template_path);
+        let template_path = {
+            let artifact_fs = ctx.fs();
+            input.resolve_path(
+                artifact_fs,
+                if input.path_resolution_requires_artifact_value() {
+                    Some(input_value.content_based_path_hash())
+                } else {
+                    None
+                }
+                .as_ref(),
+            )?
+        };
+        ctx.materializer()
+            .ensure_materialized(vec![template_path.clone()])
+            .await?;
+        let template_path = ctx.fs().fs().resolve(template_path);
         let fs = ctx.fs();
 
         let mut execution_start = None;
