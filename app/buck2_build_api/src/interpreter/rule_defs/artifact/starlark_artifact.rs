@@ -167,7 +167,10 @@ impl<'v> StarlarkArtifactLike<'v> for StarlarkArtifact {
     }
 
     fn owner(&'v self) -> buck2_error::Result<Option<BaseDeferredKey>> {
-        Ok(bazel_artifact_owner(self.artifact.get_path()).or_else(|| self.artifact.owner().duped()))
+        Ok(
+            bazel_artifact_owner(self.artifact.get_path())
+                .or_else(|| self.artifact.owner().duped()),
+        )
     }
 
     fn source_owner(&'v self) -> buck2_error::Result<Option<ProvidersLabel>> {

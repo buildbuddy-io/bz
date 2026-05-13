@@ -2046,9 +2046,11 @@ impl<'a> Execute2RequestExpander<'a> {
                 Some(WorkerSpec {
                     exe: worker_rendered,
                     id: WorkerId(worker.id),
+                    protocol: buck2_execute::execute::request::WorkerProtocol::Buck2,
                     env: worker_env?,
                     concurrency: worker.concurrency(),
                     streaming: worker.streaming(),
+                    bazel_worker_sandboxing: false,
                     remote_key: None,
                     // TODO(ianc): Support input_paths on test workers
                     input_paths: CommandExecutionPaths::new(

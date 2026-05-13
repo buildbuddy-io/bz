@@ -35,6 +35,7 @@ use starlark::values::Trace;
 use starlark::values::Value;
 use starlark::values::ValueLifetimeless;
 use starlark::values::ValueLike;
+use starlark::values::ValueTypedComplex;
 use starlark::values::dict::AllocDict;
 use starlark::values::list::AllocList;
 use starlark::values::list::ListRef;
@@ -50,6 +51,9 @@ use crate::interpreter::rule_defs::depset::BazelDepset;
 use crate::interpreter::rule_defs::depset::bazel_depset_from_values;
 use crate::interpreter::rule_defs::depset::bazel_depset_to_list;
 use crate::interpreter::rule_defs::provider::ProviderLike;
+use crate::interpreter::rule_defs::provider::builtin::worker_info::WorkerInfo;
+use crate::interpreter::rule_defs::provider::builtin::worker_info::synthetic_bazel_local_worker_info;
+use crate::interpreter::rule_defs::provider::builtin::worker_run_info::synthetic_worker_run_info;
 use crate::interpreter::rule_defs::provider::callable::provider_callable_equals;
 use crate::interpreter::rule_defs::provider::callable::provider_callable_write_hash;
 
@@ -552,6 +556,7 @@ fn java_call_run_action<'v>(
     mnemonic: &str,
     param_file_start: usize,
     execution_requirements: Option<Value<'v>>,
+    worker_executable: Option<Value<'v>>,
     eval: &mut Evaluator<'v, '_, '_>,
 ) -> starlark::Result<NoneType> {
     let heap = eval.heap();
@@ -559,11 +564,26 @@ fn java_call_run_action<'v>(
     let run = actions
         .get_attr("run", heap)?
         .ok_or_else(|| java_common_error("ctx.actions has no `run` method"))?;
-    let arguments = heap.alloc(AllocList(java_param_file_arguments(
-        argv,
-        param_file_start,
-        heap,
-    )?));
+    let (executable, arguments) = if let Some(worker_executable) = worker_executable {
+        let param_file_values = argv[param_file_start..].to_vec();
+        (
+            worker_executable,
+            heap.alloc(AllocList(java_param_file_arguments(
+                param_file_values,
+                0,
+                heap,
+            )?)),
+        )
+    } else {
+        (
+            executable,
+            heap.alloc(AllocList(java_param_file_arguments(
+                argv,
+                param_file_start,
+                heap,
+            )?)),
+        )
+    };
     let mut kwargs = vec![
         ("executable", executable),
         ("arguments", arguments),
@@ -629,6 +649,40 @@ fn java_compile_execution_requirements<'v>(
     Ok(heap.alloc(AllocDict(requirements)))
 }
 
+fn java_compile_worker_executable<'v>(
+    java_toolchain: Value<'v>,
+    executable: Value<'v>,
+    argv: &[Value<'v>],
+    param_file_start: usize,
+    heap: Heap<'v>,
+) -> starlark::Result<Option<Value<'v>>> {
+    if !java_bool_attr(java_toolchain, "_javac_supports_workers", heap)? {
+        return Ok(None);
+    }
+
+    let fixed_args = argv[..param_file_start].iter().copied();
+    let fallback_exe = StarlarkCmdArgs::from_values(std::iter::once(executable).chain(fixed_args))?;
+
+    let fixed_args = argv[..param_file_start].iter().copied();
+    let worker_exe = StarlarkCmdArgs::from_values(std::iter::once(executable).chain(fixed_args))?;
+
+    let concurrency = if java_bool_attr(java_toolchain, "_javac_supports_multiplex_workers", heap)?
+    {
+        Some(8)
+    } else {
+        Some(1)
+    };
+    let worker_info = synthetic_bazel_local_worker_info(
+        worker_exe,
+        concurrency,
+        true, // Bazel-path aliases are equivalent to Bazel's path-mapped worker case.
+        heap,
+    );
+    let worker = ValueTypedComplex::<WorkerInfo>::new_err(heap.alloc(worker_info))?;
+    let worker_run_info = synthetic_worker_run_info(worker, fallback_exe, heap);
+    Ok(Some(heap.alloc(worker_run_info).to_value()))
+}
+
 fn java_push_output<'v>(outputs: &mut Vec<Value<'v>>, output: Value<'v>) {
     if !output.is_none() {
         outputs.push(output);
@@ -680,6 +734,7 @@ fn java_register_gen_class_action<'v>(
         vec![gen_class_jar],
         "JavaSourceJar",
         param_file_start,
+        None,
         None,
         eval,
     )
@@ -854,6 +909,7 @@ fn java_register_header_compilation_action<'v>(
         "JavacTurbine",
         param_file_start,
         None,
+        None,
         eval,
     )
 }
@@ -1009,6 +1065,8 @@ fn java_register_compilation_action<'v>(
     outputs.extend(java_collection_values(additional_outputs, heap)?);
 
     let execution_requirements = java_compile_execution_requirements(java_toolchain, heap)?;
+    let worker_executable =
+        java_compile_worker_executable(java_toolchain, executable, &argv, param_file_start, heap)?;
     java_call_run_action(
         ctx,
         executable,
@@ -1018,6 +1076,7 @@ fn java_register_compilation_action<'v>(
         "Javac",
         param_file_start,
         Some(execution_requirements),
+        worker_executable,
         eval,
     )?;
     java_register_gen_class_action(ctx, java_toolchain, output, manifest_proto, gen_class, eval)

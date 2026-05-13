@@ -69,8 +69,8 @@ use crate::interpreter::rule_defs::provider::DefaultInfoCallable;
 use crate::interpreter::rule_defs::provider::FrozenBuiltinProviderLike;
 use crate::interpreter::rule_defs::provider::FrozenDefaultInfo;
 use crate::interpreter::rule_defs::provider::ValueAsProviderLike;
-use crate::interpreter::rule_defs::provider::builtin::output_group_info::merge_output_group_info_values;
 use crate::interpreter::rule_defs::provider::builtin::output_group_info::OutputGroupInfoCallable;
+use crate::interpreter::rule_defs::provider::builtin::output_group_info::merge_output_group_info_values;
 use crate::interpreter::rule_defs::provider::ty::abstract_provider::AbstractProvider;
 
 fn format_provider_keys_for_error(keys: &[String]) -> String {
@@ -138,7 +138,8 @@ static_starlark_value!(EMPTY_PROVIDER_COLLECTION: FrozenProviderCollection = Fro
     providers: SmallMap::new(),
 });
 
-pub(crate) fn empty_provider_collection_value() -> FrozenValueTyped<'static, FrozenProviderCollection> {
+pub(crate) fn empty_provider_collection_value()
+-> FrozenValueTyped<'static, FrozenProviderCollection> {
     EMPTY_PROVIDER_COLLECTION.unpack()
 }
 

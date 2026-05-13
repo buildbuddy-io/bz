@@ -774,12 +774,26 @@ mod tests {
 
     #[test]
     fn test_build_file_requires_recursive_listing() {
-        assert!(build_file_requires_recursive_listing("srcs = glob([\"*.go\"])"));
-        assert!(build_file_requires_recursive_listing("g = glob\ng([\"**\"])"));
-        assert!(build_file_requires_recursive_listing("native.glob([\"*\"])"));
-        assert!(build_file_requires_recursive_listing("load(\":defs.bzl\", \"macro\")"));
-        assert!(!build_file_requires_recursive_listing("go_library(name = \"globular\")"));
-        assert!(!build_file_requires_recursive_listing("my_glob_helper(name = \"x\")"));
-        assert!(!build_file_requires_recursive_listing("genrule(name = \"upload\")"));
+        assert!(build_file_requires_recursive_listing(
+            "srcs = glob([\"*.go\"])"
+        ));
+        assert!(build_file_requires_recursive_listing(
+            "g = glob\ng([\"**\"])"
+        ));
+        assert!(build_file_requires_recursive_listing(
+            "native.glob([\"*\"])"
+        ));
+        assert!(build_file_requires_recursive_listing(
+            "load(\":defs.bzl\", \"macro\")"
+        ));
+        assert!(!build_file_requires_recursive_listing(
+            "go_library(name = \"globular\")"
+        ));
+        assert!(!build_file_requires_recursive_listing(
+            "my_glob_helper(name = \"x\")"
+        ));
+        assert!(!build_file_requires_recursive_listing(
+            "genrule(name = \"upload\")"
+        ));
     }
 }

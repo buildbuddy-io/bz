@@ -210,10 +210,12 @@ impl<'v, V: ValueLike<'v>> StarlarkArtifactLike<'v> for StarlarkOutputArtifactGe
     }
 
     fn owner(&'v self) -> buck2_error::Result<Option<BaseDeferredKey>> {
-        Ok(bazel_artifact_owner(self.get_path()).or_else(|| match self.unpack() {
-            Either::Left(v) => v.artifact.owner(),
-            Either::Right(v) => v.artifact.owner().cloned(),
-        }))
+        Ok(
+            bazel_artifact_owner(self.get_path()).or_else(|| match self.unpack() {
+                Either::Left(v) => v.artifact.owner(),
+                Either::Right(v) => v.artifact.owner().cloned(),
+            }),
+        )
     }
 
     fn with_short_path(

@@ -49,9 +49,9 @@ use crate::interpreter::rule_defs::provider::DefaultInfo;
 use crate::interpreter::rule_defs::provider::FrozenDefaultInfo;
 use crate::interpreter::rule_defs::provider::builtin::default_info::BazelRunfiles;
 use crate::interpreter::rule_defs::provider::builtin::template_variable_info::FrozenTemplateVariableInfo;
-use crate::interpreter::rule_defs::provider::collection::empty_provider_collection_value;
 use crate::interpreter::rule_defs::provider::collection::FrozenProviderCollection;
 use crate::interpreter::rule_defs::provider::collection::ProviderCollection;
+use crate::interpreter::rule_defs::provider::collection::empty_provider_collection_value;
 use crate::interpreter::rule_defs::provider::execution_platform::StarlarkExecutionPlatformResolution;
 use crate::interpreter::rule_defs::provider::ty::abstract_provider::AbstractProvider;
 
@@ -130,7 +130,7 @@ impl<'v> Dependency<'v> {
                     heap.alloc(StarlarkExecutionPlatformResolution(e.clone())),
                 ),
                 None => ValueOfUnchecked::new(Value::new_none()),
-        };
+            };
         Dependency {
             label: heap.alloc_typed_unchecked(StarlarkConfiguredProvidersLabel::new(label)),
             provider_collection: unsafe {
@@ -157,7 +157,7 @@ impl<'v> Dependency<'v> {
                     heap.alloc(StarlarkExecutionPlatformResolution(e.clone())),
                 ),
                 None => ValueOfUnchecked::new(Value::new_none()),
-        };
+            };
         Dependency {
             label: heap.alloc_typed_unchecked(StarlarkConfiguredProvidersLabel::new(label)),
             provider_collection: unsafe {

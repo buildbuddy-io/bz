@@ -25,7 +25,7 @@ fn run_display() {
         .run_starlark_bzl_test(
             r#"
 def test():
-    assert_eq('WorkerInfo(exe=cmd_args("x"), env=None, concurrency=None, streaming=None, supports_bazel_remote_persistent_worker_protocol=False)', str(WorkerInfo(exe="x")))
+    assert_eq('WorkerInfo(exe=cmd_args("x"), env=None, concurrency=None, streaming=None, supports_bazel_local_persistent_worker_protocol=False, supports_bazel_remote_persistent_worker_protocol=False, requires_bazel_worker_sandboxing=False)', str(WorkerInfo(exe="x")))
 "#,
         )
         .unwrap();

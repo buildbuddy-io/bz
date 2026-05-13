@@ -332,12 +332,20 @@ impl CommandExecutionPaths {
 #[derive(Copy, Clone, Dupe, Debug, Display, Allocative, Hash, PartialEq, Eq)]
 pub struct WorkerId(pub u64);
 
+#[derive(Copy, Clone, Dupe, Debug, Display, Allocative, Hash, PartialEq, Eq)]
+pub enum WorkerProtocol {
+    Buck2,
+    Bazel,
+}
+
 pub struct WorkerSpec {
     pub id: WorkerId,
+    pub protocol: WorkerProtocol,
     pub exe: Vec<String>,
     pub env: SortedVectorMap<String, String>,
     pub concurrency: Option<usize>,
     pub streaming: bool,
+    pub bazel_worker_sandboxing: bool,
     pub remote_key: Option<TrackedFileDigest>,
     pub input_paths: CommandExecutionPaths,
 }

@@ -104,6 +104,7 @@ use buck2_execute::execute::request::CommandExecutionRequest;
 use buck2_execute::execute::request::ExecutorPreference;
 use buck2_execute::execute::request::RemoteWorkerSpec;
 use buck2_execute::execute::request::WorkerId;
+use buck2_execute::execute::request::WorkerProtocol;
 use buck2_execute::execute::request::WorkerSpec;
 use buck2_execute::execute::result::CommandExecutionResult;
 use buck2_execute::materialize::materializer::WriteRequest;
@@ -422,7 +423,9 @@ struct UnpackedWorkerValues<'v> {
     id: WorkerId,
     concurrency: Option<usize>,
     streaming: bool,
+    supports_bazel_local_persistent_worker_protocol: bool,
     supports_bazel_remote_persistent_worker_protocol: bool,
+    requires_bazel_worker_sandboxing: bool,
 }
 
 struct UnpackedRunActionValues<'v> {
@@ -1118,7 +1121,15 @@ fn visit_bazel_tool_runfiles_artifacts<'v>(
 }
 
 impl RunAction {
-    fn bazel_execroot(
+    fn bazel_worker_execroot(fs: &ArtifactFs) -> ProjectRelativePathBuf {
+        fs.buck_out_path_resolver()
+            .root()
+            .join(ForwardRelativePathBuf::unchecked_new(
+                "__bazel_execroot".to_owned(),
+            ))
+    }
+
+    fn bazel_private_execroot(
         fs: &ArtifactFs,
         scratch: &BuckOutScratchPath,
     ) -> buck2_error::Result<ProjectRelativePathBuf> {
@@ -1217,8 +1228,11 @@ impl RunAction {
             id: WorkerId(worker.id),
             concurrency: worker.concurrency(),
             streaming: worker.streaming(),
+            supports_bazel_local_persistent_worker_protocol: worker
+                .supports_bazel_local_persistent_worker_protocol(),
             supports_bazel_remote_persistent_worker_protocol: worker
                 .supports_bazel_remote_persistent_worker_protocol(),
+            requires_bazel_worker_sandboxing: worker.requires_bazel_worker_sandboxing(),
         });
 
         let remote_worker: Option<&WorkerInfo> = values.remote_worker()?.map(|v| v.typed);
@@ -1229,7 +1243,9 @@ impl RunAction {
             id: WorkerId(remote_worker.id),
             concurrency: remote_worker.concurrency(),
             streaming: false,
+            supports_bazel_local_persistent_worker_protocol: false,
             supports_bazel_remote_persistent_worker_protocol: false,
+            requires_bazel_worker_sandboxing: false,
         });
 
         Ok(UnpackedRunActionValues {
@@ -1478,9 +1494,15 @@ impl RunAction {
             Some(WorkerSpec {
                 exe: worker_rendered,
                 id: worker.id,
+                protocol: if worker.supports_bazel_local_persistent_worker_protocol {
+                    WorkerProtocol::Bazel
+                } else {
+                    WorkerProtocol::Buck2
+                },
                 env: worker_env?,
                 concurrency: worker.concurrency,
                 streaming: worker.streaming,
+                bazel_worker_sandboxing: worker.requires_bazel_worker_sandboxing,
                 remote_key: worker_key,
                 input_paths,
             })
@@ -1899,9 +1921,15 @@ impl RunAction {
             artifact_inputs[..].map(|&i| CommandExecutionInput::Artifact(Box::new(i.dupe())))
         };
         let scratch = ctx.target().scratch_path();
-        let bazel_execroot = bazel_paths
-            .then(|| Self::bazel_execroot(fs, &scratch))
-            .transpose()?;
+        let bazel_execroot = if bazel_paths {
+            Some(if worker.is_some() {
+                Self::bazel_worker_execroot(fs)
+            } else {
+                Self::bazel_private_execroot(fs, &scratch)?
+            })
+        } else {
+            None
+        };
         self.add_bazel_execroot_path_aliases(
             &mut inputs,
             &artifact_inputs,
@@ -2394,6 +2422,7 @@ impl RunAction {
             None | Some(true) => EnvironmentInheritance::local_command_exclusions(),
             Some(false) => EnvironmentInheritance::empty(),
         };
+        let uses_worker = prepared_run_action.worker.is_some();
         let mut req = prepared_run_action
             .into_command_execution_request()
             .with_prefetch_lossy_stderr(true)
@@ -2413,10 +2442,13 @@ impl RunAction {
             .with_outputs_for_error_handler(outputs_for_error_handler);
 
         if self.inner.bazel_use_default_shell_env.is_some() {
-            req = req.with_working_directory(Self::bazel_execroot(
-                ctx.executor_fs().fs(),
-                &ctx.target().scratch_path(),
-            )?);
+            let scratch = ctx.target().scratch_path();
+            let working_directory = if uses_worker {
+                Self::bazel_worker_execroot(ctx.executor_fs().fs())
+            } else {
+                Self::bazel_private_execroot(ctx.executor_fs().fs(), &scratch)?
+            };
+            req = req.with_working_directory(working_directory);
         }
 
         if let Some(timeout) = self.inner.timeout {

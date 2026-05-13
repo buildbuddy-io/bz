@@ -8,7 +8,11 @@
  * above-listed licenses.
  */
 
+use std::collections::hash_map::DefaultHasher;
 use std::ffi::OsString;
+use std::hash::Hash;
+use std::hash::Hasher;
+use std::process::Stdio;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
@@ -27,6 +31,7 @@ use buck2_execute::execute::manager::CommandExecutionManagerWithClaim;
 use buck2_execute::execute::output::CommandStdStreams;
 use buck2_execute::execute::request::CommandExecutionRequest;
 use buck2_execute::execute::request::WorkerId;
+use buck2_execute::execute::request::WorkerProtocol;
 use buck2_execute::execute::request::WorkerSpec;
 use buck2_execute::execute::result::CommandExecutionMetadata;
 use buck2_execute::execute::result::CommandExecutionResult;
@@ -35,6 +40,7 @@ use buck2_execute_local::GatherOutputStatus;
 use buck2_execute_local::StdRedirectPaths;
 use buck2_fs::error::IoResultExt;
 use buck2_fs::fs_util;
+use buck2_fs::paths::abs_norm_path::AbsNormPath;
 use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
 use buck2_fs::paths::file_name::FileName;
 use buck2_hash::BuckDashMap;
@@ -54,6 +60,10 @@ use futures::future::BoxFuture;
 use futures::future::Shared;
 use host_sharing::HostSharingBroker;
 use host_sharing::HostSharingStrategy;
+use tokio::io::AsyncReadExt;
+use tokio::io::AsyncWriteExt;
+use tokio::process::ChildStdin;
+use tokio::process::ChildStdout;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::task::JoinHandle;
 use tokio_stream::wrappers::UnboundedReceiverStream;
@@ -69,6 +79,57 @@ use crate::executors::local::ForkserverAccess;
 // To avoid unnecessarily limiting the usecases, let's use a maximum allowed value
 // for the request/response.
 const MAX_MESSAGE_SIZE_BYTES: usize = usize::MAX;
+
+#[derive(Clone, PartialEq, prost::Message)]
+struct BazelWorkRequest {
+    #[prost(string, repeated, tag = "1")]
+    arguments: Vec<String>,
+    #[prost(int32, tag = "3")]
+    request_id: i32,
+    #[prost(bool, tag = "4")]
+    cancel: bool,
+    #[prost(int32, tag = "5")]
+    verbosity: i32,
+    #[prost(string, tag = "6")]
+    sandbox_dir: String,
+}
+
+#[derive(Clone, PartialEq, prost::Message)]
+struct BazelWorkResponse {
+    #[prost(int32, tag = "1")]
+    exit_code: i32,
+    #[prost(string, tag = "2")]
+    output: String,
+    #[prost(int32, tag = "3")]
+    request_id: i32,
+    #[prost(bool, tag = "4")]
+    was_cancelled: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+struct WorkerCacheKey {
+    id: WorkerId,
+    protocol: WorkerProtocol,
+    root: String,
+    exe: Vec<String>,
+    env: Vec<(String, String)>,
+}
+
+impl WorkerCacheKey {
+    fn new(worker_spec: &WorkerSpec, root: &AbsNormPath) -> Self {
+        Self {
+            id: worker_spec.id,
+            protocol: worker_spec.protocol,
+            root: root.to_string(),
+            exe: worker_spec.exe.clone(),
+            env: worker_spec
+                .env
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect(),
+        }
+    }
+}
 
 #[derive(buck2_error::Error, Debug)]
 #[buck2(tag = WorkerInit)]
@@ -218,18 +279,223 @@ fn spawn_via_forkserver(
     unreachable!("workers should not be initialized off unix")
 }
 
+fn encode_varint(mut value: usize, out: &mut Vec<u8>) {
+    while value >= 0x80 {
+        out.push((value as u8) | 0x80);
+        value >>= 7;
+    }
+    out.push(value as u8);
+}
+
+async fn read_varint(reader: &mut ChildStdout) -> buck2_error::Result<Option<usize>> {
+    let mut value = 0usize;
+    let mut shift = 0usize;
+    for index in 0..10 {
+        let byte = match reader.read_u8().await {
+            Ok(byte) => byte,
+            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof && index == 0 => {
+                return Ok(None);
+            }
+            Err(e) => return Err(e.into()),
+        };
+        value |= ((byte & 0x7f) as usize) << shift;
+        if byte & 0x80 == 0 {
+            return Ok(Some(value));
+        }
+        shift += 7;
+    }
+    Err(buck2_error!(
+        ErrorTag::Input,
+        "Invalid Bazel worker response length varint"
+    ))
+}
+
+async fn read_bazel_work_response(
+    reader: &mut ChildStdout,
+) -> buck2_error::Result<Option<BazelWorkResponse>> {
+    let Some(len) = read_varint(reader).await? else {
+        return Ok(None);
+    };
+    let mut buf = vec![0u8; len];
+    reader.read_exact(&mut buf).await?;
+    Ok(Some(prost::Message::decode(&*buf)?))
+}
+
+async fn write_bazel_work_request(
+    writer: &mut ChildStdin,
+    request: BazelWorkRequest,
+) -> buck2_error::Result<()> {
+    let mut body = Vec::new();
+    prost::Message::encode(&request, &mut body)?;
+    let mut frame = Vec::with_capacity(body.len() + 10);
+    encode_varint(body.len(), &mut frame);
+    frame.extend(body);
+    writer.write_all(&frame).await?;
+    writer.flush().await?;
+    Ok(())
+}
+
+async fn spawn_bazel_worker(
+    worker_id: WorkerId,
+    worker_key_hash: u64,
+    mut args: Vec<String>,
+    env: impl IntoIterator<Item = (OsString, OsString)>,
+    multiplex: bool,
+    root: &AbsNormPath,
+    dispatcher: EventDispatcher,
+) -> Result<WorkerHandle, WorkerInitError> {
+    let dir_name = format!(
+        "{}-{}-{:016x}",
+        dispatcher.trace_id(),
+        worker_id,
+        worker_key_hash
+    );
+    let worker_dir = AbsNormPathBuf::from("/tmp/buck2_worker".to_owned())
+        .map_err(WorkerInitError::InternalError)?
+        .join(FileName::unchecked_new(&dir_name));
+    if fs_util::try_exists(&worker_dir).map_err(|e| WorkerInitError::InternalError(e.into()))? {
+        return Err(WorkerInitError::InternalError(buck2_error!(
+            buck2_error::ErrorTag::WorkerDirectoryExists,
+            "Directory for worker already exists: {:?}",
+            worker_dir
+        )));
+    }
+    let std_redirects = StdRedirectPaths {
+        stdout: worker_dir.join(FileName::unchecked_new("stdout")),
+        stderr: worker_dir.join(FileName::unchecked_new("stderr")),
+    };
+    fs_util::create_dir_all(&worker_dir).map_err(|e| WorkerInitError::InternalError(e.into()))?;
+
+    args.push("--persistent_worker".to_owned());
+    tracing::info!(
+        "Starting Bazel protocol worker with logs at {}:\n$ {}\n",
+        worker_dir,
+        args.join(" ")
+    );
+
+    let stderr = std::fs::File::create(std_redirects.stderr.as_path())
+        .map_err(|e| WorkerInitError::InternalError(e.into()))?;
+    let mut command = tokio::process::Command::new(&args[0]);
+    command
+        .args(&args[1..])
+        .current_dir(root.as_path())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::from(stderr))
+        .kill_on_drop(true)
+        .env("PWD", root.as_path());
+    for (key, value) in env {
+        command.env(key, value);
+    }
+
+    let mut child = command
+        .spawn()
+        .map_err(|e| WorkerInitError::SpawnFailed(e.to_string()))?;
+    let stdin = child.stdin.take().ok_or_else(|| {
+        WorkerInitError::InternalError(buck2_error!(
+            ErrorTag::Tier0,
+            "Bazel protocol worker stdin was not piped"
+        ))
+    })?;
+    let mut stdout = child.stdout.take().ok_or_else(|| {
+        WorkerInitError::InternalError(buck2_error!(
+            ErrorTag::Tier0,
+            "Bazel protocol worker stdout was not piped"
+        ))
+    })?;
+
+    let (liveliness_observer, liveliness_guard) = LivelinessGuard::create();
+    let (child_exited_observer, child_exited_guard) = LivelinessGuard::create();
+    tokio::spawn(async move {
+        tokio::select! {
+            _ = child.wait() => {}
+            _ = liveliness_observer.while_alive() => {
+                let _ignored = child.kill().await;
+                let _ignored = child.wait().await;
+            }
+        }
+        drop(child_exited_guard);
+    });
+
+    let waiters: Arc<BuckDashMap<i32, tokio::sync::oneshot::Sender<BazelWorkResponse>>> =
+        Default::default();
+    let (stdout_closed_observer, stdout_closed_guard) = LivelinessGuard::create();
+    {
+        let waiters = waiters.dupe();
+        tokio::spawn(async move {
+            loop {
+                match read_bazel_work_response(&mut stdout).await {
+                    Ok(Some(response)) => match waiters.remove(&response.request_id) {
+                        Some(waiter) => {
+                            let _ignored = waiter.1.send(response);
+                        }
+                        None => {
+                            tracing::warn!(
+                                request_id = response.request_id,
+                                "Missing waiter for Bazel worker response"
+                            );
+                        }
+                    },
+                    Ok(None) => break,
+                    Err(e) => {
+                        tracing::warn!(
+                            error = e.to_string(),
+                            "Error reading Bazel worker response"
+                        );
+                        break;
+                    }
+                }
+            }
+            drop(stdout_closed_guard);
+        });
+    }
+
+    Ok(WorkerHandle::new(
+        WorkerClient::Bazel(BazelWorkerClient {
+            ids: Default::default(),
+            stdin: Arc::new(tokio::sync::Mutex::new(stdin)),
+            waiters,
+            stdout_closed_observer,
+            multiplex,
+        }),
+        child_exited_observer,
+        std_redirects,
+        liveliness_guard,
+    ))
+}
+
 async fn spawn_worker(
     worker_id: WorkerId,
+    worker_key_hash: u64,
+    protocol: WorkerProtocol,
     args: Vec<String>,
     env: impl IntoIterator<Item = (OsString, OsString)>,
     streaming: bool,
-    root: &AbsNormPathBuf,
+    root: &AbsNormPath,
     forkserver: ForkserverAccess,
     dispatcher: EventDispatcher,
     graceful_shutdown_timeout_s: Option<u32>,
 ) -> Result<WorkerHandle, WorkerInitError> {
+    if protocol == WorkerProtocol::Bazel {
+        return spawn_bazel_worker(
+            worker_id,
+            worker_key_hash,
+            args,
+            env,
+            streaming,
+            root,
+            dispatcher,
+        )
+        .await;
+    }
+
     // Use fixed length path at /tmp to avoid 108 character limit for unix domain sockets
-    let dir_name = format!("{}-{}", dispatcher.trace_id(), worker_id);
+    let dir_name = format!(
+        "{}-{}-{:016x}",
+        dispatcher.trace_id(),
+        worker_id,
+        worker_key_hash
+    );
     let worker_dir = AbsNormPathBuf::from("/tmp/buck2_worker".to_owned())
         .map_err(WorkerInitError::InternalError)?
         .join(FileName::unchecked_new(&dir_name));
@@ -266,7 +532,7 @@ async fn spawn_worker(
         OsString::from(args[0].clone()),
         args[1..].iter().map(OsString::from).collect(),
         env.clone(),
-        root.clone(),
+        root.to_buf(),
         liveliness_observer,
         &std_redirects,
         &socket_path,
@@ -356,8 +622,8 @@ async fn spawn_worker(
 type WorkerFuture = Shared<BoxFuture<'static, Result<Arc<WorkerHandle>, Arc<WorkerInitError>>>>;
 
 pub struct WorkerPool {
-    workers: Arc<parking_lot::Mutex<StdBuckHashMap<WorkerId, WorkerFuture>>>,
-    brokers: Arc<parking_lot::Mutex<StdBuckHashMap<WorkerId, Arc<HostSharingBroker>>>>,
+    workers: Arc<parking_lot::Mutex<StdBuckHashMap<WorkerCacheKey, WorkerFuture>>>,
+    brokers: Arc<parking_lot::Mutex<StdBuckHashMap<WorkerCacheKey, Arc<HostSharingBroker>>>>,
     graceful_shutdown_timeout_s: Option<u32>,
 }
 
@@ -371,11 +637,16 @@ impl WorkerPool {
         }
     }
 
-    pub fn get_worker_broker(&self, worker_spec: &WorkerSpec) -> Option<Arc<HostSharingBroker>> {
+    pub fn get_worker_broker(
+        &self,
+        worker_spec: &WorkerSpec,
+        root: &AbsNormPath,
+    ) -> Option<Arc<HostSharingBroker>> {
         let mut brokers = self.brokers.lock();
+        let worker_key = WorkerCacheKey::new(worker_spec, root);
         worker_spec.concurrency.map(|concurrency| {
             brokers
-                .entry(worker_spec.id)
+                .entry(worker_key)
                 .or_insert_with(|| {
                     Arc::new(HostSharingBroker::new(
                         HostSharingStrategy::Fifo,
@@ -390,23 +661,34 @@ impl WorkerPool {
         &self,
         worker_spec: &WorkerSpec,
         env: impl IntoIterator<Item = (OsString, OsString)>,
-        root: &AbsNormPathBuf,
+        root: &AbsNormPath,
         forkserver: ForkserverAccess,
         dispatcher: EventDispatcher,
     ) -> (bool, WorkerFuture) {
         let mut workers = self.workers.lock();
-        if let Some(worker_fut) = workers.get(&worker_spec.id) {
+        let worker_key = WorkerCacheKey::new(worker_spec, root);
+        if let Some(worker_fut) = workers.get(&worker_key) {
             (false, worker_fut.clone())
         } else {
             let worker_id = worker_spec.id;
+            let mut hasher = DefaultHasher::new();
+            worker_key.hash(&mut hasher);
+            let worker_key_hash = hasher.finish();
+            let protocol = worker_spec.protocol;
             let args = worker_spec.exe.to_vec();
-            let streaming = worker_spec.streaming;
-            let root = root.clone();
+            let streaming = if worker_spec.protocol == WorkerProtocol::Bazel {
+                worker_spec.concurrency.unwrap_or(1) > 1
+            } else {
+                worker_spec.streaming
+            };
+            let root = root.to_buf();
             let env: Vec<(OsString, OsString)> = env.into_iter().collect();
             let graceful_shutdown_timeout_s = self.graceful_shutdown_timeout_s;
             let fut = async move {
                 match spawn_worker(
                     worker_id,
+                    worker_key_hash,
+                    protocol,
                     args,
                     env,
                     streaming,
@@ -424,7 +706,7 @@ impl WorkerPool {
             .boxed()
             .shared();
 
-            workers.insert(worker_id, fut.clone());
+            workers.insert(worker_key, fut.clone());
             (true, fut)
         }
     }
@@ -439,6 +721,16 @@ enum WorkerClient {
         stream_closed_observer: Arc<dyn LivelinessObserver>,
         waiters: Arc<BuckDashMap<u64, tokio::sync::oneshot::Sender<ExecuteResponseStream>>>,
     },
+    Bazel(BazelWorkerClient),
+}
+
+#[derive(Clone)]
+struct BazelWorkerClient {
+    ids: Arc<AtomicU64>,
+    stdin: Arc<tokio::sync::Mutex<ChildStdin>>,
+    waiters: Arc<BuckDashMap<i32, tokio::sync::oneshot::Sender<BazelWorkResponse>>>,
+    stdout_closed_observer: Arc<dyn LivelinessObserver>,
+    multiplex: bool,
 }
 
 impl WorkerClient {
@@ -507,9 +799,14 @@ impl WorkerClient {
         })
     }
 
-    async fn execute(&mut self, request: ExecuteCommand) -> buck2_error::Result<ExecuteResponse> {
+    async fn execute(
+        &mut self,
+        request: ExecuteCommand,
+        bazel_sandbox_dir: Option<String>,
+    ) -> buck2_error::Result<ExecuteResponse> {
         match self {
             Self::Single(client) => Self::execute_with_retry(client, request).await,
+            Self::Bazel(client) => client.execute(request, bazel_sandbox_dir).await,
             Self::Stream {
                 ids,
                 stream,
@@ -565,6 +862,96 @@ impl WorkerClient {
     }
 }
 
+impl BazelWorkerClient {
+    async fn execute(
+        &self,
+        request: ExecuteCommand,
+        sandbox_dir: Option<String>,
+    ) -> buck2_error::Result<ExecuteResponse> {
+        let ExecuteCommand {
+            argv,
+            env: _,
+            timeout_s,
+        } = request;
+        let request_id = if self.multiplex {
+            self.ids.fetch_add(1, Ordering::Acquire) as i32 + 1
+        } else {
+            0
+        };
+        let arguments = argv
+            .into_iter()
+            .map(|arg| {
+                String::from_utf8(arg).map_err(|e| {
+                    buck2_error!(ErrorTag::Input, "Bazel worker arguments must be UTF-8: {e}")
+                })
+            })
+            .collect::<buck2_error::Result<Vec<_>>>()?;
+
+        let work_request = BazelWorkRequest {
+            arguments,
+            request_id,
+            cancel: false,
+            verbosity: 0,
+            sandbox_dir: sandbox_dir.unwrap_or_default(),
+        };
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        if self.waiters.insert(request_id, tx).is_some() {
+            return Err(buck2_error!(
+                ErrorTag::Tier0,
+                "Bazel worker request id collision: {request_id}"
+            ));
+        }
+        {
+            let mut stdin = self.stdin.lock().await;
+            if let Err(e) = write_bazel_work_request(&mut stdin, work_request).await {
+                self.waiters.remove(&request_id);
+                return Err(e);
+            }
+        }
+
+        let wait_for_response = async {
+            tokio::select! {
+                response = rx => Ok(response?),
+                _ = self.stdout_closed_observer.while_alive() => {
+                    Err(buck2_error!(ErrorTag::Tier0, "Bazel worker stdout closed while waiting for response"))
+                },
+            }
+        };
+        let response = if let Some(timeout_s) = timeout_s {
+            match tokio::time::timeout(Duration::from_secs(timeout_s), wait_for_response).await {
+                Ok(response) => response?,
+                Err(_) => {
+                    self.waiters.remove(&request_id);
+                    if request_id != 0 {
+                        let cancel = BazelWorkRequest {
+                            arguments: Vec::new(),
+                            request_id,
+                            cancel: true,
+                            verbosity: 0,
+                            sandbox_dir: String::new(),
+                        };
+                        let mut stdin = self.stdin.lock().await;
+                        let _ignored = write_bazel_work_request(&mut stdin, cancel).await;
+                    }
+                    return Ok(ExecuteResponse {
+                        exit_code: 1,
+                        stderr: String::new(),
+                        timed_out_after_s: Some(timeout_s),
+                    });
+                }
+            }
+        } else {
+            wait_for_response.await?
+        };
+
+        Ok(ExecuteResponse {
+            exit_code: response.exit_code,
+            stderr: response.output,
+            timed_out_after_s: None,
+        })
+    }
+}
+
 pub struct WorkerHandle {
     client: WorkerClient,
     child_exited_observer: Arc<dyn LivelinessObserver>,
@@ -610,6 +997,7 @@ impl WorkerHandle {
         args: &[String],
         env: Vec<(OsString, OsString)>,
         timeout: Option<Duration>,
+        bazel_sandbox_dir: Option<String>,
     ) -> CommandResult {
         tracing::info!(
             "Sending worker command:\nExecuteCommand {{ argv: {:?}, env: {:?} }}\n",
@@ -627,7 +1015,7 @@ impl WorkerHandle {
 
         let mut client = self.client.clone();
         let (status, stdout, stderr) = tokio::select! {
-            response = client.execute(request) => {
+            response = client.execute(request, bazel_sandbox_dir) => {
                 match response {
                     Ok(exec_response) => {
                         tracing::info!("Worker response:\n{:?}\n", exec_response);
