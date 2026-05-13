@@ -17,6 +17,8 @@ use buck2_artifact::artifact::artifact_type::Artifact;
 use buck2_core::cells::external::ExternalCellOrigin;
 use buck2_core::cells::external::external_cell_origin_for_cell;
 use buck2_core::deferred::base_deferred_key::BaseDeferredKey;
+use buck2_core::fs::buck_out_path::BazelOutputPathKind;
+use buck2_core::fs::buck_out_path::BazelOutputRoot;
 use buck2_core::provider::label::ProvidersLabel;
 use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
 use buck2_execute::path::artifact_path::ArtifactPath;
@@ -201,9 +203,94 @@ pub fn bazel_normalize_root_artifact_exec_paths(value: &str) -> String {
     result
 }
 
+fn bazel_normalize_output_artifact_exec_path(
+    path: &str,
+    marker_text: &str,
+    output_root: BazelOutputRoot,
+) -> Option<String> {
+    let (_, artifact_path) = path.split_once(marker_text)?;
+    let (configuration, output_path) = artifact_path.split_once('/')?;
+    if configuration.is_empty() || output_path.is_empty() {
+        return None;
+    }
+
+    let mut changed = false;
+    let components = output_path
+        .split('/')
+        .filter(|component| {
+            let hidden = component.starts_with("__") && component.ends_with("__");
+            changed |= hidden;
+            !hidden
+        })
+        .collect::<Vec<_>>();
+    if !changed || components.is_empty() {
+        return None;
+    }
+
+    let mut exec_path = format!("{}/{configuration}", output_root.exec_root());
+    for component in components {
+        exec_path.push('/');
+        exec_path.push_str(component);
+    }
+    Some(exec_path)
+}
+
+fn bazel_normalize_output_artifact_exec_paths(
+    value: &str,
+    marker_text: &str,
+    output_root: BazelOutputRoot,
+) -> String {
+    let Some(_) = value.find(marker_text) else {
+        return value.to_owned();
+    };
+
+    let mut result = String::with_capacity(value.len());
+    let mut cursor = 0;
+    while let Some(marker_offset) = value[cursor..].find(marker_text) {
+        let marker_start = cursor + marker_offset;
+        let path_start = value[cursor..marker_start]
+            .rfind(bazel_path_delimiter)
+            .map_or(cursor, |index| cursor + index + 1);
+        let after_marker = &value[marker_start + marker_text.len()..];
+        let path_len = after_marker
+            .find(bazel_path_delimiter)
+            .unwrap_or(after_marker.len());
+        let path_end = marker_start + marker_text.len() + path_len;
+        let Some(path) = bazel_normalize_output_artifact_exec_path(
+            &value[path_start..path_end],
+            marker_text,
+            output_root,
+        ) else {
+            result.push_str(&value[cursor..marker_start + marker_text.len()]);
+            cursor = marker_start + marker_text.len();
+            continue;
+        };
+
+        result.push_str(&value[cursor..path_start]);
+        result.push_str(&path);
+        cursor = path_end;
+    }
+    result.push_str(&value[cursor..]);
+    result
+}
+
+pub fn bazel_normalize_bin_artifact_exec_paths(value: &str) -> String {
+    bazel_normalize_output_artifact_exec_paths(value, "buck-out/bin/", BazelOutputRoot::Bin)
+}
+
+pub fn bazel_normalize_genfiles_artifact_exec_paths(value: &str) -> String {
+    bazel_normalize_output_artifact_exec_paths(
+        value,
+        "buck-out/genfiles/",
+        BazelOutputRoot::Genfiles,
+    )
+}
+
 pub fn bazel_normalize_buck_owned_exec_paths(value: &str) -> String {
     let value = bazel_normalize_external_cells_exec_paths(value);
-    bazel_normalize_root_artifact_exec_paths(&value)
+    let value = bazel_normalize_root_artifact_exec_paths(&value);
+    let value = bazel_normalize_bin_artifact_exec_paths(&value);
+    bazel_normalize_genfiles_artifact_exec_paths(&value)
 }
 
 fn bazel_configuration_exec_path(label: &ConfiguredTargetLabel) -> String {
@@ -213,6 +300,27 @@ fn bazel_configuration_exec_path(label: &ConfiguredTargetLabel) -> String {
         path.push_str(exec_cfg.output_hash().as_str());
     }
     path
+}
+
+fn bazel_build_artifact_owner_label(path: &ArtifactPath<'_>) -> Option<ConfiguredTargetLabel> {
+    let Either::Left(build) = path.base_path.as_ref() else {
+        return None;
+    };
+    build
+        .bazel_owner()
+        .cloned()
+        .or_else(|| build.owner().owner().configured_label())
+}
+
+pub fn bazel_artifact_owner(path: ArtifactPath<'_>) -> Option<BaseDeferredKey> {
+    bazel_artifact_owner_ref(&path)
+}
+
+fn bazel_artifact_owner_ref(path: &ArtifactPath<'_>) -> Option<BaseDeferredKey> {
+    match path.base_path.as_ref() {
+        Either::Left(_) => bazel_build_artifact_owner_label(path).map(BaseDeferredKey::TargetLabel),
+        Either::Right(_) => None,
+    }
 }
 
 fn bazel_package_exec_path(owner: &BaseDeferredKey) -> String {
@@ -251,6 +359,22 @@ fn bazel_package_runfiles_path(owner: &BaseDeferredKey) -> String {
     path
 }
 
+fn bazel_path_has_package_prefix(path: &str, package_exec_path: &str) -> bool {
+    !package_exec_path.is_empty()
+        && (path == package_exec_path
+            || path
+                .strip_prefix(package_exec_path)
+                .is_some_and(|path| path.starts_with('/')))
+}
+
+fn bazel_output_dir_relative_runfiles_path(path: String) -> String {
+    if let Some(path) = path.strip_prefix("external/") {
+        format!("../{path}")
+    } else {
+        path
+    }
+}
+
 fn bazel_build_artifact_path(path: ArtifactPath<'_>) -> String {
     let Either::Left(build) = path.base_path.as_ref() else {
         unreachable!("called with a source artifact path")
@@ -259,14 +383,18 @@ fn bazel_build_artifact_path(path: ArtifactPath<'_>) -> String {
     let short_path = base_short_path
         .strip_prefix_components(path.hidden_components_count)
         .map_or_else(String::new, |path| path.as_str().to_owned());
-    let mut exec_path = "buck-out/bin".to_owned();
-    if let Some(label) = build.owner().owner().configured_label() {
+    let mut exec_path = build.bazel_output_root().exec_root().to_owned();
+    if let Some(label) = bazel_build_artifact_owner_label(&path) {
         push_bazel_path_component(&mut exec_path, &bazel_configuration_exec_path(&label));
     }
-    push_bazel_path_component(
-        &mut exec_path,
-        &bazel_package_exec_path(build.owner().owner()),
-    );
+    if build.bazel_output_path_kind() == BazelOutputPathKind::PackageRelative {
+        if let Some(owner) = bazel_artifact_owner_ref(&path) {
+            let package_exec_path = bazel_package_exec_path(&owner);
+            if !bazel_path_has_package_prefix(&short_path, &package_exec_path) {
+                push_bazel_path_component(&mut exec_path, &package_exec_path);
+            }
+        }
+    }
     push_bazel_path_component(&mut exec_path, &short_path);
     exec_path
 }
@@ -279,7 +407,17 @@ fn bazel_build_artifact_short_path(path: ArtifactPath<'_>) -> String {
     let short_path = base_short_path
         .strip_prefix_components(path.hidden_components_count)
         .map_or_else(String::new, |path| path.as_str().to_owned());
-    let mut runfiles_path = bazel_package_runfiles_path(build.owner().owner());
+    if build.bazel_output_path_kind() == BazelOutputPathKind::OutputDirRelative {
+        return bazel_output_dir_relative_runfiles_path(short_path);
+    }
+    let Some(owner) = bazel_artifact_owner_ref(&path) else {
+        return short_path;
+    };
+    let package_exec_path = bazel_package_exec_path(&owner);
+    if bazel_path_has_package_prefix(&short_path, &package_exec_path) {
+        return bazel_output_dir_relative_runfiles_path(short_path);
+    }
+    let mut runfiles_path = bazel_package_runfiles_path(&owner);
     push_bazel_path_component(&mut runfiles_path, &short_path);
     runfiles_path
 }

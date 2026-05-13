@@ -1173,6 +1173,28 @@ fn bazel_args_values<'v>(value: Value<'v>, heap: Heap<'v>) -> starlark::Result<V
         .collect())
 }
 
+fn bazel_args_scalar_to_string<'v>(value: Value<'v>, heap: Heap<'v>) -> Value<'v> {
+    if value.is_none() {
+        return heap.alloc_str("None").to_value();
+    }
+    if let Some(value) = value.unpack_i32() {
+        return heap.alloc_str(&value.to_string()).to_value();
+    }
+    if let Some(value) = value.unpack_bool() {
+        return heap
+            .alloc_str(if value { "true" } else { "false" })
+            .to_value();
+    }
+    value
+}
+
+fn bazel_args_stringify_scalars<'v>(values: Vec<Value<'v>>, heap: Heap<'v>) -> Vec<Value<'v>> {
+    values
+        .into_iter()
+        .map(|value| bazel_args_scalar_to_string(value, heap))
+        .collect()
+}
+
 fn bazel_args_extend_mapped_value<'v>(
     mapped: Value<'v>,
     values: &mut Vec<Value<'v>>,
@@ -1181,6 +1203,7 @@ fn bazel_args_extend_mapped_value<'v>(
     if mapped.is_none() {
         return Ok(());
     }
+    let mapped = bazel_args_scalar_to_string(mapped, heap);
     if mapped.unpack_str().is_some() {
         values.push(mapped);
         return Ok(());
@@ -1325,11 +1348,22 @@ fn cmd_args_methods(builder: &mut MethodsBuilder) {
                 }
             }
         }
-        let values = args.positions(heap)?.collect::<Vec<_>>();
+        let positions = args.positions(heap)?.collect::<Vec<_>>();
         if let Some(format) = format {
+            if let [arg_name, value] = positions.as_slice()
+                && arg_name.unpack_str().is_some()
+            {
+                this.borrow.add_value(*arg_name)?;
+                let values = bazel_args_stringify_scalars(vec![*value], heap);
+                let nested = bazel_args_nested(values, Some(format), None, None, false)?;
+                this.borrow.add_value(heap.alloc_typed(nested).to_value())?;
+                return Ok(this);
+            }
+            let values = bazel_args_stringify_scalars(positions, heap);
             let nested = bazel_args_nested(values, Some(format), None, None, false)?;
             this.borrow.add_value(heap.alloc_typed(nested).to_value())?;
         } else {
+            let values = bazel_args_stringify_scalars(positions, heap);
             this.borrow.add_from_iterator(values.into_iter())?;
         }
         Ok(this)
@@ -1369,6 +1403,7 @@ fn cmd_args_methods(builder: &mut MethodsBuilder) {
         };
         let mut values = bazel_args_values(values, eval.heap())?;
         values = bazel_args_apply_map_each(values, map_each, eval)?;
+        values = bazel_args_stringify_scalars(values, eval.heap());
         if values.is_empty() && omit_if_empty {
             return Ok(this);
         }
@@ -1428,6 +1463,7 @@ fn cmd_args_methods(builder: &mut MethodsBuilder) {
         };
         let mut values = bazel_args_values(values, eval.heap())?;
         values = bazel_args_apply_map_each(values, map_each, eval)?;
+        values = bazel_args_stringify_scalars(values, eval.heap());
         if values.is_empty() && omit_if_empty {
             return Ok(this);
         }

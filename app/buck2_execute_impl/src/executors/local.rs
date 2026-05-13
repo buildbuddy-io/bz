@@ -1686,7 +1686,7 @@ enum BazelExecrootPreparation {
 }
 
 fn prepare_bazel_execroot_working_directory(
-    project_root: &AbsNormPathBuf,
+    _project_root: &AbsNormPathBuf,
     working_directory: &AbsNormPath,
     preparation: BazelExecrootPreparation,
 ) -> buck2_error::Result<()> {
@@ -1703,29 +1703,13 @@ fn prepare_bazel_execroot_working_directory(
     fs_util::create_dir_all(working_directory)
         .buck_error_context("Error creating Bazel execroot working directory")?;
 
+    // Bazel sandboxed spawns get a private execroot: inputs are materialized inside it and outputs
+    // are copied back after execution. Keep the Buck-backed Bazel execroot private too; symlinking
+    // its buck-out directory to the project buck-out makes otherwise isolated actions race on the
+    // same generated output paths.
     let buck_out = ForwardRelativePathBuf::unchecked_new("buck-out".to_owned());
-    let source = project_root.join(&buck_out);
-    let dest = working_directory.join(&buck_out);
-    if artifact_path_alias_is_current(&dest, &source) {
-        return Ok(());
-    }
-
-    match create_artifact_path_alias_symlink(&source, &dest) {
-        Ok(()) => Ok(()),
-        Err(e) if artifact_path_alias_is_current(&dest, &source) => Ok(()),
-        Err(_) => {
-            fs_util::remove_all(&dest)
-                .categorize_internal()
-                .buck_error_context("Error cleaning stale Bazel execroot buck-out symlink")?;
-            match create_artifact_path_alias_symlink(&source, &dest) {
-                Ok(()) => Ok(()),
-                Err(e) if artifact_path_alias_is_current(&dest, &source) => Ok(()),
-                Err(e) => {
-                    Err(e).buck_error_context("Error creating Bazel execroot buck-out symlink")
-                }
-            }
-        }
-    }
+    fs_util::create_dir_all(working_directory.join(&buck_out))
+        .buck_error_context("Error creating Bazel execroot buck-out directory")
 }
 
 fn is_bazel_execroot_working_directory(working_directory: &AbsNormPath) -> bool {
@@ -1920,10 +1904,9 @@ fn promote_produced_output_path(
             format!("Error creating parent directory for output path `{output_path}`")
         })?;
     }
-    fs_util::rename(&produced, &output)
-        .categorize_internal()
+    fs.copy(produced_path, output_path)
         .with_buck_error_context(|| {
-            format!("Error moving produced output `{produced_path}` to `{output_path}`")
+            format!("Error copying produced output `{produced_path}` to `{output_path}`")
         })?;
 
     Ok(())

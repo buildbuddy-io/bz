@@ -18,6 +18,7 @@ use async_trait::async_trait;
 use buck2_build_api::actions::query::CONFIGURED_ATTR_TO_VALUE;
 use buck2_build_api::actions::query::PackageLabelOption;
 use buck2_build_api::analysis::calculation::RuleAnalysisCalculation;
+use buck2_build_api::interpreter::rule_defs::provider::builtin::platform_info::FrozenPlatformInfo;
 use buck2_build_api::interpreter::rule_defs::provider::builtin::platform_info::PlatformInfo;
 use buck2_build_api::interpreter::rule_defs::provider::collection::FrozenProviderCollectionValue;
 use buck2_build_api::transition::TRANSITION_CALCULATION;
@@ -89,7 +90,13 @@ enum ApplyTransitionError {
     BazelTransitionMustReturnDict(String),
     #[error("unsupported default value for Bazel build setting `{0}`: `{1}`")]
     UnsupportedBazelBuildSettingDefault(String, String),
+    #[error("unsupported value for Bazel build setting `//command_line_option:platforms`: `{0}`")]
+    UnsupportedBazelPlatformsValue(String),
+    #[error("Expected `{0}` to be a `platform()` target, but it had no `PlatformInfo` provider.")]
+    MissingPlatformInfo(TargetLabel),
 }
+
+const BAZEL_PLATFORMS_OPTION: &str = "//command_line_option:platforms";
 
 fn bazel_transition_input_value<'v>(
     key: &str,
@@ -98,7 +105,7 @@ fn bazel_transition_input_value<'v>(
     conf: &ConfigurationData,
     eval: &mut Evaluator<'v, '_, '_>,
 ) -> buck2_error::Result<Value<'v>> {
-    if key == "//command_line_option:platforms" {
+    if key == BAZEL_PLATFORMS_OPTION {
         if let Some(value) = conf.data()?.build_settings.get(key) {
             Ok(bazel_build_setting_value_to_starlark(value, eval))
         } else {
@@ -345,6 +352,142 @@ fn bazel_transitioned_label(
     format!("bazeltr-{:016x}", hasher.finish())
 }
 
+async fn bazel_platform_configuration(
+    ctx: &mut DiceComputations<'_>,
+    target: &TargetLabel,
+    is_marked_as_exec_platform: bool,
+) -> buck2_error::Result<ConfigurationData> {
+    ctx.get_configuration_analysis_result(&ProvidersLabel::default_for(target.dupe()))
+        .await?
+        .provider_collection()
+        .builtin_provider::<FrozenPlatformInfo>()
+        .ok_or_else(|| ApplyTransitionError::MissingPlatformInfo(target.dupe()))?
+        .to_configuration(is_marked_as_exec_platform)
+}
+
+async fn parse_bazel_platform_target(
+    ctx: &mut DiceComputations<'_>,
+    label: &str,
+) -> buck2_error::Result<TargetLabel> {
+    let cell_resolver = ctx.get_cell_resolver().await?;
+    let cell_alias_resolver = ctx
+        .get_cell_alias_resolver(cell_resolver.root_cell())
+        .await?;
+    TargetLabel::parse(
+        label,
+        cell_resolver.root_cell(),
+        &cell_resolver,
+        &cell_alias_resolver,
+    )
+}
+
+async fn bazel_platform_targets_from_setting(
+    ctx: &mut DiceComputations<'_>,
+    value: &BazelBuildSettingValue,
+) -> buck2_error::Result<Vec<TargetLabel>> {
+    match value {
+        BazelBuildSettingValue::Label(label) => Ok(vec![label.target().dupe()]),
+        BazelBuildSettingValue::LabelList(labels) => {
+            Ok(labels.iter().map(|label| label.target().dupe()).collect())
+        }
+        BazelBuildSettingValue::String(label) => Ok(vec![
+            parse_bazel_platform_target(ctx, label)
+                .await
+                .with_buck_error_context(|| format!("Parsing Bazel platform label `{label}`"))?,
+        ]),
+        BazelBuildSettingValue::StringList(labels) => {
+            let mut targets = Vec::with_capacity(labels.len());
+            for label in labels {
+                targets.push(
+                    parse_bazel_platform_target(ctx, label)
+                        .await
+                        .with_buck_error_context(|| {
+                            format!("Parsing Bazel platform label `{label}`")
+                        })?,
+                );
+            }
+            Ok(targets)
+        }
+        BazelBuildSettingValue::Bool(_) | BazelBuildSettingValue::Int(_) => Err(
+            ApplyTransitionError::UnsupportedBazelPlatformsValue(value.as_config_setting_value())
+                .into(),
+        ),
+    }
+}
+
+async fn bazel_host_platform_target(
+    ctx: &mut DiceComputations<'_>,
+) -> buck2_error::Result<TargetLabel> {
+    parse_bazel_platform_target(ctx, "platforms//host:host").await
+}
+
+async fn apply_bazel_platform_build_setting_to_cfg(
+    ctx: &mut DiceComputations<'_>,
+    cfg: ConfigurationData,
+) -> buck2_error::Result<ConfigurationData> {
+    if !cfg.is_bound() {
+        return Ok(cfg);
+    }
+
+    let data = cfg.data()?.clone();
+    let Some(platforms) = data.build_settings.get(BAZEL_PLATFORMS_OPTION) else {
+        return Ok(cfg);
+    };
+
+    let mut platform_targets = bazel_platform_targets_from_setting(ctx, platforms).await?;
+    if platform_targets.is_empty() {
+        platform_targets.push(bazel_host_platform_target(ctx).await?);
+    }
+    platform_targets.truncate(1);
+
+    let platform_cfg =
+        bazel_platform_configuration(ctx, &platform_targets[0], cfg.is_marked_as_exec_platform())
+            .await?;
+
+    let mut new_data = platform_cfg.data()?.clone();
+    for (key, value) in data.build_settings {
+        new_data.build_settings.insert(key, value);
+    }
+    new_data.build_settings.insert(
+        BAZEL_PLATFORMS_OPTION.to_owned(),
+        BazelBuildSettingValue::LabelList(
+            platform_targets
+                .into_iter()
+                .map(ProvidersLabel::default_for)
+                .collect(),
+        ),
+    );
+
+    if cfg.data()? == &new_data {
+        return Ok(cfg);
+    }
+
+    let label = bazel_transitioned_label(&new_data, cfg.is_marked_as_exec_platform());
+    ConfigurationData::from_platform(label, new_data, cfg.is_marked_as_exec_platform())
+}
+
+async fn apply_bazel_platform_build_setting(
+    ctx: &mut DiceComputations<'_>,
+    applied: TransitionApplied,
+) -> buck2_error::Result<TransitionApplied> {
+    match applied {
+        TransitionApplied::Single(cfg) => Ok(TransitionApplied::Single(
+            apply_bazel_platform_build_setting_to_cfg(ctx, cfg).await?,
+        )),
+        TransitionApplied::Split(split) => {
+            let mut converted = OrderedMap::new();
+            for (key, cfg) in split {
+                let previous = converted.insert(
+                    key,
+                    apply_bazel_platform_build_setting_to_cfg(ctx, cfg).await?,
+                );
+                assert!(previous.is_none());
+            }
+            Ok(TransitionApplied::Split(SortedMap::from(converted)))
+        }
+    }
+}
+
 fn bazel_transition_result_to_configuration(
     result: Value,
     conf: &ConfigurationData,
@@ -579,7 +722,11 @@ async fn do_apply_transition(
 ) -> buck2_error::Result<TransitionApplied> {
     let transition = ctx.fetch_transition(transition_id).await?;
     if let Some(settings) = transition.bazel_analysis_test_settings() {
-        return bazel_analysis_test_transition_to_configuration(settings, conf);
+        return apply_bazel_platform_build_setting(
+            ctx,
+            bazel_analysis_test_transition_to_configuration(settings, conf)?,
+        )
+        .await;
     }
     let bazel_defaults = if transition.is_bazel() {
         bazel_transition_input_defaults(ctx, &transition).await?
@@ -600,7 +747,7 @@ async fn do_apply_transition(
     let print = EventDispatcherPrintHandler(get_dispatcher());
     let eval_kind = StarlarkEvalKind::Transition(Arc::new(transition_id.clone()));
     let provider = StarlarkEvaluatorProvider::new(ctx, eval_kind).await?;
-    BuckStarlarkModule::with_profiling(|module| {
+    let applied = BuckStarlarkModule::with_profiling(|module| {
         let (finished_eval, res) =
             provider.with_evaluator(&module, cancellation.into(), |eval, _| {
                 eval.set_print_handler(&print);
@@ -680,8 +827,14 @@ async fn do_apply_transition(
                 }
             })?;
         let (token, _) = finished_eval.finish()?;
-        Ok((token, res))
-    })
+        Ok::<_, buck2_error::Error>((token, res))
+    })?;
+
+    if transition.is_bazel() {
+        apply_bazel_platform_build_setting(ctx, applied).await
+    } else {
+        Ok(applied)
+    }
 }
 
 #[async_trait]

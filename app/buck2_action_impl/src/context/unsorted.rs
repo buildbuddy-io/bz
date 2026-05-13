@@ -19,6 +19,7 @@ use buck2_build_api::interpreter::rule_defs::digest_config::StarlarkDigestConfig
 use buck2_build_api::interpreter::rule_defs::transitive_set::FrozenTransitiveSetDefinition;
 use buck2_build_api::interpreter::rule_defs::transitive_set::TransitiveSet;
 use buck2_core::cells::external::external_cell_origin_for_cell;
+use buck2_core::fs::buck_out_path::BazelOutputPathKind;
 use buck2_core::fs::buck_out_path::BuckOutPathKind;
 use buck2_execute::execute::request::OutputType;
 use starlark::environment::MethodsBuilder;
@@ -36,9 +37,9 @@ fn bazel_action_output_path<'v>(
     filename: &str,
     sibling: Value<'v>,
     eval: &mut Evaluator<'v, '_, '_>,
-) -> starlark::Result<String> {
+) -> starlark::Result<(String, BazelOutputPathKind)> {
     if sibling.is_none() {
-        return Ok(filename.to_owned());
+        return Ok((filename.to_owned(), BazelOutputPathKind::PackageRelative));
     }
 
     let sibling = <&dyn StarlarkArtifactLike<'v>>::unpack_value(sibling)?.ok_or_else(|| {
@@ -48,12 +49,27 @@ fn bazel_action_output_path<'v>(
             sibling.get_type()
         )
     })?;
-    let sibling_path = sibling.with_short_path(&|path| eval.heap().alloc_str(path.as_str()))?;
+    let sibling_path = sibling.with_bazel_path(&|path| eval.heap().alloc_str(path))?;
     let sibling_path = sibling_path.as_str();
-    Ok(match sibling_path.rsplit_once('/') {
-        Some((parent, _)) if !parent.is_empty() => format!("{parent}/{filename}"),
-        _ => filename.to_owned(),
-    })
+    let sibling_path = bazel_output_dir_relative_path(sibling_path);
+    Ok((
+        match sibling_path.rsplit_once('/') {
+            Some((parent, _)) if !parent.is_empty() => format!("{parent}/{filename}"),
+            _ => filename.to_owned(),
+        },
+        BazelOutputPathKind::OutputDirRelative,
+    ))
+}
+
+fn bazel_output_dir_relative_path(exec_path: &str) -> &str {
+    let Some(path) = exec_path
+        .strip_prefix("buck-out/bin/")
+        .or_else(|| exec_path.strip_prefix("buck-out/genfiles/"))
+    else {
+        return exec_path;
+    };
+
+    path.split_once('/').map_or(exec_path, |(_, path)| path)
 }
 
 fn bazel_push_path_component(path: &mut String, component: &str) {
@@ -67,7 +83,7 @@ fn bazel_push_path_component(path: &mut String, component: &str) {
 }
 
 fn bazel_current_package_exec_path<'v>(actions: &AnalysisActions<'v>) -> String {
-    let Some(label) = actions.label else {
+    let Some(label) = actions.bazel_label() else {
         return String::new();
     };
     let package = label.label().target().pkg();
@@ -120,15 +136,20 @@ pub(crate) fn analysis_actions_methods_unsorted(builder: &mut MethodsBuilder) {
         #[starlark(require = named, default = NoneType)] sibling: Value<'v>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<StarlarkDeclaredArtifact<'v>> {
-        let filename = bazel_action_output_path(filename, sibling, eval)?;
-        let artifact = this.state()?.declare_output(
-            None,
-            &filename,
-            OutputType::File,
-            eval.call_stack_top_location(),
-            BuckOutPathKind::Configuration,
-            eval.heap(),
-        )?;
+        let (filename, bazel_output_path_kind) = bazel_action_output_path(filename, sibling, eval)?;
+        let artifact = this
+            .state()?
+            .declare_output_with_bazel_owner_output_root_and_path_kind(
+                None,
+                &filename,
+                OutputType::File,
+                eval.call_stack_top_location(),
+                BuckOutPathKind::Configuration,
+                this.bazel_owner(),
+                this.bazel_output_root,
+                bazel_output_path_kind,
+                eval.heap(),
+            )?;
 
         Ok(StarlarkDeclaredArtifact::new(
             eval.call_stack_top_location(),
@@ -144,15 +165,20 @@ pub(crate) fn analysis_actions_methods_unsorted(builder: &mut MethodsBuilder) {
         #[starlark(require = named, default = NoneType)] sibling: Value<'v>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<StarlarkDeclaredArtifact<'v>> {
-        let filename = bazel_action_output_path(filename, sibling, eval)?;
-        let artifact = this.state()?.declare_output(
-            None,
-            &filename,
-            OutputType::Directory,
-            eval.call_stack_top_location(),
-            BuckOutPathKind::Configuration,
-            eval.heap(),
-        )?;
+        let (filename, bazel_output_path_kind) = bazel_action_output_path(filename, sibling, eval)?;
+        let artifact = this
+            .state()?
+            .declare_output_with_bazel_owner_output_root_and_path_kind(
+                None,
+                &filename,
+                OutputType::Directory,
+                eval.call_stack_top_location(),
+                BuckOutPathKind::Configuration,
+                this.bazel_owner(),
+                this.bazel_output_root,
+                bazel_output_path_kind,
+                eval.heap(),
+            )?;
 
         Ok(StarlarkDeclaredArtifact::new(
             eval.call_stack_top_location(),
@@ -168,15 +194,20 @@ pub(crate) fn analysis_actions_methods_unsorted(builder: &mut MethodsBuilder) {
         #[starlark(require = named, default = NoneType)] sibling: Value<'v>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<StarlarkDeclaredArtifact<'v>> {
-        let filename = bazel_action_output_path(filename, sibling, eval)?;
-        let artifact = this.state()?.declare_output(
-            None,
-            &filename,
-            OutputType::Symlink,
-            eval.call_stack_top_location(),
-            BuckOutPathKind::Configuration,
-            eval.heap(),
-        )?;
+        let (filename, bazel_output_path_kind) = bazel_action_output_path(filename, sibling, eval)?;
+        let artifact = this
+            .state()?
+            .declare_output_with_bazel_owner_output_root_and_path_kind(
+                None,
+                &filename,
+                OutputType::Symlink,
+                eval.call_stack_top_location(),
+                BuckOutPathKind::Configuration,
+                this.bazel_owner(),
+                this.bazel_output_root,
+                bazel_output_path_kind,
+                eval.heap(),
+            )?;
 
         Ok(StarlarkDeclaredArtifact::new(
             eval.call_stack_top_location(),
@@ -201,14 +232,18 @@ pub(crate) fn analysis_actions_methods_unsorted(builder: &mut MethodsBuilder) {
         }
 
         let path = bazel_shareable_output_path(this, path)?;
-        let artifact = this.state()?.declare_output(
-            None,
-            &path,
-            OutputType::File,
-            eval.call_stack_top_location(),
-            BuckOutPathKind::Configuration,
-            eval.heap(),
-        )?;
+        let artifact = this
+            .state()?
+            .declare_output_with_bazel_owner_and_output_root(
+                None,
+                &path,
+                OutputType::File,
+                eval.call_stack_top_location(),
+                BuckOutPathKind::Configuration,
+                this.bazel_owner(),
+                this.bazel_output_root,
+                eval.heap(),
+            )?;
 
         Ok(StarlarkDeclaredArtifact::new(
             eval.call_stack_top_location(),
@@ -224,14 +259,18 @@ pub(crate) fn analysis_actions_methods_unsorted(builder: &mut MethodsBuilder) {
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<StarlarkDeclaredArtifact<'v>> {
         let path = bazel_shareable_output_path(this, path)?;
-        let artifact = this.state()?.declare_output(
-            None,
-            &path,
-            OutputType::Directory,
-            eval.call_stack_top_location(),
-            BuckOutPathKind::Configuration,
-            eval.heap(),
-        )?;
+        let artifact = this
+            .state()?
+            .declare_output_with_bazel_owner_and_output_root(
+                None,
+                &path,
+                OutputType::Directory,
+                eval.call_stack_top_location(),
+                BuckOutPathKind::Configuration,
+                this.bazel_owner(),
+                this.bazel_output_root,
+                eval.heap(),
+            )?;
 
         Ok(StarlarkDeclaredArtifact::new(
             eval.call_stack_top_location(),
@@ -290,14 +329,18 @@ pub(crate) fn analysis_actions_methods_unsorted(builder: &mut MethodsBuilder) {
         } else {
             BuckOutPathKind::Configuration
         };
-        let artifact = this.state()?.declare_output(
-            prefix,
-            filename,
-            output_type,
-            eval.call_stack_top_location(),
-            path_resolution_method,
-            eval.heap(),
-        )?;
+        let artifact = this
+            .state()?
+            .declare_output_with_bazel_owner_and_output_root(
+                prefix,
+                filename,
+                output_type,
+                eval.call_stack_top_location(),
+                path_resolution_method,
+                this.bazel_owner(),
+                this.bazel_output_root,
+                eval.heap(),
+            )?;
 
         Ok(StarlarkDeclaredArtifact::new(
             eval.call_stack_top_location(),

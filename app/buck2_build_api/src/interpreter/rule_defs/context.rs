@@ -19,6 +19,7 @@ use allocative::Allocative;
 use buck2_core::cells::external::bzlmod_canonical_repo_name_for_cell;
 use buck2_core::cells::external::bzlmod_cell_aliases_for_cell;
 use buck2_core::configuration::data::BazelBuildSettingValue;
+use buck2_core::fs::buck_out_path::BazelOutputRoot;
 use buck2_core::fs::buck_out_path::BuckOutPathKind;
 use buck2_core::provider::label::ConfiguredProvidersLabel;
 use buck2_core::provider::label::ProvidersName;
@@ -36,6 +37,7 @@ use buck2_interpreter::types::target_label::StarlarkTargetLabel;
 use buck2_util::late_binding::LateBinding;
 use derive_more::Display;
 use dice::DiceComputations;
+use dupe::Dupe;
 use futures::FutureExt;
 use starlark::any::ProvidesStaticType;
 use starlark::collections::SmallMap;
@@ -83,6 +85,7 @@ use crate::interpreter::rule_defs::artifact::starlark_artifact::StarlarkArtifact
 use crate::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkArtifactLike;
 use crate::interpreter::rule_defs::artifact::starlark_declared_artifact::StarlarkDeclaredArtifact;
 use crate::interpreter::rule_defs::depset::BazelDepset;
+use crate::interpreter::rule_defs::depset::bazel_depset_from_values;
 use crate::interpreter::rule_defs::depset::bazel_depset_to_list;
 use crate::interpreter::rule_defs::plugins::AnalysisPlugins;
 use crate::interpreter::rule_defs::provider::builtin::constraint_value_info::ConstraintValueInfo;
@@ -100,6 +103,8 @@ enum AnalysisContextError {
     NonBuildSetting(String),
     #[error("{0}")]
     MakeVariableExpansion(String),
+    #[error("{message} while tokenizing '{option}'")]
+    Tokenization { message: String, option: String },
 }
 
 /// Whether `declare_output` defaults `has_content_based_path` to `true`.
@@ -152,13 +157,23 @@ pub struct AnalysisActions<'v> {
     pub label: Option<ValueTyped<'v, StarlarkConfiguredProvidersLabel>>,
     pub toolchains: ValueTyped<'v, AnalysisToolchains<'v>>,
     pub bazel_cpp_options: BazelCppOptions,
+    #[trace(unsafe_ignore)]
+    pub bazel_output_root: BazelOutputRoot,
     /// Copies from the ctx, so we can capture them for `dynamic`.
-    pub attributes: Option<ValueOfUnchecked<'v, StructRef<'static>>>,
+    pub attributes: RefCell<Option<ValueOfUnchecked<'v, StructRef<'static>>>>,
+    pub bazel_context_override: RefCell<Option<BazelActionsContextOverride<'v>>>,
     pub plugins: Option<ValueTypedComplex<'v, AnalysisPlugins<'v>>>,
     pub build_file_path: Option<String>,
     pub rule_kind_name: Option<String>,
     /// Digest configuration to use when interpreting digests passed in analysis.
     pub digest_config: DigestConfig,
+}
+
+#[derive(Clone, Debug, Trace, Allocative)]
+pub struct BazelActionsContextOverride<'v> {
+    pub label: Option<ValueTyped<'v, StarlarkConfiguredProvidersLabel>>,
+    pub build_file_path: Option<String>,
+    pub rule_kind_name: Option<String>,
 }
 
 #[derive(ProvidesStaticType, Debug, Trace, NoSerialize, Allocative)]
@@ -366,6 +381,44 @@ impl<'v> AnalysisActions<'v> {
         }
         Ok(())
     }
+
+    pub fn bazel_label(&self) -> Option<ValueTyped<'v, StarlarkConfiguredProvidersLabel>> {
+        self.bazel_context_override
+            .borrow()
+            .as_ref()
+            .and_then(|context| context.label)
+            .or(self.label)
+    }
+
+    pub fn bazel_owner(&self) -> Option<ConfiguredTargetLabel> {
+        self.bazel_label()
+            .map(|label| label.as_ref().label().target().dupe())
+    }
+
+    pub fn bazel_build_file_path(&self) -> String {
+        self.bazel_context_override
+            .borrow()
+            .as_ref()
+            .and_then(|context| context.build_file_path.clone())
+            .or_else(|| self.build_file_path.clone())
+            .unwrap_or_else(|| bazel_build_file_path_from_label(self.bazel_label()))
+    }
+
+    pub fn bazel_rule_kind_name(&self) -> String {
+        self.bazel_context_override
+            .borrow()
+            .as_ref()
+            .and_then(|context| context.rule_kind_name.clone())
+            .or_else(|| self.rule_kind_name.clone())
+            .unwrap_or_default()
+    }
+
+    pub fn replace_bazel_context_override(
+        &self,
+        context: Option<BazelActionsContextOverride<'v>>,
+    ) -> Option<BazelActionsContextOverride<'v>> {
+        self.bazel_context_override.replace(context)
+    }
 }
 
 #[starlark_value(type = "AnalysisActions", StarlarkTypeRepr, UnpackValue)]
@@ -448,6 +501,8 @@ fn analysis_actions_methods_context(builder: &mut MethodsBuilder) {
     fn attr<'v>(this: &AnalysisActions<'v>, heap: Heap<'v>) -> starlark::Result<Value<'v>> {
         Ok(this
             .attributes
+            .borrow()
+            .as_ref()
             .map(|attrs| attrs.get())
             .unwrap_or_else(|| heap.alloc(AllocStruct(Vec::<(&str, Value<'v>)>::new()))))
     }
@@ -457,21 +512,24 @@ fn analysis_actions_methods_context(builder: &mut MethodsBuilder) {
     fn attrs<'v>(this: &AnalysisActions<'v>, heap: Heap<'v>) -> starlark::Result<Value<'v>> {
         Ok(this
             .attributes
+            .borrow()
+            .as_ref()
             .map(|attrs| attrs.get())
             .unwrap_or_else(|| heap.alloc(AllocStruct(Vec::<(&str, Value<'v>)>::new()))))
     }
 
     #[starlark(attribute)]
     fn bin_dir<'v>(this: &AnalysisActions<'v>, heap: Heap<'v>) -> starlark::Result<Value<'v>> {
-        Ok(bazel_file_root_for_label(heap, "buck-out/bin", this.label))
+        Ok(bazel_file_root_for_label(
+            heap,
+            "buck-out/bin",
+            this.bazel_label(),
+        ))
     }
 
     #[starlark(attribute)]
     fn build_file_path<'v>(this: &AnalysisActions<'v>) -> starlark::Result<String> {
-        Ok(this
-            .build_file_path
-            .clone()
-            .unwrap_or_else(|| bazel_build_file_path_from_label(this.label)))
+        Ok(this.bazel_build_file_path())
     }
 
     #[starlark(attribute)]
@@ -479,7 +537,7 @@ fn analysis_actions_methods_context(builder: &mut MethodsBuilder) {
         this: &AnalysisActions<'v>,
         heap: Heap<'v>,
     ) -> starlark::Result<Value<'v>> {
-        Ok(analysis_configuration(this.label, heap).get())
+        Ok(analysis_configuration(this.bazel_label(), heap).get())
     }
 
     #[starlark(attribute)]
@@ -507,7 +565,7 @@ fn analysis_actions_methods_context(builder: &mut MethodsBuilder) {
     fn fragments<'v>(this: &AnalysisActions<'v>, heap: Heap<'v>) -> starlark::Result<Value<'v>> {
         Ok(bazel_fragments(
             heap,
-            this.label,
+            this.bazel_label(),
             this.bazel_cpp_options.clone(),
         ))
     }
@@ -517,7 +575,7 @@ fn analysis_actions_methods_context(builder: &mut MethodsBuilder) {
         Ok(bazel_file_root_for_label(
             heap,
             "buck-out/genfiles",
-            this.label,
+            this.bazel_label(),
         ))
     }
 
@@ -525,7 +583,7 @@ fn analysis_actions_methods_context(builder: &mut MethodsBuilder) {
     fn label<'v>(
         this: &AnalysisActions<'v>,
     ) -> starlark::Result<NoneOr<ValueTyped<'v, StarlarkConfiguredProvidersLabel>>> {
-        Ok(NoneOr::from_option(this.label))
+        Ok(NoneOr::from_option(this.bazel_label()))
     }
 
     #[starlark(attribute)]
@@ -537,7 +595,7 @@ fn analysis_actions_methods_context(builder: &mut MethodsBuilder) {
 
     #[starlark(attribute)]
     fn workspace_name<'v>(this: &AnalysisActions<'v>) -> starlark::Result<String> {
-        Ok(bazel_workspace_name_for_label(this.label))
+        Ok(bazel_workspace_name_for_label(this.bazel_label()))
     }
 
     #[starlark(attribute)]
@@ -555,7 +613,8 @@ fn analysis_actions_methods_context(builder: &mut MethodsBuilder) {
 
 #[derive(ProvidesStaticType, Debug, Trace, NoSerialize, Allocative)]
 pub struct AnalysisContext<'v> {
-    attrs: Option<ValueOfUnchecked<'v, StructRef<'static>>>,
+    attrs: RefCell<Option<ValueOfUnchecked<'v, StructRef<'static>>>>,
+    split_attrs: Option<ValueOfUnchecked<'v, StructRef<'static>>>,
     outputs: Option<ValueOfUnchecked<'v, StructRef<'static>>>,
     pub actions: ValueTyped<'v, AnalysisActions<'v>>,
     /// Only `None` when running a `dynamic_output` action from Bxl.
@@ -596,12 +655,14 @@ impl<'v> AnalysisContext<'v> {
     fn new(
         heap: Heap<'v>,
         attrs: Option<ValueOfUnchecked<'v, StructRef<'static>>>,
+        split_attrs: Option<ValueOfUnchecked<'v, StructRef<'static>>>,
         outputs: Option<ValueOfUnchecked<'v, StructRef<'static>>>,
         label: Option<ValueTyped<'v, StarlarkConfiguredProvidersLabel>>,
         plugins: Option<ValueTypedComplex<'v, AnalysisPlugins<'v>>>,
         toolchains: Vec<String>,
         resolved_toolchains: SmallMap<String, Value<'v>>,
         bazel_cpp_options: BazelCppOptions,
+        bazel_output_root: BazelOutputRoot,
         is_bazel_build_setting: bool,
         build_file_path: Option<String>,
         rule_kind_name: Option<String>,
@@ -614,14 +675,17 @@ impl<'v> AnalysisContext<'v> {
             label,
             toolchains,
             bazel_cpp_options: bazel_cpp_options.clone(),
-            attributes: attrs,
+            bazel_output_root,
+            attributes: RefCell::new(attrs),
+            bazel_context_override: RefCell::new(None),
             plugins,
             build_file_path: build_file_path.clone(),
             rule_kind_name: rule_kind_name.clone(),
             digest_config,
         });
         Self {
-            attrs,
+            attrs: RefCell::new(attrs),
+            split_attrs,
             outputs,
             actions,
             label,
@@ -640,12 +704,14 @@ impl<'v> AnalysisContext<'v> {
     pub fn prepare(
         heap: Heap<'v>,
         attrs: Option<ValueOfUnchecked<'v, StructRef<'static>>>,
+        split_attrs: Option<ValueOfUnchecked<'v, StructRef<'static>>>,
         outputs: Option<ValueOfUnchecked<'v, StructRef<'static>>>,
         label: Option<ConfiguredTargetLabel>,
         plugins: Option<ValueTypedComplex<'v, AnalysisPlugins<'v>>>,
         toolchains: Vec<String>,
         resolved_toolchains: SmallMap<String, Value<'v>>,
         bazel_cpp_options: BazelCppOptions,
+        bazel_output_root: BazelOutputRoot,
         is_bazel_build_setting: bool,
         build_file_path: Option<String>,
         rule_kind_name: Option<String>,
@@ -660,12 +726,14 @@ impl<'v> AnalysisContext<'v> {
         let analysis_context = Self::new(
             heap,
             attrs,
+            split_attrs,
             outputs,
             label,
             plugins,
             toolchains,
             resolved_toolchains,
             bazel_cpp_options,
+            bazel_output_root,
             is_bazel_build_setting,
             build_file_path,
             rule_kind_name,
@@ -677,6 +745,12 @@ impl<'v> AnalysisContext<'v> {
 
     pub fn assert_no_promises(&self) -> buck2_error::Result<()> {
         self.actions.state()?.assert_no_promises()
+    }
+
+    pub fn set_attrs(&self, attrs: ValueOfUnchecked<'v, StructRef<'static>>) {
+        *self.attrs.borrow_mut() = Some(attrs);
+        *self.actions.attributes.borrow_mut() = Some(attrs);
+        *self.bazel_file_structs.borrow_mut() = None;
     }
 
     /// Must take an `AnalysisContext` which has never had `take_state` called on it before.
@@ -726,7 +800,17 @@ fn analysis_context_attrs<'v>(
     ctx: &AnalysisContext<'v>,
 ) -> buck2_error::Result<ValueOfUnchecked<'v, StructRef<'static>>> {
     ctx.attrs
+        .borrow()
+        .as_ref()
+        .copied()
         .ok_or_else(|| internal_error!("`attrs` is not available for `dynamic_output` or BXL"))
+}
+
+fn analysis_context_split_attrs<'v>(
+    ctx: &AnalysisContext<'v>,
+) -> buck2_error::Result<ValueOfUnchecked<'v, StructRef<'static>>> {
+    ctx.split_attrs
+        .ok_or_else(|| internal_error!("`split_attr` is not available for `dynamic_output` or BXL"))
 }
 
 fn analysis_context_outputs<'v>(
@@ -823,6 +907,51 @@ fn bazel_configuration_bool_method<'v>(
 }
 
 #[derive(Debug, ProvidesStaticType, NoSerialize, Allocative)]
+struct BazelTokenizeFunction;
+
+impl fmt::Display for BazelTokenizeFunction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("<ctx.tokenize>")
+    }
+}
+
+starlark::starlark_simple_value!(BazelTokenizeFunction);
+
+#[starlark_value(type = "function")]
+impl<'v> StarlarkValue<'v> for BazelTokenizeFunction {
+    fn invoke(
+        &self,
+        _me: Value<'v>,
+        args: &Arguments<'v, '_>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<Value<'v>> {
+        args.no_named_args()?;
+        let positions = args.positions(eval.heap())?.collect::<Vec<_>>();
+        let [option] = positions.as_slice() else {
+            return Err(buck2_error::buck2_error!(
+                buck2_error::ErrorTag::Input,
+                "ctx.tokenize() expects exactly one positional argument"
+            )
+            .into());
+        };
+        let Some(option) = option.unpack_str() else {
+            return Err(buck2_error::buck2_error!(
+                buck2_error::ErrorTag::Input,
+                "ctx.tokenize() expected str, got `{}`",
+                option.get_type()
+            )
+            .into());
+        };
+        let tokens = bazel_shell_tokenize(option)?;
+        Ok(bazel_string_list(eval.heap(), &tokens))
+    }
+}
+
+fn bazel_tokenize_function<'v>(heap: Heap<'v>) -> Value<'v> {
+    heap.alloc(BazelTokenizeFunction)
+}
+
+#[derive(Debug, ProvidesStaticType, NoSerialize, Allocative)]
 struct BazelCppConfiguration {
     options: BazelCppOptions,
     is_exec: bool,
@@ -833,6 +962,9 @@ struct BazelAppleConfiguration {
     options: BazelCppOptions,
     is_exec: bool,
 }
+
+#[derive(Debug, ProvidesStaticType, NoSerialize, Allocative)]
+struct BazelJavaConfiguration;
 
 #[derive(Debug, ProvidesStaticType, NoSerialize, Allocative)]
 struct BazelPlatformConfiguration {
@@ -852,6 +984,12 @@ impl fmt::Display for BazelAppleConfiguration {
     }
 }
 
+impl fmt::Display for BazelJavaConfiguration {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("<java fragment>")
+    }
+}
+
 impl fmt::Display for BazelPlatformConfiguration {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("<platform fragment>")
@@ -860,6 +998,7 @@ impl fmt::Display for BazelPlatformConfiguration {
 
 starlark::starlark_simple_value!(BazelCppConfiguration);
 starlark::starlark_simple_value!(BazelAppleConfiguration);
+starlark::starlark_simple_value!(BazelJavaConfiguration);
 starlark::starlark_simple_value!(BazelPlatformConfiguration);
 
 #[starlark_value(type = "cpp")]
@@ -875,6 +1014,14 @@ impl<'v> StarlarkValue<'v> for BazelAppleConfiguration {
     fn get_methods() -> Option<&'static Methods> {
         static RES: MethodsStatic = MethodsStatic::new();
         RES.methods_for_type::<Self::Canonical>(bazel_apple_configuration_methods)
+    }
+}
+
+#[starlark_value(type = "java")]
+impl<'v> StarlarkValue<'v> for BazelJavaConfiguration {
+    fn get_methods() -> Option<&'static Methods> {
+        static RES: MethodsStatic = MethodsStatic::new();
+        RES.methods_for_type::<Self::Canonical>(bazel_java_configuration_methods)
     }
 }
 
@@ -896,6 +1043,72 @@ fn bazel_string_list<'v>(heap: Heap<'v>, values: &[String]) -> Value<'v> {
     ))
 }
 
+pub(crate) fn bazel_shell_tokenize(option_string: &str) -> buck2_error::Result<Vec<String>> {
+    let mut options = Vec::new();
+    let mut token = String::new();
+    let mut force_token = false;
+    let mut quotation = None;
+    let mut chars = option_string.chars();
+
+    while let Some(c) = chars.next() {
+        if let Some(quote) = quotation {
+            if c == quote {
+                quotation = None;
+            } else if c == '\\' && quote == '"' {
+                let Some(next) = chars.next() else {
+                    return Err(buck2_error::Error::from(
+                        AnalysisContextError::Tokenization {
+                            message: "backslash at end of string".to_owned(),
+                            option: option_string.to_owned(),
+                        },
+                    ));
+                };
+                if next != '\\' && next != '"' {
+                    token.push('\\');
+                }
+                token.push(next);
+            } else {
+                token.push(c);
+            }
+        } else if c == '\'' || c == '"' {
+            quotation = Some(c);
+            force_token = true;
+        } else if c == ' ' || c == '\t' {
+            if force_token || !token.is_empty() {
+                options.push(std::mem::take(&mut token));
+                force_token = false;
+            }
+        } else if c == '\\' {
+            let Some(next) = chars.next() else {
+                return Err(buck2_error::Error::from(
+                    AnalysisContextError::Tokenization {
+                        message: "backslash at end of string".to_owned(),
+                        option: option_string.to_owned(),
+                    },
+                ));
+            };
+            token.push(next);
+        } else {
+            token.push(c);
+        }
+    }
+
+    if quotation.is_some() {
+        return Err(buck2_error::Error::from(
+            AnalysisContextError::Tokenization {
+                message: "unterminated quotation".to_owned(),
+                option: option_string.to_owned(),
+            },
+        ));
+    }
+
+    if force_token || !token.is_empty() {
+        options.push(token);
+    }
+
+    Ok(options)
+}
+
 fn bazel_apple_platform<'v>(heap: Heap<'v>) -> Value<'v> {
     heap.alloc(AllocStruct([
         ("name", heap.alloc_str("macos").to_value()),
@@ -914,6 +1127,177 @@ fn bazel_apple_minimum_os<'v>(
         .macos_minimum_os(is_exec)
         .map(|value| heap.alloc_str(value).to_value())
         .unwrap_or_else(Value::new_none)
+}
+
+#[starlark_module]
+fn bazel_java_configuration_methods(builder: &mut MethodsBuilder) {
+    #[starlark(attribute)]
+    fn default_javac_flags<'v>(
+        #[starlark(this)] this: &BazelJavaConfiguration,
+        heap: Heap<'v>,
+    ) -> starlark::Result<Value<'v>> {
+        let _ = this;
+        Ok(bazel_empty_list(heap))
+    }
+
+    #[starlark(attribute)]
+    fn default_javac_flags_depset<'v>(
+        #[starlark(this)] this: &BazelJavaConfiguration,
+        heap: Heap<'v>,
+    ) -> starlark::Result<Value<'v>> {
+        let _ = this;
+        Ok(bazel_depset_from_values(heap, Vec::<Value>::new())?)
+    }
+
+    #[starlark(attribute)]
+    fn strict_java_deps(
+        #[starlark(this)] this: &BazelJavaConfiguration,
+    ) -> starlark::Result<&'static str> {
+        let _ = this;
+        Ok("default")
+    }
+
+    fn use_header_compilation(
+        #[starlark(this)] this: &BazelJavaConfiguration,
+    ) -> starlark::Result<bool> {
+        let _ = this;
+        Ok(true)
+    }
+
+    fn generate_java_deps(
+        #[starlark(this)] this: &BazelJavaConfiguration,
+    ) -> starlark::Result<bool> {
+        let _ = this;
+        Ok(true)
+    }
+
+    fn reduce_java_classpath(
+        #[starlark(this)] this: &BazelJavaConfiguration,
+    ) -> starlark::Result<&'static str> {
+        let _ = this;
+        Ok("BAZEL")
+    }
+
+    #[starlark(attribute)]
+    fn default_jvm_opts<'v>(
+        #[starlark(this)] this: &BazelJavaConfiguration,
+        heap: Heap<'v>,
+    ) -> starlark::Result<Value<'v>> {
+        let _ = this;
+        Ok(bazel_empty_list(heap))
+    }
+
+    #[starlark(attribute)]
+    fn one_version_enforcement_level(
+        #[starlark(this)] this: &BazelJavaConfiguration,
+    ) -> starlark::Result<&'static str> {
+        let _ = this;
+        Ok("OFF")
+    }
+
+    #[starlark(attribute)]
+    fn one_version_enforcement_on_java_tests(
+        #[starlark(this)] this: &BazelJavaConfiguration,
+    ) -> starlark::Result<bool> {
+        let _ = this;
+        Ok(true)
+    }
+
+    #[starlark(attribute)]
+    fn add_test_support_to_compile_deps(
+        #[starlark(this)] this: &BazelJavaConfiguration,
+    ) -> starlark::Result<bool> {
+        let _ = this;
+        Ok(true)
+    }
+
+    #[starlark(attribute)]
+    fn run_android_lint(#[starlark(this)] this: &BazelJavaConfiguration) -> starlark::Result<bool> {
+        let _ = this;
+        Ok(false)
+    }
+
+    fn enforce_explicit_java_test_deps(
+        #[starlark(this)] this: &BazelJavaConfiguration,
+    ) -> starlark::Result<bool> {
+        let _ = this;
+        Ok(false)
+    }
+
+    #[starlark(attribute)]
+    fn multi_release_deploy_jars(
+        #[starlark(this)] this: &BazelJavaConfiguration,
+    ) -> starlark::Result<bool> {
+        let _ = this;
+        Ok(true)
+    }
+
+    #[starlark(attribute)]
+    fn plugins<'v>(
+        #[starlark(this)] this: &BazelJavaConfiguration,
+        heap: Heap<'v>,
+    ) -> starlark::Result<Value<'v>> {
+        let _ = this;
+        Ok(bazel_empty_list(heap))
+    }
+
+    fn use_ijars(#[starlark(this)] this: &BazelJavaConfiguration) -> starlark::Result<bool> {
+        let _ = this;
+        Ok(true)
+    }
+
+    fn use_header_compilation_direct_deps(
+        #[starlark(this)] this: &BazelJavaConfiguration,
+    ) -> starlark::Result<bool> {
+        let _ = this;
+        Ok(true)
+    }
+
+    fn disallow_java_import_exports(
+        #[starlark(this)] this: &BazelJavaConfiguration,
+    ) -> starlark::Result<bool> {
+        let _ = this;
+        Ok(false)
+    }
+
+    #[starlark(attribute)]
+    fn bytecode_optimizer_mnemonic(
+        #[starlark(this)] this: &BazelJavaConfiguration,
+    ) -> starlark::Result<&'static str> {
+        let _ = this;
+        Ok("Proguard")
+    }
+
+    #[starlark(attribute)]
+    fn split_bytecode_optimization_pass(
+        #[starlark(this)] this: &BazelJavaConfiguration,
+    ) -> starlark::Result<bool> {
+        let _ = this;
+        Ok(false)
+    }
+
+    #[starlark(attribute)]
+    fn bytecode_optimization_pass_actions(
+        #[starlark(this)] this: &BazelJavaConfiguration,
+    ) -> starlark::Result<i32> {
+        let _ = this;
+        Ok(1)
+    }
+
+    #[starlark(attribute)]
+    fn enforce_proguard_file_extension(
+        #[starlark(this)] this: &BazelJavaConfiguration,
+    ) -> starlark::Result<bool> {
+        let _ = this;
+        Ok(false)
+    }
+
+    fn auto_create_java_test_deploy_jars(
+        #[starlark(this)] this: &BazelJavaConfiguration,
+    ) -> starlark::Result<bool> {
+        let _ = this;
+        Ok(false)
+    }
 }
 
 #[starlark_module]
@@ -1373,9 +1757,7 @@ fn bazel_is_exec_configuration(
     label.is_some_and(|label| label.label().target().cfg().is_marked_as_exec_platform())
 }
 
-fn bazel_platform_label(
-    label: Option<ValueTyped<'_, StarlarkConfiguredProvidersLabel>>,
-) -> String {
+fn bazel_platform_label(label: Option<ValueTyped<'_, StarlarkConfiguredProvidersLabel>>) -> String {
     label
         .and_then(|label| label.label().target().cfg().label().ok().map(str::to_owned))
         .unwrap_or_else(|| "@@platforms//host:host".to_owned())
@@ -1403,6 +1785,7 @@ fn bazel_fragments<'v>(
                 is_exec,
             }),
         ),
+        ("java", heap.alloc(BazelJavaConfiguration)),
         (
             "platform",
             heap.alloc(BazelPlatformConfiguration {
@@ -1471,33 +1854,48 @@ pub fn analysis_actions_to_bazel_ctx<'v>(
     let empty_struct = heap.alloc(AllocStruct(Vec::<(&str, Value<'v>)>::new()));
     let attr = this
         .attributes
+        .borrow()
+        .as_ref()
         .map(|attrs| attrs.get())
         .unwrap_or(empty_struct);
-    let label = this
-        .label
+    analysis_actions_to_bazel_ctx_with_overrides(
+        actions,
+        heap,
+        attr,
+        attr,
+        this.bazel_label(),
+        this.bazel_build_file_path(),
+        this.bazel_rule_kind_name(),
+    )
+}
+
+pub fn analysis_actions_to_bazel_ctx_with_overrides<'v>(
+    actions: ValueTyped<'v, AnalysisActions<'v>>,
+    heap: Heap<'v>,
+    attr: Value<'v>,
+    rule_attr: Value<'v>,
+    label: Option<ValueTyped<'v, StarlarkConfiguredProvidersLabel>>,
+    build_file_path: String,
+    rule_kind: String,
+) -> Value<'v> {
+    let this = actions.as_ref();
+    let empty_struct = heap.alloc(AllocStruct(Vec::<(&str, Value<'v>)>::new()));
+    let label_value = label
         .map(|label| label.to_value())
         .unwrap_or_else(Value::new_none);
-    let build_file_path = this
-        .build_file_path
-        .clone()
-        .unwrap_or_else(|| bazel_build_file_path_from_label(this.label));
-    let rule_kind = this.rule_kind_name.as_deref().unwrap_or("");
     heap.alloc(AllocStruct([
         ("actions", actions.to_value()),
         ("attr", attr),
         ("attrs", attr),
         (
             "bin_dir",
-            bazel_file_root_for_label(heap, "buck-out/bin", this.label),
+            bazel_file_root_for_label(heap, "buck-out/bin", label),
         ),
         (
             "build_file_path",
             heap.alloc_str(build_file_path.as_str()).to_value(),
         ),
-        (
-            "configuration",
-            analysis_configuration(this.label, heap).get(),
-        ),
+        ("configuration", analysis_configuration(label, heap).get()),
         ("disabled_features", heap.alloc(AllocList::EMPTY)),
         ("exec_groups", heap.alloc(AllocDict::EMPTY)),
         ("executable", empty_struct),
@@ -1506,25 +1904,29 @@ pub fn analysis_actions_to_bazel_ctx<'v>(
         ("files", empty_struct),
         (
             "fragments",
-            bazel_fragments(heap, this.label, this.bazel_cpp_options.clone()),
+            bazel_fragments(heap, label, this.bazel_cpp_options.clone()),
         ),
         (
             "genfiles_dir",
-            bazel_file_root_for_label(heap, "buck-out/genfiles", this.label),
+            bazel_file_root_for_label(heap, "buck-out/genfiles", label),
         ),
         ("info_file", Value::new_none()),
-        ("label", label),
+        ("label", label_value),
         ("outputs", empty_struct),
         (
             "rule",
-            heap.alloc(AllocStruct([("kind", heap.alloc_str(rule_kind).to_value())])),
+            heap.alloc(AllocStruct([
+                ("attr", rule_attr),
+                ("kind", heap.alloc_str(&rule_kind).to_value()),
+            ])),
         ),
-        ("rule_class", heap.alloc_str(rule_kind).to_value()),
+        ("rule_class", heap.alloc_str(&rule_kind).to_value()),
+        ("tokenize", bazel_tokenize_function(heap)),
         ("toolchains", this.toolchains.to_value()),
         ("version_file", Value::new_none()),
         (
             "workspace_name",
-            heap.alloc_str(&bazel_workspace_name_for_label(this.label))
+            heap.alloc_str(&bazel_workspace_name_for_label(label))
                 .to_value(),
         ),
     ]))
@@ -1713,6 +2115,11 @@ fn bazel_location_label_keys_for_target<'v>(
             keys.push(root_relative.to_owned());
         }
     }
+    if let Some(current) = ctx.label
+        && current.label().target().pkg().cell_name().as_str() == cell
+    {
+        bazel_push_repo_local_location_label_key(&mut keys, package_path, name);
+    }
     if cell != "root" {
         bazel_push_external_location_label_key(
             &mut keys,
@@ -1741,6 +2148,21 @@ fn bazel_location_label_keys_for_target<'v>(
     }
 
     keys
+}
+
+fn bazel_push_repo_local_location_label_key(
+    keys: &mut Vec<String>,
+    package_path: &str,
+    name: &str,
+) {
+    if package_path.is_empty() {
+        keys.push(format!("//:{name}"));
+    } else {
+        keys.push(format!("//{package_path}:{name}"));
+        if package_path.rsplit('/').next() == Some(name) {
+            keys.push(format!("//{package_path}"));
+        }
+    }
 }
 
 fn bazel_push_external_location_label_key(
@@ -1807,8 +2229,20 @@ fn bazel_location_target_for_artifact<'v>(
 fn bazel_location_target_for_dep<'v>(
     dep: &Dependency<'v>,
     short_paths: bool,
+    prefer_executable: bool,
     heap: Heap<'v>,
 ) -> starlark::Result<BazelLocationTarget> {
+    if prefer_executable
+        && let Some(executable) = dep.files_to_run_executable()?
+        && let Some(artifact) = <&dyn StarlarkArtifactLike<'v>>::unpack_value(executable)?
+    {
+        return Ok(bazel_location_target_for_artifact(
+            artifact,
+            short_paths,
+            heap,
+        )?);
+    }
+
     let mut exec_paths = Vec::new();
     let mut rlocation_paths = Vec::new();
     for output in dep.default_output_values()? {
@@ -1829,6 +2263,7 @@ fn bazel_collect_location_targets<'v>(
     ctx: &AnalysisContext<'v>,
     value: Value<'v>,
     short_paths: bool,
+    prefer_executable: bool,
     heap: Heap<'v>,
     targets: &mut SmallMap<String, BazelLocationTarget>,
 ) -> starlark::Result<()> {
@@ -1836,7 +2271,7 @@ fn bazel_collect_location_targets<'v>(
         return Ok(());
     }
     if let Some(dep) = Dependency::from_value(value) {
-        let target = bazel_location_target_for_dep(dep, short_paths, heap)?;
+        let target = bazel_location_target_for_dep(dep, short_paths, prefer_executable, heap)?;
         for key in
             bazel_location_label_keys_for_target(ctx, dep.label().inner().target().unconfigured())
         {
@@ -1867,20 +2302,48 @@ fn bazel_collect_location_targets<'v>(
     }
     if let Some(list) = ListRef::from_value(value) {
         for item in list.iter() {
-            bazel_collect_location_targets(ctx, item, short_paths, heap, targets)?;
+            bazel_collect_location_targets(
+                ctx,
+                item,
+                short_paths,
+                prefer_executable,
+                heap,
+                targets,
+            )?;
         }
         return Ok(());
     }
     if let Some(tuple) = TupleRef::from_value(value) {
         for item in tuple.iter() {
-            bazel_collect_location_targets(ctx, item, short_paths, heap, targets)?;
+            bazel_collect_location_targets(
+                ctx,
+                item,
+                short_paths,
+                prefer_executable,
+                heap,
+                targets,
+            )?;
         }
         return Ok(());
     }
     if let Some(dict) = DictRef::from_value(value) {
         for (key, value) in dict.iter() {
-            bazel_collect_location_targets(ctx, key, short_paths, heap, targets)?;
-            bazel_collect_location_targets(ctx, value, short_paths, heap, targets)?;
+            bazel_collect_location_targets(
+                ctx,
+                key,
+                short_paths,
+                prefer_executable,
+                heap,
+                targets,
+            )?;
+            bazel_collect_location_targets(
+                ctx,
+                value,
+                short_paths,
+                prefer_executable,
+                heap,
+                targets,
+            )?;
         }
     }
     Ok(())
@@ -1892,14 +2355,18 @@ fn bazel_collect_location_targets_from_attrs<'v>(
     heap: Heap<'v>,
     targets: &mut SmallMap<String, BazelLocationTarget>,
 ) -> starlark::Result<()> {
-    let Some(attrs) = ctx.attrs else {
+    let Some(attrs) = ctx.attrs.borrow().as_ref().copied() else {
         return Ok(());
     };
     let Some(attrs) = StructRef::from_value(attrs.get()) else {
         return Ok(());
     };
-    for (_, value) in attrs.iter() {
-        bazel_collect_location_targets(ctx, value, short_paths, heap, targets)?;
+    for (name, value) in attrs.iter() {
+        let prefer_executable = matches!(
+            name.as_str(),
+            "deps" | "implementation_deps" | "data" | "tools" | "exec_tools" | "toolchains"
+        );
+        bazel_collect_location_targets(ctx, value, short_paths, prefer_executable, heap, targets)?;
     }
     Ok(())
 }
@@ -2039,8 +2506,11 @@ fn bazel_collect_location_targets_from_label_dict<'v>(
         let Some(label) = bazel_target_label_from_label_value(label) else {
             continue;
         };
-        let target =
-            bazel_location_target_for_file_values(bazel_file_values_from_value(files)?, short_paths, heap)?;
+        let target = bazel_location_target_for_file_values(
+            bazel_file_values_from_value(files)?,
+            short_paths,
+            heap,
+        )?;
         for key in bazel_location_label_keys_for_target(ctx, label) {
             if !targets.contains_key(&key) {
                 targets.insert(key, target.clone());
@@ -2240,7 +2710,7 @@ fn analysis_context_template_make_variables<'v>(
     this: &AnalysisContext<'v>,
 ) -> buck2_error::Result<Vec<(String, String)>> {
     let mut variables = Vec::new();
-    let Some(attrs) = this.attrs else {
+    let Some(attrs) = this.attrs.borrow().as_ref().copied() else {
         return Ok(variables);
     };
     for attr in BAZEL_DEFAULT_MAKE_VARIABLE_ATTRIBUTES {
@@ -2422,12 +2892,14 @@ pub fn bazel_analysis_context_declare_file<'v>(
         )
     })?;
     let mut state = ctx.actions.state()?;
-    let declared = state.declare_output(
+    let declared = state.declare_output_with_bazel_owner_and_output_root(
         None,
         name,
         OutputType::File,
         None,
         BuckOutPathKind::Configuration,
+        ctx.actions.bazel_owner(),
+        ctx.actions.bazel_output_root,
         heap,
     )?;
     Ok(heap
@@ -2486,6 +2958,14 @@ fn analysis_context_methods(builder: &mut MethodsBuilder) {
         this: RefAnalysisContext<'v>,
     ) -> starlark::Result<ValueOfUnchecked<'v, StructRef<'static>>> {
         Ok(analysis_context_attrs(this.0)?)
+    }
+
+    /// Bazel view of split-transition attributes.
+    #[starlark(attribute)]
+    fn split_attr<'v>(
+        this: RefAnalysisContext<'v>,
+    ) -> starlark::Result<ValueOfUnchecked<'v, StructRef<'static>>> {
+        Ok(analysis_context_split_attrs(this.0)?)
     }
 
     /// Bazel rule metadata visible to aspect implementations.
@@ -2623,6 +3103,17 @@ fn analysis_context_methods(builder: &mut MethodsBuilder) {
         Ok(false)
     }
 
+    /// Splits a shell command into a list of tokens.
+    fn tokenize<'v>(
+        this: RefAnalysisContext<'v>,
+        #[starlark(require = pos)] option: &str,
+        heap: Heap<'v>,
+    ) -> starlark::Result<Value<'v>> {
+        let _ = this;
+        let tokens = bazel_shell_tokenize(option)?;
+        Ok(bazel_string_list(heap, &tokens))
+    }
+
     /// Returns true if the given constraint value is part of the current target platform.
     fn target_platform_has_constraint<'v>(
         this: RefAnalysisContext<'v>,
@@ -2670,7 +3161,7 @@ fn analysis_context_methods(builder: &mut MethodsBuilder) {
 
         let mut collected = Vec::new();
         bazel_collect_runfiles_from_attrs(
-            this.0.attrs,
+            this.0.attrs.borrow().as_ref().copied(),
             collect_data,
             collect_default,
             &mut collected,
@@ -2755,7 +3246,7 @@ fn analysis_context_methods(builder: &mut MethodsBuilder) {
             return Ok(bazel_build_setting_value_to_starlark(value, heap));
         }
 
-        let attrs = this.0.attrs.ok_or_else(|| {
+        let attrs = this.0.attrs.borrow().as_ref().copied().ok_or_else(|| {
             internal_error!("`build_setting_value` is not available without attrs")
         })?;
         struct_field(attrs, "build_setting_default").ok_or_else(|| {
@@ -2795,7 +3286,14 @@ fn analysis_context_methods(builder: &mut MethodsBuilder) {
         let mut target_map = SmallMap::new();
         bazel_collect_location_targets_from_attrs(this.0, short_paths, heap, &mut target_map)?;
         for target in targets.items {
-            bazel_collect_location_targets(this.0, target, short_paths, heap, &mut target_map)?;
+            bazel_collect_location_targets(
+                this.0,
+                target,
+                short_paths,
+                false,
+                heap,
+                &mut target_map,
+            )?;
         }
         bazel_expand_location(input, &target_map)
     }

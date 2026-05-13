@@ -574,9 +574,7 @@ async fn target_node_dependency_is_visible(
                     return Ok(true);
                 }
                 if target_node_visibility_matches_bazel_package_groups_for_package(
-                    ctx,
-                    dep,
-                    package,
+                    ctx, dep, package,
                 )
                 .await?
                 {
@@ -642,7 +640,10 @@ async fn precheck_toolchain_dep_visibility(
             .get_target_node(dep.unconfigured())
             .await
             .with_buck_error_context(|| {
-                format!("looking up unconfigured target node `{}`", dep.unconfigured())
+                format!(
+                    "looking up unconfigured target node `{}`",
+                    dep.unconfigured()
+                )
             })?;
         match target_node_dependency_is_visible(ctx, &dep_node, target_label, &CheckVisibility::Yes)
             .await
@@ -1775,11 +1776,7 @@ async fn compute_configured_target_node_no_transition(
     let mut exec_deps = Vec::with_capacity(gathered_deps.exec_deps.len());
 
     for dep in toolchain_dep_results {
-        errors_and_incompats.unpack_dep_no_visibility_into(
-            partial_target_label,
-            dep,
-            &mut deps,
-        );
+        errors_and_incompats.unpack_dep_no_visibility_into(partial_target_label, dep, &mut deps);
     }
     for (dep, _check_visibility) in exec_dep_results {
         errors_and_incompats.unpack_dep_no_visibility_into(

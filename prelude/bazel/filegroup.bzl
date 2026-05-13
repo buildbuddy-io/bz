@@ -27,7 +27,10 @@ def _bazel_filegroup_impl(ctx):
         fail("Output group {} is not permitted for reference in filegroups.".format(output_group))
 
     transitive_files = _collect_output_group(ctx.attr.srcs, output_group) if output_group else _collect_files(ctx.attr.srcs)
-    return [DefaultInfo(files = depset(transitive = transitive_files))]
+    files = depset(transitive = transitive_files)
+    files_list = files.to_list()
+    executable = files_list[0] if len(files_list) == 1 else None
+    return [DefaultInfo(files = files, executable = executable)]
 
 bazel_filegroup = rule(
     implementation = _bazel_filegroup_impl,

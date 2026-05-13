@@ -72,6 +72,8 @@ pub struct Rule {
     pub bazel_output_attrs: Vec<BazelOutputAttr>,
     /// Bazel implicit outputs declared with `rule(outputs = {...})`.
     pub bazel_implicit_outputs: Vec<BazelImplicitOutput>,
+    /// Whether Bazel output artifacts from this rule are declared under genfiles instead of bin.
+    pub bazel_output_to_genfiles: bool,
     /// Whether the rule was declared through Bazel's `rule(implementation = ...)` API.
     pub is_bazel_rule: bool,
     /// Whether the rule was declared with Bazel's `build_setting = ...`.

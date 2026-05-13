@@ -73,6 +73,7 @@ use crate::interpreter::rule_defs::artifact::starlark_artifact_like::ValueIsInpu
 use crate::interpreter::rule_defs::artifact_tagging::ArtifactTag;
 use crate::interpreter::rule_defs::cmd_args::CommandLineArtifactVisitor;
 use crate::interpreter::rule_defs::cmd_args::value_as::ValueAsCommandLineLike;
+use crate::interpreter::rule_defs::context::bazel_workspace_name_for_label;
 use crate::interpreter::rule_defs::depset::BazelDepset;
 use crate::interpreter::rule_defs::depset::FrozenBazelDepset;
 use crate::interpreter::rule_defs::depset::bazel_depset_empty;
@@ -357,7 +358,7 @@ fn path_is_package_init(path: &str) -> bool {
     matches!(path_file_name(path), "__init__.py" | "__init__.pyc")
 }
 
-fn bazel_runfiles_file_path<'v>(heap: Heap<'v>, file: Value<'v>) -> starlark::Result<String> {
+fn bazel_runfiles_raw_file_path<'v>(heap: Heap<'v>, file: Value<'v>) -> starlark::Result<String> {
     let file = ValueAsInputArtifactLike::unpack_value(file)?.ok_or_else(|| {
         buck2_error::buck2_error!(
             buck2_error::ErrorTag::Input,
@@ -365,11 +366,25 @@ fn bazel_runfiles_file_path<'v>(heap: Heap<'v>, file: Value<'v>) -> starlark::Re
             file.to_string_for_type_error()
         )
     })?;
-    Ok(file
+    let path = file
         .0
         .with_bazel_short_path(&|short_path| heap.alloc_str(short_path))?
         .as_str()
-        .to_owned())
+        .to_owned();
+    Ok(path)
+}
+
+fn bazel_runfiles_file_path<'v>(heap: Heap<'v>, file: Value<'v>) -> starlark::Result<String> {
+    let path = bazel_runfiles_raw_file_path(heap, file)?;
+    Ok(bazel_runfiles_prefixed_path(&path))
+}
+
+fn bazel_runfiles_prefixed_path(path: &str) -> String {
+    if let Some(external_path) = path.strip_prefix("../") {
+        external_path.to_owned()
+    } else {
+        path_join(&bazel_workspace_name_for_label(None), path)
+    }
 }
 
 fn bazel_runfiles_symlink_path<'v>(heap: Heap<'v>, symlink: Value<'v>) -> starlark::Result<String> {
@@ -427,7 +442,7 @@ pub fn bazel_runfiles_artifact_entries<'v>(
         entries.push(bazel_runfiles_artifact_entry(heap, &path, file));
     }
     for symlink in bazel_depset_to_list(runfiles.symlinks.get().to_value())? {
-        let path = bazel_runfiles_symlink_path(heap, symlink)?;
+        let path = bazel_runfiles_prefixed_path(&bazel_runfiles_symlink_path(heap, symlink)?);
         let target_file = bazel_runfiles_symlink_target_file(heap, symlink)?;
         entries.push(bazel_runfiles_artifact_entry(heap, &path, target_file));
     }
@@ -495,7 +510,7 @@ pub fn bazel_runfiles_with_generated_inits_empty_files_supplier<'v>(
 
     let mut manifest_paths = BTreeSet::new();
     for file in &files {
-        manifest_paths.insert(bazel_runfiles_file_path(heap, *file)?);
+        manifest_paths.insert(bazel_runfiles_raw_file_path(heap, *file)?);
     }
     for symlink in &symlinks {
         manifest_paths.insert(bazel_runfiles_symlink_path(heap, *symlink)?);
@@ -773,6 +788,33 @@ impl<'v> DefaultInfo<'v> {
             data_runfiles,
             default_runfiles,
         }
+    }
+}
+
+impl<'v, V: ValueLike<'v>> DefaultInfoGen<V> {
+    pub fn default_output_values_for_dependency(&self) -> buck2_error::Result<Vec<Value<'v>>> {
+        let default_outputs = ListRef::from_value(self.default_outputs.get().to_value())
+            .ok_or_else(|| internal_error!("Should be list of artifacts"))?;
+        if !default_outputs.is_empty() {
+            return Ok(default_outputs.iter().collect());
+        }
+        Ok(bazel_depset_to_list(self.files.get().to_value())?)
+    }
+
+    pub fn files_raw_for_dependency(&self) -> Value<'v> {
+        self.files.get().to_value()
+    }
+
+    pub fn files_to_run_raw_for_dependency(&self) -> Value<'v> {
+        self.files_to_run.get().to_value()
+    }
+
+    pub fn data_runfiles_raw_for_dependency(&self) -> Value<'v> {
+        self.data_runfiles.get().to_value()
+    }
+
+    pub fn default_runfiles_raw_for_dependency(&self) -> Value<'v> {
+        self.default_runfiles.get().to_value()
     }
 }
 

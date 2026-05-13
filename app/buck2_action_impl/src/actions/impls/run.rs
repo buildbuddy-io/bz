@@ -69,11 +69,13 @@ use buck2_core::category::Category;
 use buck2_core::category::CategoryRef;
 use buck2_core::content_hash::ContentBasedPathHash;
 use buck2_core::deferred::base_deferred_key::BaseDeferredKey;
+use buck2_core::deferred::key::DeferredHolderKey;
 use buck2_core::execution_types::executor_config::MetaInternalExtraParams;
 use buck2_core::execution_types::executor_config::ReGangWorker;
 use buck2_core::execution_types::executor_config::RemoteExecutorCustomImage;
 use buck2_core::execution_types::executor_config::RemoteExecutorDependency;
 use buck2_core::fs::artifact_path_resolver::ArtifactFs;
+use buck2_core::fs::buck_out_path::BazelOutputRoot;
 use buck2_core::fs::buck_out_path::BuckOutPathKind;
 use buck2_core::fs::buck_out_path::BuckOutScratchPath;
 use buck2_core::fs::buck_out_path::BuildArtifactPath;
@@ -114,6 +116,7 @@ use buck2_hash::buck_indexmap;
 use buck2_util::thin_box::ThinBoxSlice;
 use derive_more::Display;
 use dupe::Dupe;
+use either::Either;
 use gazebo::prelude::*;
 use host_sharing::HostSharingRequirements;
 use host_sharing::WeightClass;
@@ -306,6 +309,7 @@ pub(crate) struct StarlarkRunActionValues<'v> {
     pub(crate) args: ValueTyped<'v, StarlarkCmdArgs<'v>>,
     pub(crate) bazel_inputs: Option<ValueTyped<'v, StarlarkCmdArgs<'v>>>,
     pub(crate) bazel_executable_runfiles: Option<Value<'v>>,
+    pub(crate) bazel_tool_runfiles: Option<Value<'v>>,
     pub(crate) env: Option<ValueOfUnchecked<'v, DictType<String, ValueAsCommandLineLike<'static>>>>,
     pub(crate) worker: Option<ValueTypedComplex<'v, WorkerInfo<'v>>>,
     pub(crate) remote_worker: Option<ValueTypedComplex<'v, WorkerInfo<'v>>>,
@@ -329,6 +333,7 @@ pub(crate) struct FrozenStarlarkRunActionValues {
     pub(crate) args: FrozenValueTyped<'static, FrozenStarlarkCmdArgs>,
     pub(crate) bazel_inputs: Option<FrozenValueTyped<'static, FrozenStarlarkCmdArgs>>,
     pub(crate) bazel_executable_runfiles: Option<FrozenValue>,
+    pub(crate) bazel_tool_runfiles: Option<FrozenValue>,
     pub(crate) env:
         Option<FrozenValueOfUnchecked<'static, DictType<String, ValueAsCommandLineLike<'static>>>>,
     pub(crate) worker: Option<FrozenValueTyped<'static, FrozenWorkerInfo>>,
@@ -355,6 +360,7 @@ impl<'v> Freeze for StarlarkRunActionValues<'v> {
             args,
             bazel_inputs,
             bazel_executable_runfiles,
+            bazel_tool_runfiles,
             env,
             worker,
             remote_worker,
@@ -367,6 +373,7 @@ impl<'v> Freeze for StarlarkRunActionValues<'v> {
             args: args.freeze(freezer)?,
             bazel_inputs: bazel_inputs.freeze(freezer)?,
             bazel_executable_runfiles: bazel_executable_runfiles.freeze(freezer)?,
+            bazel_tool_runfiles: bazel_tool_runfiles.freeze(freezer)?,
             env: env.freeze(freezer)?,
             worker: worker.freeze(freezer)?,
             remote_worker: remote_worker.freeze(freezer)?,
@@ -423,6 +430,7 @@ struct UnpackedRunActionValues<'v> {
     args: &'v dyn CommandLineArgLike<'v>,
     bazel_inputs: Option<&'v dyn CommandLineArgLike<'v>>,
     bazel_executable_runfiles: Option<Value<'v>>,
+    bazel_tool_runfiles: Option<Value<'v>>,
     env: Vec<(&'v str, &'v dyn CommandLineArgLike<'v>)>,
     worker: Option<UnpackedWorkerValues<'v>>,
     remote_worker: Option<UnpackedWorkerValues<'v>>,
@@ -559,8 +567,10 @@ impl CommandLineContext for BazelCommandLineContext<'_> {
         artifact: &Artifact,
         _artifact_path_mapping: &dyn ArtifactPathMapper,
     ) -> buck2_error::Result<CommandLineLocation<'_>> {
-        let path = ProjectRelativePathBuf::try_from(bazel_artifact_path(artifact.get_path()))
-            .buck_error_context("Invalid Bazel execroot artifact path")?;
+        let path = ProjectRelativePathBuf::try_from(bazel_normalize_buck_owned_exec_paths(
+            &bazel_artifact_path(artifact.get_path()),
+        ))
+        .buck_error_context("Invalid Bazel execroot artifact path")?;
         self.resolve_project_path(path)
             .with_buck_error_context(|| format!("Error resolving Bazel artifact: {artifact}"))
     }
@@ -569,8 +579,10 @@ impl CommandLineContext for BazelCommandLineContext<'_> {
         &self,
         artifact: &Artifact,
     ) -> buck2_error::Result<CommandLineLocation<'_>> {
-        let path = ProjectRelativePathBuf::try_from(bazel_artifact_path(artifact.get_path()))
-            .buck_error_context("Invalid Bazel execroot output path")?;
+        let path = ProjectRelativePathBuf::try_from(bazel_normalize_buck_owned_exec_paths(
+            &bazel_artifact_path(artifact.get_path()),
+        ))
+        .buck_error_context("Invalid Bazel execroot output path")?;
         self.resolve_project_path(path).with_buck_error_context(|| {
             format!("Error resolving Bazel output artifact: {artifact}")
         })
@@ -598,9 +610,10 @@ struct RunActionParamFile {
 }
 
 struct RunActionParamFiles {
-    owner: BaseDeferredKey,
+    owner: DeferredHolderKey,
     base_path: ForwardRelativePathBuf,
     base_bazel_exec_path: Option<String>,
+    bazel_output_root: BazelOutputRoot,
     path_resolution_method: BuckOutPathKind,
     digest_config: DigestConfig,
     files: Vec<RunActionParamFile>,
@@ -612,9 +625,10 @@ struct RunActionParamFilesRef(Rc<RefCell<RunActionParamFiles>>);
 
 impl RunActionParamFilesRef {
     fn new(
-        owner: BaseDeferredKey,
+        owner: DeferredHolderKey,
         base_path: ForwardRelativePathBuf,
         base_bazel_exec_path: Option<String>,
+        bazel_output_root: BazelOutputRoot,
         path_resolution_method: BuckOutPathKind,
         digest_config: DigestConfig,
     ) -> Self {
@@ -622,6 +636,7 @@ impl RunActionParamFilesRef {
             owner,
             base_path,
             base_bazel_exec_path,
+            bazel_output_root,
             path_resolution_method,
             digest_config,
             files: Vec::new(),
@@ -639,11 +654,14 @@ impl RunActionParamFilesRef {
         match mode {
             RunActionParamFileMode::Record => {
                 let index = state.files.len();
-                let path = BuildArtifactPath::new(
-                    state.owner.dupe(),
-                    derive_param_file_path(&state.base_path, index)?,
-                    state.path_resolution_method,
-                );
+                let path =
+                    BuildArtifactPath::with_dynamic_actions_action_key_and_bazel_owner_and_output_root(
+                        state.owner.dupe(),
+                        derive_param_file_path(&state.base_path, index)?,
+                        state.path_resolution_method,
+                        None,
+                        state.bazel_output_root,
+                    );
                 let digest = TrackedFileDigest::from_content(
                     &content,
                     state.digest_config.cas_digest_config(),
@@ -743,6 +761,21 @@ fn derive_param_file_exec_path(base_exec_path: &str, index: usize) -> String {
     } else {
         format!("{parent}/{derived_name}")
     }
+}
+
+fn bazel_param_file_base_path(base_exec_path: &str) -> buck2_error::Result<ForwardRelativePathBuf> {
+    let rest = base_exec_path
+        .strip_prefix("buck-out/bin/")
+        .or_else(|| base_exec_path.strip_prefix("buck-out/genfiles/"))
+        .ok_or_else(|| {
+            internal_error!(
+                "Bazel output path `{base_exec_path}` is not under buck-out/bin or buck-out/genfiles"
+            )
+        })?;
+    let (_, path) = rest.split_once('/').ok_or_else(|| {
+        internal_error!("Bazel output path `{base_exec_path}` has no configuration segment")
+    })?;
+    ForwardRelativePathBuf::new(path.to_owned()).buck_error_context("Invalid Bazel param-file path")
 }
 
 enum RunActionCommandLineContext<'v> {
@@ -935,6 +968,45 @@ impl CommandLineArtifactVisitor<'_> for SkipHiddenCommandLineArtifactVisitor {
     }
 }
 
+struct BazelOutputExecPathVisitor<'a> {
+    outputs: &'a BoxSliceSet<BuildArtifact>,
+    paths: &'a mut BuckIndexMap<BuildArtifactPath, String>,
+}
+
+impl<'a> BazelOutputExecPathVisitor<'a> {
+    fn new(
+        outputs: &'a BoxSliceSet<BuildArtifact>,
+        paths: &'a mut BuckIndexMap<BuildArtifactPath, String>,
+    ) -> Self {
+        Self { outputs, paths }
+    }
+
+    fn record_path(&mut self, path: buck2_execute::path::artifact_path::ArtifactPath<'_>) {
+        let build_path = match path.base_path.as_ref() {
+            Either::Left(build_path) => (**build_path).dupe(),
+            Either::Right(_) => return,
+        };
+        self.paths.insert(
+            build_path,
+            bazel_normalize_buck_owned_exec_paths(&bazel_artifact_path(path)),
+        );
+    }
+}
+
+impl<'v> CommandLineArtifactVisitor<'v> for BazelOutputExecPathVisitor<'_> {
+    fn visit_input(&mut self, _input: ArtifactGroup, _tags: Vec<&ArtifactTag>) {}
+
+    fn visit_declared_output(&mut self, artifact: OutputArtifact<'v>, _tags: Vec<&ArtifactTag>) {
+        self.record_path(artifact.get_path());
+    }
+
+    fn visit_frozen_output(&mut self, artifact: Artifact, _tags: Vec<&ArtifactTag>) {
+        if artifact_is_run_action_output(self.outputs, &artifact) {
+            self.record_path(artifact.get_path());
+        }
+    }
+}
+
 fn visit_run_action_command_line_artifacts<'v>(
     outputs: &BoxSliceSet<BuildArtifact>,
     command_line: &dyn CommandLineArgLike<'v>,
@@ -948,6 +1020,11 @@ fn visit_run_action_command_line_artifacts<'v>(
 struct BazelRunfilesEntry<'v> {
     path: &'v str,
     target_file: Value<'v>,
+}
+
+struct BazelToolRunfiles<'v> {
+    executable: Value<'v>,
+    runfiles: Value<'v>,
 }
 
 fn bazel_runfiles_entries<'v>(
@@ -977,6 +1054,34 @@ fn bazel_runfiles_entries<'v>(
     }))
 }
 
+fn bazel_tool_runfiles<'v>(
+    tool_runfiles: Value<'v>,
+) -> buck2_error::Result<impl Iterator<Item = buck2_error::Result<BazelToolRunfiles<'v>>> + 'v> {
+    let tools = ListRef::from_value(tool_runfiles)
+        .ok_or_else(|| internal_error!("Bazel tool runfiles should be a list"))?;
+    Ok(tools.iter().map(|tool| {
+        let tool = StructRef::from_value(tool)
+            .ok_or_else(|| internal_error!("Bazel tool runfiles entry should be a struct"))?;
+        let mut executable = None;
+        let mut runfiles = None;
+        for (name, value) in tool.iter() {
+            match name.as_str() {
+                "executable" => executable = Some(value),
+                "runfiles" => runfiles = Some(value),
+                _ => {}
+            }
+        }
+        Ok(BazelToolRunfiles {
+            executable: executable.ok_or_else(|| {
+                internal_error!("Bazel tool runfiles entry should have field `executable`")
+            })?,
+            runfiles: runfiles.ok_or_else(|| {
+                internal_error!("Bazel tool runfiles entry should have field `runfiles`")
+            })?,
+        })
+    }))
+}
+
 fn visit_bazel_runfiles_artifacts<'v>(
     runfiles: Value<'v>,
     artifact_visitor: &mut dyn CommandLineArtifactVisitor<'v>,
@@ -991,6 +1096,23 @@ fn visit_bazel_runfiles_artifacts<'v>(
                 internal_error!("Bazel executable runfiles target_file should be File")
             })?;
         artifact_visitor.visit_input(artifact.0.get_artifact_group()?, Vec::new());
+    }
+    Ok(())
+}
+
+fn visit_bazel_tool_runfiles_artifacts<'v>(
+    tool_runfiles: Value<'v>,
+    artifact_visitor: &mut dyn CommandLineArtifactVisitor<'v>,
+) -> buck2_error::Result<()> {
+    if artifact_visitor.skip_hidden() {
+        return Ok(());
+    }
+    for tool in bazel_tool_runfiles(tool_runfiles)? {
+        let tool = tool?;
+        let executable = ValueAsInputArtifactLike::unpack_value(tool.executable)?
+            .ok_or_else(|| internal_error!("Bazel tool runfiles executable should be File"))?;
+        artifact_visitor.visit_input(executable.0.get_artifact_group()?, Vec::new());
+        visit_bazel_runfiles_artifacts(tool.runfiles, artifact_visitor)?;
     }
     Ok(())
 }
@@ -1039,6 +1161,9 @@ impl RunAction {
             visit_run_action_command_line_artifacts(&self.outputs, values.args, artifact_visitor)?;
             if let Some(runfiles) = values.bazel_executable_runfiles {
                 visit_bazel_runfiles_artifacts(runfiles, artifact_visitor)?;
+            }
+            if let Some(tool_runfiles) = values.bazel_tool_runfiles {
+                visit_bazel_tool_runfiles_artifacts(tool_runfiles, artifact_visitor)?;
             }
         } else {
             visit_run_action_command_line_artifacts(&self.outputs, values.args, artifact_visitor)?;
@@ -1117,6 +1242,9 @@ impl RunAction {
             bazel_executable_runfiles: values
                 .bazel_executable_runfiles
                 .map(|runfiles: FrozenValue| runfiles.to_value()),
+            bazel_tool_runfiles: values
+                .bazel_tool_runfiles
+                .map(|runfiles: FrozenValue| runfiles.to_value()),
             env,
             worker,
             remote_worker,
@@ -1144,14 +1272,22 @@ impl RunAction {
             .ok_or_else(|| internal_error!("run actions must have at least one output"))?;
         let base_bazel_exec_path = if bazel_paths {
             let artifact = Artifact::from(base_output.dupe());
-            Some(bazel_artifact_path(artifact.get_path()))
+            Some(bazel_normalize_buck_owned_exec_paths(&bazel_artifact_path(
+                artifact.get_path(),
+            )))
         } else {
             None
         };
+        let base_path = if let Some(base_bazel_exec_path) = &base_bazel_exec_path {
+            bazel_param_file_base_path(base_bazel_exec_path)?
+        } else {
+            base_output.get_path().path().to_owned()
+        };
         let param_files = RunActionParamFilesRef::new(
-            action_execution_ctx.target().owner().dupe(),
-            base_output.get_path().path().to_owned(),
+            base_output.get_path().owner().dupe(),
+            base_path,
             base_bazel_exec_path,
+            base_output.get_path().bazel_output_root(),
             if self.all_outputs_are_content_based() {
                 BuckOutPathKind::ContentHash
             } else {
@@ -1172,6 +1308,32 @@ impl RunAction {
             RunActionParamFileMode::Replay,
         );
         let values = Self::unpack(&self.starlark_values)?;
+        if bazel_paths {
+            let mut output_visitor = BazelOutputExecPathVisitor::new(
+                &self.outputs,
+                &mut artifact_visitor.bazel_output_exec_paths,
+            );
+            values.exe.visit_artifacts(&mut output_visitor)?;
+            values.args.visit_artifacts(&mut output_visitor)?;
+            if let Some(bazel_inputs) = values.bazel_inputs {
+                bazel_inputs.visit_artifacts(&mut output_visitor)?;
+            }
+            for (_, value) in &values.env {
+                value.visit_artifacts(&mut output_visitor)?;
+            }
+            if let Some(worker) = &values.worker {
+                worker.exe.visit_artifacts(&mut output_visitor)?;
+                for (_, value) in &worker.env {
+                    value.visit_artifacts(&mut output_visitor)?;
+                }
+            }
+            if let Some(remote_worker) = &values.remote_worker {
+                remote_worker.exe.visit_artifacts(&mut output_visitor)?;
+                for (_, value) in &remote_worker.env {
+                    value.visit_artifacts(&mut output_visitor)?;
+                }
+            }
+        }
 
         let mut command_line_digest_for_dep_files = ExpandedCommandLineFingerprinter::new();
 
@@ -1433,6 +1595,9 @@ impl RunAction {
         if let Some(runfiles) = values.bazel_executable_runfiles {
             visit_bazel_runfiles_artifacts(runfiles, artifact_visitor)?;
         }
+        if let Some(tool_runfiles) = values.bazel_tool_runfiles {
+            visit_bazel_tool_runfiles_artifacts(tool_runfiles, artifact_visitor)?;
+        }
 
         let env_len = values.env.len();
         let cli_env: buck2_error::Result<SortedVectorMap<_, _>> = values
@@ -1542,29 +1707,41 @@ impl RunAction {
         let mut aliases = BuckIndexSet::new();
         for artifact_group_values in artifact_inputs {
             for (artifact, value) in artifact_group_values.iter() {
-                let bazel_path = bazel_artifact_path(artifact.get_path());
-                let alias = Self::bazel_execroot_path(bazel_execroot, bazel_path)?;
-                if aliases.insert(alias.clone()) {
-                    let source_path = artifact
-                        .get_path()
-                        .resolve(
-                            artifact_fs,
-                            if artifact.path_resolution_requires_artifact_value() {
-                                Some(value.content_based_path_hash())
-                            } else {
-                                None
-                            }
-                            .as_ref(),
-                        )
-                        .buck_error_context("Invalid Bazel execroot source path")?;
-                    if source_path == alias {
-                        continue;
-                    }
+                let source_path = artifact
+                    .get_path()
+                    .resolve(
+                        artifact_fs,
+                        if artifact.path_resolution_requires_artifact_value() {
+                            Some(value.content_based_path_hash())
+                        } else {
+                            None
+                        }
+                        .as_ref(),
+                    )
+                    .buck_error_context("Invalid Bazel execroot source path")?;
+                let source_requires_materialization =
+                    artifact.requires_materialization(artifact_fs);
+
+                let bazel_path = bazel_normalize_buck_owned_exec_paths(&bazel_artifact_path(
+                    artifact.get_path(),
+                ));
+                let bazel_alias = Self::bazel_execroot_path(bazel_execroot, bazel_path)?;
+                if aliases.insert(bazel_alias.clone()) && source_path != bazel_alias {
                     inputs.push(CommandExecutionInput::ArtifactPathAlias {
-                        source_path,
-                        source_requires_materialization: artifact
-                            .requires_materialization(artifact_fs),
-                        path: alias,
+                        source_path: source_path.clone(),
+                        source_requires_materialization,
+                        path: bazel_alias,
+                        value: value.dupe(),
+                    });
+                }
+
+                let source_alias =
+                    Self::bazel_execroot_path(bazel_execroot, source_path.as_str().to_owned())?;
+                if aliases.insert(source_alias.clone()) && source_path != source_alias {
+                    inputs.push(CommandExecutionInput::ArtifactPathAlias {
+                        source_path: source_path.clone(),
+                        source_requires_materialization,
+                        path: source_alias,
                         value: value.dupe(),
                     });
                 }
@@ -1656,6 +1833,38 @@ impl RunAction {
         Ok(())
     }
 
+    fn add_bazel_tool_runfiles_path_aliases(
+        &self,
+        inputs: &mut Vec<CommandExecutionInput>,
+        artifact_inputs: &[&ArtifactGroupValues],
+        artifact_fs: &ArtifactFs,
+        bazel_execroot: Option<&ProjectRelativePath>,
+        tool_runfiles: Option<Value<'_>>,
+    ) -> buck2_error::Result<()> {
+        let (Some(bazel_execroot), Some(tool_runfiles)) = (bazel_execroot, tool_runfiles) else {
+            return Ok(());
+        };
+
+        for tool in bazel_tool_runfiles(tool_runfiles)? {
+            let tool = tool?;
+            let executable = ValueAsInputArtifactLike::unpack_value(tool.executable)?
+                .ok_or_else(|| internal_error!("Bazel tool runfiles executable should be File"))?
+                .0
+                .get_bound_artifact()?;
+            let executable_path =
+                bazel_normalize_buck_owned_exec_paths(&bazel_artifact_path(executable.get_path()));
+            self.add_bazel_runfiles_path_aliases(
+                inputs,
+                artifact_inputs,
+                artifact_fs,
+                Some(bazel_execroot),
+                Some(&executable_path),
+                Some(tool.runfiles),
+            )?;
+        }
+        Ok(())
+    }
+
     async fn prepare<'v>(
         &'v self,
         visitor: &mut RunActionVisitor<'v>,
@@ -1711,6 +1920,17 @@ impl RunAction {
             expanded.exe.first().map(String::as_str),
             bazel_executable_runfiles,
         )?;
+        let bazel_tool_runfiles = {
+            let values = Self::unpack(&self.starlark_values)?;
+            values.bazel_tool_runfiles
+        };
+        self.add_bazel_tool_runfiles_path_aliases(
+            &mut inputs,
+            &artifact_inputs,
+            fs,
+            bazel_execroot.as_deref(),
+            bazel_tool_runfiles,
+        )?;
 
         let mut extra_env = Vec::new();
         let cli_ctx = DefaultCommandLineContext::new(&executor_fs);
@@ -1762,11 +1982,16 @@ impl RunAction {
             .iter()
             .map(|b| {
                 let produced_path = if let Some(bazel_execroot) = bazel_execroot.as_deref() {
-                    let artifact = Artifact::from(b.dupe());
-                    Some(Self::bazel_execroot_path(
-                        bazel_execroot,
-                        bazel_artifact_path(artifact.get_path()),
-                    )?)
+                    let bazel_path =
+                        if let Some(path) = visitor.bazel_output_exec_paths.get(b.get_path()) {
+                            path.clone()
+                        } else {
+                            let artifact = Artifact::from(b.dupe());
+                            bazel_normalize_buck_owned_exec_paths(&bazel_artifact_path(
+                                artifact.get_path(),
+                            ))
+                        };
+                    Some(Self::bazel_execroot_path(bazel_execroot, bazel_path)?)
                 } else {
                     None
                 };
@@ -2267,6 +2492,7 @@ impl PreparedRunAction {
 pub struct RunActionVisitor<'a> {
     pub(crate) dep_files_visitor: DepFilesCommandLineVisitor<'a>,
     pub(crate) incremental_metadata_inputs: Vec<ArtifactGroup>,
+    pub(crate) bazel_output_exec_paths: BuckIndexMap<BuildArtifactPath, String>,
     incremental_metadata_ignore_tags: Option<&'a SmallSet<ArtifactTag>>,
 }
 
@@ -2278,6 +2504,7 @@ impl<'a> RunActionVisitor<'a> {
         Self {
             dep_files_visitor: DepFilesCommandLineVisitor::new(dep_files),
             incremental_metadata_inputs: Vec::new(),
+            bazel_output_exec_paths: BuckIndexMap::new(),
             incremental_metadata_ignore_tags,
         }
     }
@@ -2300,12 +2527,31 @@ impl<'v> CommandLineArtifactVisitor<'v> for RunActionVisitor<'v> {
         self.dep_files_visitor.visit_input(input, tags);
     }
 
-    fn visit_declared_output(&mut self, _artifact: OutputArtifact<'v>, tags: Vec<&ArtifactTag>) {
-        self.dep_files_visitor
-            .visit_declared_output(_artifact, tags);
+    fn visit_declared_output(&mut self, artifact: OutputArtifact<'v>, tags: Vec<&ArtifactTag>) {
+        let bazel_output_exec_path = {
+            let path = artifact.get_path();
+            let build_path = match path.base_path.as_ref() {
+                Either::Left(build_path) => Some((**build_path).dupe()),
+                Either::Right(_) => None,
+            };
+            build_path.map(|build_path| {
+                let exec_path = bazel_normalize_buck_owned_exec_paths(&bazel_artifact_path(path));
+                (build_path, exec_path)
+            })
+        };
+        if let Some((build_path, exec_path)) = bazel_output_exec_path {
+            self.bazel_output_exec_paths.insert(build_path, exec_path);
+        }
+        self.dep_files_visitor.visit_declared_output(artifact, tags);
     }
 
     fn visit_frozen_output(&mut self, artifact: Artifact, tags: Vec<&ArtifactTag>) {
+        if let BaseArtifactKind::Build(build) = artifact.as_parts().0 {
+            self.bazel_output_exec_paths.insert(
+                build.get_path().dupe(),
+                bazel_normalize_buck_owned_exec_paths(&bazel_artifact_path(artifact.get_path())),
+            );
+        }
         self.dep_files_visitor.visit_frozen_output(artifact, tags);
     }
 }
@@ -2393,14 +2639,23 @@ impl Action for RunAction {
         let base_output = self.outputs.iter().next().unwrap();
         let base_bazel_exec_path = if self.inner.bazel_use_default_shell_env.is_some() {
             let artifact = Artifact::from(base_output.dupe());
-            Some(bazel_artifact_path(artifact.get_path()))
+            Some(bazel_normalize_buck_owned_exec_paths(&bazel_artifact_path(
+                artifact.get_path(),
+            )))
         } else {
             None
         };
+        let base_path = if let Some(base_bazel_exec_path) = &base_bazel_exec_path {
+            bazel_param_file_base_path(base_bazel_exec_path)
+                .expect("Bazel aquery param-file path should be valid")
+        } else {
+            base_output.get_path().path().to_owned()
+        };
         let param_files = RunActionParamFilesRef::new(
-            base_output.key().owner().dupe(),
-            base_output.get_path().path().to_owned(),
+            base_output.get_path().owner().dupe(),
+            base_path,
             base_bazel_exec_path,
+            base_output.get_path().bazel_output_root(),
             if self.all_outputs_are_content_based() {
                 BuckOutPathKind::ContentHash
             } else {

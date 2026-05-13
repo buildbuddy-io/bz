@@ -69,6 +69,8 @@ use crate::interpreter::rule_defs::provider::DefaultInfoCallable;
 use crate::interpreter::rule_defs::provider::FrozenBuiltinProviderLike;
 use crate::interpreter::rule_defs::provider::FrozenDefaultInfo;
 use crate::interpreter::rule_defs::provider::ValueAsProviderLike;
+use crate::interpreter::rule_defs::provider::builtin::output_group_info::merge_output_group_info_values;
+use crate::interpreter::rule_defs::provider::builtin::output_group_info::OutputGroupInfoCallable;
 use crate::interpreter::rule_defs::provider::ty::abstract_provider::AbstractProvider;
 
 fn format_provider_keys_for_error(keys: &[String]) -> String {
@@ -136,7 +138,7 @@ static_starlark_value!(EMPTY_PROVIDER_COLLECTION: FrozenProviderCollection = Fro
     providers: SmallMap::new(),
 });
 
-fn empty_provider_collection_value() -> FrozenValueTyped<'static, FrozenProviderCollection> {
+pub(crate) fn empty_provider_collection_value() -> FrozenValueTyped<'static, FrozenProviderCollection> {
     EMPTY_PROVIDER_COLLECTION.unpack()
 }
 
@@ -220,6 +222,17 @@ enum GetOp {
 }
 
 impl<'v, V: ValueLike<'v>> ProviderCollectionGen<V> {
+    pub fn default_info_value(&self) -> buck2_error::Result<Value<'v>> {
+        self.providers
+            .get(DefaultInfoCallable::provider_id())
+            .map(|value| value.to_value())
+            .ok_or_else(|| {
+                internal_error!(
+                    "DefaultInfo should always be set for providers returned from rule function"
+                )
+            })
+    }
+
     fn insert_provider_value(
         providers: &mut SmallMap<Arc<ProviderId>, Value<'v>>,
         value: Value<'v>,
@@ -326,16 +339,18 @@ impl<'v, V: ValueLike<'v>> ProviderCollectionGen<V> {
 
     /// Takes a value returned from a Bazel Starlark rule implementation and builds a provider
     /// collection. Bazel accepts `None`, a single provider, or a sequence of providers, and injects
-    /// an empty `DefaultInfo` when the implementation did not return one.
+    /// a `DefaultInfo` containing the rule's predeclared outputs when the implementation did not
+    /// return one.
     pub fn try_from_value_bazel_rule(
         value: Value<'v>,
         heap: Heap<'v>,
+        default_outputs: Vec<Value<'v>>,
     ) -> buck2_error::Result<ProviderCollection<'v>> {
         let mut providers = Self::try_from_bazel_value_impl(value)?;
         if !providers.contains_key(DefaultInfoCallable::provider_id()) {
             providers.insert(
                 DefaultInfoCallable::provider_id().dupe(),
-                heap.alloc(DefaultInfo::empty(heap)),
+                heap.alloc(DefaultInfo::with_default_outputs(heap, default_outputs)),
             );
         }
 
@@ -427,8 +442,26 @@ impl<'v> ProviderCollection<'v> {
         ProviderCollectionGen::<Value<'v>>::insert_provider_value(&mut self.providers, value)
     }
 
-    pub fn extend_from(&mut self, other: ProviderCollection<'v>) -> buck2_error::Result<()> {
+    pub fn extend_from(
+        &mut self,
+        heap: Heap<'v>,
+        other: ProviderCollection<'v>,
+    ) -> buck2_error::Result<()> {
         for (_, value) in other.providers {
+            let Some(provider) = ValueAsProviderLike::unpack(value) else {
+                return Err(ProviderCollectionError::CollectionElementNotAProvider {
+                    repr: value.to_repr(),
+                }
+                .into());
+            };
+            let provider_id = provider.0.id().dupe();
+            if provider_id == OutputGroupInfoCallable::provider_id().dupe() {
+                if let Some(existing) = self.providers.get(&provider_id).copied() {
+                    let merged = merge_output_group_info_values(heap, existing, value)?;
+                    self.providers.insert(provider_id, merged);
+                    continue;
+                }
+            }
             self.insert_provider(value)?;
         }
         Ok(())

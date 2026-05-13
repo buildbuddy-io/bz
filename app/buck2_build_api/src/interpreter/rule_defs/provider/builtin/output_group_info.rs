@@ -11,6 +11,7 @@ use std::fmt::Debug;
 
 use allocative::Allocative;
 use buck2_build_api_derive::internal_provider;
+use buck2_error::internal_error;
 use starlark::any::ProvidesStaticType;
 use starlark::coerce::Coerce;
 use starlark::collections::SmallMap;
@@ -32,6 +33,7 @@ use starlark::values::dict::DictRef;
 use starlark::values::dict::DictType;
 
 use crate as buck2_build_api;
+use crate::interpreter::rule_defs::depset::bazel_depset_from_transitive;
 
 #[internal_provider(
     output_group_info_creator,
@@ -78,6 +80,50 @@ fn output_group_info_get_attr<'v, V: ValueLike<'v>>(
     _heap: Heap<'v>,
 ) -> Option<Value<'v>> {
     output_group_info_groups(this).get_str(attribute)
+}
+
+fn output_group_info_groups_from_value<'v>(value: Value<'v>) -> buck2_error::Result<DictRef<'v>> {
+    if let Some(info) = value.downcast_ref::<OutputGroupInfo<'v>>() {
+        return Ok(output_group_info_groups(info));
+    }
+    if let Some(info) = value
+        .unpack_frozen()
+        .and_then(|value| value.downcast_ref::<FrozenOutputGroupInfo>())
+    {
+        return Ok(output_group_info_groups(info));
+    }
+    Err(internal_error!(
+        "OutputGroupInfo provider should have the expected provider type"
+    ))
+}
+
+pub(crate) fn merge_output_group_info_values<'v>(
+    heap: Heap<'v>,
+    left: Value<'v>,
+    right: Value<'v>,
+) -> buck2_error::Result<Value<'v>> {
+    let mut groups: SmallMap<String, Vec<Value<'v>>> = SmallMap::new();
+    for provider in [left, right] {
+        for (name, value) in output_group_info_groups_from_value(provider)?.iter() {
+            let name = name
+                .unpack_str()
+                .ok_or_else(|| internal_error!("OutputGroupInfo group names should be strings"))?;
+            groups.entry(name.to_owned()).or_default().push(value);
+        }
+    }
+
+    let mut merged = SmallMap::with_capacity(groups.len());
+    for (name, values) in groups {
+        let value = match values.as_slice() {
+            [value] => *value,
+            _ => bazel_depset_from_transitive(heap, values)?,
+        };
+        merged.insert(name, value);
+    }
+
+    Ok(heap.alloc(OutputGroupInfo {
+        groups: ValueOfUnchecked::new(heap.alloc(AllocDict(merged))),
+    }))
 }
 
 #[starlark_module]

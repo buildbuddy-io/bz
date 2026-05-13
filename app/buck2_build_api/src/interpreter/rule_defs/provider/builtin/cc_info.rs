@@ -317,6 +317,7 @@ pub struct BazelCcCompileAction<'v> {
     pub executable: Value<'v>,
     pub arguments: Vec<Value<'v>>,
     pub inputs: Vec<Value<'v>>,
+    pub env: Vec<(String, Value<'v>)>,
     pub outputs: Vec<ValueTyped<'v, StarlarkDeclaredArtifact<'v>>>,
     pub mnemonic: StringValue<'v>,
 }
@@ -2465,161 +2466,21 @@ fn bazel_cc_collect_output<'v>(
     Ok(())
 }
 
-fn bazel_cc_push_compile_arg<'v>(args: &mut Vec<Value<'v>>, heap: Heap<'v>, arg: &str) {
-    args.push(heap.alloc_str(arg).to_value());
-}
-
-fn bazel_cc_push_compile_joined_arg<'v>(
-    args: &mut Vec<Value<'v>>,
-    heap: Heap<'v>,
-    prefix: &str,
-    value: Value<'v>,
-) -> starlark::Result<()> {
-    let value = bazel_cc_link_string(value, heap)?;
-    bazel_cc_push_compile_arg(args, heap, &format!("{prefix}{value}"));
-    Ok(())
-}
-
-fn bazel_cc_push_compile_path_sequence<'v>(
-    args: &mut Vec<Value<'v>>,
-    heap: Heap<'v>,
-    variables: Value<'v>,
-    variable: &str,
-    flag: &str,
-    joined: bool,
-) -> starlark::Result<()> {
-    let Some(values) = bazel_cc_build_variable(variables, variable) else {
-        return Ok(());
-    };
-    for value in bazel_cc_link_sequence_values(values, variable)? {
-        if joined {
-            bazel_cc_push_compile_joined_arg(args, heap, flag, value)?;
-        } else {
-            bazel_cc_push_compile_arg(args, heap, flag);
-            args.push(value);
-        }
-    }
-    Ok(())
-}
-
-fn bazel_cc_push_compile_string_sequence<'v>(
-    args: &mut Vec<Value<'v>>,
-    heap: Heap<'v>,
-    variables: Value<'v>,
-    variable: &str,
-) -> starlark::Result<()> {
-    let Some(values) = bazel_cc_build_variable(variables, variable) else {
-        return Ok(());
-    };
-    for value in bazel_cc_link_sequence_values(values, variable)? {
-        let value = bazel_cc_link_string(value, heap)?;
-        bazel_cc_push_compile_arg(args, heap, &value);
-    }
-    Ok(())
-}
-
-fn bazel_cc_compile_args_from_variables<'v>(
-    variables: Value<'v>,
-    heap: Heap<'v>,
-) -> starlark::Result<Vec<Value<'v>>> {
-    let mut args = Vec::new();
-
-    bazel_cc_push_compile_string_sequence(&mut args, heap, variables, "user_compile_flags")?;
-
-    if let Some(defines) = bazel_cc_build_variable(variables, "preprocessor_defines") {
-        for define in bazel_cc_link_sequence_values(defines, "preprocessor_defines")? {
-            bazel_cc_push_compile_joined_arg(&mut args, heap, "-D", define)?;
-        }
-    }
-
-    bazel_cc_push_compile_path_sequence(&mut args, heap, variables, "include_paths", "-I", true)?;
-    bazel_cc_push_compile_path_sequence(
-        &mut args,
-        heap,
-        variables,
-        "quote_include_paths",
-        "-iquote",
-        false,
-    )?;
-    bazel_cc_push_compile_path_sequence(
-        &mut args,
-        heap,
-        variables,
-        "system_include_paths",
-        "-isystem",
-        false,
-    )?;
-    bazel_cc_push_compile_path_sequence(
-        &mut args,
-        heap,
-        variables,
-        "external_include_paths",
-        "-isystem",
-        false,
-    )?;
-    bazel_cc_push_compile_path_sequence(
-        &mut args,
-        heap,
-        variables,
-        "framework_include_paths",
-        "-F",
-        true,
-    )?;
-    bazel_cc_push_compile_path_sequence(&mut args, heap, variables, "includes", "-include", false)?;
-
-    if bazel_cc_build_variable(variables, "pic").is_some() {
-        bazel_cc_push_compile_arg(&mut args, heap, "-fPIC");
-    }
-    if let Some(dependency_file) = bazel_cc_build_variable(variables, "dependency_file") {
-        bazel_cc_push_compile_arg(&mut args, heap, "-MD");
-        bazel_cc_push_compile_arg(&mut args, heap, "-MF");
-        args.push(dependency_file);
-    }
-    if let Some(diagnostics_file) =
-        bazel_cc_build_variable(variables, "serialized_diagnostics_file")
-    {
-        bazel_cc_push_compile_arg(&mut args, heap, "-serialize-diagnostics");
-        args.push(diagnostics_file);
-    }
-    if let Some(source_file) = bazel_cc_build_variable(variables, "source_file") {
-        bazel_cc_push_compile_arg(&mut args, heap, "-c");
-        args.push(source_file);
-    }
-    if let Some(output_file) = bazel_cc_build_variable(variables, "output_file") {
-        bazel_cc_push_compile_arg(&mut args, heap, "-o");
-        args.push(output_file);
-    }
-
-    Ok(args)
-}
-
 fn bazel_cc_compile_output_path<'v>(
     label: Value<'v>,
     output_name: &str,
 ) -> starlark::Result<String> {
-    let (package, target_name) = if let Some(label) = StarlarkProvidersLabel::from_value(label) {
-        let target = label.label().target();
-        (
-            target.pkg().cell_relative_path().as_str(),
-            target.name().as_str(),
-        )
+    let target_name = if let Some(label) = StarlarkProvidersLabel::from_value(label) {
+        label.label().target().name().as_str()
     } else if let Some(label) = StarlarkConfiguredProvidersLabel::from_value(label) {
-        let target = label.label().target();
-        (
-            target.pkg().cell_relative_path().as_str(),
-            target.name().as_str(),
-        )
+        label.label().target().name().as_str()
     } else {
         return Err(bazel_cc_error(format!(
             "Expected `label` to be a Label, got `{}`",
             label.get_type()
         )));
     };
-    if package.is_empty() {
-        Ok(format!("_objs/{target_name}/{output_name}"))
-    } else {
-        Ok(format!("{package}/_objs/{target_name}/{output_name}"))
-    }
+    Ok(format!("_objs/{target_name}/{output_name}"))
 }
 
 fn bazel_cc_action_context_actions<'v>(
@@ -2665,6 +2526,58 @@ fn cc_internal_kw_value_or_default<'v>(
 ) -> Value<'v> {
     let value = cc_internal_kw_value(kwargs, name, default);
     if value.is_none() { default } else { value }
+}
+
+fn bazel_cc_artifact_path<'v>(value: Value<'v>, heap: Heap<'v>) -> starlark::Result<String> {
+    if let Some(value) = value.unpack_str() {
+        return Ok(value.to_owned());
+    }
+    for attr in ["path", "short_path"] {
+        if let Some(value) = value.get_attr(attr, heap)?
+            && let Some(value) = value.unpack_str()
+        {
+            return Ok(value.to_owned());
+        }
+    }
+    Err(bazel_cc_error(format!(
+        "Expected C++ source to be an artifact-like value, got `{}`",
+        value.get_type()
+    )))
+}
+
+fn bazel_cc_action_name_for_source_path(path: &str) -> &'static str {
+    if path.ends_with(".c") {
+        "c-compile"
+    } else if [".m"].iter().any(|ext| path.ends_with(ext)) {
+        "objc-compile"
+    } else if [".mm"].iter().any(|ext| path.ends_with(ext)) {
+        "objc++-compile"
+    } else if path.ends_with(".S") {
+        "preprocess-assemble"
+    } else if (path.ends_with(".s") && !path.ends_with(".pic.s")) || path.ends_with(".asm") {
+        "assemble"
+    } else if [".cc", ".cpp", ".cxx", ".c++", ".C", ".cu", ".cl"]
+        .iter()
+        .any(|ext| path.ends_with(ext))
+    {
+        "c++-compile"
+    } else {
+        "c++-compile"
+    }
+}
+
+fn bazel_cc_compile_action_name<'v>(
+    kwargs: &SmallMap<String, Value<'v>>,
+    source: Value<'v>,
+    heap: Heap<'v>,
+) -> starlark::Result<String> {
+    if let Some(action_name) =
+        cc_internal_kw_value(kwargs, "action_name", Value::new_none()).unpack_str()
+    {
+        return Ok(action_name.to_owned());
+    }
+    let source_path = bazel_cc_artifact_path(source, heap)?;
+    Ok(bazel_cc_action_name_for_source_path(&source_path).to_owned())
 }
 
 fn cc_internal_header_info_attr<'v>(
@@ -3005,14 +2918,19 @@ fn bazel_cc_internal_methods(builder: &mut MethodsBuilder) {
         let _unused = configuration;
         let actions = bazel_cc_action_context_actions(ctx, eval.heap())?;
         let path = bazel_cc_compile_output_path(label, output_name)?;
-        let artifact = actions.as_ref().state()?.declare_output(
-            None,
-            &path,
-            OutputType::File,
-            eval.call_stack_top_location(),
-            BuckOutPathKind::Configuration,
-            eval.heap(),
-        )?;
+        let artifact = actions
+            .as_ref()
+            .state()?
+            .declare_output_with_bazel_owner_and_output_root(
+                None,
+                &path,
+                OutputType::File,
+                eval.call_stack_top_location(),
+                BuckOutPathKind::Configuration,
+                actions.as_ref().bazel_owner(),
+                actions.as_ref().bazel_output_root,
+                eval.heap(),
+            )?;
         Ok(StarlarkDeclaredArtifact::new(
             eval.call_stack_top_location(),
             artifact,
@@ -3094,21 +3012,27 @@ fn bazel_cc_internal_methods(builder: &mut MethodsBuilder) {
             })?;
         let compile_build_variables =
             cc_internal_kw_value(&kwargs, "compile_build_variables", none);
-        let action_name = cc_internal_kw_value(&kwargs, "action_name", none)
-            .unpack_str()
-            .unwrap_or("c++-compile");
+        let source = cc_internal_kw_value(&kwargs, "source", none);
+        let action_name = bazel_cc_compile_action_name(&kwargs, source, heap)?;
         let tool_path = feature_configuration
-            .selected_tool(action_name)?
+            .selected_tool(&action_name)?
             .tool_path(&feature_configuration.data.tools_directory);
         let executable = heap.alloc_str(&tool_path).to_value();
-        let mut arguments = Vec::new();
-        arguments.extend(bazel_cc_compile_args_from_variables(
+        let arguments = bazel_cc_feature_command_line(
+            feature_configuration,
+            &action_name,
             compile_build_variables,
             heap,
-        )?);
+        )?;
+        let env = bazel_cc_feature_environment(
+            feature_configuration,
+            &action_name,
+            compile_build_variables,
+            heap,
+        )?;
 
         let mut inputs = Vec::new();
-        bazel_cc_collect_values(cc_internal_kw_value(&kwargs, "source", none), &mut inputs)?;
+        bazel_cc_collect_values(source, &mut inputs)?;
         bazel_cc_collect_values(
             cc_internal_kw_value(&kwargs, "additional_compilation_inputs", none),
             &mut inputs,
@@ -3186,6 +3110,7 @@ fn bazel_cc_internal_methods(builder: &mut MethodsBuilder) {
                 executable,
                 arguments,
                 inputs,
+                env,
                 outputs,
                 mnemonic,
             },

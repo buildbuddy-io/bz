@@ -19,7 +19,9 @@ use buck2_interpreter::late_binding_ty::AnalysisContextReprLate;
 use buck2_interpreter::late_binding_ty::ProviderReprLate;
 use buck2_interpreter::starlark_promise::StarlarkPromise;
 use buck2_interpreter::types::configured_providers_label::StarlarkProvidersLabel;
+use buck2_interpreter::types::rule::FROZEN_BAZEL_ASPECT_INFO_GET_IMPL;
 use buck2_interpreter::types::rule::FROZEN_BAZEL_ASPECTS_GET_IMPL;
+use buck2_interpreter::types::rule::FROZEN_BAZEL_ATTR_ASPECTS_GET_IMPL;
 use buck2_interpreter::types::rule::FROZEN_PROMISE_ARTIFACT_MAPPINGS_GET_IMPL;
 use buck2_interpreter::types::rule::FROZEN_RULE_GET_IMPL;
 use buck2_interpreter::types::target_label::StarlarkTargetLabel;
@@ -95,7 +97,10 @@ use starlark_map::small_map::SmallMap;
 use crate::attrs::starlark_attribute::BazelComputedDefault;
 use crate::attrs::starlark_attribute::FrozenBazelComputedDefault;
 use crate::attrs::starlark_attribute::StarlarkAttribute;
+use crate::bazel_aspect::collect_bazel_aspect_hidden_attributes;
+use crate::bazel_aspect::collect_bazel_aspect_toolchains;
 use crate::bazel_aspect::frozen_aspect_implementation;
+use crate::bazel_aspect::frozen_aspect_info;
 use crate::interpreter::build_context::BuildContext;
 use crate::interpreter::build_context::PerFileTypeContext;
 use crate::interpreter::module_internals::ModuleInternals;
@@ -293,6 +298,8 @@ pub struct StarlarkRuleCallable<'v> {
     bazel_output_attrs: Vec<BazelOutputAttr>,
     /// Bazel implicit outputs declared by `rule(outputs = {...})`.
     bazel_implicit_outputs: Vec<BazelImplicitOutput>,
+    /// Whether Bazel output artifacts from this rule are declared under genfiles instead of bin.
+    bazel_output_to_genfiles: bool,
     /// Whether the rule was declared through Bazel's `rule(implementation = ...)` API.
     is_bazel_rule: bool,
     /// Whether the rule was declared with Bazel's `build_setting = ...`.
@@ -679,6 +686,7 @@ impl<'v> StarlarkRuleCallable<'v> {
         uses_plugins: Vec<PluginKind>,
         bazel_toolchains: Vec<String>,
         bazel_implicit_outputs: Vec<BazelImplicitOutput>,
+        bazel_output_to_genfiles: bool,
         is_bazel_rule: bool,
         is_bazel_test_rule: bool,
         is_bazel_executable_rule: bool,
@@ -714,7 +722,7 @@ impl<'v> StarlarkRuleCallable<'v> {
             if !value.bazel_aspects().is_empty() {
                 bazel_attr_aspects.insert(
                     (*name).to_owned(),
-                    value.bazel_aspects().iter().copied().collect(),
+                    value.bazel_aspects().iter().copied().collect::<Vec<_>>(),
                 );
             }
             if let Some(computed_default) = value.bazel_computed_default() {
@@ -738,6 +746,20 @@ impl<'v> StarlarkRuleCallable<'v> {
                 }
             })
             .collect::<buck2_error::Result<Vec<(String, Attribute)>>>()?;
+        for (name, aspects) in &bazel_attr_aspects {
+            collect_bazel_aspect_hidden_attributes(name, aspects, &mut sorted_validated_attrs);
+        }
+        let mut bazel_toolchains = bazel_toolchains;
+        let mut bazel_aspect_toolchains = Vec::new();
+        for aspects in bazel_attr_aspects.values() {
+            collect_bazel_aspect_toolchains(aspects, &mut bazel_aspect_toolchains);
+        }
+        for toolchain in bazel_aspect_toolchains {
+            let toolchain = bazel_toolchain_key_from_value(toolchain)?;
+            if !bazel_toolchains.contains(&toolchain) {
+                bazel_toolchains.push(toolchain);
+            }
+        }
         let is_bazel_build_setting = build_setting.is_some();
         let build_setting_attrs = bazel_build_setting_attrs(build_setting)?;
         if !build_setting_attrs.is_empty() {
@@ -807,6 +829,7 @@ impl<'v> StarlarkRuleCallable<'v> {
             bazel_toolchains,
             bazel_output_attrs,
             bazel_implicit_outputs,
+            bazel_output_to_genfiles,
             is_bazel_rule,
             is_bazel_build_setting,
             bazel_initializer,
@@ -840,6 +863,7 @@ impl<'v> StarlarkRuleCallable<'v> {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            false,
             false,
             false,
             false,
@@ -1044,6 +1068,7 @@ impl<'v> Freeze for StarlarkRuleCallable<'v> {
                 bazel_toolchains: self.bazel_toolchains,
                 bazel_output_attrs: self.bazel_output_attrs,
                 bazel_implicit_outputs: self.bazel_implicit_outputs,
+                bazel_output_to_genfiles: self.bazel_output_to_genfiles,
                 is_bazel_rule: self.is_bazel_rule,
                 is_bazel_build_setting: self.is_bazel_build_setting,
             }),
@@ -1121,7 +1146,12 @@ pub(crate) fn init_frozen_bazel_aspects_get_impl() {
             }
         }
         Ok(aspects)
-    })
+    });
+    FROZEN_BAZEL_ATTR_ASPECTS_GET_IMPL.init(|rule| {
+        let rule = unpack_frozen_rule(rule)?;
+        Ok(rule.bazel_attr_aspects().clone())
+    });
+    FROZEN_BAZEL_ASPECT_INFO_GET_IMPL.init(frozen_aspect_info)
 }
 
 impl FrozenStarlarkRuleCallable {
@@ -1459,7 +1489,6 @@ pub fn register_rule_function(builder: &mut GlobalsBuilder) {
         let bazel_implicit_outputs = bazel_implicit_outputs_from_value(outputs)?;
 
         let _unused = (
-            output_to_genfiles,
             fragments,
             host_fragments,
             _skylark_testable,
@@ -1475,6 +1504,7 @@ pub fn register_rule_function(builder: &mut GlobalsBuilder) {
         let has_bazel_rule_options = has_bazel_attrs
             || !bazel_toolchains.is_empty()
             || !bazel_implicit_outputs.is_empty()
+            || output_to_genfiles
             || executable
             || test.is_some()
             || build_setting.is_some()
@@ -1506,6 +1536,7 @@ pub fn register_rule_function(builder: &mut GlobalsBuilder) {
                 .collect(),
             bazel_toolchains,
             bazel_implicit_outputs,
+            is_bazel_rule && output_to_genfiles,
             is_bazel_rule,
             is_bazel_rule && test.unwrap_or(false),
             is_bazel_rule && executable,

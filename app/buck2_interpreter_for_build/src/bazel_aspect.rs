@@ -36,15 +36,21 @@ use starlark::values::starlark_value;
 use starlark::values::typing::StarlarkCallable;
 
 use crate::attrs::starlark_attribute::StarlarkAttribute;
+use buck2_interpreter::types::rule::FrozenBazelAspectInfo;
+use buck2_interpreter::types::rule::bazel_aspect_hidden_attr_name;
+use buck2_node::attrs::attr::Attribute;
 
 #[derive(Debug, ProvidesStaticType, Trace, NoSerialize, Allocative)]
 pub(crate) struct StarlarkAspect<'v> {
     id: RefCell<Option<String>>,
     implementation: StarlarkCallable<'v, (Value<'v>, Value<'v>), Value<'v>>,
-    attr_aspects: Value<'v>,
+    attr_aspects: Vec<String>,
     toolchains_aspects: Value<'v>,
-    has_required_providers: bool,
-    attrs: Vec<String>,
+    required_providers: Vec<Value<'v>>,
+    required_aspect_providers: Vec<Value<'v>>,
+    requires: Vec<Value<'v>>,
+    toolchains: Vec<Value<'v>>,
+    attrs: Vec<(String, Attribute)>,
     doc: Option<String>,
     apply_to_generating_rules: bool,
 }
@@ -83,9 +89,28 @@ impl<'v> Freeze for StarlarkAspect<'v> {
         Ok(FrozenStarlarkAspect {
             id: self.id.into_inner(),
             implementation: self.implementation.0.freeze(freezer)?,
-            attr_aspects: self.attr_aspects.freeze(freezer)?,
+            attr_aspects: self.attr_aspects,
             toolchains_aspects: self.toolchains_aspects.freeze(freezer)?,
-            has_required_providers: self.has_required_providers,
+            required_providers: self
+                .required_providers
+                .into_iter()
+                .map(|provider| provider.freeze(freezer))
+                .collect::<FreezeResult<Vec<_>>>()?,
+            required_aspect_providers: self
+                .required_aspect_providers
+                .into_iter()
+                .map(|provider| provider.freeze(freezer))
+                .collect::<FreezeResult<Vec<_>>>()?,
+            requires: self
+                .requires
+                .into_iter()
+                .map(|aspect| aspect.freeze(freezer))
+                .collect::<FreezeResult<Vec<_>>>()?,
+            toolchains: self
+                .toolchains
+                .into_iter()
+                .map(|toolchain| toolchain.freeze(freezer))
+                .collect::<FreezeResult<Vec<_>>>()?,
             attrs: self.attrs,
             doc: self.doc,
             apply_to_generating_rules: self.apply_to_generating_rules,
@@ -97,13 +122,14 @@ impl<'v> Freeze for StarlarkAspect<'v> {
 pub(crate) struct FrozenStarlarkAspect {
     id: Option<String>,
     pub(crate) implementation: FrozenValue,
-    #[allow(dead_code)]
-    attr_aspects: FrozenValue,
+    attr_aspects: Vec<String>,
     #[allow(dead_code)]
     toolchains_aspects: FrozenValue,
-    has_required_providers: bool,
-    #[allow(dead_code)]
-    attrs: Vec<String>,
+    required_providers: Vec<FrozenValue>,
+    required_aspect_providers: Vec<FrozenValue>,
+    requires: Vec<FrozenValue>,
+    toolchains: Vec<FrozenValue>,
+    attrs: Vec<(String, Attribute)>,
     #[allow(dead_code)]
     doc: Option<String>,
     #[allow(dead_code)]
@@ -128,10 +154,123 @@ impl<'v> StarlarkValue<'v> for FrozenStarlarkAspect {
 
 pub(crate) fn frozen_aspect_implementation(aspect: FrozenValue) -> Option<FrozenValue> {
     let aspect = aspect.downcast_ref::<FrozenStarlarkAspect>()?;
-    if aspect.has_required_providers {
-        return None;
-    }
     Some(aspect.implementation)
+}
+
+pub(crate) fn frozen_aspect_info(
+    aspect: FrozenValue,
+) -> buck2_error::Result<FrozenBazelAspectInfo> {
+    let aspect = aspect
+        .downcast_ref::<FrozenStarlarkAspect>()
+        .ok_or_else(|| {
+            buck2_error::buck2_error!(
+                buck2_error::ErrorTag::Input,
+                "expected Bazel aspect, got `{}`",
+                aspect
+            )
+        })?;
+    Ok(FrozenBazelAspectInfo {
+        implementation: aspect.implementation,
+        attr_aspects: aspect.attr_aspects.clone(),
+        required_providers: aspect.required_providers.clone(),
+        required_aspect_providers: aspect.required_aspect_providers.clone(),
+        requires: aspect.requires.clone(),
+        attrs: aspect.attrs.iter().map(|(name, _)| name.clone()).collect(),
+        toolchains: aspect.toolchains.clone(),
+    })
+}
+
+fn collect_bazel_aspect_hidden_attributes_impl<'v>(
+    rule_attr: &str,
+    aspect_path: &str,
+    aspect: Value<'v>,
+    output: &mut Vec<(String, Attribute)>,
+) {
+    if let Some(aspect) = aspect.downcast_ref::<StarlarkAspect>() {
+        for (name, attr) in &aspect.attrs {
+            output.push((
+                bazel_aspect_hidden_attr_name(rule_attr, aspect_path, name),
+                attr.clone(),
+            ));
+        }
+        for (idx, required) in aspect.requires.iter().enumerate() {
+            let required_path = format!("{aspect_path}r{idx}");
+            collect_bazel_aspect_hidden_attributes_impl(
+                rule_attr,
+                &required_path,
+                *required,
+                output,
+            );
+        }
+        return;
+    }
+
+    let Some(aspect) = aspect
+        .unpack_frozen()
+        .and_then(|aspect| aspect.downcast_ref::<FrozenStarlarkAspect>())
+    else {
+        return;
+    };
+    for (name, attr) in &aspect.attrs {
+        output.push((
+            bazel_aspect_hidden_attr_name(rule_attr, aspect_path, name),
+            attr.clone(),
+        ));
+    }
+    for (idx, required) in aspect.requires.iter().enumerate() {
+        let required_path = format!("{aspect_path}r{idx}");
+        collect_bazel_aspect_hidden_attributes_impl(
+            rule_attr,
+            &required_path,
+            required.to_value(),
+            output,
+        );
+    }
+}
+
+pub(crate) fn collect_bazel_aspect_hidden_attributes<'v>(
+    rule_attr: &str,
+    aspects: &[Value<'v>],
+    output: &mut Vec<(String, Attribute)>,
+) {
+    for (idx, aspect) in aspects.iter().enumerate() {
+        collect_bazel_aspect_hidden_attributes_impl(rule_attr, &idx.to_string(), *aspect, output);
+    }
+}
+
+fn collect_bazel_aspect_toolchains_impl<'v>(aspect: Value<'v>, output: &mut Vec<Value<'v>>) {
+    if let Some(aspect) = aspect.downcast_ref::<StarlarkAspect>() {
+        output.extend(aspect.toolchains.iter().copied());
+        for required in &aspect.requires {
+            collect_bazel_aspect_toolchains_impl(*required, output);
+        }
+        return;
+    }
+
+    let Some(aspect) = aspect
+        .unpack_frozen()
+        .and_then(|aspect| aspect.downcast_ref::<FrozenStarlarkAspect>())
+    else {
+        return;
+    };
+    output.extend(
+        aspect
+            .toolchains
+            .iter()
+            .map(|toolchain| toolchain.to_value()),
+    );
+    for required in &aspect.requires {
+        collect_bazel_aspect_toolchains_impl(required.to_value(), output);
+    }
+}
+
+pub(crate) fn collect_bazel_aspect_toolchains<'v>(
+    aspects: &[Value<'v>],
+    output: &mut Vec<Value<'v>>,
+) {
+    for aspect in aspects {
+        collect_bazel_aspect_toolchains_impl(*aspect, output);
+    }
 }
 
 fn doc_string(doc: NoneOr<&str>) -> Option<String> {
@@ -142,7 +281,8 @@ fn doc_string(doc: NoneOr<&str>) -> Option<String> {
 pub(crate) fn register_bazel_aspect(builder: &mut GlobalsBuilder) {
     fn aspect<'v>(
         implementation: StarlarkCallable<'v, (Value<'v>, Value<'v>), Value<'v>>,
-        #[starlark(require = named, default = AllocList::EMPTY)] attr_aspects: Value<'v>,
+        #[starlark(require = named, default = UnpackListOrTuple::default())]
+        attr_aspects: UnpackListOrTuple<String>,
         #[starlark(require = named, default = AllocList::EMPTY)] toolchains_aspects: Value<'v>,
         #[starlark(require = named, default = UnpackDictEntries::default())]
         attrs: UnpackDictEntries<&'v str, &'v StarlarkAttribute<'v>>,
@@ -169,16 +309,11 @@ pub(crate) fn register_bazel_aspect(builder: &mut GlobalsBuilder) {
         #[starlark(require = named, default = UnpackListOrTuple::default())]
         subrules: UnpackListOrTuple<Value<'v>>,
     ) -> starlark::Result<StarlarkAspect<'v>> {
-        let has_required_providers = !required_providers.items.is_empty();
         let _unused = (
-            required_providers,
-            required_aspect_providers,
             provides,
-            requires,
             propagation_predicate,
             fragments,
             host_fragments,
-            toolchains,
             exec_compatible_with,
             exec_groups,
             subrules,
@@ -186,13 +321,16 @@ pub(crate) fn register_bazel_aspect(builder: &mut GlobalsBuilder) {
         Ok(StarlarkAspect {
             id: RefCell::new(None),
             implementation,
-            attr_aspects,
+            attr_aspects: attr_aspects.items,
             toolchains_aspects,
-            has_required_providers,
+            required_providers: required_providers.items,
+            required_aspect_providers: required_aspect_providers.items,
+            requires: requires.items,
+            toolchains: toolchains.items,
             attrs: attrs
                 .entries
                 .into_iter()
-                .map(|(name, _)| name.to_owned())
+                .map(|(name, attr)| (name.to_owned(), attr.clone_attribute()))
                 .collect(),
             doc: doc_string(doc),
             apply_to_generating_rules,

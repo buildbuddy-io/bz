@@ -719,50 +719,29 @@ impl<'v, 'x> CommandLineOptionsRef<'v, 'x> {
         }
 
         impl<'a, 'v> CommandLineContext for ExtrasContext<'a, 'v> {
+            fn resolve_artifact(
+                &self,
+                artifact: &Artifact,
+                artifact_path_mapping: &dyn ArtifactPathMapper,
+            ) -> buck2_error::Result<CommandLineLocation<'_>> {
+                let resolved = self.ctx.resolve_artifact(artifact, artifact_path_mapping)?;
+                self.apply_path_options(resolved)
+            }
+
+            fn resolve_output_artifact(
+                &self,
+                artifact: &Artifact,
+            ) -> buck2_error::Result<CommandLineLocation<'_>> {
+                let resolved = self.ctx.resolve_output_artifact(artifact)?;
+                self.apply_path_options(resolved)
+            }
+
             fn resolve_project_path(
                 &self,
                 path: ProjectRelativePathBuf,
             ) -> buck2_error::Result<CommandLineLocation<'_>> {
-                let Self {
-                    ctx,
-                    relative_to,
-                    opts,
-                } = self;
-
-                let resolved = ctx.resolve_project_path(path)?;
-
-                if opts.parent == 0
-                    && opts.absolute_prefix.is_none()
-                    && opts.absolute_suffix.is_none()
-                    && relative_to.is_none()
-                {
-                    return Ok(resolved);
-                }
-
-                let mut x = resolved.into_relative();
-                if let Some(relative_to) = relative_to {
-                    x = relative_to.relative(x);
-                }
-                let mut parent_ref = x.as_relative_path();
-                for _ in 0..opts.parent {
-                    parent_ref = parent_ref
-                        .parent()
-                        .ok_or(CommandLineArgError::TooManyParentCalls)?;
-                }
-                x = parent_ref.to_owned();
-                if opts.absolute_prefix.is_some() || opts.absolute_suffix.is_some() {
-                    x = RelativePath::new(&format!(
-                        "{}{}{}",
-                        opts.absolute_prefix.unwrap_or_default().as_str(),
-                        x,
-                        opts.absolute_suffix.unwrap_or_default().as_str(),
-                    ))
-                    .to_owned();
-                }
-                Ok(CommandLineLocation::from_relative_path(
-                    x,
-                    self.fs().path_separator(),
-                ))
+                let resolved = self.ctx.resolve_project_path(path)?;
+                self.apply_path_options(resolved)
             }
 
             fn fs(&self) -> &ExecutorFs<'_> {
@@ -797,6 +776,50 @@ impl<'v, 'x> CommandLineOptionsRef<'v, 'x> {
 
             fn normalize_param_file_arg(&self, arg: String) -> String {
                 self.ctx.normalize_param_file_arg(arg)
+            }
+        }
+
+        impl<'a, 'v> ExtrasContext<'a, 'v> {
+            fn apply_path_options<'b>(
+                &self,
+                resolved: CommandLineLocation<'b>,
+            ) -> buck2_error::Result<CommandLineLocation<'b>> {
+                let Self {
+                    relative_to, opts, ..
+                } = self;
+
+                if opts.parent == 0
+                    && opts.absolute_prefix.is_none()
+                    && opts.absolute_suffix.is_none()
+                    && relative_to.is_none()
+                {
+                    return Ok(resolved);
+                }
+
+                let mut path = resolved.into_relative();
+                if let Some(relative_to) = relative_to {
+                    path = relative_to.relative(path);
+                }
+                let mut parent_ref = path.as_relative_path();
+                for _ in 0..opts.parent {
+                    parent_ref = parent_ref
+                        .parent()
+                        .ok_or(CommandLineArgError::TooManyParentCalls)?;
+                }
+                path = parent_ref.to_owned();
+                if opts.absolute_prefix.is_some() || opts.absolute_suffix.is_some() {
+                    path = RelativePath::new(&format!(
+                        "{}{}{}",
+                        opts.absolute_prefix.unwrap_or_default().as_str(),
+                        path,
+                        opts.absolute_suffix.unwrap_or_default().as_str(),
+                    ))
+                    .to_owned();
+                }
+                Ok(CommandLineLocation::from_relative_path(
+                    path,
+                    self.fs().path_separator(),
+                ))
             }
         }
 

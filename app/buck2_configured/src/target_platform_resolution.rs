@@ -39,6 +39,7 @@ use dupe::Dupe;
 use pagable::Pagable;
 use pagable::pagable_typetag;
 
+use crate::bazel_command_line_options::apply_bazel_command_line_build_settings;
 use crate::configuration::get_platform_configuration;
 use crate::execution::get_execution_platform_toolchain_dep;
 
@@ -148,7 +149,7 @@ impl ConfiguredTargetCalculationImpl for ConfiguredTargetCalculationInstance {
                 },
             };
 
-            CFG_CONSTRUCTOR_CALCULATION_IMPL
+            let cfg = CFG_CONSTRUCTOR_CALCULATION_IMPL
                 .get()?
                 .eval_cfg_constructor(
                     ctx,
@@ -162,7 +163,9 @@ impl ConfiguredTargetCalculationImpl for ConfiguredTargetCalculationInstance {
                     false,
                 )
                 .await
-                .with_buck_error_context(|| format!("Resolving modifiers for target `{target}`"))
+                .with_buck_error_context(|| format!("Resolving modifiers for target `{target}`"))?;
+
+            apply_bazel_command_line_build_settings(ctx, cfg).await
         }
 
         match node.rule_kind() {

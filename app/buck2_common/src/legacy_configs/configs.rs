@@ -303,6 +303,7 @@ pub(crate) struct BazelCompatBazelrcOptions {
     pub(crate) per_file_copt: Vec<String>,
     pub(crate) macos_minimum_os: Vec<String>,
     pub(crate) host_macos_minimum_os: Vec<String>,
+    pub(crate) command_line_build_settings: Vec<String>,
 }
 
 impl LegacyBuckConfig {
@@ -503,6 +504,7 @@ impl LegacyBuckConfig {
         if bazelrc_option_values
             .iter()
             .any(|(_, values)| !values.is_empty())
+            || !bazelrc_options.command_line_build_settings.is_empty()
         {
             let section = values.entry("bazel".to_owned()).or_default();
             let mut section_values: BTreeMap<String, ConfigValue> = section
@@ -516,6 +518,15 @@ impl LegacyBuckConfig {
                         .entry(key.to_owned())
                         .or_insert_with(|| synthetic_config_value(&values.join("\n")));
                 }
+            }
+            if !bazelrc_options.command_line_build_settings.is_empty() {
+                section_values
+                    .entry("command_line_build_settings".to_owned())
+                    .or_insert_with(|| {
+                        synthetic_config_value(
+                            &bazelrc_options.command_line_build_settings.join("\n"),
+                        )
+                    });
             }
             section.values = SortedMap::from_iter(section_values);
         }

@@ -54,6 +54,7 @@ use buck2_core::deferred::base_deferred_key::BaseDeferredKeyDyn;
 use buck2_core::deferred::key::DeferredHolderKey;
 use buck2_core::execution_types::execution::ExecutionPlatformResolution;
 use buck2_core::execution_types::execution::ExecutionPlatformResolutionPartial;
+use buck2_core::fs::buck_out_path::BazelOutputRoot;
 use buck2_core::package::PackageLabel;
 use buck2_core::pattern::pattern::PatternData;
 use buck2_core::pattern::pattern::lex_target_pattern;
@@ -525,6 +526,7 @@ impl AnonTargetKey {
                     eval.heap(),
                     Some(attributes),
                     None,
+                    None,
                     Some(self.0.configured_label()),
                     // FIXME(JakobDegen): There should probably be a way to pass plugins
                     // into anon targets
@@ -536,6 +538,7 @@ impl AnonTargetKey {
                     Vec::new(),
                     SmallMap::new(),
                     BazelCppOptions::default(),
+                    BazelOutputRoot::Bin,
                     false,
                     None,
                     None,

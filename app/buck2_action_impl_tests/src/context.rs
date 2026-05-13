@@ -16,6 +16,7 @@ use buck2_build_api::interpreter::rule_defs::register_rule_defs;
 use buck2_core::configuration::data::ConfigurationData;
 use buck2_core::deferred::base_deferred_key::BaseDeferredKey;
 use buck2_core::execution_types::execution::ExecutionPlatformResolution;
+use buck2_core::fs::buck_out_path::BazelOutputRoot;
 use buck2_core::target::label::label::TargetLabel;
 use buck2_execute::digest_config::DigestConfig;
 use buck2_interpreter::file_type::StarlarkFileType;
@@ -90,11 +91,13 @@ fn run_ctx_test(
                 eval.heap(),
                 Some(attributes),
                 None,
+                None,
                 Some(label),
                 Some(plugins),
                 Vec::new(),
                 SmallMap::new(),
                 BazelCppOptions::default(),
+                BazelOutputRoot::Bin,
                 false,
                 None,
                 None,

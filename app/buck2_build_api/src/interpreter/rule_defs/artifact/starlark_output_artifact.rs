@@ -52,6 +52,7 @@ use crate::interpreter::rule_defs::artifact::methods::any_artifact_methods;
 use crate::interpreter::rule_defs::artifact::starlark_artifact::StarlarkArtifact;
 use crate::interpreter::rule_defs::artifact::starlark_artifact_like::ArtifactFingerprint;
 use crate::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkArtifactLike;
+use crate::interpreter::rule_defs::artifact::starlark_artifact_like::bazel_artifact_owner;
 use crate::interpreter::rule_defs::artifact::starlark_artifact_like::bazel_artifact_path;
 use crate::interpreter::rule_defs::artifact::starlark_artifact_like::bazel_artifact_short_path;
 use crate::interpreter::rule_defs::artifact::starlark_declared_artifact::StarlarkDeclaredArtifact;
@@ -209,10 +210,10 @@ impl<'v, V: ValueLike<'v>> StarlarkArtifactLike<'v> for StarlarkOutputArtifactGe
     }
 
     fn owner(&'v self) -> buck2_error::Result<Option<BaseDeferredKey>> {
-        Ok(match self.unpack() {
+        Ok(bazel_artifact_owner(self.get_path()).or_else(|| match self.unpack() {
             Either::Left(v) => v.artifact.owner(),
             Either::Right(v) => v.artifact.owner().cloned(),
-        })
+        }))
     }
 
     fn with_short_path(

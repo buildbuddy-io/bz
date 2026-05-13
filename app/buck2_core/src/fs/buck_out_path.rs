@@ -35,6 +35,7 @@ use crate::fs::project_rel_path::ProjectRelativePathBuf;
 use crate::provider::label::ConfiguredProvidersLabel;
 use crate::provider::label::NonDefaultProvidersName;
 use crate::provider::label::ProvidersName;
+use crate::target::configured_target_label::ConfiguredTargetLabel;
 
 #[derive(
     Copy,
@@ -59,6 +60,58 @@ pub enum BuckOutPathKind {
 }
 
 #[derive(
+    Copy,
+    Clone,
+    Debug,
+    Allocative,
+    Hash,
+    Eq,
+    PartialEq,
+    strong_hash::StrongHash,
+    Pagable
+)]
+#[derive(Default)]
+pub enum BazelOutputRoot {
+    #[default]
+    Bin,
+    Genfiles,
+}
+
+impl BazelOutputRoot {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Bin => "bin",
+            Self::Genfiles => "genfiles",
+        }
+    }
+
+    pub fn exec_root(self) -> &'static str {
+        match self {
+            Self::Bin => "buck-out/bin",
+            Self::Genfiles => "buck-out/genfiles",
+        }
+    }
+}
+
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Allocative,
+    Hash,
+    Eq,
+    PartialEq,
+    strong_hash::StrongHash,
+    Pagable
+)]
+#[derive(Default)]
+pub enum BazelOutputPathKind {
+    #[default]
+    PackageRelative,
+    OutputDirRelative,
+}
+
+#[derive(
     Clone,
     Debug,
     Display,
@@ -73,6 +126,16 @@ pub enum BuckOutPathKind {
 struct BuildArtifactPathData {
     /// The owner responsible for creating this path.
     owner: DeferredHolderKey,
+    /// The Bazel owner used for Starlark File path/owner semantics.
+    ///
+    /// Bazel aspects create actions under an aspect key whose label is the aspect target. Buck's
+    /// action graph still needs the owning analysis target for lookup, so Bazel compatibility keeps
+    /// that as `owner` and stores the Bazel-visible owner separately.
+    bazel_owner: Option<ConfiguredTargetLabel>,
+    /// Whether Bazel-visible exec paths for this artifact live under bin or genfiles.
+    bazel_output_root: BazelOutputRoot,
+    /// Whether `path` is relative to the rule package or to the Bazel output root.
+    bazel_output_path_kind: BazelOutputPathKind,
     /// The path relative to that target.
     path: Box<ForwardRelativePath>,
     /// How the path is resolved
@@ -118,8 +181,59 @@ impl BuildArtifactPath {
         path: ForwardRelativePathBuf,
         path_resolution_method: BuckOutPathKind,
     ) -> Self {
+        Self::with_dynamic_actions_action_key_and_bazel_owner(
+            owner,
+            path,
+            path_resolution_method,
+            None,
+        )
+    }
+
+    pub fn with_dynamic_actions_action_key_and_bazel_owner(
+        owner: DeferredHolderKey,
+        path: ForwardRelativePathBuf,
+        path_resolution_method: BuckOutPathKind,
+        bazel_owner: Option<ConfiguredTargetLabel>,
+    ) -> Self {
+        Self::with_dynamic_actions_action_key_and_bazel_owner_and_output_root(
+            owner,
+            path,
+            path_resolution_method,
+            bazel_owner,
+            BazelOutputRoot::Bin,
+        )
+    }
+
+    pub fn with_dynamic_actions_action_key_and_bazel_owner_and_output_root(
+        owner: DeferredHolderKey,
+        path: ForwardRelativePathBuf,
+        path_resolution_method: BuckOutPathKind,
+        bazel_owner: Option<ConfiguredTargetLabel>,
+        bazel_output_root: BazelOutputRoot,
+    ) -> Self {
+        Self::with_dynamic_actions_action_key_and_bazel_owner_output_root_and_path_kind(
+            owner,
+            path,
+            path_resolution_method,
+            bazel_owner,
+            bazel_output_root,
+            BazelOutputPathKind::PackageRelative,
+        )
+    }
+
+    pub fn with_dynamic_actions_action_key_and_bazel_owner_output_root_and_path_kind(
+        owner: DeferredHolderKey,
+        path: ForwardRelativePathBuf,
+        path_resolution_method: BuckOutPathKind,
+        bazel_owner: Option<ConfiguredTargetLabel>,
+        bazel_output_root: BazelOutputRoot,
+        bazel_output_path_kind: BazelOutputPathKind,
+    ) -> Self {
         BuildArtifactPath(Arc::new(BuildArtifactPathData {
             owner,
+            bazel_owner,
+            bazel_output_root,
+            bazel_output_path_kind,
             path: path.into_box(),
             path_resolution_method,
         }))
@@ -127,6 +241,18 @@ impl BuildArtifactPath {
 
     pub fn owner(&self) -> &DeferredHolderKey {
         &self.0.owner
+    }
+
+    pub fn bazel_owner(&self) -> Option<&ConfiguredTargetLabel> {
+        self.0.bazel_owner.as_ref()
+    }
+
+    pub fn bazel_output_root(&self) -> BazelOutputRoot {
+        self.0.bazel_output_root
+    }
+
+    pub fn bazel_output_path_kind(&self) -> BazelOutputPathKind {
+        self.0.bazel_output_path_kind
     }
 
     pub fn dynamic_actions_action_key(&self) -> Option<DynamicActionsActionKey> {

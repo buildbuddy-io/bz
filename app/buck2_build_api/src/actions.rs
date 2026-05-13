@@ -38,10 +38,15 @@ use buck2_build_signals::env::WaitingData;
 use buck2_common::io::IoProvider;
 use buck2_core::category::Category;
 use buck2_core::category::CategoryRef;
+use buck2_core::cells::external::ExternalCellOrigin;
+use buck2_core::cells::external::external_cell_origin_for_cell;
 use buck2_core::content_hash::ContentBasedPathHash;
 use buck2_core::deferred::base_deferred_key::BaseDeferredKey;
 use buck2_core::execution_types::executor_config::CommandExecutorConfig;
 use buck2_core::fs::artifact_path_resolver::ArtifactFs;
+use buck2_core::fs::buck_out_path::BazelOutputPathKind;
+use buck2_core::fs::buck_out_path::BuildArtifactPath;
+use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
 use buck2_events::dispatch::EventDispatcher;
 use buck2_execute::artifact::fs::ExecutorFs;
 use buck2_execute::digest_config::DigestConfig;
@@ -382,6 +387,86 @@ pub struct RegisteredAction {
     executor_config: Arc<CommandExecutorConfig>,
 }
 
+fn bazel_external_repo_name<'a>(cell: &'a str, origin: &'a ExternalCellOrigin) -> &'a str {
+    match origin {
+        ExternalCellOrigin::Bundled(cell) => cell.as_str(),
+        ExternalCellOrigin::Git(_) => cell,
+        ExternalCellOrigin::Bzlmod(setup) => setup.canonical_repo_name.as_ref(),
+        ExternalCellOrigin::BzlmodGenerated(setup) => setup.canonical_repo_name.as_ref(),
+    }
+}
+
+fn push_bazel_path_component(path: &mut String, component: &str) {
+    if component.is_empty() {
+        return;
+    }
+    if !path.is_empty() {
+        path.push('/');
+    }
+    path.push_str(component);
+}
+
+fn bazel_package_exec_path(label: &ConfiguredTargetLabel) -> String {
+    let package = label.pkg();
+    let cell = package.cell_name();
+    let mut path = String::new();
+    if let Some(origin) = external_cell_origin_for_cell(cell.as_str()) {
+        push_bazel_path_component(&mut path, "external");
+        push_bazel_path_component(&mut path, bazel_external_repo_name(cell.as_str(), &origin));
+    } else if cell.as_str() != "root" {
+        push_bazel_path_component(&mut path, cell.as_str());
+    }
+    push_bazel_path_component(&mut path, package.cell_relative_path().as_str());
+    path
+}
+
+fn bazel_logical_output_path<'a>(
+    output_path: &'a BuildArtifactPath,
+    label: &ConfiguredTargetLabel,
+) -> &'a str {
+    let path = output_path.path().as_str();
+    if output_path.bazel_output_path_kind() != BazelOutputPathKind::PackageRelative {
+        return path;
+    }
+
+    let package_exec_path = bazel_package_exec_path(label);
+    if package_exec_path.is_empty() {
+        return path;
+    }
+    if path == package_exec_path {
+        return "";
+    }
+    path.strip_prefix(&format!("{package_exec_path}/"))
+        .unwrap_or(path)
+}
+
+fn action_key_output_path(output_path: &BuildArtifactPath) -> ForwardRelativePathBuf {
+    let Some(label) = output_path.bazel_owner() else {
+        return output_path.path().to_buf();
+    };
+
+    let mut path = String::from("_bazel/");
+    path.push_str(label.cfg().output_hash().as_str());
+    if let Some(exec_cfg) = label.exec_cfg() {
+        path.push('-');
+        path.push_str(exec_cfg.output_hash().as_str());
+    }
+    path.push('/');
+    path.push_str(output_path.bazel_output_root().as_str());
+
+    if output_path.bazel_output_path_kind() == BazelOutputPathKind::PackageRelative {
+        let package_exec_path = bazel_package_exec_path(label);
+        if !package_exec_path.is_empty() {
+            path.push('/');
+            path.push_str(&package_exec_path);
+        }
+    }
+
+    path.push('/');
+    path.push_str(bazel_logical_output_path(output_path, label));
+    ForwardRelativePathBuf::new(path).expect("Bazel action key path should be normalized")
+}
+
 impl RegisteredAction {
     pub fn new(
         key: ActionKey,
@@ -410,12 +495,13 @@ impl RegisteredAction {
         // As an artifact can only be bound as an output to one action, we know it uniquely identifies the action and we can
         // derive the scratch path from that and that will be no unstable than the artifact already is.
         let output_path = self.action.first_output().get_path();
+        let output_key_path = action_key_output_path(output_path);
         match output_path.dynamic_actions_action_key() {
             Some(k) => k
                 .as_file_name()
                 .as_forward_rel_path()
-                .join(output_path.path()),
-            None => output_path.path().to_buf(),
+                .join(&output_key_path),
+            None => output_key_path,
         }
     }
 

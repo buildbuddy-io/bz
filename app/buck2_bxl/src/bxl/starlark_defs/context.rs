@@ -31,6 +31,7 @@ use buck2_core::cells::cell_path::CellPath;
 use buck2_core::cells::name::CellName;
 use buck2_core::execution_types::execution::ExecutionPlatformResolution;
 use buck2_core::fs::artifact_path_resolver::ArtifactFs;
+use buck2_core::fs::buck_out_path::BazelOutputRoot;
 use buck2_core::fs::project::ProjectRoot;
 use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
 use buck2_core::global_cfg_options::GlobalCfgOptions;
@@ -362,7 +363,9 @@ impl<'v> BxlContext<'v> {
                 label: None,
                 toolchains: AnalysisToolchains::empty(heap),
                 bazel_cpp_options: BazelCppOptions::default(),
-                attributes: None,
+                bazel_output_root: BazelOutputRoot::Bin,
+                attributes: RefCell::new(None),
+                bazel_context_override: RefCell::new(None),
                 plugins: None,
                 build_file_path: None,
                 rule_kind_name: None,
@@ -386,7 +389,9 @@ impl<'v> BxlContext<'v> {
                 label: None,
                 toolchains: AnalysisToolchains::empty(heap),
                 bazel_cpp_options: BazelCppOptions::default(),
-                attributes: None,
+                bazel_output_root: BazelOutputRoot::Bin,
+                attributes: RefCell::new(None),
+                bazel_context_override: RefCell::new(None),
                 plugins: None,
                 build_file_path: None,
                 rule_kind_name: None,
@@ -410,7 +415,9 @@ impl<'v> BxlContext<'v> {
                 label: None,
                 toolchains: AnalysisToolchains::empty(heap),
                 bazel_cpp_options: BazelCppOptions::default(),
-                attributes: Some(attributes),
+                bazel_output_root: BazelOutputRoot::Bin,
+                attributes: RefCell::new(Some(attributes)),
+                bazel_context_override: RefCell::new(None),
                 plugins: None,
                 build_file_path: None,
                 rule_kind_name: None,

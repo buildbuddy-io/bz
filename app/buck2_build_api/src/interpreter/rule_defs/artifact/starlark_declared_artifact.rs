@@ -56,6 +56,7 @@ use crate::interpreter::rule_defs::artifact::starlark_artifact_like::ArtifactFin
 use crate::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkArtifactLike;
 use crate::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkInputArtifactLike;
 use crate::interpreter::rule_defs::artifact::starlark_artifact_like::ValueAsInputArtifactLike;
+use crate::interpreter::rule_defs::artifact::starlark_artifact_like::bazel_artifact_owner;
 use crate::interpreter::rule_defs::artifact::starlark_artifact_like::bazel_artifact_path;
 use crate::interpreter::rule_defs::artifact::starlark_artifact_like::bazel_artifact_short_path;
 use crate::interpreter::rule_defs::artifact::starlark_output_artifact::StarlarkOutputArtifact;
@@ -154,7 +155,7 @@ impl<'v> StarlarkArtifactLike<'v> for StarlarkDeclaredArtifact<'v> {
     }
 
     fn owner(&'v self) -> buck2_error::Result<Option<BaseDeferredKey>> {
-        Ok(self.artifact.owner())
+        Ok(bazel_artifact_owner(self.artifact.get_path()).or_else(|| self.artifact.owner()))
     }
 
     fn with_short_path(

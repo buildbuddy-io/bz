@@ -63,6 +63,7 @@ use pagable::Pagable;
 use pagable::pagable_typetag;
 use starlark_map::ordered_map::OrderedMap;
 
+use crate::bazel_command_line_options::apply_bazel_command_line_build_settings;
 use crate::configuration::compute_platform_cfgs;
 use crate::configuration::get_matched_cfg_keys;
 use crate::configuration::get_matched_cfg_keys_for_node;
@@ -547,6 +548,7 @@ pub(crate) async fn configure_exec_dep_with_modifiers(
         .with_buck_error_context(|| {
             format!("Resolving modifiers for exec dep target `{}`", exec_dep)
         })?;
+    let cfg_config = apply_bazel_command_line_build_settings(ctx, cfg_config).await?;
 
     // Create configuration pair with modifiers applied
     let cfg_pair = Configuration::new(cfg_config, None);

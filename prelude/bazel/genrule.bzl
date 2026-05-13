@@ -30,105 +30,39 @@ def _rule_output_dir(ctx, outs, output_names):
         return ctx.bin_dir.path + "/" + ctx.label.package
     return ctx.bin_dir.path
 
-def _label_keys(label):
-    package = label.package
-    name = label.name
-    keys = [":" + name]
-    if package:
-        canonical = "//{}:{}".format(package, name)
-        keys.append(canonical)
-        if package.split("/")[-1] == name:
-            keys.append("//" + package)
-    else:
-        keys.append("//:" + name)
-
-    repo_name = label.repo_name
-    if repo_name and repo_name != "root":
-        for key in keys[:]:
-            if key.startswith("//"):
-                keys.append("@{}{}".format(repo_name, key))
-                keys.append("@@{}{}".format(repo_name, key))
-
-    return keys
-
-def _record_location_paths(location_paths, value, prefer_executable = False):
-    executable = None
-    if prefer_executable and hasattr(value, "files_to_run"):
-        executable = value.files_to_run.executable
-    files = [executable] if executable != None else value.files.to_list()
-    if not files:
-        return
-
-    if len(files) == 1:
-        single = files[0].path
-    else:
-        single = None
-    joined = _join_paths(files)
-
-    if hasattr(value, "label"):
-        for key in _label_keys(value.label):
-            location_paths[key] = single
-            location_paths[key + ".__locations"] = joined
-    else:
-        for file in files:
-            location_paths[file.basename] = file.path
-            location_paths[":" + file.basename] = file.path
-            location_paths[file.short_path] = file.path
-
-def _expand_location_macros(command, location_paths):
-    for key, path in location_paths.items():
-        if key.endswith(".__locations"):
-            continue
-        if path == None:
-            continue
-        for name in ["location", "execpath", "rootpath"]:
-            command = command.replace("$({} {})".format(name, key), path)
-
-    for key, paths in location_paths.items():
-        if not key.endswith(".__locations"):
-            continue
-        label = key[:-len(".__locations")]
-        for name in ["locations", "execpaths", "rootpaths"]:
-            command = command.replace("$({} {})".format(name, label), paths)
-
-    for name in ["location", "locations", "execpath", "execpaths", "rootpath", "rootpaths"]:
-        if "$({} ".format(name) in command:
-            fail("unresolved genrule `{}` macro in command: {}".format(name, command))
-
-    return command
-
 def _expand_make_variables(ctx, command, srcs, outs, output_names):
     out_paths = _join_paths(outs)
     src_paths = _join_paths(srcs)
-
-    command = command.replace("$(SRCS)", src_paths)
-    command = command.replace("$(OUTS)", out_paths)
-    command = command.replace("$(BINDIR)", ctx.bin_dir.path)
-    command = command.replace("$(GENDIR)", ctx.genfiles_dir.path)
+    substitutions = {
+        "BINDIR": ctx.bin_dir.path,
+        "GENDIR": ctx.genfiles_dir.path,
+        "OUTS": out_paths,
+        "SRCS": src_paths,
+    }
 
     if "$@" in command:
         if len(outs) != 1:
             fail("genrule `$@` expansion requires exactly one output, got {}".format(len(outs)))
-        command = command.replace("$@", outs[0].path)
+        substitutions["@"] = outs[0].path
 
     if "$<" in command:
         if len(srcs) != 1:
             fail("genrule `$<` expansion requires exactly one source, got {}".format(len(srcs)))
-        command = command.replace("$<", srcs[0].path)
+        substitutions["<"] = srcs[0].path
 
     if "$(@D)" in command or "$(RULEDIR)" in command:
         if len(outs) == 0:
             fail("genrule output directory expansion requires at least one output")
         rule_dir = _rule_output_dir(ctx, outs, output_names)
         at_d = outs[0].dirname if len(outs) == 1 else rule_dir
-        command = command.replace("$(@D)", at_d)
-        command = command.replace("$(RULEDIR)", rule_dir)
+        substitutions["@D"] = at_d
+        substitutions["RULEDIR"] = rule_dir
 
     if ctx.attr.stamp == 1:
         command = command.replace("bazel-out/stable-status.txt", ctx.info_file.path)
         command = command.replace("bazel-out/volatile-status.txt", ctx.version_file.path)
 
-    return command
+    return ctx.expand_make_variables("cmd", command, substitutions)
 
 def _dollar_escape_placeholder(command):
     placeholder = "__BUCK_BAZEL_GENRULE_DOLLAR__"
@@ -155,20 +89,15 @@ def _bazel_genrule_impl(ctx):
         fail("genrule(executable = True) requires exactly one output")
 
     srcs = _collect_files(ctx.attr.srcs)
-    tools = _collect_files(ctx.attr.tools) + _collect_files(ctx.attr.exec_tools)
-
-    location_paths = {}
-    for value in ctx.attr.srcs:
-        _record_location_paths(location_paths, value)
-    for value in ctx.attr.tools:
-        _record_location_paths(location_paths, value, prefer_executable = True)
-    for value in ctx.attr.exec_tools:
-        _record_location_paths(location_paths, value, prefer_executable = True)
+    tools = _collect_files(ctx.attr.tools) + _collect_files(ctx.attr.exec_tools) + _collect_files(ctx.attr.toolchains)
 
     command = _selected_command(ctx)
     dollar_escape_placeholder = _dollar_escape_placeholder(command)
     command = command.replace("$$", dollar_escape_placeholder)
-    command = _expand_location_macros(command, location_paths)
+    command = ctx.expand_location(
+        command,
+        ctx.attr.srcs + ctx.attr.tools + ctx.attr.exec_tools + ctx.attr.toolchains,
+    )
     command = _expand_make_variables(ctx, command, srcs, outs, ctx.attr.outs)
     command = command.replace(dollar_escape_placeholder, "$")
 

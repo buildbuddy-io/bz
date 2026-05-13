@@ -1368,6 +1368,95 @@ fn bazelrc_arg_value(args: &[String], index: &mut usize, name: &str) -> Option<S
     None
 }
 
+fn bazelrc_command_line_build_setting_entry(kind: &str, key: &str, value: &str) -> String {
+    format!("{kind}\t{key}\t{value}")
+}
+
+fn bazelrc_native_command_line_string_option(name: &str) -> bool {
+    matches!(
+        name,
+        "java_language_version"
+            | "tool_java_language_version"
+            | "java_runtime_version"
+            | "tool_java_runtime_version"
+            | "experimental_one_version_enforcement"
+    )
+}
+
+fn bazelrc_native_command_line_list_option(name: &str) -> bool {
+    matches!(name, "javacopt" | "host_javacopt")
+}
+
+fn bazelrc_label_build_setting_key(value: &str) -> bool {
+    value.starts_with('@') || value.starts_with("//") || value.starts_with(':')
+}
+
+fn bazelrc_command_line_build_setting(args: &[String], index: &mut usize) -> Option<String> {
+    let arg = &args[*index];
+    let option = arg.strip_prefix("--")?;
+    if option.is_empty() {
+        return None;
+    }
+
+    let (negated, option) = if let Some(option) = option.strip_prefix("no") {
+        (true, option)
+    } else {
+        (false, option)
+    };
+
+    if bazelrc_label_build_setting_key(option) {
+        let (key, value) = option
+            .split_once('=')
+            .map_or((option, None), |(key, value)| (key, Some(value)));
+        if !bazelrc_label_build_setting_key(key) {
+            return None;
+        }
+        return Some(match value {
+            Some("true" | "True" | "1") => {
+                bazelrc_command_line_build_setting_entry("bool", key, "true")
+            }
+            Some("false" | "False" | "0") => {
+                bazelrc_command_line_build_setting_entry("bool", key, "false")
+            }
+            Some(value) => bazelrc_command_line_build_setting_entry("string", key, value),
+            None => bazelrc_command_line_build_setting_entry(
+                "bool",
+                key,
+                if negated { "false" } else { "true" },
+            ),
+        });
+    }
+
+    if negated {
+        return None;
+    }
+
+    let (name, value) = option
+        .split_once('=')
+        .map_or((option, None), |(name, value)| {
+            (name, Some(value.to_owned()))
+        });
+    if !bazelrc_native_command_line_string_option(name)
+        && !bazelrc_native_command_line_list_option(name)
+    {
+        return None;
+    }
+    let value = match value {
+        Some(value) => value,
+        None => {
+            *index += 1;
+            args.get(*index)?.clone()
+        }
+    };
+    let key = format!("//command_line_option:{name}");
+    let kind = if bazelrc_native_command_line_list_option(name) {
+        "list"
+    } else {
+        "string"
+    };
+    Some(bazelrc_command_line_build_setting_entry(kind, &key, &value))
+}
+
 fn bazelrc_add_options(
     options: &mut BazelCompatBazelrcOptions,
     args: &[String],
@@ -1400,6 +1489,8 @@ fn bazelrc_add_options(
                 bazelrc_arg_value(args, &mut index, "--host_macos_minimum_os")
             {
                 options.host_macos_minimum_os.push(value);
+            } else if let Some(value) = bazelrc_command_line_build_setting(args, &mut index) {
+                options.command_line_build_settings.push(value);
             }
         }
         index += 1;

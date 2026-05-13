@@ -126,6 +126,7 @@ fn bazel_output_file_rule() -> buck2_error::Result<Arc<Rule>> {
         bazel_toolchains: Vec::new(),
         bazel_output_attrs: Vec::new(),
         bazel_implicit_outputs: Vec::new(),
+        bazel_output_to_genfiles: false,
         is_bazel_rule: false,
         is_bazel_build_setting: false,
     }))
@@ -141,6 +142,7 @@ fn bazel_input_file_rule() -> buck2_error::Result<Arc<Rule>> {
         bazel_toolchains: Vec::new(),
         bazel_output_attrs: Vec::new(),
         bazel_implicit_outputs: Vec::new(),
+        bazel_output_to_genfiles: false,
         is_bazel_rule: false,
         is_bazel_build_setting: false,
     }))

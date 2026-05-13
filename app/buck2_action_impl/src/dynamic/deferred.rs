@@ -39,6 +39,7 @@ use buck2_core::deferred::base_deferred_key::BaseDeferredKey;
 use buck2_core::deferred::dynamic::DynamicLambdaResultsKey;
 use buck2_core::deferred::key::DeferredHolderKey;
 use buck2_core::fs::artifact_path_resolver::ArtifactFs;
+use buck2_core::fs::buck_out_path::BazelOutputRoot;
 use buck2_error::buck2_error;
 use buck2_error::internal_error;
 use buck2_events::dispatch::get_dispatcher;
@@ -203,11 +204,13 @@ fn execute_lambda_inner<'v>(
             heap,
             dynamic_lambda_ctx_data.lambda.attributes()?,
             None,
+            None,
             self_key.owner().configured_label(),
             dynamic_lambda_ctx_data.lambda.plugins()?,
             Vec::new(),
             SmallMap::new(),
             BazelCppOptions::default(),
+            BazelOutputRoot::Bin,
             false,
             None,
             None,
