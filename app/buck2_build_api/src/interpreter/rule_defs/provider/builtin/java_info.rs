@@ -35,6 +35,7 @@ use starlark::values::Trace;
 use starlark::values::Value;
 use starlark::values::ValueLifetimeless;
 use starlark::values::ValueLike;
+use starlark::values::dict::AllocDict;
 use starlark::values::list::AllocList;
 use starlark::values::list::ListRef;
 use starlark::values::none::NoneType;
@@ -43,6 +44,7 @@ use starlark::values::structs::StructRef;
 use starlark::values::tuple::TupleRef;
 use starlark_map::StarlarkHasher;
 
+use crate::interpreter::rule_defs::cmd_args::StarlarkCmdArgs;
 use crate::interpreter::rule_defs::context::bazel_shell_tokenize;
 use crate::interpreter::rule_defs::depset::BazelDepset;
 use crate::interpreter::rule_defs::depset::bazel_depset_from_values;
@@ -503,7 +505,7 @@ fn java_tool_command<'v>(
     tool_attr: &str,
     extra_jvm_flags: Value<'v>,
     heap: Heap<'v>,
-) -> starlark::Result<(Value<'v>, Vec<Value<'v>>, Vec<Value<'v>>)> {
+) -> starlark::Result<(Value<'v>, Vec<Value<'v>>, Vec<Value<'v>>, usize)> {
     let tool = java_attr(java_toolchain, tool_attr, heap)?;
     let files_to_run = java_attr(tool, "tool", heap)?;
     let tool_executable = java_files_to_run_executable(files_to_run)?;
@@ -531,11 +533,13 @@ fn java_tool_command<'v>(
         argv.extend(java_string_values(extra_jvm_flags, heap)?);
         java_add_flag(&mut argv, heap, "-jar");
         argv.push(tool_executable);
-        Ok((java_executable, argv, inputs))
+        let param_file_start = argv.len();
+        Ok((java_executable, argv, inputs, param_file_start))
     } else {
         argv.extend(java_string_values(tool_jvm_opts, heap)?);
         argv.extend(java_string_values(extra_jvm_flags, heap)?);
-        Ok((tool_executable, argv, inputs))
+        let param_file_start = argv.len();
+        Ok((tool_executable, argv, inputs, param_file_start))
     }
 }
 
@@ -546,6 +550,8 @@ fn java_call_run_action<'v>(
     inputs: Vec<Value<'v>>,
     outputs: Vec<Value<'v>>,
     mnemonic: &str,
+    param_file_start: usize,
+    execution_requirements: Option<Value<'v>>,
     eval: &mut Evaluator<'v, '_, '_>,
 ) -> starlark::Result<NoneType> {
     let heap = eval.heap();
@@ -553,19 +559,74 @@ fn java_call_run_action<'v>(
     let run = actions
         .get_attr("run", heap)?
         .ok_or_else(|| java_common_error("ctx.actions has no `run` method"))?;
-    eval.eval_function(
-        run,
-        &[],
-        &[
-            ("executable", executable),
-            ("arguments", heap.alloc(AllocList(argv))),
-            ("inputs", heap.alloc(AllocList(inputs))),
-            ("outputs", heap.alloc(AllocList(outputs))),
-            ("mnemonic", heap.alloc_str(mnemonic).to_value()),
-            ("use_default_shell_env", Value::new_bool(true)),
-        ],
-    )?;
+    let arguments = heap.alloc(AllocList(java_param_file_arguments(
+        argv,
+        param_file_start,
+        heap,
+    )?));
+    let mut kwargs = vec![
+        ("executable", executable),
+        ("arguments", arguments),
+        ("inputs", heap.alloc(AllocList(inputs))),
+        ("outputs", heap.alloc(AllocList(outputs))),
+        ("mnemonic", heap.alloc_str(mnemonic).to_value()),
+        ("use_default_shell_env", Value::new_bool(true)),
+    ];
+    if let Some(execution_requirements) = execution_requirements {
+        kwargs.push(("execution_requirements", execution_requirements));
+    }
+    eval.eval_function(run, &[], &kwargs)?;
     Ok(NoneType)
+}
+
+fn java_param_file_arguments<'v>(
+    argv: Vec<Value<'v>>,
+    param_file_start: usize,
+    heap: Heap<'v>,
+) -> starlark::Result<Vec<Value<'v>>> {
+    if param_file_start >= argv.len() {
+        return Ok(argv);
+    }
+
+    let mut argv = argv;
+    let param_file_values = argv.split_off(param_file_start);
+    let param_file = StarlarkCmdArgs::from_values_with_bazel_param_file(
+        param_file_values,
+        heap.alloc_str("@{}"),
+        "UNQUOTED",
+    )?;
+    argv.push(heap.alloc(param_file));
+    Ok(argv)
+}
+
+fn java_bool_attr<'v>(value: Value<'v>, attr: &str, heap: Heap<'v>) -> starlark::Result<bool> {
+    java_attr(value, attr, heap)?.unpack_bool().ok_or_else(|| {
+        java_common_error(format!("Java toolchain attribute `{attr}` is not a bool")).into()
+    })
+}
+
+fn java_compile_execution_requirements<'v>(
+    java_toolchain: Value<'v>,
+    heap: Heap<'v>,
+) -> starlark::Result<Value<'v>> {
+    let mut requirements = vec![("supports-path-mapping", "1")];
+    if java_bool_attr(java_toolchain, "_javac_supports_workers", heap)? {
+        requirements.push(("supports-workers", "1"));
+    }
+    if java_bool_attr(java_toolchain, "_javac_supports_multiplex_workers", heap)? {
+        requirements.push(("supports-multiplex-workers", "1"));
+    }
+    if java_bool_attr(java_toolchain, "_javac_supports_worker_cancellation", heap)? {
+        requirements.push(("supports-worker-cancellation", "1"));
+    }
+    if java_bool_attr(
+        java_toolchain,
+        "_javac_supports_worker_multiplex_sandboxing",
+        heap,
+    )? {
+        requirements.push(("supports-multiplex-sandboxing", "1"));
+    }
+    Ok(heap.alloc(AllocDict(requirements)))
 }
 
 fn java_push_output<'v>(outputs: &mut Vec<Value<'v>>, output: Value<'v>) {
@@ -600,6 +661,7 @@ fn java_register_gen_class_action<'v>(
     )?);
     java_add_flag(&mut argv, heap, "-jar");
     argv.push(gen_class_tool);
+    let param_file_start = argv.len();
     java_add_flag_value(&mut argv, heap, "--manifest_proto", manifest_proto);
     java_add_flag_value(&mut argv, heap, "--class_jar", class_jar);
     java_add_flag_value(&mut argv, heap, "--output_jar", gen_class_jar);
@@ -617,6 +679,8 @@ fn java_register_gen_class_action<'v>(
         inputs,
         vec![gen_class_jar],
         "JavaSourceJar",
+        param_file_start,
+        None,
         eval,
     )
 }
@@ -669,7 +733,7 @@ fn java_register_header_compilation_action<'v>(
     } else {
         "_header_compiler"
     };
-    let (executable, mut argv, mut inputs) =
+    let (executable, mut argv, mut inputs, param_file_start) =
         java_tool_command(java_toolchain, tool_attr, Value::new_none(), heap)?;
 
     java_add_flag_value(&mut argv, heap, "--output", compile_jar);
@@ -781,7 +845,17 @@ fn java_register_header_compilation_action<'v>(
     java_push_output(&mut outputs, compile_deps_proto);
     java_push_output(&mut outputs, header_compilation_jar);
 
-    java_call_run_action(ctx, executable, argv, inputs, outputs, "JavacTurbine", eval)
+    java_call_run_action(
+        ctx,
+        executable,
+        argv,
+        inputs,
+        outputs,
+        "JavacTurbine",
+        param_file_start,
+        None,
+        eval,
+    )
 }
 
 fn java_register_compilation_action<'v>(
@@ -817,7 +891,7 @@ fn java_register_compilation_action<'v>(
     let additional_inputs = java_arg(args, kwargs, 26, "additional_inputs");
     let additional_outputs = java_arg(args, kwargs, 27, "additional_outputs");
 
-    let (executable, mut argv, mut inputs) =
+    let (executable, mut argv, mut inputs, param_file_start) =
         java_tool_command(java_toolchain, "_javabuilder", javabuilder_jvm_flags, heap)?;
 
     java_add_flag_value(&mut argv, heap, "--output", output);
@@ -934,7 +1008,18 @@ fn java_register_compilation_action<'v>(
     java_push_output(&mut outputs, native_header_jar);
     outputs.extend(java_collection_values(additional_outputs, heap)?);
 
-    java_call_run_action(ctx, executable, argv, inputs, outputs, "Javac", eval)?;
+    let execution_requirements = java_compile_execution_requirements(java_toolchain, heap)?;
+    java_call_run_action(
+        ctx,
+        executable,
+        argv,
+        inputs,
+        outputs,
+        "Javac",
+        param_file_start,
+        Some(execution_requirements),
+        eval,
+    )?;
     java_register_gen_class_action(ctx, java_toolchain, output, manifest_proto, gen_class, eval)
 }
 
