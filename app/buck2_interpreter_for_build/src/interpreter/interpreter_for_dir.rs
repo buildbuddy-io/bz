@@ -150,14 +150,76 @@ impl ParseData {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn strategy(source: &str) -> PackageListingStrategy {
+        let ast = AstModule::parse(
+            "BUILD.bazel",
+            source.to_owned(),
+            &StarlarkFileType::Buck.dialect(true),
+        )
+        .unwrap();
+        bazel_package_listing_strategy_from_ast(&ast)
+    }
+
+    fn prefix(path: &str) -> PackageRelativePathBuf {
+        PackageRelativePathBuf::try_from(path.to_owned()).unwrap()
+    }
+
+    #[test]
+    fn test_bazel_package_listing_strategy_recurses_for_load() {
+        assert_eq!(
+            strategy(
+                r#"
+load("//:defs.bzl", "go_library")
+go_library(name = "demo")
+"#
+            ),
+            PackageListingStrategy::Recursive
+        );
+    }
+
+    #[test]
+    fn test_bazel_package_listing_strategy_selective_glob_prefix() {
+        assert_eq!(
+            strategy(r#"cc_library(name = "demo", srcs = glob(["src/**/*.cc"]))"#),
+            PackageListingStrategy::Selective(vec![prefix("src")])
+        );
+    }
+
+    #[test]
+    fn test_bazel_package_listing_strategy_recursive_glob() {
+        assert_eq!(
+            strategy(r#"cc_library(name = "demo", srcs = glob(["**/*.cc"]))"#),
+            PackageListingStrategy::Recursive
+        );
+    }
+
+    #[test]
+    fn test_bazel_package_listing_strategy_subpackages() {
+        assert_eq!(
+            strategy(r#"subpackages(include = ["tools/**"])"#),
+            PackageListingStrategy::Selective(vec![prefix("tools")])
+        );
+        assert_eq!(
+            strategy(r#"sub_packages()"#),
+            PackageListingStrategy::Recursive
+        );
+    }
+}
+
 fn bazel_package_listing_strategy_from_ast(ast: &AstModule) -> PackageListingStrategy {
     if !ast.loads().is_empty() {
-        // Bazel exposes native.glob to loaded macros. A BUILD file can therefore
-        // need recursive package contents even when the BUILD file AST itself has
-        // no glob call.
+        // Bazel can resolve native.glob and generated file-label references from
+        // loaded macros at evaluation time. Buck2 fixes the package listing before
+        // evaluation, so a loaded macro can require files hidden from the BUILD AST.
         return PackageListingStrategy::Recursive;
     }
 
+    // Match Bazel's PackageFactory.checkBuildSyntax prefetch heuristic for BUILD
+    // files without loads: direct glob/subpackages calls drive package traversal.
     struct Visitor {
         unknown_glob_use: bool,
         prefixes: Vec<PackageRelativePathBuf>,
@@ -166,7 +228,7 @@ fn bazel_package_listing_strategy_from_ast(ast: &AstModule) -> PackageListingStr
     impl Visitor {
         fn visit_expr(&mut self, node: &AstExpr) {
             match &node.node {
-                Expr::Call(callee, arguments) if is_direct_glob_callee(callee) => {
+                Expr::Call(callee, arguments) if is_direct_package_listing_callee(callee) => {
                     match literal_glob_include_patterns(arguments.args.as_slice()) {
                         Some(patterns) => {
                             for pattern in patterns {
@@ -186,11 +248,17 @@ fn bazel_package_listing_strategy_from_ast(ast: &AstModule) -> PackageListingStr
                     }
                 }
                 Expr::Identifier(ident)
-                    if ident.node.ident == "glob" || ident.node.ident == "sub_packages" =>
+                    if ident.node.ident == "glob"
+                        || ident.node.ident == "subpackages"
+                        || ident.node.ident == "sub_packages" =>
                 {
                     self.unknown_glob_use = true;
                 }
-                Expr::Dot(_, field) if field.node == "glob" => {
+                Expr::Dot(_, field)
+                    if field.node == "glob"
+                        || field.node == "subpackages"
+                        || field.node == "sub_packages" =>
+                {
                     self.unknown_glob_use = true;
                 }
                 _ => node.visit_expr(|expr| self.visit_expr(expr)),
@@ -210,10 +278,16 @@ fn bazel_package_listing_strategy_from_ast(ast: &AstModule) -> PackageListingStr
     }
 }
 
-fn is_direct_glob_callee(callee: &AstExpr) -> bool {
+fn is_direct_package_listing_callee(callee: &AstExpr) -> bool {
     match &callee.node {
-        Expr::Identifier(ident) => ident.node.ident == "glob",
-        Expr::Dot(_, field) => field.node == "glob",
+        Expr::Identifier(ident) => {
+            ident.node.ident == "glob"
+                || ident.node.ident == "subpackages"
+                || ident.node.ident == "sub_packages"
+        }
+        Expr::Dot(_, field) => {
+            field.node == "glob" || field.node == "subpackages" || field.node == "sub_packages"
+        }
         _ => false,
     }
 }

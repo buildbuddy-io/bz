@@ -743,9 +743,13 @@ fn bazel_compat_enabled(
 }
 
 fn build_file_requires_recursive_listing(contents: &str) -> bool {
-    // Bazel's globber is available to loaded macros as well as directly in BUILD
-    // files, so any load can hide a native.glob call from the BUILD file text.
+    // Keep the text fallback aligned with Bazel's BUILD syntax prefetch:
+    // direct glob/subpackages calls require package traversal. Buck2's eager
+    // package listings still need a conservative load() fallback because loaded
+    // macros can hide native.glob or generated file-label references.
     may_contain_starlark_identifier(contents, "glob")
+        || may_contain_starlark_identifier(contents, "subpackages")
+        || may_contain_starlark_identifier(contents, "sub_packages")
         || may_contain_starlark_identifier(contents, "load")
 }
 
@@ -783,6 +787,10 @@ mod tests {
         assert!(build_file_requires_recursive_listing(
             "native.glob([\"*\"])"
         ));
+        assert!(build_file_requires_recursive_listing(
+            "subpackages(include = [\"foo/**\"])"
+        ));
+        assert!(build_file_requires_recursive_listing("sub_packages()"));
         assert!(build_file_requires_recursive_listing(
             "load(\":defs.bzl\", \"macro\")"
         ));
