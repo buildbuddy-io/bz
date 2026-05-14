@@ -250,8 +250,6 @@ pub(crate) enum BazelRepositoryError {
     ModuleCtxDownloadUrlUnsupportedValue(String),
     #[error("module_ctx.download requires at least one URL")]
     ModuleCtxDownloadNoUrls,
-    #[error("module_ctx.download `{field}` is not implemented")]
-    ModuleCtxDownloadUnsupportedField { field: &'static str },
     #[error("module_ctx.download auth key must be a string, got `{0}`")]
     ModuleCtxDownloadAuthKeyUnsupportedValue(String),
     #[error("module_ctx.download auth value for `{url}` must be a dict, got `{got}`")]
