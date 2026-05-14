@@ -178,11 +178,26 @@ impl InvocationPaths {
         FileName::unchecked_new("local_action_cache")
     }
 
+    fn bzlmod_bcr_discovery_dir_name(&self) -> &FileName {
+        FileName::unchecked_new("bzlmod_bcr_discovery")
+    }
+
+    fn bzlmod_cell_graph_module_extensions_dir_name(&self) -> &FileName {
+        FileName::unchecked_new("bzlmod_cell_graph_module_extensions")
+    }
+
+    fn bzlmod_repo_contents_dir_name(&self) -> &FileName {
+        FileName::unchecked_new("bzlmod_repo_contents")
+    }
+
     pub fn valid_cache_dirs(&self) -> Vec<&FileName> {
         vec![
             self.materializer_state_dir_name(),
             self.incremental_state_dir_name(),
             self.local_action_cache_dir_name(),
+            self.bzlmod_bcr_discovery_dir_name(),
+            self.bzlmod_cell_graph_module_extensions_dir_name(),
+            self.bzlmod_repo_contents_dir_name(),
         ]
     }
 

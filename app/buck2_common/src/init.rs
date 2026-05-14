@@ -518,6 +518,7 @@ pub struct DaemonStartupConfig {
     pub daemon_buster: Option<String>,
     pub digest_algorithms: Option<String>,
     pub source_digest_algorithm: Option<String>,
+    pub watchfs: bool,
     pub paranoid: bool,
     pub materializations: Option<String>,
     pub http: HttpConfig,
@@ -591,6 +592,12 @@ impl DaemonStartupConfig {
                     property: "source_digest_algorithm",
                 })
                 .map(ToOwned::to_owned),
+            watchfs: config
+                .parse(BuckconfigKeyRef {
+                    section: "buck2",
+                    property: "watchfs",
+                })?
+                .unwrap_or(cfg!(fbcode_build)),
             paranoid: false, // Setup later in ImmediateConfig
             materializations: config
                 .get(BuckconfigKeyRef {
@@ -656,6 +663,7 @@ impl DaemonStartupConfig {
             daemon_buster: None,
             digest_algorithms: None,
             source_digest_algorithm: None,
+            watchfs: false,
             paranoid: false,
             materializations: None,
             http: HttpConfig::default(),
@@ -704,6 +712,25 @@ mod tests {
         )?;
         let startup_config = DaemonStartupConfig::new(&config)?;
         assert_eq!(startup_config.daemon_idle_timeout_s, Some(10800));
+        Ok(())
+    }
+
+    #[test]
+    fn test_watchfs_configured() -> buck2_error::Result<()> {
+        let config = parse(
+            &[(
+                "config",
+                indoc!(
+                    r#"
+                    [buck2]
+                    watchfs = true
+                    "#
+                ),
+            )],
+            "config",
+        )?;
+        let startup_config = DaemonStartupConfig::new(&config)?;
+        assert!(startup_config.watchfs);
         Ok(())
     }
 }

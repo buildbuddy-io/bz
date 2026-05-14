@@ -8,6 +8,7 @@
  * above-listed licenses.
  */
 
+use std::any::Any;
 use std::fmt;
 use std::fmt::Display;
 use std::fmt::Formatter;
@@ -202,6 +203,8 @@ pub trait KeyForIntrospection: Display + Send + 'static {
 
     fn hash(&self, state: &mut dyn Hasher);
 
+    fn as_any(&self) -> &dyn Any;
+
     fn type_name(&self) -> &'static str {
         std::any::type_name::<Self>()
     }
@@ -219,6 +222,10 @@ where
 
     fn hash(&self, mut state: &mut dyn Hasher) {
         K::hash(self, &mut state)
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 
     fn box_clone(&self) -> Box<dyn KeyForIntrospection> {
@@ -260,6 +267,10 @@ impl AnyKey {
 
     pub fn short_type_name(&self) -> &'static str {
         short_type_name(self.type_name())
+    }
+
+    pub fn downcast_ref<K: 'static>(&self) -> Option<&K> {
+        self.inner.as_any().downcast_ref()
     }
 }
 

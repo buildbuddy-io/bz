@@ -19,6 +19,7 @@ mod edenfs;
 pub mod file_watcher;
 mod fs_hash_crawler;
 pub mod mergebase;
+mod no_watchfs;
 mod notify;
 mod stats;
 mod watchman;

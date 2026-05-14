@@ -2215,6 +2215,7 @@ enum FileWatcherProvider {
   RUST_NOTIFY = 1;
   FS_HASH_CRAWLER = 2;
   EDEN_FS = 3;
+  NO_WATCH_FS = 4;
 }
 
 enum FileWatcherEventType {

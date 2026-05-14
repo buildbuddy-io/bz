@@ -26,6 +26,7 @@ use crate::impls::core::state::CoreStateHandle;
 use crate::impls::ctx::BaseComputeCtx;
 use crate::impls::ctx::SharedLiveTransactionCtx;
 use crate::impls::key::DiceKey;
+use crate::introspection::graph::AnyKey;
 use crate::impls::value::DiceKeyValue;
 use crate::impls::value::DiceValidValue;
 use crate::impls::value::DiceValidity;
@@ -118,6 +119,10 @@ impl TransactionUpdater {
 
     pub(crate) fn unstable_take(&self) {
         self.dice.state_handle.unstable_drop_everything()
+    }
+
+    pub(crate) fn existing_keys_for_introspection(&self) -> Vec<AnyKey> {
+        self.dice.to_introspectable().keys().collect()
     }
 
     async fn commit_to_state(self) -> (SharedLiveTransactionCtx, ActiveTransactionGuard) {

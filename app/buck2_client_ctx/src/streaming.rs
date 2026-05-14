@@ -67,7 +67,6 @@ fn update_events_ctx<T: StreamingCommand>(
     let log_size_counter_bytes = Some(Arc::new(AtomicU64::new(0)));
 
     let enable_health_checks = ctx
-        .immediate_config
         .daemon_startup_config()
         .map(|daemon_startup_config| {
             daemon_startup_config
@@ -231,8 +230,10 @@ impl<T: StreamingCommand> BuckSubcommand for T {
             let mut constraints = if T::existing_only() {
                 BuckdConnectConstraints::ExistingOnly
             } else {
-                let mut req =
-                    DaemonConstraintsRequest::new(ctx.immediate_config, T::trace_io(&self))?;
+                let mut req = DaemonConstraintsRequest::new_with_startup_config(
+                    ctx.daemon_startup_config()?,
+                    T::trace_io(&self),
+                )?;
                 ctx.restarter.apply_to_constraints(&mut req);
                 BuckdConnectConstraints::Constraints(req)
             };

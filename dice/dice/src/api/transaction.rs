@@ -19,6 +19,7 @@ use dupe::Dupe;
 use crate::api::computations::DiceComputations;
 use crate::api::key::Key;
 use crate::api::user_data::UserComputationData;
+use crate::introspection::graph::AnyKey;
 use crate::transaction::DiceTransactionImpl;
 use crate::transaction_update::DiceTransactionUpdaterImpl;
 use crate::versions::VersionNumber;
@@ -75,6 +76,14 @@ impl DiceTransactionUpdater {
 
     pub fn unstable_take(self) -> Self {
         Self(self.0.unstable_take())
+    }
+
+    /// Returns the keys that are currently present in the DICE graph.
+    ///
+    /// This is intended for invalidation strategies that need to operate over
+    /// already-observed state without discovering new filesystem state.
+    pub fn existing_keys_for_introspection(&self) -> Vec<AnyKey> {
+        self.0.existing_keys_for_introspection()
     }
 }
 

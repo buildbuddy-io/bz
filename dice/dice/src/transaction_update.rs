@@ -17,6 +17,7 @@ use futures::FutureExt;
 use crate::DiceTransaction;
 use crate::api::key::Key;
 use crate::api::user_data::UserComputationData;
+use crate::introspection::graph::AnyKey;
 use crate::impls::transaction::TransactionUpdater;
 use crate::transaction::DiceTransactionImpl;
 
@@ -83,5 +84,9 @@ impl DiceTransactionUpdaterImpl {
     pub fn unstable_take(self) -> Self {
         self.0.unstable_take();
         self
+    }
+
+    pub(crate) fn existing_keys_for_introspection(&self) -> Vec<AnyKey> {
+        self.0.existing_keys_for_introspection()
     }
 }

@@ -97,8 +97,10 @@ impl DiceFileComputations {
         ctx: &mut DiceComputations<'_>,
         path: CellPathRef<'_>,
     ) -> buck2_error::Result<Option<String>> {
-        (ctx.compute(&ReadFileKey(Arc::new(path.to_owned())))
+        (ctx
+            .compute(&ReadFileKey(Arc::new(path.to_owned())))
             .await??
+            .proxy
             .0)()
         .await
     }
@@ -167,6 +169,20 @@ pub struct FileChangeTracker {
     exists_matching_exact_case_to_dirty: StdBuckHashSet<ExistsMatchingExactCaseKey>,
 
     maybe_modified_dirs: StdBuckHashSet<CellPath>,
+}
+
+#[derive(Debug)]
+pub struct KnownFileStateInvalidationStats {
+    pub read_files: usize,
+    pub read_dirs: usize,
+    pub paths: usize,
+    pub exists_matching_exact_case: usize,
+}
+
+impl KnownFileStateInvalidationStats {
+    pub fn total(&self) -> usize {
+        self.read_files + self.read_dirs + self.paths + self.exists_matching_exact_case
+    }
 }
 
 impl FileChangeTracker {
@@ -259,6 +275,41 @@ impl FileChangeTracker {
     }
 }
 
+pub fn invalidate_all_known_file_state(
+    ctx: &mut DiceTransactionUpdater,
+) -> buck2_error::Result<KnownFileStateInvalidationStats> {
+    let mut read_files = Vec::new();
+    let mut read_dirs = Vec::new();
+    let mut paths = Vec::new();
+    let mut exists_matching_exact_case = Vec::new();
+
+    for key in ctx.existing_keys_for_introspection() {
+        if let Some(key) = key.downcast_ref::<ReadFileKey>() {
+            read_files.push(key.clone());
+        } else if let Some(key) = key.downcast_ref::<ReadDirKey>() {
+            read_dirs.push(key.clone());
+        } else if let Some(key) = key.downcast_ref::<PathMetadataKey>() {
+            paths.push(key.clone());
+        } else if let Some(key) = key.downcast_ref::<ExistsMatchingExactCaseKey>() {
+            exists_matching_exact_case.push(key.clone());
+        }
+    }
+
+    let stats = KnownFileStateInvalidationStats {
+        read_files: read_files.len(),
+        read_dirs: read_dirs.len(),
+        paths: paths.len(),
+        exists_matching_exact_case: exists_matching_exact_case.len(),
+    };
+
+    ctx.changed(read_files)?;
+    ctx.changed(read_dirs)?;
+    ctx.changed(paths)?;
+    ctx.changed(exists_matching_exact_case)?;
+
+    Ok(stats)
+}
+
 /// The return value of a `ReadFileKey` computation.
 ///
 /// Instead of the actual file contents, this is a closure that reads the actual file contents from
@@ -288,26 +339,37 @@ impl ReadFileProxy {
     }
 }
 
+#[derive(Clone, Dupe, Allocative)]
+struct ReadFileValue {
+    proxy: ReadFileProxy,
+    metadata: Option<RawPathMetadata>,
+}
+
 #[derive(Clone, Dupe, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable)]
 #[pagable_typetag(dice::DiceKeyDyn)]
 struct ReadFileKey(Arc<CellPath>);
 
 #[async_trait]
 impl Key for ReadFileKey {
-    type Value = buck2_error::Result<ReadFileProxy>;
+    type Value = buck2_error::Result<ReadFileValue>;
     async fn compute(
         &self,
         ctx: &mut DiceComputations,
         _cancellations: &CancellationContext,
     ) -> Self::Value {
-        get_delegated_file_ops(ctx, self.0.cell(), CheckIgnores::No)
-            .await?
-            .read_file_if_exists(ctx, self.0.path())
-            .await
+        let file_ops = get_delegated_file_ops(ctx, self.0.cell(), CheckIgnores::No).await?;
+        let metadata = file_ops
+            .read_path_metadata_if_exists(ctx, self.0.path())
+            .await?;
+        let proxy = file_ops.read_file_if_exists(ctx, self.0.path()).await?;
+        Ok(ReadFileValue { proxy, metadata })
     }
 
-    fn equality(_: &Self::Value, _: &Self::Value) -> bool {
-        false
+    fn equality(x: &Self::Value, y: &Self::Value) -> bool {
+        match (x, y) {
+            (Ok(x), Ok(y)) => x.metadata == y.metadata,
+            _ => false,
+        }
     }
 
     fn invalidation_source_priority() -> InvalidationSourcePriority {

@@ -53,6 +53,7 @@ use buck2_cmd_log_client::LogCommand;
 use buck2_cmd_rage_client::rage::RageCommand;
 use buck2_cmd_starlark_client::StarlarkCommand;
 use buck2_common::argv::Argv;
+use buck2_common::init::DaemonStartupConfig;
 use buck2_common::invocation_paths_result::InvocationPathsResult;
 use buck2_common::invocation_roots::get_invocation_paths_result;
 use buck2_core::buck2_env;
@@ -155,10 +156,42 @@ struct BeforeSubcommandOptions {
     // NO_BUCKD=1 for buck1.
     no_buckd: bool,
 
+    /// Enable filesystem watching for incremental invalidation.
+    ///
+    /// When disabled, Buck avoids recursive watcher setup during daemon startup.
+    #[clap(long, global = true, conflicts_with = "no_watchfs")]
+    watchfs: bool,
+
+    /// Disable filesystem watching, overriding `[buck2] watchfs = true`.
+    #[clap(long = "no-watchfs", global = true, hide = true)]
+    no_watchfs: bool,
+
     /// Print buck wrapper help.
     #[clap(skip)] // @oss-enable
     // @oss-disable: #[clap(long)]
     help_wrapper: bool,
+}
+
+impl BeforeSubcommandOptions {
+    fn watchfs_override(&self) -> Option<bool> {
+        if self.watchfs {
+            Some(true)
+        } else if self.no_watchfs {
+            Some(false)
+        } else {
+            None
+        }
+    }
+}
+
+fn apply_daemon_startup_config_overrides(
+    mut daemon_startup_config: DaemonStartupConfig,
+    watchfs_override: Option<bool>,
+) -> DaemonStartupConfig {
+    if let Some(watchfs) = watchfs_override {
+        daemon_startup_config.watchfs = watchfs;
+    }
+    daemon_startup_config
 }
 
 #[rustfmt::skip] // Formatting in internal and in OSS versions disagree after oss markers applied.
@@ -465,11 +498,17 @@ impl CommandKind {
         } = process;
 
         let runtime = runtime.get_or_init()?;
+        let watchfs_override = common_opts.watchfs_override();
 
         let start_in_process_daemon = if common_opts.no_buckd {
             #[cfg(not(client_only))]
+            let daemon_startup_config = apply_daemon_startup_config_overrides(
+                immediate_config.daemon_startup_config()?.clone(),
+                watchfs_override,
+            );
+            #[cfg(not(client_only))]
             let v = buck2_daemon::no_buckd::start_in_process_daemon(
-                immediate_config.daemon_startup_config()?,
+                &daemon_startup_config,
                 paths.clone().get_result()?,
                 runtime,
             )?;
@@ -498,6 +537,7 @@ impl CommandKind {
             common_opts.client_metadata,
             common_opts.isolation_dir,
             common_opts.agent_context,
+            watchfs_override,
         );
         if let Some(recorder) = events_ctx.recorder.as_mut() {
             recorder.update_for_client_ctx(&command_ctx, self.command_name());

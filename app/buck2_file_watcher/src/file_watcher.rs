@@ -31,6 +31,7 @@ use dice::DiceTransactionUpdater;
 use crate::edenfs::interface::EdenFsFileWatcher;
 use crate::fs_hash_crawler::FsHashCrawler;
 use crate::mergebase::Mergebase;
+use crate::no_watchfs::NoWatchFs;
 use crate::notify::NotifyFileWatcher;
 use crate::watchman::interface::WatchmanFileWatcher;
 
@@ -72,6 +73,7 @@ impl dyn FileWatcher {
         root_config: &LegacyBuckConfig,
         cells: CellResolver,
         ignore_specs: StdBuckHashMap<CellName, IgnoreSet>,
+        watchfs: bool,
     ) -> buck2_error::Result<Arc<dyn FileWatcher>> {
         if !project_root.root().as_path().exists() {
             return Err(buck2_error!(
@@ -80,6 +82,10 @@ impl dyn FileWatcher {
                  The directory may have been removed.",
                 project_root.root()
             ));
+        }
+
+        if !watchfs {
+            return Ok(Arc::new(NoWatchFs::new()));
         }
 
         #[cfg(fbcode_build)]
