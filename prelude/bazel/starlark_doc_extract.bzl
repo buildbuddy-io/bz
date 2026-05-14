@@ -7,9 +7,9 @@
 
 def _starlark_doc_extract_impl(ctx):
     fail(
-        "starlark_doc_extract is not implemented in Buck2. Bazel loads the "
-        "source .bzl/.scl module, validates its documented transitive loads, "
-        "and writes real ModuleInfo proto outputs; refusing to emit empty "
+        "starlark_doc_extract is not implemented in Buck2. Bazel loads the " +
+        "source .bzl/.scl module, validates its documented transitive loads, " +
+        "and writes real ModuleInfo proto outputs; refusing to emit empty " +
         "binaryproto/textproto files for `{}`.".format(ctx.attr.src),
     )
 
