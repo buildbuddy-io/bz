@@ -252,6 +252,24 @@ pub(crate) enum BazelRepositoryError {
     ModuleCtxDownloadNoUrls,
     #[error("module_ctx.download `{field}` is not implemented")]
     ModuleCtxDownloadUnsupportedField { field: &'static str },
+    #[error("module_ctx.download auth key must be a string, got `{0}`")]
+    ModuleCtxDownloadAuthKeyUnsupportedValue(String),
+    #[error("module_ctx.download auth value for `{url}` must be a dict, got `{got}`")]
+    ModuleCtxDownloadAuthValueUnsupportedValue { url: String, got: String },
+    #[error("module_ctx.download auth field `{field}` for `{url}` must be a string, got `{got}`")]
+    ModuleCtxDownloadAuthFieldUnsupportedValue {
+        url: String,
+        field: &'static str,
+        got: String,
+    },
+    #[error(
+        "Found request to do basic auth for {url} without 'login' and 'password' being provided."
+    )]
+    ModuleCtxDownloadAuthBasicMissingCredentials { url: String },
+    #[error("Found request to do pattern auth for {url} without a pattern being provided")]
+    ModuleCtxDownloadAuthPatternMissingPattern { url: String },
+    #[error("Auth pattern contains {component} but it was not provided in auth dict.")]
+    ModuleCtxDownloadAuthPatternMissingComponent { component: String },
     #[error("module_ctx.download `headers` keys must be strings, got `{0}`")]
     ModuleCtxDownloadHeaderKeyUnsupportedValue(String),
     #[error(
@@ -585,6 +603,59 @@ mod tests {
         assert_eq!(
             module_ctx_integrity_from_checksum(&checksum).unwrap(),
             integrity
+        );
+    }
+
+    #[test]
+    fn test_module_ctx_download_auth_headers_match_url() {
+        let heap = Heap::new();
+        let url = "https://example.com/archive.zip";
+        let auth = heap.alloc(AllocDict([
+            ("type", "basic"),
+            ("login", "user"),
+            ("password", "pass"),
+        ]));
+        let entries = UnpackDictEntries {
+            entries: vec![(heap.alloc(url), auth)],
+        };
+        let auth_headers = module_ctx_download_auth_headers_from_entries(&entries).unwrap();
+
+        assert_eq!(
+            module_ctx_download_request_headers_for_url(
+                url,
+                &[("x-test".to_owned(), "1".to_owned())],
+                &auth_headers,
+            ),
+            vec![("x-test", "1"), ("Authorization", "Basic dXNlcjpwYXNz"),],
+        );
+        assert_eq!(
+            module_ctx_download_request_headers_for_url(
+                "https://example.com/other.zip",
+                &[],
+                &auth_headers,
+            ),
+            Vec::<(&str, &str)>::new(),
+        );
+    }
+
+    #[test]
+    fn test_module_ctx_download_pattern_auth() {
+        let heap = Heap::new();
+        let url = "https://example.com/archive.zip";
+        let auth = heap.alloc(AllocDict([
+            ("type", "pattern"),
+            ("pattern", "Bearer <login>:<password>"),
+            ("login", "user"),
+            ("password", "pass"),
+        ]));
+        let entries = UnpackDictEntries {
+            entries: vec![(heap.alloc(url), auth)],
+        };
+        let auth_headers = module_ctx_download_auth_headers_from_entries(&entries).unwrap();
+
+        assert_eq!(
+            module_ctx_download_request_headers_for_url(url, &[], &auth_headers),
+            vec![("Authorization", "Bearer user:pass")],
         );
     }
 }
@@ -3046,32 +3117,123 @@ fn repository_ctx_download_error<'v>(
     }
 }
 
-fn repository_ctx_download_option_is_empty(value: Value<'_>) -> bool {
-    if value.is_none() {
-        return true;
-    }
-    if let Some(value) = value.unpack_str() {
-        return value.is_empty();
-    }
-    if let Some(dict) = DictRef::from_value(value) {
-        return dict.iter().next().is_none();
-    }
-    if let Some(list) = ListRef::from_value(value) {
-        return list.iter().next().is_none();
-    }
-    if let Some(tuple) = TupleRef::from_value(value) {
-        return tuple.iter().next().is_none();
-    }
-    false
+#[derive(Debug, Clone)]
+struct ModuleCtxDownloadAuthHeader {
+    url: String,
+    name: String,
+    value: String,
 }
 
-fn repository_ctx_download_options_are_empty(
+fn module_ctx_download_auth_string_field(
+    auth: &DictRef<'_>,
+    url: &str,
+    field: &'static str,
+) -> starlark::Result<Option<String>> {
+    let Some(value) = auth.get_str(field) else {
+        return Ok(None);
+    };
+    let Some(value) = value.unpack_str() else {
+        return Err(buck2_error::Error::from(
+            BazelRepositoryError::ModuleCtxDownloadAuthFieldUnsupportedValue {
+                url: url.to_owned(),
+                field,
+                got: value.get_type().to_owned(),
+            },
+        )
+        .into());
+    };
+    Ok(Some(value.to_owned()))
+}
+
+fn module_ctx_download_auth_headers_from_entries(
     entries: &UnpackDictEntries<Value<'_>, Value<'_>>,
-) -> bool {
-    entries
-        .entries
-        .iter()
-        .all(|(_, value)| repository_ctx_download_option_is_empty(*value))
+) -> starlark::Result<Vec<ModuleCtxDownloadAuthHeader>> {
+    let mut headers = Vec::new();
+    for (url, auth) in entries.entries.iter() {
+        let Some(url) = url.unpack_str() else {
+            return Err(buck2_error::Error::from(
+                BazelRepositoryError::ModuleCtxDownloadAuthKeyUnsupportedValue(
+                    url.get_type().to_owned(),
+                ),
+            )
+            .into());
+        };
+        let Some(auth) = DictRef::from_value(*auth) else {
+            return Err(buck2_error::Error::from(
+                BazelRepositoryError::ModuleCtxDownloadAuthValueUnsupportedValue {
+                    url: url.to_owned(),
+                    got: auth.get_type().to_owned(),
+                },
+            )
+            .into());
+        };
+        let Some(auth_type) = auth.get_str("type").and_then(|value| value.unpack_str()) else {
+            continue;
+        };
+        match auth_type {
+            "basic" => {
+                let Some(login) = module_ctx_download_auth_string_field(&auth, url, "login")?
+                else {
+                    return Err(buck2_error::Error::from(
+                        BazelRepositoryError::ModuleCtxDownloadAuthBasicMissingCredentials {
+                            url: url.to_owned(),
+                        },
+                    )
+                    .into());
+                };
+                let Some(password) = module_ctx_download_auth_string_field(&auth, url, "password")?
+                else {
+                    return Err(buck2_error::Error::from(
+                        BazelRepositoryError::ModuleCtxDownloadAuthBasicMissingCredentials {
+                            url: url.to_owned(),
+                        },
+                    )
+                    .into());
+                };
+                let credentials = format!("{login}:{password}");
+                headers.push(ModuleCtxDownloadAuthHeader {
+                    url: url.to_owned(),
+                    name: "Authorization".to_owned(),
+                    value: format!("Basic {}", BASE64_STANDARD.encode(credentials)),
+                });
+            }
+            "pattern" => {
+                let Some(mut authorization) =
+                    module_ctx_download_auth_string_field(&auth, url, "pattern")?
+                else {
+                    return Err(buck2_error::Error::from(
+                        BazelRepositoryError::ModuleCtxDownloadAuthPatternMissingPattern {
+                            url: url.to_owned(),
+                        },
+                    )
+                    .into());
+                };
+                for component in ["password", "login"] {
+                    let marker = format!("<{component}>");
+                    if authorization.contains(&marker) {
+                        let Some(value) =
+                            module_ctx_download_auth_string_field(&auth, url, component)?
+                        else {
+                            return Err(buck2_error::Error::from(
+                                BazelRepositoryError::ModuleCtxDownloadAuthPatternMissingComponent {
+                                    component: marker,
+                                },
+                            )
+                            .into());
+                        };
+                        authorization = authorization.replace(&marker, &value);
+                    }
+                }
+                headers.push(ModuleCtxDownloadAuthHeader {
+                    url: url.to_owned(),
+                    name: "Authorization".to_owned(),
+                    value: authorization,
+                });
+            }
+            _ => {}
+        }
+    }
+    Ok(headers)
 }
 
 fn module_ctx_download_header_value_to_strings(
@@ -3157,6 +3319,7 @@ fn repository_ctx_download_to_path<'v>(
     integrity: &str,
     canonical_id: &str,
     headers: &[(String, String)],
+    auth_headers: &[ModuleCtxDownloadAuthHeader],
     eval: &mut Evaluator<'v, '_, '_>,
 ) -> starlark::Result<(Value<'v>, bool)> {
     let expected_checksum = match module_ctx_expected_checksum(sha256, integrity) {
@@ -3184,6 +3347,7 @@ fn repository_ctx_download_to_path<'v>(
         canonical_id,
         executable,
         headers,
+        auth_headers,
     ) {
         Ok(checksums) => checksums,
         Err(error) => {
@@ -3770,12 +3934,7 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
         #[starlark(require = named, default = true)] block: bool,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {
-        if !repository_ctx_download_options_are_empty(&auth) {
-            return Err(buck2_error::Error::from(
-                BazelRepositoryError::ModuleCtxDownloadUnsupportedField { field: "auth" },
-            )
-            .into());
-        }
+        let auth_headers = module_ctx_download_auth_headers_from_entries(&auth)?;
         let download_headers = module_ctx_download_headers_from_entries(&headers)?;
 
         let urls = module_ctx_urls_from_value(url, eval.heap())?;
@@ -3793,6 +3952,7 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
             integrity,
             canonical_id,
             &download_headers,
+            &auth_headers,
             eval,
         )?;
         Ok(module_ctx_pending_download(block, result, eval))
@@ -3835,12 +3995,7 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
         };
         let archive_path = Path::new(working_dir).join(archive_name);
         let archive_path_string = archive_path.to_string_lossy().into_owned();
-        if !repository_ctx_download_options_are_empty(&auth) {
-            return Err(buck2_error::Error::from(
-                BazelRepositoryError::ModuleCtxDownloadUnsupportedField { field: "auth" },
-            )
-            .into());
-        }
+        let auth_headers = module_ctx_download_auth_headers_from_entries(&auth)?;
         let download_headers = module_ctx_download_headers_from_entries(&headers)?;
         let rename_files = repository_ctx_rename_files_from_entries(&rename_files)?;
         let urls = module_ctx_urls_from_value(url, eval.heap())?;
@@ -3857,6 +4012,7 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
             integrity,
             canonical_id,
             &download_headers,
+            &auth_headers,
             eval,
         )?;
         if !success {
@@ -4482,8 +4638,9 @@ async fn module_ctx_download_url_to_path(
     expected_checksum: Option<&ModuleCtxChecksum>,
     executable: bool,
     headers: &[(String, String)],
+    auth_headers: &[ModuleCtxDownloadAuthHeader],
 ) -> Result<(Option<String>, String), ModuleCtxDownloadAttemptError> {
-    let request_headers = module_ctx_download_request_headers_for_url(url, headers);
+    let request_headers = module_ctx_download_request_headers_for_url(url, headers, auth_headers);
     let response = client
         .get_with_headers(url, request_headers.into_iter())
         .await
@@ -4561,15 +4718,23 @@ async fn module_ctx_download_url_to_path(
 fn module_ctx_download_request_headers_for_url<'a>(
     url: &str,
     headers: &'a [(String, String)],
+    auth_headers: &'a [ModuleCtxDownloadAuthHeader],
 ) -> Vec<(&'a str, &'a str)> {
     let compressed_url = module_ctx_download_url_has_bazel_compressed_extension(url);
-    headers
+    let mut request_headers = headers
         .iter()
         .filter(|(name, _)| {
             !compressed_url || !name.eq_ignore_ascii_case(BAZEL_REPOSITORY_ACCEPT_ENCODING_HEADER)
         })
         .map(|(name, value)| (&**name, &**value))
-        .collect()
+        .collect::<Vec<_>>();
+    request_headers.extend(
+        auth_headers
+            .iter()
+            .filter(|auth| auth.url == url)
+            .map(|auth| (&*auth.name, &*auth.value)),
+    );
+    request_headers
 }
 
 async fn module_ctx_download_copy_response(
@@ -4650,6 +4815,7 @@ async fn module_ctx_download_to_path_uncached(
     expected_checksum: Option<&ModuleCtxChecksum>,
     executable: bool,
     headers: &[(String, String)],
+    auth_headers: &[ModuleCtxDownloadAuthHeader],
 ) -> buck2_error::Result<(Option<String>, String)> {
     const MAX_ATTEMPTS: usize = 8;
 
@@ -4680,6 +4846,7 @@ async fn module_ctx_download_to_path_uncached(
                 expected_checksum,
                 executable,
                 headers,
+                auth_headers,
             )
             .await;
             drop(_permit);
@@ -4715,11 +4882,13 @@ fn module_ctx_download_to_path_uncached_blocking(
     expected_checksum: Option<&ModuleCtxChecksum>,
     executable: bool,
     headers: &[(String, String)],
+    auth_headers: &[ModuleCtxDownloadAuthHeader],
 ) -> buck2_error::Result<(Option<String>, String)> {
     let urls = urls.to_owned();
     let destination = destination.to_owned();
     let expected_checksum = expected_checksum.cloned();
     let headers = headers.to_owned();
+    let auth_headers = auth_headers.to_owned();
     std::thread::spawn(move || {
         tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -4738,6 +4907,7 @@ fn module_ctx_download_to_path_uncached_blocking(
                     expected_checksum.as_ref(),
                     executable,
                     &headers,
+                    &auth_headers,
                 )
                 .await
             })
@@ -4985,6 +5155,7 @@ fn module_ctx_download_to_path_blocking(
     canonical_id: &str,
     executable: bool,
     headers: &[(String, String)],
+    auth_headers: &[ModuleCtxDownloadAuthHeader],
 ) -> buck2_error::Result<(Option<String>, String)> {
     if let Some(expected_checksum) = expected_checksum {
         if destination.is_file()
@@ -5027,6 +5198,7 @@ fn module_ctx_download_to_path_blocking(
             Some(expected_checksum),
             executable,
             headers,
+            auth_headers,
         )?;
         module_ctx_download_cache_put_verified(expected_checksum, canonical_id, destination)?;
         return module_ctx_download_result_checksums_verified(expected_checksum);
@@ -5038,6 +5210,7 @@ fn module_ctx_download_to_path_blocking(
         None,
         executable,
         headers,
+        auth_headers,
     )?;
     if let Some(sha256) = &checksums.0 {
         module_ctx_download_cache_put_verified(
@@ -5580,12 +5753,7 @@ fn module_extension_context_methods(builder: &mut MethodsBuilder) {
         #[starlark(require = named, default = true)] block: bool,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {
-        if !repository_ctx_download_options_are_empty(&auth) {
-            return Err(buck2_error::Error::from(
-                BazelRepositoryError::ModuleCtxDownloadUnsupportedField { field: "auth" },
-            )
-            .into());
-        }
+        let auth_headers = module_ctx_download_auth_headers_from_entries(&auth)?;
         let download_headers = module_ctx_download_headers_from_entries(&headers)?;
 
         let urls = module_ctx_urls_from_value(url, eval.heap())?;
@@ -5615,6 +5783,7 @@ fn module_extension_context_methods(builder: &mut MethodsBuilder) {
             canonical_id,
             executable,
             &download_headers,
+            &auth_headers,
         ) {
             Ok(checksums) => checksums,
             Err(error) => {
