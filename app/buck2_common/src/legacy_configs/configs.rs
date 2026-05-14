@@ -414,6 +414,9 @@ impl LegacyBuckConfig {
                 "buck2",
                 &[
                     ("file_watcher", "fs_hash_crawler"),
+                    ("local_action_cache", "false"),
+                    ("sqlite_incremental_state", "false"),
+                    ("sqlite_materializer_state", "false"),
                     ("starlark_max_callstack_size", "1000"),
                 ],
             ),

@@ -640,10 +640,17 @@ impl DaemonState {
                 .build();
 
             let incremental_db_state = Arc::new(incremental_db_state);
+            let local_action_cache_enabled = root_config
+                .parse(BuckconfigKeyRef {
+                    section: "buck2",
+                    property: "local_action_cache",
+                })?
+                .unwrap_or(true);
             let local_action_cache = Arc::new(
                 LocalActionCache::initialize(
                     paths.local_action_cache_path(),
                     blocking_executor.dupe(),
+                    local_action_cache_enabled,
                 )
                 .await?,
             );
@@ -771,6 +778,7 @@ impl DaemonState {
                 ),
                 format!("paranoid:{}", paranoid.is_some()),
                 format!("remote-dep-files:{}", remote_dep_files_enabled),
+                format!("local-action-cache:{}", local_action_cache_enabled),
                 #[cfg(fbcode_build)]
                 format!(
                     "respect-file-symlinks:{}",

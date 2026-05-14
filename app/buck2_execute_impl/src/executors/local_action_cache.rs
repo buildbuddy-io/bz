@@ -42,7 +42,7 @@ const STATE_TABLE_NAME: &str = "local_action_cache_v2";
 
 pub struct LocalActionCache {
     entries: BuckDashMap<String, Arc<[u8]>>,
-    connection: Arc<Mutex<Connection>>,
+    connection: Option<Arc<Mutex<Connection>>>,
 }
 
 impl LocalActionCache {
@@ -52,14 +52,22 @@ impl LocalActionCache {
         LocalActionCacheSqliteTable::new(connection.dupe()).create_table()?;
         Ok(Self {
             entries: BuckDashMap::default(),
-            connection,
+            connection: Some(connection),
         })
     }
 
     pub async fn initialize(
         cache_dir: AbsNormPathBuf,
         io_executor: Arc<dyn BlockingExecutor>,
+        enabled: bool,
     ) -> buck2_error::Result<Self> {
+        if !enabled {
+            return Ok(Self {
+                entries: BuckDashMap::default(),
+                connection: None,
+            });
+        }
+
         io_executor
             .execute_io_inline(|| Self::initialize_blocking(cache_dir))
             .await
@@ -91,7 +99,7 @@ impl LocalActionCache {
         let entries = table.read_all()?;
         Ok(Self {
             entries,
-            connection,
+            connection: Some(connection),
         })
     }
 
@@ -106,17 +114,25 @@ impl LocalActionCache {
         action_digest: &ActionDigest,
         outputs_fingerprint: Vec<u8>,
     ) -> buck2_error::Result<()> {
+        let Some(connection) = &self.connection else {
+            return Ok(());
+        };
+
         let key = action_digest.to_string();
         self.entries
             .insert(key.clone(), Arc::from(outputs_fingerprint.as_slice()));
-        LocalActionCacheSqliteTable::new(self.connection.dupe())
+        LocalActionCacheSqliteTable::new(connection.dupe())
             .insert_or_replace(key, outputs_fingerprint)
     }
 
     pub fn remove(&self, action_digest: &ActionDigest) -> buck2_error::Result<()> {
+        let Some(connection) = &self.connection else {
+            return Ok(());
+        };
+
         let key = action_digest.to_string();
         self.entries.remove(key.as_str());
-        LocalActionCacheSqliteTable::new(self.connection.dupe()).delete(key)?;
+        LocalActionCacheSqliteTable::new(connection.dupe()).delete(key)?;
         Ok(())
     }
 }
