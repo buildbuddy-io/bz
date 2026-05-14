@@ -1511,10 +1511,7 @@ fn extract_archive(
     temp: &AbsNormPath,
 ) -> buck2_error::Result<()> {
     let primary_url = bzlmod_cell_setup_primary_url(setup);
-    let archive_type = setup
-        .archive_type
-        .as_deref()
-        .or_else(|| archive.as_path().extension().and_then(|ext| ext.to_str()));
+    let archive_type = setup.archive_type.as_deref();
     let kind = archive_kind_from_type_or_url(archive_type, primary_url)
         .ok_or_else(|| BzlmodError::UnsupportedArchiveType(primary_url.to_owned()))?;
     extract_bazel_archive(archive.as_path(), temp.as_path(), kind, "", 0, &[])
