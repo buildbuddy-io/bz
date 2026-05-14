@@ -39,6 +39,8 @@ enum NativePatchLine {
     Remove(String),
 }
 
+const NATIVE_BZLMOD_PATCH_FUZZ: usize = 2;
+
 pub fn apply_unified_patch_file(
     directory: &Path,
     patch_file: &Path,
@@ -450,36 +452,146 @@ fn apply_native_bzlmod_hunks(
     old_lines: &[String],
     hunks: &[NativePatchHunk],
 ) -> buck2_error::Result<Vec<String>> {
-    let mut result = Vec::new();
-    let mut cursor = 0usize;
-    for hunk in hunks {
-        let hunk_start = hunk.old_start.saturating_sub(1);
-        if hunk_start < cursor || hunk_start > old_lines.len() {
-            return Err(native_bzlmod_patch_mismatch(target_path, hunk.old_start));
+    let mut result = old_lines.to_owned();
+    let mut sorted_hunks = hunks.iter().collect::<Vec<_>>();
+    sorted_hunks.sort_by_key(|hunk| hunk.old_start);
+
+    for hunk in sorted_hunks.into_iter().rev() {
+        let (position, fuzz) = native_bzlmod_patch_hunk_position(&result, hunk)
+            .ok_or_else(|| native_bzlmod_patch_mismatch(target_path, hunk.old_start))?;
+        apply_native_bzlmod_hunk_at(target_path, &mut result, hunk, position, fuzz)?;
+    }
+    Ok(result)
+}
+
+fn native_bzlmod_patch_hunk_position(
+    lines: &[String],
+    hunk: &NativePatchHunk,
+) -> Option<(usize, usize)> {
+    let source_lines = native_bzlmod_patch_source_lines(hunk);
+    let target_lines = native_bzlmod_patch_target_lines(hunk);
+    let default_position = hunk.old_start.saturating_sub(1);
+
+    for fuzz in 0..=NATIVE_BZLMOD_PATCH_FUZZ {
+        let max_position = native_bzlmod_patch_max_position(
+            lines.len(),
+            source_lines.len(),
+            target_lines.len(),
+            fuzz,
+        )?;
+        if default_position <= max_position
+            && native_bzlmod_patch_source_matches(lines, &source_lines, default_position, fuzz)
+        {
+            return Some((default_position, fuzz));
         }
-        result.extend_from_slice(&old_lines[cursor..hunk_start]);
-        cursor = hunk_start;
-        for line in &hunk.lines {
-            match line {
-                NativePatchLine::Context(expected) => {
-                    if old_lines.get(cursor) != Some(expected) {
-                        return Err(native_bzlmod_patch_mismatch(target_path, cursor + 1));
-                    }
-                    result.push(expected.clone());
-                    cursor += 1;
+
+        if default_position > max_position {
+            for position in (0..=max_position).rev() {
+                if native_bzlmod_patch_source_matches(lines, &source_lines, position, fuzz) {
+                    return Some((position, fuzz));
                 }
-                NativePatchLine::Remove(expected) => {
-                    if old_lines.get(cursor) != Some(expected) {
-                        return Err(native_bzlmod_patch_mismatch(target_path, cursor + 1));
-                    }
-                    cursor += 1;
+            }
+            continue;
+        }
+
+        let max_delta = default_position.max(max_position - default_position);
+        for delta in 1..=max_delta {
+            if let Some(position) = default_position.checked_sub(delta) {
+                if native_bzlmod_patch_source_matches(lines, &source_lines, position, fuzz) {
+                    return Some((position, fuzz));
                 }
-                NativePatchLine::Add(line) => result.push(line.clone()),
+            }
+            if let Some(position) = default_position.checked_add(delta) {
+                if position <= max_position
+                    && native_bzlmod_patch_source_matches(lines, &source_lines, position, fuzz)
+                {
+                    return Some((position, fuzz));
+                }
             }
         }
     }
-    result.extend_from_slice(&old_lines[cursor..]);
-    Ok(result)
+    None
+}
+
+fn native_bzlmod_patch_max_position(
+    line_count: usize,
+    source_line_count: usize,
+    target_line_count: usize,
+    fuzz: usize,
+) -> Option<usize> {
+    let source_end = source_line_count.checked_sub(fuzz)?;
+    let target_end = target_line_count.checked_sub(fuzz)?;
+    if fuzz > source_end || fuzz > target_end {
+        return None;
+    }
+    line_count.checked_sub(source_end)
+}
+
+fn native_bzlmod_patch_source_matches(
+    lines: &[String],
+    source_lines: &[String],
+    position: usize,
+    fuzz: usize,
+) -> bool {
+    let Some(source_end) = source_lines.len().checked_sub(fuzz) else {
+        return false;
+    };
+    if fuzz > source_end || position + source_end > lines.len() {
+        return false;
+    }
+
+    (fuzz..source_end).all(|index| {
+        lines
+            .get(position + index)
+            .is_some_and(|line| line == &source_lines[index])
+    })
+}
+
+fn apply_native_bzlmod_hunk_at(
+    target_path: &str,
+    lines: &mut Vec<String>,
+    hunk: &NativePatchHunk,
+    position: usize,
+    fuzz: usize,
+) -> buck2_error::Result<()> {
+    let source_lines = native_bzlmod_patch_source_lines(hunk);
+    let target_lines = native_bzlmod_patch_target_lines(hunk);
+    let source_end = source_lines
+        .len()
+        .checked_sub(fuzz)
+        .ok_or_else(|| native_bzlmod_patch_mismatch(target_path, hunk.old_start))?;
+    let target_end = target_lines
+        .len()
+        .checked_sub(fuzz)
+        .ok_or_else(|| native_bzlmod_patch_mismatch(target_path, hunk.old_start))?;
+    let replace_start = position + fuzz;
+    let replace_end = position + source_end;
+
+    lines.splice(
+        replace_start..replace_end,
+        target_lines[fuzz..target_end].iter().cloned(),
+    );
+    Ok(())
+}
+
+fn native_bzlmod_patch_source_lines(hunk: &NativePatchHunk) -> Vec<String> {
+    hunk.lines
+        .iter()
+        .filter_map(|line| match line {
+            NativePatchLine::Context(line) | NativePatchLine::Remove(line) => Some(line.clone()),
+            NativePatchLine::Add(_) => None,
+        })
+        .collect()
+}
+
+fn native_bzlmod_patch_target_lines(hunk: &NativePatchHunk) -> Vec<String> {
+    hunk.lines
+        .iter()
+        .filter_map(|line| match line {
+            NativePatchLine::Context(line) | NativePatchLine::Add(line) => Some(line.clone()),
+            NativePatchLine::Remove(_) => None,
+        })
+        .collect()
 }
 
 fn native_bzlmod_patch_mismatch(target_path: &str, line: usize) -> buck2_error::Error {
@@ -541,6 +653,64 @@ mod tests {
         assert_eq!(
             fs::read_to_string(dir.path().join("MODULE.bazel")).unwrap(),
             "module(name = \"demo\")\nbazel_dep(name = \"new\", version = \"2.0\")\n",
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_native_bzlmod_patch_applies_hunk_with_line_offset() -> buck2_error::Result<()> {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(
+            dir.path().join("MODULE.bazel"),
+            "# inserted upstream\nmodule(name = \"demo\")\nbazel_dep(name = \"old\", version = \"1.0\")\n",
+        )
+        .unwrap();
+
+        let patch = indoc!(
+            r#"
+            diff --git a/MODULE.bazel b/MODULE.bazel
+            --- a/MODULE.bazel
+            +++ b/MODULE.bazel
+            @@ -1,2 +1,2 @@
+             module(name = "demo")
+            -bazel_dep(name = "old", version = "1.0")
+            +bazel_dep(name = "new", version = "2.0")
+            "#
+        );
+        apply_unified_patch(dir.path(), patch, 1)?;
+
+        assert_eq!(
+            fs::read_to_string(dir.path().join("MODULE.bazel")).unwrap(),
+            "# inserted upstream\nmodule(name = \"demo\")\nbazel_dep(name = \"new\", version = \"2.0\")\n",
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_native_bzlmod_patch_applies_hunk_with_context_fuzz() -> buck2_error::Result<()> {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(
+            dir.path().join("foo.cc"),
+            "#include <stdio.h>\n\nvoid main(){\n  printf(\"Hello foo\");\n}\n",
+        )
+        .unwrap();
+
+        let patch = concat!(
+            "diff --git a/foo.cc b/foo.cc\n",
+            "--- a/foo.cc\n",
+            "+++ b/foo.cc\n",
+            "@@ -2,4 +2,5 @@\n",
+            " \n",
+            " void main(){\n",
+            "   printf(\"Hello foo\");\n",
+            "+  printf(\"Hello from patch\");\n",
+            " WRONG CONTEXT LINE\n",
+        );
+        apply_unified_patch(dir.path(), patch, 1)?;
+
+        assert_eq!(
+            fs::read_to_string(dir.path().join("foo.cc")).unwrap(),
+            "#include <stdio.h>\n\nvoid main(){\n  printf(\"Hello foo\");\n  printf(\"Hello from patch\");\n}\n",
         );
         Ok(())
     }
