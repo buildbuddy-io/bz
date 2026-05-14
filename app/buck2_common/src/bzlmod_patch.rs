@@ -343,27 +343,26 @@ fn apply_native_bzlmod_file_patch(
         })?,
         None => String::new(),
     };
+    let input_file_mode = match input_target {
+        Some(path) => get_native_bzlmod_file_mode(path)?,
+        None => None,
+    };
+    let output_file_mode = file_patch.file_mode.or(input_file_mode);
     let old_lines = split_native_patch_lines(&old_text);
     let new_lines = apply_native_bzlmod_hunks(target_path, &old_lines, &file_patch.hunks)?;
 
     let deletes_file = file_patch.new_path.as_deref() == Some("/dev/null") && new_lines.is_empty();
     if let Some(old_target) = &old_target {
-        if deletes_file
-            || new_target
-                .as_ref()
-                .is_some_and(|new_target| new_target != old_target)
-        {
-            match fs::remove_file(old_target) {
-                Ok(()) => {}
-                Err(error) if error.kind() == ErrorKind::NotFound => {}
-                Err(error) => {
-                    return Err(
-                        from_any_with_tag(error, buck2_error::ErrorTag::Input).context(format!(
-                            "Error deleting `{}` after applying bzlmod patch",
-                            old_target.display()
-                        )),
-                    );
-                }
+        match fs::remove_file(old_target) {
+            Ok(()) => {}
+            Err(error) if error.kind() == ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(
+                    from_any_with_tag(error, buck2_error::ErrorTag::Input).context(format!(
+                        "Error deleting `{}` after applying bzlmod patch",
+                        old_target.display()
+                    )),
+                );
             }
         }
     }
@@ -382,7 +381,7 @@ fn apply_native_bzlmod_file_patch(
             target.display()
         )
     })?;
-    if let Some(mode) = file_patch.file_mode {
+    if let Some(mode) = output_file_mode {
         set_native_bzlmod_file_mode(target, mode)?;
     }
     Ok(())
@@ -604,6 +603,20 @@ fn native_bzlmod_patch_mismatch(target_path: &str, line: usize) -> buck2_error::
 }
 
 #[cfg(unix)]
+fn get_native_bzlmod_file_mode(path: &Path) -> buck2_error::Result<Option<u32>> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let metadata = fs::metadata(path)
+        .with_buck_error_context(|| format!("Error reading permissions on `{}`", path.display()))?;
+    Ok(Some(metadata.permissions().mode()))
+}
+
+#[cfg(not(unix))]
+fn get_native_bzlmod_file_mode(_path: &Path) -> buck2_error::Result<Option<u32>> {
+    Ok(None)
+}
+
+#[cfg(unix)]
 fn set_native_bzlmod_file_mode(path: &Path, mode: u32) -> buck2_error::Result<()> {
     use std::os::unix::fs::PermissionsExt;
 
@@ -711,6 +724,44 @@ mod tests {
         assert_eq!(
             fs::read_to_string(dir.path().join("foo.cc")).unwrap(),
             "#include <stdio.h>\n\nvoid main(){\n  printf(\"Hello foo\");\n  printf(\"Hello from patch\");\n}\n",
+        );
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_native_bzlmod_patch_replaces_read_only_file() -> buck2_error::Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let module = dir.path().join("MODULE.bazel");
+        fs::write(
+            &module,
+            "module(name = \"demo\")\nbazel_dep(name = \"old\", version = \"1.0\")\n",
+        )
+        .unwrap();
+        fs::set_permissions(&module, fs::Permissions::from_mode(0o555)).unwrap();
+
+        let patch = indoc!(
+            r#"
+            diff --git a/MODULE.bazel b/MODULE.bazel
+            --- a/MODULE.bazel
+            +++ b/MODULE.bazel
+            @@ -1,2 +1,2 @@
+             module(name = "demo")
+            -bazel_dep(name = "old", version = "1.0")
+            +bazel_dep(name = "new", version = "2.0")
+            "#
+        );
+        apply_unified_patch(dir.path(), patch, 1)?;
+
+        assert_eq!(
+            fs::read_to_string(&module).unwrap(),
+            "module(name = \"demo\")\nbazel_dep(name = \"new\", version = \"2.0\")\n",
+        );
+        assert_eq!(
+            fs::metadata(&module).unwrap().permissions().mode() & 0o777,
+            0o555
         );
         Ok(())
     }
