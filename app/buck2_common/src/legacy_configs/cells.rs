@@ -32,6 +32,8 @@ use buck2_core::cells::alias::NonEmptyCellAlias;
 use buck2_core::cells::cell_root_path::CellRootPath;
 use buck2_core::cells::cell_root_path::CellRootPathBuf;
 use buck2_core::cells::external::BZLMOD_BAZEL_COMPAT_VERSION;
+use buck2_core::cells::external::BZLMOD_EXTERNAL_CELL_KIND;
+use buck2_core::cells::external::BZLMOD_GENERATED_EXTERNAL_CELL_KIND;
 use buck2_core::cells::external::BzlmodBazelFeaturesGlobalsSetup;
 use buck2_core::cells::external::BzlmodBazelFeaturesVersionSetup;
 use buck2_core::cells::external::BzlmodCellSetup;
@@ -992,7 +994,7 @@ impl BuckConfigBasedCells {
                 commit: Arc::from(commit),
                 object_format,
             }))
-        } else if value == "bzlmod" {
+        } else if value == BZLMOD_EXTERNAL_CELL_KIND {
             let section = &format!("external_cell_{}", cell.as_str());
             let patches: Vec<BzlmodPatchConfig> =
                 serde_json::from_str(get_config(section, "patches")?)
@@ -1066,7 +1068,7 @@ impl BuckConfigBasedCells {
                 ),
                 patch_strip: module_patch_strip,
             }))
-        } else if value == "bzlmod_generated" {
+        } else if value == BZLMOD_GENERATED_EXTERNAL_CELL_KIND {
             let section = &format!("external_cell_{}", cell.as_str());
             let generator: BzlmodGeneratedCellGenerator =
                 serde_json::from_str(get_config(section, "generator")?)

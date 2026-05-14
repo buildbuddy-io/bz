@@ -28,12 +28,20 @@ use serde::Serialize;
 use crate::cells::name::CellName;
 
 pub const BZLMOD_BAZEL_COMPAT_VERSION: &str = "9.1.0";
+pub const EXTERNAL_CELLS_ROOT: &str = "buck-out/v2/external_cells";
+pub const BZLMOD_EXTERNAL_CELL_KIND: &str = "bzlmod";
+pub const BZLMOD_GENERATED_EXTERNAL_CELL_KIND: &str = "bzlmod_generated";
+pub const BZLMOD_GENERATED_EXTERNAL_CELL_PATH_MARKER: &str = "/bzlmod_generated/";
 pub const BAZEL_REPOSITORY_ACCEPT_ENCODING_HEADER: &str = "Accept-Encoding";
 pub const BAZEL_REPOSITORY_ACCEPT_ENCODING: &str = "gzip";
 pub const BAZEL_REPOSITORY_USER_AGENT_HEADER: &str = "User-Agent";
 
 pub fn bazel_repository_user_agent() -> String {
     format!("Bazel/release {BZLMOD_BAZEL_COMPAT_VERSION}")
+}
+
+pub fn external_cell_source_path(kind: &str, canonical_repo_name: &str) -> String {
+    format!("{EXTERNAL_CELLS_ROOT}/{kind}/{canonical_repo_name}")
 }
 
 pub fn bzlmod_cell_name(canonical_repo_name: &str) -> String {

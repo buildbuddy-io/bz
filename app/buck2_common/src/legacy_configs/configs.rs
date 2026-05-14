@@ -17,6 +17,9 @@ use std::sync::Arc;
 use allocative::Allocative;
 use buck2_cli_proto::ConfigOverride;
 use buck2_core::cells::cell_root_path::CellRootPath;
+use buck2_core::cells::external::BZLMOD_EXTERNAL_CELL_KIND;
+use buck2_core::cells::external::BZLMOD_GENERATED_EXTERNAL_CELL_KIND;
+use buck2_core::cells::external::external_cell_source_path;
 use buck2_core::cells::external::register_bzlmod_cell_canonical_repo_name_for_cell;
 use buck2_core::fs::project_rel_path::ProjectRelativePath;
 use buck2_hash::StdBuckHashMap;
@@ -194,6 +197,13 @@ impl BazelCompatExternalModule {
         match self {
             Self::Registry(module) => &module.canonical_repo_name,
             Self::Generated(module) => &module.canonical_repo_name,
+        }
+    }
+
+    fn external_cell_kind(&self) -> &'static str {
+        match self {
+            Self::Registry(_) => BZLMOD_EXTERNAL_CELL_KIND,
+            Self::Generated(_) => BZLMOD_GENERATED_EXTERNAL_CELL_KIND,
         }
     }
 }
@@ -441,13 +451,9 @@ impl LegacyBuckConfig {
                     section_values
                         .entry(module.cell_name().to_owned())
                         .or_insert_with(|| {
-                            synthetic_config_value(&format!(
-                                "buck-out/v2/external_cells/{}/{}",
-                                match module {
-                                    BazelCompatExternalModule::Registry(_) => "bzlmod",
-                                    BazelCompatExternalModule::Generated(_) => "bzlmod_generated",
-                                },
-                                module.canonical_repo_name()
+                            synthetic_config_value(&external_cell_source_path(
+                                module.external_cell_kind(),
+                                module.canonical_repo_name(),
                             ))
                         });
                 }
@@ -464,12 +470,7 @@ impl LegacyBuckConfig {
                 for module in external_modules {
                     section_values
                         .entry(module.cell_name().to_owned())
-                        .or_insert_with(|| {
-                            synthetic_config_value(match module {
-                                BazelCompatExternalModule::Registry(_) => "bzlmod",
-                                BazelCompatExternalModule::Generated(_) => "bzlmod_generated",
-                            })
-                        });
+                        .or_insert_with(|| synthetic_config_value(module.external_cell_kind()));
                 }
             }
             section.values = SortedMap::from_iter(section_values);

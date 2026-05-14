@@ -33,6 +33,8 @@ use buck2_common::http::HasHttpClient;
 use buck2_common::io::IoProvider;
 use buck2_common::io::fs::FsIoProvider;
 use buck2_core::cells::cell_path::CellPath;
+use buck2_core::cells::external::BZLMOD_EXTERNAL_CELL_KIND;
+use buck2_core::cells::external::BZLMOD_GENERATED_EXTERNAL_CELL_PATH_MARKER;
 use buck2_core::cells::external::BzlmodBazelFeaturesGlobalsSetup;
 use buck2_core::cells::external::BzlmodBazelFeaturesVersionSetup;
 use buck2_core::cells::external::BzlmodCcAutoconfSetup;
@@ -1078,7 +1080,10 @@ fn cc_toolchains_build_template(
     dest_rel: &ProjectRelativePath,
     parent_canonical_repo_name: &str,
 ) -> buck2_error::Result<String> {
-    let Some((external_cells_root, _)) = dest_rel.as_str().split_once("/bzlmod_generated/") else {
+    let Some((external_cells_root, _)) = dest_rel
+        .as_str()
+        .split_once(BZLMOD_GENERATED_EXTERNAL_CELL_PATH_MARKER)
+    else {
         return Err(BzlmodError::InvalidGeneratedRepoPath(dest_rel.to_string()).into());
     };
     read_bzlmod_module_file_text(
@@ -1099,7 +1104,7 @@ fn read_bzlmod_module_file_text(
     path: &str,
 ) -> buck2_error::Result<String> {
     let materialized_path = ProjectRelativePathBuf::unchecked_new(format!(
-        "{external_cells_root}/bzlmod/{canonical_repo_name}/{path}",
+        "{external_cells_root}/{BZLMOD_EXTERNAL_CELL_KIND}/{canonical_repo_name}/{path}",
     ));
     match fs_util::read_to_string(project_fs.resolve(&materialized_path)) {
         Ok(contents) => return Ok(contents),
@@ -1229,11 +1234,14 @@ fn write_bazel_features_globals_repo(
     dest: &AbsNormPath,
     setup: &BzlmodBazelFeaturesGlobalsSetup,
 ) -> buck2_error::Result<()> {
-    let Some((external_cells_root, _)) = dest_rel.as_str().split_once("/bzlmod_generated/") else {
+    let Some((external_cells_root, _)) = dest_rel
+        .as_str()
+        .split_once(BZLMOD_GENERATED_EXTERNAL_CELL_PATH_MARKER)
+    else {
         return Err(BzlmodError::InvalidGeneratedRepoPath(dest_rel.to_string()).into());
     };
     let globals_path = ProjectRelativePathBuf::unchecked_new(format!(
-        "{external_cells_root}/bzlmod/{}/private/globals.bzl",
+        "{external_cells_root}/{BZLMOD_EXTERNAL_CELL_KIND}/{}/private/globals.bzl",
         setup.parent_canonical_repo_name
     ));
     let globals_text = read_bzlmod_module_file_text(
@@ -1988,7 +1996,7 @@ fn bzlmod_module_extension_evaluation_working_dir(
 ) -> ProjectRelativePathBuf {
     let external_cells_root = generated_repo_path
         .as_str()
-        .rsplit_once("/bzlmod_generated/")
+        .rsplit_once(BZLMOD_GENERATED_EXTERNAL_CELL_PATH_MARKER)
         .map(|(external_cells_root, _)| external_cells_root)
         .unwrap_or_else(|| {
             generated_repo_path
