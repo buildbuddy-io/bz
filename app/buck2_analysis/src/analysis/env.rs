@@ -1063,7 +1063,7 @@ fn bazel_aspect_actual_dep_node<'a>(
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Eq, PartialEq, Hash)]
 struct BazelAspectAnalysisSpec {
     attrs: Vec<String>,
     attr_aspects: Vec<String>,
@@ -1124,13 +1124,14 @@ fn collect_bazel_aspect_analysis_dep_edge(
     dep_label: &ConfiguredProvidersLabel,
     aspects: &[BazelAspectAnalysisSpec],
     labels: &mut StdBuckHashSet<ConfiguredTargetLabel>,
+    visited: &mut StdBuckHashSet<(ConfiguredTargetLabel, BazelAspectAnalysisSpec)>,
 ) -> buck2_error::Result<()> {
     labels.insert(dep_label.target().dupe());
     let dep_node = find_direct_dep_node(parent_node, dep_label.target())?;
     let unwrapped_dep_node = dep_node.to_owned().unwrap_forward().dupe();
     let aspect_dep_node = bazel_aspect_actual_dep_node(unwrapped_dep_node.as_ref())?;
     for aspect in aspects {
-        collect_bazel_aspect_analysis_deps_for_aspect(aspect_dep_node, aspect, labels)?;
+        collect_bazel_aspect_analysis_deps_for_aspect(aspect_dep_node, aspect, labels, visited)?;
     }
     Ok(())
 }
@@ -1139,11 +1140,16 @@ fn collect_bazel_aspect_analysis_deps_for_aspect(
     node: ConfiguredTargetNodeRef<'_>,
     aspect: &BazelAspectAnalysisSpec,
     labels: &mut StdBuckHashSet<ConfiguredTargetLabel>,
+    visited: &mut StdBuckHashSet<(ConfiguredTargetLabel, BazelAspectAnalysisSpec)>,
 ) -> buck2_error::Result<()> {
+    if !visited.insert((node.label().dupe(), aspect.clone())) {
+        return Ok(());
+    }
+
     collect_bazel_aspect_base_target_deps(node, labels);
 
     for required in &aspect.requires {
-        collect_bazel_aspect_analysis_deps_for_aspect(node, required, labels)?;
+        collect_bazel_aspect_analysis_deps_for_aspect(node, required, labels, visited)?;
     }
 
     for attr_aspect in &aspect.attr_aspects {
@@ -1152,10 +1158,22 @@ fn collect_bazel_aspect_analysis_deps_for_aspect(
                 if is_bazel_aspect_hidden_attr(attr.name) {
                     continue;
                 }
-                collect_bazel_aspect_analysis_deps_from_attr(node, &attr.value, aspect, labels)?;
+                collect_bazel_aspect_analysis_deps_from_attr(
+                    node,
+                    &attr.value,
+                    aspect,
+                    labels,
+                    visited,
+                )?;
             }
         } else if let Some(attr) = node.get(attr_aspect, AttrInspectOptions::All) {
-            collect_bazel_aspect_analysis_deps_from_attr(node, &attr.value, aspect, labels)?;
+            collect_bazel_aspect_analysis_deps_from_attr(
+                node,
+                &attr.value,
+                aspect,
+                labels,
+                visited,
+            )?;
         }
     }
 
@@ -1185,6 +1203,7 @@ fn collect_bazel_aspect_analysis_deps_from_attr(
     attr: &ConfiguredAttr,
     aspect: &BazelAspectAnalysisSpec,
     labels: &mut StdBuckHashSet<ConfiguredTargetLabel>,
+    visited: &mut StdBuckHashSet<(ConfiguredTargetLabel, BazelAspectAnalysisSpec)>,
 ) -> buck2_error::Result<()> {
     let mut dep_labels = Vec::new();
     collect_configured_attr_dep_labels(attr, &mut dep_labels);
@@ -1197,6 +1216,7 @@ fn collect_bazel_aspect_analysis_deps_from_attr(
             &dep_label,
             std::slice::from_ref(aspect),
             labels,
+            visited,
         )?;
     }
     Ok(())
@@ -1221,6 +1241,7 @@ fn collect_bazel_aspect_analysis_deps(
         })
         .collect::<buck2_error::Result<SmallMap<_, _>>>()?;
     let mut labels = StdBuckHashSet::default();
+    let mut visited = StdBuckHashSet::default();
     for (attr_name, aspects) in attr_aspects {
         for (idx, aspect) in aspects.iter().enumerate() {
             collect_bazel_aspect_hidden_attr_deps(
@@ -1241,7 +1262,13 @@ fn collect_bazel_aspect_analysis_deps(
             if find_direct_dep_node(node, dep_label.target()).is_err() {
                 continue;
             }
-            collect_bazel_aspect_analysis_dep_edge(node, &dep_label, &aspects, &mut labels)?;
+            collect_bazel_aspect_analysis_dep_edge(
+                node,
+                &dep_label,
+                &aspects,
+                &mut labels,
+                &mut visited,
+            )?;
         }
     }
     Ok(labels.into_iter().collect())
