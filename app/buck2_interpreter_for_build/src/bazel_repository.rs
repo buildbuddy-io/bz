@@ -14,15 +14,19 @@ use std::collections::HashMap;
 use std::env;
 use std::fmt;
 use std::fs;
+use std::io;
 use std::io::Read;
 use std::io::Write;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
+use std::process::Stdio;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::OnceLock;
+use std::thread;
 use std::time::Duration;
+use std::time::Instant;
 use std::time::SystemTime;
 
 use allocative::Allocative;
@@ -652,6 +656,12 @@ pub struct RepositoryPathLabelDep {
     cell_name: String,
     path: Option<String>,
     recursive: bool,
+}
+
+struct RepositoryCommandOutput {
+    stdout: Vec<u8>,
+    stderr: Vec<u8>,
+    return_code: i32,
 }
 
 impl RepositoryPathLabelDep {
@@ -3228,6 +3238,92 @@ fn repository_ctx_extract_archive(
     .map_err(Into::into)
 }
 
+fn repository_ctx_execute_output(
+    command: &mut Command,
+    timeout: i32,
+    quiet: bool,
+) -> Result<RepositoryCommandOutput, String> {
+    if timeout <= 0 {
+        return Err(format!("timeout must be positive, got {timeout}"));
+    }
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = command.spawn().map_err(|error| error.to_string())?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| "failed to capture stdout".to_owned())?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| "failed to capture stderr".to_owned())?;
+    let mut stdout_handle = Some(repository_ctx_read_command_output(stdout, quiet));
+    let mut stderr_handle = Some(repository_ctx_read_command_output(stderr, quiet));
+    let deadline = Instant::now() + Duration::from_secs(timeout as u64);
+
+    loop {
+        if let Some(status) = child.try_wait().map_err(|error| error.to_string())? {
+            let stdout =
+                repository_ctx_join_command_output(stdout_handle.take().expect("stdout joined"))?;
+            let stderr =
+                repository_ctx_join_command_output(stderr_handle.take().expect("stderr joined"))?;
+            return Ok(RepositoryCommandOutput {
+                stdout,
+                stderr,
+                return_code: status.code().unwrap_or(1),
+            });
+        }
+
+        let now = Instant::now();
+        if now >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ =
+                repository_ctx_join_command_output(stdout_handle.take().expect("stdout joined"));
+            let _ =
+                repository_ctx_join_command_output(stderr_handle.take().expect("stderr joined"));
+            return Ok(RepositoryCommandOutput {
+                stdout: Vec::new(),
+                stderr: format!("Command timed out after {timeout} seconds").into_bytes(),
+                return_code: 256,
+            });
+        }
+
+        thread::sleep(std::cmp::min(
+            Duration::from_millis(10),
+            deadline.saturating_duration_since(now),
+        ));
+    }
+}
+
+fn repository_ctx_read_command_output<R: Read + Send + 'static>(
+    mut reader: R,
+    quiet: bool,
+) -> thread::JoinHandle<io::Result<Vec<u8>>> {
+    thread::spawn(move || {
+        let mut output = Vec::new();
+        let mut buffer = [0u8; 8192];
+        loop {
+            let len = reader.read(&mut buffer)?;
+            if len == 0 {
+                return Ok(output);
+            }
+            if !quiet {
+                let _ = std::io::stderr().write_all(&buffer[..len]);
+            }
+            output.extend_from_slice(&buffer[..len]);
+        }
+    })
+}
+
+fn repository_ctx_join_command_output(
+    handle: thread::JoinHandle<io::Result<Vec<u8>>>,
+) -> Result<Vec<u8>, String> {
+    handle
+        .join()
+        .map_err(|_| "command output reader panicked".to_owned())?
+        .map_err(|error| error.to_string())
+}
+
 #[starlark_module]
 fn repository_context_methods(builder: &mut MethodsBuilder) {
     fn file<'v>(
@@ -3543,7 +3639,6 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
         #[starlark(require = named)] working_directory: Option<Value<'v>>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {
-        let _unused = (timeout, quiet);
         let repository_working_dir = repository_ctx_working_dir(this).to_owned();
         let mut arguments = arguments
             .items
@@ -3599,12 +3694,13 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
             })
         })?;
         command.current_dir(working_directory);
-        let output = command.output().map_err(|error| {
-            buck2_error::Error::from(BazelRepositoryError::RepositoryCtxExecuteFailed {
-                program: program.clone(),
-                error: error.to_string(),
-            })
-        })?;
+        let output =
+            repository_ctx_execute_output(&mut command, timeout, quiet).map_err(|error| {
+                buck2_error::Error::from(BazelRepositoryError::RepositoryCtxExecuteFailed {
+                    program: program.clone(),
+                    error,
+                })
+            })?;
         Ok(eval.heap().alloc(AllocStruct([
             (
                 "stdout",
@@ -3616,10 +3712,7 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
                 eval.heap()
                     .alloc(String::from_utf8_lossy(&output.stderr).into_owned()),
             ),
-            (
-                "return_code",
-                eval.heap().alloc(output.status.code().unwrap_or(1)),
-            ),
+            ("return_code", eval.heap().alloc(output.return_code)),
         ])))
     }
 
@@ -5351,7 +5444,6 @@ fn module_extension_context_methods(builder: &mut MethodsBuilder) {
         #[starlark(require = named)] working_directory: Option<Value<'v>>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {
-        let _unused = (timeout, quiet);
         let repository_working_dir = module_ctx_working_dir(this).to_owned();
         let mut arguments = arguments
             .items
@@ -5405,12 +5497,13 @@ fn module_extension_context_methods(builder: &mut MethodsBuilder) {
             })
         })?;
         command.current_dir(working_directory);
-        let output = command.output().map_err(|error| {
-            buck2_error::Error::from(BazelRepositoryError::RepositoryCtxExecuteFailed {
-                program: program.clone(),
-                error: error.to_string(),
-            })
-        })?;
+        let output =
+            repository_ctx_execute_output(&mut command, timeout, quiet).map_err(|error| {
+                buck2_error::Error::from(BazelRepositoryError::RepositoryCtxExecuteFailed {
+                    program: program.clone(),
+                    error,
+                })
+            })?;
         Ok(eval.heap().alloc(AllocStruct([
             (
                 "stdout",
@@ -5422,10 +5515,7 @@ fn module_extension_context_methods(builder: &mut MethodsBuilder) {
                 eval.heap()
                     .alloc(String::from_utf8_lossy(&output.stderr).into_owned()),
             ),
-            (
-                "return_code",
-                eval.heap().alloc(output.status.code().unwrap_or(1)),
-            ),
+            ("return_code", eval.heap().alloc(output.return_code)),
         ])))
     }
 
