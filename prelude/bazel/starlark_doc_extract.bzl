@@ -6,16 +6,12 @@
 # You may select, at your option, one of the above-listed licenses.
 
 def _starlark_doc_extract_impl(ctx):
-    binaryproto = ctx.outputs.binaryproto
-    textproto = ctx.outputs.textproto
-    ctx.actions.write(binaryproto, "", has_content_based_path = False)
-    ctx.actions.write(textproto, "", has_content_based_path = False)
-    return [
-        DefaultInfo(
-            default_output = binaryproto,
-            other_outputs = [textproto],
-        ),
-    ]
+    fail(
+        "starlark_doc_extract is not implemented in Buck2. Bazel loads the "
+        "source .bzl/.scl module, validates its documented transitive loads, "
+        "and writes real ModuleInfo proto outputs; refusing to emit empty "
+        "binaryproto/textproto files for `{}`.".format(ctx.attr.src),
+    )
 
 starlark_doc_extract = rule(
     implementation = _starlark_doc_extract_impl,

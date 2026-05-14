@@ -9,12 +9,13 @@ def _bazel_genquery_impl(ctx):
     if ctx.attr.compressed_output:
         fail("genquery(compressed_output = True) is not implemented")
 
-    output = ctx.actions.write(
-        ctx.label.name,
-        "",
-        has_content_based_path = False,
+    fail(
+        "genquery is not implemented in Buck2. Bazel evaluates genquery by "
+        "running the query engine over the transitive closure of the rule's "
+        "scope; refusing to emit a placeholder output for expression `{}`.".format(
+            ctx.attr.expression,
+        ),
     )
-    return [DefaultInfo(default_output = output)]
 
 bazel_genquery = rule(
     implementation = _bazel_genquery_impl,
