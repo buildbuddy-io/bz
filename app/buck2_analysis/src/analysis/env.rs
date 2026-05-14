@@ -35,6 +35,7 @@ use buck2_build_api::interpreter::rule_defs::provider::collection::FrozenProvide
 use buck2_build_api::interpreter::rule_defs::provider::collection::FrozenProviderCollectionValueRef;
 use buck2_build_api::interpreter::rule_defs::provider::collection::ProviderCollection;
 use buck2_build_api::interpreter::rule_defs::provider::dependency::Dependency;
+use buck2_build_api::keep_going::KeepGoing;
 use buck2_build_api::validation::transitive_validations::TransitiveValidations;
 use buck2_build_api::validation::transitive_validations::TransitiveValidationsData;
 use buck2_common::legacy_configs::dice::HasLegacyConfigs;
@@ -86,6 +87,7 @@ use dice::CancellationContext;
 use dice::DiceComputations;
 use dupe::Dupe;
 use futures::Future;
+use futures::FutureExt;
 use starlark::environment::FrozenModule;
 use starlark::environment::Module;
 use starlark::eval::Evaluator;
@@ -1676,11 +1678,18 @@ async fn run_analysis_with_env_underlying(
         } else {
             Vec::new()
         };
-        let mut extra_dep_analysis_results = Vec::new();
-        for dep in bazel_aspect_analysis_deps {
-            let result = dice.get_analysis_result(&dep).await?.require_compatible()?;
-            extra_dep_analysis_results.push((dep, result));
-        }
+        // Bazel requests aspect values from Skyframe as a batch. Keep Buck2's
+        // synthetic aspect dependencies equally parallel instead of serializing
+        // wide Starlark aspect graphs such as rules_go go_proto_library deps.
+        let extra_dep_analysis_results =
+            KeepGoing::try_compute_join_all(dice, bazel_aspect_analysis_deps, |dice, dep| {
+                async move {
+                    let result = dice.get_analysis_result(&dep).await?.require_compatible()?;
+                    buck2_error::Ok((dep, result))
+                }
+                .boxed()
+            })
+            .await?;
 
         let mut dep_analysis_results = get_deps_from_analysis_results(analysis_env.deps)?;
         for (label, result) in extra_dep_analysis_results {
