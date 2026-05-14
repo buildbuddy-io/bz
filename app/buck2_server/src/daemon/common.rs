@@ -11,6 +11,7 @@
 use std::sync::Arc;
 use std::sync::OnceLock;
 
+use async_trait::async_trait;
 use buck2_build_api::actions::execute::dice_data::CommandExecutorResponse;
 use buck2_build_api::actions::execute::dice_data::HasCommandExecutor;
 use buck2_cli_proto::client_context::HostPlatformOverride;
@@ -180,14 +181,17 @@ enum ExecutorCompatibilityError {
     SelectedConfig(ExecutionStrategy, CommandExecutorConfig),
 }
 
+#[async_trait]
 impl HasCommandExecutor for CommandExecutorFactory {
-    fn get_command_executor(
+    async fn get_command_executor(
         &self,
         artifact_fs: &ArtifactFs,
         executor_config: &CommandExecutorConfig,
     ) -> buck2_error::Result<CommandExecutorResponse> {
         // 30GB is the max RE can currently support.
         const DEFAULT_RE_MAX_INPUT_FILE_BYTES: u64 = 30 * 1024 * 1024 * 1024;
+
+        self.local_action_cache.load().await?;
 
         let local_executor_new = |options: &LocalExecutorOptions| {
             let worker_pool = if options.use_persistent_workers {

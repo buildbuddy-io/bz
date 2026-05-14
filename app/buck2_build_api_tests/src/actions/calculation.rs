@@ -14,6 +14,7 @@ use std::sync::Arc;
 use std::sync::Mutex;
 
 use assert_matches::assert_matches;
+use async_trait::async_trait;
 use buck2_analysis::analysis::calculation::AnalysisKey;
 use buck2_artifact::actions::key::ActionIndex;
 use buck2_artifact::actions::key::ActionKey;
@@ -210,8 +211,9 @@ async fn make_default_dice_state(
     struct CommandExecutorProvider {
         dry_run_tracker: Arc<Mutex<Vec<DryRunEntry>>>,
     }
+    #[async_trait]
     impl HasCommandExecutor for CommandExecutorProvider {
-        fn get_command_executor(
+        async fn get_command_executor(
             &self,
             artifact_fs: &ArtifactFs,
             _config: &CommandExecutorConfig,

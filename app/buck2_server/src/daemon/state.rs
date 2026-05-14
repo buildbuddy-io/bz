@@ -646,14 +646,11 @@ impl DaemonState {
                     property: "local_action_cache",
                 })?
                 .unwrap_or(true);
-            let local_action_cache = Arc::new(
-                LocalActionCache::initialize(
-                    paths.local_action_cache_path(),
-                    blocking_executor.dupe(),
-                    local_action_cache_enabled,
-                )
-                .await?,
-            );
+            let local_action_cache = Arc::new(LocalActionCache::new(
+                paths.local_action_cache_path(),
+                blocking_executor.dupe(),
+                local_action_cache_enabled,
+            ));
 
             let materializer_state_identity =
                 materializer_db.as_ref().map(|d| d.identity().clone());

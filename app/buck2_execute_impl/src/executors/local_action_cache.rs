@@ -14,6 +14,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use buck2_common::sqlite::sqlite_db::SqliteTable;
 use buck2_common::sqlite::sqlite_db::SqliteTables;
+use buck2_core::async_once_cell::AsyncOnceCell;
 use buck2_core::fs::artifact_path_resolver::ArtifactFs;
 use buck2_directory::directory::entry::DirectoryEntry;
 use buck2_error::BuckErrorContext;
@@ -41,8 +42,23 @@ use rusqlite::Connection;
 const STATE_TABLE_NAME: &str = "local_action_cache_v2";
 
 pub struct LocalActionCache {
+    state: LocalActionCacheState,
+}
+
+enum LocalActionCacheState {
+    Disabled,
+    Lazy {
+        cache_dir: AbsNormPathBuf,
+        io_executor: Arc<dyn BlockingExecutor>,
+        cache: AsyncOnceCell<LoadedLocalActionCache>,
+    },
+    #[cfg(test)]
+    Loaded(LoadedLocalActionCache),
+}
+
+struct LoadedLocalActionCache {
     entries: BuckDashMap<String, Arc<[u8]>>,
-    connection: Option<Arc<Mutex<Connection>>>,
+    connection: Arc<Mutex<Connection>>,
 }
 
 impl LocalActionCache {
@@ -51,28 +67,93 @@ impl LocalActionCache {
         let connection = Arc::new(Mutex::new(Connection::open_in_memory()?));
         LocalActionCacheSqliteTable::new(connection.dupe()).create_table()?;
         Ok(Self {
-            entries: BuckDashMap::default(),
-            connection: Some(connection),
+            state: LocalActionCacheState::Loaded(LoadedLocalActionCache {
+                entries: BuckDashMap::default(),
+                connection,
+            }),
         })
     }
 
-    pub async fn initialize(
+    pub fn new(
         cache_dir: AbsNormPathBuf,
         io_executor: Arc<dyn BlockingExecutor>,
         enabled: bool,
-    ) -> buck2_error::Result<Self> {
+    ) -> Self {
         if !enabled {
-            return Ok(Self {
-                entries: BuckDashMap::default(),
-                connection: None,
-            });
+            return Self {
+                state: LocalActionCacheState::Disabled,
+            };
         }
 
-        io_executor
-            .execute_io_inline(|| Self::initialize_blocking(cache_dir))
-            .await
+        Self {
+            state: LocalActionCacheState::Lazy {
+                cache_dir,
+                io_executor,
+                cache: AsyncOnceCell::new(),
+            },
+        }
     }
 
+    pub async fn load(&self) -> buck2_error::Result<()> {
+        match &self.state {
+            LocalActionCacheState::Disabled => Ok(()),
+            #[cfg(test)]
+            LocalActionCacheState::Loaded(_) => Ok(()),
+            LocalActionCacheState::Lazy {
+                cache_dir,
+                io_executor,
+                cache,
+            } => {
+                let cache_dir = cache_dir.clone();
+                let io_executor = io_executor.dupe();
+                cache
+                    .get_or_try_init(async move {
+                        tracing::info!("Loading local action cache...");
+                        io_executor
+                            .execute_io_inline(|| {
+                                LoadedLocalActionCache::initialize_blocking(cache_dir)
+                            })
+                            .await
+                    })
+                    .await?;
+                Ok(())
+            }
+        }
+    }
+
+    fn loaded(&self) -> Option<&LoadedLocalActionCache> {
+        match &self.state {
+            LocalActionCacheState::Disabled => None,
+            LocalActionCacheState::Lazy { cache, .. } => cache.get(),
+            #[cfg(test)]
+            LocalActionCacheState::Loaded(cache) => Some(cache),
+        }
+    }
+
+    pub fn get(&self, action_digest: &ActionDigest) -> Option<Arc<[u8]>> {
+        self.loaded()?.get(action_digest)
+    }
+
+    pub fn insert(
+        &self,
+        action_digest: &ActionDigest,
+        outputs_fingerprint: Vec<u8>,
+    ) -> buck2_error::Result<()> {
+        let Some(cache) = self.loaded() else {
+            return Ok(());
+        };
+        cache.insert(action_digest, outputs_fingerprint)
+    }
+
+    pub fn remove(&self, action_digest: &ActionDigest) -> buck2_error::Result<()> {
+        let Some(cache) = self.loaded() else {
+            return Ok(());
+        };
+        cache.remove(action_digest)
+    }
+}
+
+impl LoadedLocalActionCache {
     fn initialize_blocking(cache_dir: AbsNormPathBuf) -> buck2_error::Result<Self> {
         match Self::open_blocking(&cache_dir) {
             Ok(cache) => Ok(cache),
@@ -99,40 +180,32 @@ impl LocalActionCache {
         let entries = table.read_all()?;
         Ok(Self {
             entries,
-            connection: Some(connection),
+            connection,
         })
     }
 
-    pub fn get(&self, action_digest: &ActionDigest) -> Option<Arc<[u8]>> {
+    fn get(&self, action_digest: &ActionDigest) -> Option<Arc<[u8]>> {
         self.entries
             .get(action_digest.to_string().as_str())
             .map(|entry| entry.dupe())
     }
 
-    pub fn insert(
+    fn insert(
         &self,
         action_digest: &ActionDigest,
         outputs_fingerprint: Vec<u8>,
     ) -> buck2_error::Result<()> {
-        let Some(connection) = &self.connection else {
-            return Ok(());
-        };
-
         let key = action_digest.to_string();
         self.entries
             .insert(key.clone(), Arc::from(outputs_fingerprint.as_slice()));
-        LocalActionCacheSqliteTable::new(connection.dupe())
+        LocalActionCacheSqliteTable::new(self.connection.dupe())
             .insert_or_replace(key, outputs_fingerprint)
     }
 
-    pub fn remove(&self, action_digest: &ActionDigest) -> buck2_error::Result<()> {
-        let Some(connection) = &self.connection else {
-            return Ok(());
-        };
-
+    fn remove(&self, action_digest: &ActionDigest) -> buck2_error::Result<()> {
         let key = action_digest.to_string();
         self.entries.remove(key.as_str());
-        LocalActionCacheSqliteTable::new(connection.dupe()).delete(key)?;
+        LocalActionCacheSqliteTable::new(self.connection.dupe()).delete(key)?;
         Ok(())
     }
 }
