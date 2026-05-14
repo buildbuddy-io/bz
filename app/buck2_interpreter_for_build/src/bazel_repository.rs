@@ -198,6 +198,12 @@ pub(crate) enum BazelRepositoryError {
     },
     #[error("repository_ctx.download_and_extract could not extract `{archive}`: {error}")]
     RepositoryCtxExtractArchive { archive: String, error: String },
+    #[error("repository_ctx.download_and_extract rename_files key must be a string, got `{0}`")]
+    RepositoryCtxRenameFilesKeyUnsupportedValue(String),
+    #[error(
+        "repository_ctx.download_and_extract rename_files value for `{path}` must be a string, got `{got}`"
+    )]
+    RepositoryCtxRenameFilesValueUnsupportedValue { path: String, got: String },
     #[error("Program argument of repository_ctx.which may not contain a / or a \\ (`{0}` given)")]
     RepositoryCtxWhichInvalidProgram(String),
     #[error("Program argument of repository_ctx.which may not be empty")]
@@ -3206,6 +3212,7 @@ fn repository_ctx_extract_archive(
     archive_url: &str,
     strip_prefix: &str,
     strip_components: i32,
+    rename_files: &[(String, String)],
 ) -> buck2_error::Result<()> {
     if strip_components < 0 {
         return Err(BazelRepositoryError::RepositoryCtxExtractArchive {
@@ -3229,13 +3236,40 @@ fn repository_ctx_extract_archive(
         kind,
         strip_prefix,
         strip_components as u32,
-        &[],
+        rename_files,
     )
     .map_err(|e| BazelRepositoryError::RepositoryCtxExtractArchive {
         archive: archive.to_string_lossy().into_owned(),
         error: e.to_string(),
     })
     .map_err(Into::into)
+}
+
+fn repository_ctx_rename_files_from_entries(
+    entries: &UnpackDictEntries<Value<'_>, Value<'_>>,
+) -> starlark::Result<Vec<(String, String)>> {
+    let mut rename_files = Vec::new();
+    for (from, to) in entries.entries.iter() {
+        let Some(from) = from.unpack_str() else {
+            return Err(buck2_error::Error::from(
+                BazelRepositoryError::RepositoryCtxRenameFilesKeyUnsupportedValue(
+                    from.get_type().to_owned(),
+                ),
+            )
+            .into());
+        };
+        let Some(to) = to.unpack_str() else {
+            return Err(buck2_error::Error::from(
+                BazelRepositoryError::RepositoryCtxRenameFilesValueUnsupportedValue {
+                    path: from.to_owned(),
+                    got: to.get_type().to_owned(),
+                },
+            )
+            .into());
+        };
+        rename_files.push((from.to_owned(), to.to_owned()));
+    }
+    Ok(rename_files)
 }
 
 fn repository_ctx_execute_output(
@@ -3808,14 +3842,7 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
             .into());
         }
         let download_headers = module_ctx_download_headers_from_entries(&headers)?;
-        if !rename_files.entries.is_empty() {
-            return Err(buck2_error::Error::from(
-                BazelRepositoryError::ModuleCtxDownloadUnsupportedField {
-                    field: "rename_files",
-                },
-            )
-            .into());
-        }
+        let rename_files = repository_ctx_rename_files_from_entries(&rename_files)?;
         let urls = module_ctx_urls_from_value(url, eval.heap())?;
         let archive_url = urls
             .first()
@@ -3850,6 +3877,7 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
             &archive_url,
             strip_prefix,
             strip_components,
+            &rename_files,
         ) {
             Ok(()) => result,
             Err(error) => repository_ctx_download_error(allow_fail, error, eval)?,
