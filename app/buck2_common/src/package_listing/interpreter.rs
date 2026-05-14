@@ -147,6 +147,36 @@ impl PackageListingStrategy {
             }),
         }
     }
+
+    pub fn covers(&self, required: &Self) -> bool {
+        match (self, required) {
+            (Self::Recursive, _) => true,
+            (_, Self::Shallow) => true,
+            (Self::Shallow, _) => false,
+            (Self::Selective(_), Self::Recursive) => false,
+            (Self::Selective(available), Self::Selective(required)) => {
+                required.iter().all(|required_prefix| {
+                    available.iter().any(|available_prefix| {
+                        let available_prefix: &PackageRelativePath = available_prefix.as_ref();
+                        let required_prefix: &PackageRelativePath = required_prefix.as_ref();
+                        required_prefix.starts_with(available_prefix)
+                    })
+                })
+            }
+        }
+    }
+
+    pub fn union(&self, other: &Self) -> Self {
+        match (self, other) {
+            (Self::Recursive, _) | (_, Self::Recursive) => Self::Recursive,
+            (Self::Shallow, strategy) | (strategy, Self::Shallow) => strategy.clone(),
+            (Self::Selective(left), Self::Selective(right)) => {
+                let mut prefixes = left.clone();
+                prefixes.extend(right.iter().cloned());
+                Self::selective(prefixes)
+            }
+        }
+    }
 }
 
 #[derive(Debug, buck2_error::Error)]
@@ -744,13 +774,12 @@ fn bazel_compat_enabled(
 
 fn build_file_requires_recursive_listing(contents: &str) -> bool {
     // Keep the text fallback aligned with Bazel's BUILD syntax prefetch:
-    // direct glob/subpackages calls require package traversal. Buck2's eager
-    // package listings still need a conservative load() fallback because loaded
-    // macros can hide native.glob or generated file-label references.
+    // direct glob/subpackages calls require package traversal. Loaded macros
+    // that actually call glob/sub_packages request a richer listing during
+    // BUILD evaluation, matching Bazel's restart model more closely.
     may_contain_starlark_identifier(contents, "glob")
         || may_contain_starlark_identifier(contents, "subpackages")
         || may_contain_starlark_identifier(contents, "sub_packages")
-        || may_contain_starlark_identifier(contents, "load")
 }
 
 fn may_contain_starlark_identifier(contents: &str, needle: &str) -> bool {
@@ -791,7 +820,7 @@ mod tests {
             "subpackages(include = [\"foo/**\"])"
         ));
         assert!(build_file_requires_recursive_listing("sub_packages()"));
-        assert!(build_file_requires_recursive_listing(
+        assert!(!build_file_requires_recursive_listing(
             "load(\":defs.bzl\", \"macro\")"
         ));
         assert!(!build_file_requires_recursive_listing(

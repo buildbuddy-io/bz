@@ -18,6 +18,7 @@ use std::fmt::Debug;
 use std::mem;
 use std::sync::Arc;
 
+use buck2_common::package_listing::PackageListingStrategy;
 use buck2_common::package_listing::listing::PackageListing;
 use buck2_core::build_file_path::BuildFilePath;
 use buck2_core::bzl::ImportPath;
@@ -392,6 +393,8 @@ pub struct ModuleInternals {
     skip_targets_with_duplicate_names: bool,
     /// The files owned by this directory. Is `None` for .bzl files.
     package_listing: PackageListing,
+    package_listing_strategy: PackageListingStrategy,
+    package_listing_restart: Arc<RefCell<Option<PackageListingStrategy>>>,
     super_package: RefCell<SuperPackage>,
     bazel_package_declared: RefCell<bool>,
 }
@@ -433,6 +436,11 @@ enum BazelPackageError {
     AtMostOnce,
 }
 
+#[derive(Debug, buck2_error::Error)]
+#[buck2(tag = Tier0)]
+#[error("BUILD file package listing needs to be expanded before evaluation can continue")]
+struct PackageListingNeedsExpansion;
+
 impl ModuleInternals {
     pub(crate) fn new(
         attr_coercion_context: BuildAttrCoercionContext,
@@ -442,6 +450,8 @@ impl ModuleInternals {
         record_target_call_stacks: bool,
         skip_targets_with_duplicate_names: bool,
         package_listing: PackageListing,
+        package_listing_strategy: PackageListingStrategy,
+        package_listing_restart: Arc<RefCell<Option<PackageListingStrategy>>>,
         super_package: SuperPackage,
     ) -> Self {
         Self {
@@ -453,6 +463,8 @@ impl ModuleInternals {
             record_target_call_stacks,
             skip_targets_with_duplicate_names,
             package_listing,
+            package_listing_strategy,
+            package_listing_restart,
             super_package: RefCell::new(super_package),
             bazel_package_declared: RefCell::new(false),
         }
@@ -598,6 +610,27 @@ impl ModuleInternals {
             matches.sort();
         }
         matches
+    }
+
+    pub(crate) fn require_package_listing_strategy(
+        &self,
+        required: PackageListingStrategy,
+    ) -> buck2_error::Result<()> {
+        if self.package_listing_strategy.covers(&required) {
+            return Ok(());
+        }
+
+        let mut restart = self.package_listing_restart.borrow_mut();
+        let next = restart
+            .take()
+            .unwrap_or_else(|| self.package_listing_strategy.clone())
+            .union(&required);
+        *restart = Some(next);
+        Err(PackageListingNeedsExpansion.into())
+    }
+
+    pub(crate) fn take_package_listing_restart(&self) -> Option<PackageListingStrategy> {
+        self.package_listing_restart.borrow_mut().take()
     }
 
     pub(crate) fn sub_packages(&self) -> impl Iterator<Item = &PackageRelativePath> {

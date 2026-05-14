@@ -169,7 +169,7 @@ mod tests {
     }
 
     #[test]
-    fn test_bazel_package_listing_strategy_recurses_for_load() {
+    fn test_bazel_package_listing_strategy_does_not_recurse_for_load() {
         assert_eq!(
             strategy(
                 r#"
@@ -177,7 +177,7 @@ load("//:defs.bzl", "go_library")
 go_library(name = "demo")
 "#
             ),
-            PackageListingStrategy::Recursive
+            PackageListingStrategy::Shallow
         );
     }
 
@@ -211,15 +211,9 @@ go_library(name = "demo")
 }
 
 fn bazel_package_listing_strategy_from_ast(ast: &AstModule) -> PackageListingStrategy {
-    if !ast.loads().is_empty() {
-        // Bazel can resolve native.glob and generated file-label references from
-        // loaded macros at evaluation time. Buck2 fixes the package listing before
-        // evaluation, so a loaded macro can require files hidden from the BUILD AST.
-        return PackageListingStrategy::Recursive;
-    }
-
     // Match Bazel's PackageFactory.checkBuildSyntax prefetch heuristic for BUILD
-    // files without loads: direct glob/subpackages calls drive package traversal.
+    // files: direct glob/subpackages calls drive package traversal. Loaded
+    // macros request expanded package listings during evaluation if needed.
     struct Visitor {
         unknown_glob_use: bool,
         prefixes: Vec<PackageRelativePathBuf>,
@@ -276,6 +270,20 @@ fn bazel_package_listing_strategy_from_ast(ast: &AstModule) -> PackageListingStr
     } else {
         PackageListingStrategy::selective(visitor.prefixes)
     }
+}
+
+pub(crate) fn package_listing_strategy_from_glob_patterns(
+    patterns: &[String],
+) -> PackageListingStrategy {
+    let mut prefixes = Vec::new();
+    for pattern in patterns {
+        match glob_listing_prefix(pattern) {
+            GlobListingPrefix::Shallow => {}
+            GlobListingPrefix::Prefix(prefix) => prefixes.push(prefix),
+            GlobListingPrefix::Recursive => return PackageListingStrategy::Recursive,
+        }
+    }
+    PackageListingStrategy::selective(prefixes)
 }
 
 fn is_direct_package_listing_callee(callee: &AstExpr) -> bool {
@@ -542,6 +550,25 @@ struct EvalResult {
     starlark_tick_count: u64,
 }
 
+pub(crate) enum BuildFileEvalResult {
+    Complete(
+        Option<Arc<StarlarkProfileDataAndStats>>,
+        EvaluationResultWithStats,
+    ),
+    NeedsPackageListing(PackageListingStrategy),
+}
+
+enum BuildFileEvalControl {
+    Error(buck2_error::Error),
+    NeedsPackageListing(PackageListingStrategy),
+}
+
+impl From<buck2_error::Error> for BuildFileEvalControl {
+    fn from(error: buck2_error::Error) -> Self {
+        Self::Error(error)
+    }
+}
+
 impl InterpreterForDir {
     pub(crate) fn equivalent(&self, other: &Self) -> bool {
         self.global_state.equivalent(&other.global_state)
@@ -664,6 +691,8 @@ impl InterpreterForDir {
         env: BuckStarlarkModule<'v>,
         build_file: &BuildFilePath,
         package_listing: &PackageListing,
+        package_listing_strategy: PackageListingStrategy,
+        package_listing_restart: Arc<RefCell<Option<PackageListingStrategy>>>,
         super_package: SuperPackage,
         package_boundary_exception: bool,
         loaded_modules: &LoadedModules,
@@ -672,6 +701,8 @@ impl InterpreterForDir {
             &self.cell_info,
             build_file.clone(),
             package_listing.dupe(),
+            package_listing_strategy,
+            package_listing_restart,
             super_package,
             package_boundary_exception,
             loaded_modules,
@@ -1157,6 +1188,7 @@ impl InterpreterForDir {
         build_file: &BuildFilePath,
         buckconfigs: &mut dyn BuckConfigsViewForStarlark,
         listing: PackageListing,
+        listing_strategy: PackageListingStrategy,
         super_package: SuperPackage,
         package_boundary_exception: bool,
         ast: AstModule,
@@ -1164,15 +1196,15 @@ impl InterpreterForDir {
         eval_provider: StarlarkEvaluatorProvider,
         unstable_typecheck: bool,
         cancellation: &CancellationContext,
-    ) -> buck2_error::Result<(
-        Option<Arc<StarlarkProfileDataAndStats>>,
-        EvaluationResultWithStats,
-    )> {
-        BuckStarlarkModule::with_profiling(|env| {
+    ) -> buck2_error::Result<BuildFileEvalResult> {
+        match BuckStarlarkModule::with_profiling(|env| {
+            let package_listing_restart = Arc::new(RefCell::new(None));
             let (env, internals) = self.create_build_env(
                 env,
                 build_file,
                 &listing,
+                listing_strategy,
+                package_listing_restart.dupe(),
                 super_package,
                 package_boundary_exception,
                 &loaded_modules,
@@ -1189,7 +1221,7 @@ impl InterpreterForDir {
             )?
             .unwrap_or(false);
 
-            let (finished_eval, eval_result) = self.eval(
+            let (finished_eval, eval_result) = match self.eval(
                 &env,
                 ast,
                 buckconfigs,
@@ -1198,9 +1230,21 @@ impl InterpreterForDir {
                 eval_provider,
                 unstable_typecheck,
                 cancellation,
-            )?;
+            ) {
+                Ok(result) => result,
+                Err(e) => {
+                    if let Some(strategy) = package_listing_restart.borrow_mut().take() {
+                        return Err(BuildFileEvalControl::NeedsPackageListing(strategy));
+                    }
+                    return Err(e.into());
+                }
+            };
 
             let internals = eval_result.additional.into_build()?;
+            if let Some(strategy) = internals.take_package_listing_restart() {
+                let (token, _profile_data) = finished_eval.finish()?;
+                return Ok((token, BuildFileEvalResult::NeedsPackageListing(strategy)));
+            }
             let starlark_peak_allocated_bytes = env.heap().peak_allocated_bytes() as u64;
             let starlark_peak_mem_check_enabled =
                 !eval_result.is_profiling_enabled && starlark_peak_mem_config_enabled;
@@ -1212,19 +1256,21 @@ impl InterpreterForDir {
 
             if starlark_peak_mem_check_enabled && starlark_peak_allocated_bytes > starlark_mem_limit
             {
-                Err(StarlarkPeakMemoryError::ExceedsThreshold(
-                    build_file.to_owned(),
-                    HumanizedBytes::fixed_width(starlark_peak_allocated_bytes),
-                    HumanizedBytes::fixed_width(starlark_mem_limit),
-                    get_starlark_warning_link().to_owned(),
+                Err(
+                    buck2_error::Error::from(StarlarkPeakMemoryError::ExceedsThreshold(
+                        build_file.to_owned(),
+                        HumanizedBytes::fixed_width(starlark_peak_allocated_bytes),
+                        HumanizedBytes::fixed_width(starlark_mem_limit),
+                        get_starlark_warning_link().to_owned(),
+                    ))
+                    .into(),
                 )
-                .into())
             } else {
                 let (token, profile_data) = finished_eval.finish()?;
 
                 Ok((
                     token,
-                    (
+                    BuildFileEvalResult::Complete(
                         profile_data,
                         EvaluationResultWithStats {
                             result: EvaluationResult::from(internals),
@@ -1235,6 +1281,12 @@ impl InterpreterForDir {
                     ),
                 ))
             }
-        })
+        }) {
+            Ok(result) => Ok(result),
+            Err(BuildFileEvalControl::Error(error)) => Err(error),
+            Err(BuildFileEvalControl::NeedsPackageListing(strategy)) => {
+                Ok(BuildFileEvalResult::NeedsPackageListing(strategy))
+            }
+        }
     }
 }

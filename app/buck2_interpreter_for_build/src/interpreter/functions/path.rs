@@ -18,6 +18,7 @@ use starlark::values::list_or_tuple::UnpackListOrTuple;
 
 use crate::interpreter::build_context::BuildContext;
 use crate::interpreter::globspec::GlobSpec;
+use crate::interpreter::interpreter_for_dir::package_listing_strategy_from_glob_patterns;
 use crate::interpreter::module_internals::ModuleInternals;
 
 #[starlark_module]
@@ -61,6 +62,9 @@ pub(crate) fn register_path(builder: &mut GlobalsBuilder) {
         let _unused = allow_empty;
         let extra = ModuleInternals::from_context(eval, "glob")?;
         let spec = GlobSpec::new(&include.items, &exclude.items)?;
+        extra.require_package_listing_strategy(package_listing_strategy_from_glob_patterns(
+            &include.items,
+        ))?;
         let res = extra
             .resolve_glob(&spec, exclude_directories == 0)
             .into_iter()

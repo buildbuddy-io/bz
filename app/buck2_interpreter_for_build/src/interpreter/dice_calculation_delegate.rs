@@ -70,6 +70,7 @@ use crate::interpreter::cell_info::InterpreterCellInfo;
 use crate::interpreter::check_starlark_stack_size::check_starlark_stack_size;
 use crate::interpreter::cycles::LoadCycleDescriptor;
 use crate::interpreter::global_interpreter_state::HasGlobalInterpreterState;
+use crate::interpreter::interpreter_for_dir::BuildFileEvalResult;
 use crate::interpreter::interpreter_for_dir::InterpreterForDir;
 use crate::interpreter::interpreter_for_dir::ParseData;
 use crate::interpreter::interpreter_for_dir::ParseResult;
@@ -712,38 +713,49 @@ impl<'c, 'd: 'c> DiceCalculationDelegate<'c, 'd> {
                 )
                 .await?;
 
-            let (listing, build_file_path, ast, deps) = if bazel_compat_listing {
-                let shallow_listing = Self::resolve_package_listing_with_strategy(
-                    self.ctx,
-                    package.dupe(),
-                    PackageListingStrategy::Shallow,
-                )
-                .await?;
-                let build_file_path =
-                    BuildFilePath::new(package.dupe(), shallow_listing.buildfile().to_owned());
-                let (parse_data, deps) = self
-                    .prepare_eval_with_parse_data(StarlarkPath::BuildFile(&build_file_path))
+            let (mut listing, build_file_path, ast, deps, mut listing_strategy) =
+                if bazel_compat_listing {
+                    let shallow_listing = Self::resolve_package_listing_with_strategy(
+                        self.ctx,
+                        package.dupe(),
+                        PackageListingStrategy::Shallow,
+                    )
                     .await?;
-                let strategy = parse_data
-                    .bazel_package_listing_strategy
-                    .clone()
-                    .unwrap_or(PackageListingStrategy::Recursive);
-                let listing = if strategy == PackageListingStrategy::Shallow {
-                    shallow_listing
-                } else {
-                    Self::resolve_package_listing_with_strategy(self.ctx, package.dupe(), strategy)
+                    let build_file_path =
+                        BuildFilePath::new(package.dupe(), shallow_listing.buildfile().to_owned());
+                    let (parse_data, deps) = self
+                        .prepare_eval_with_parse_data(StarlarkPath::BuildFile(&build_file_path))
+                        .await?;
+                    let strategy = parse_data
+                        .bazel_package_listing_strategy
+                        .clone()
+                        .unwrap_or(PackageListingStrategy::Recursive);
+                    let listing = if strategy == PackageListingStrategy::Shallow {
+                        shallow_listing
+                    } else {
+                        Self::resolve_package_listing_with_strategy(
+                            self.ctx,
+                            package.dupe(),
+                            strategy.clone(),
+                        )
                         .await?
+                    };
+                    (listing, build_file_path, parse_data.ast, deps, strategy)
+                } else {
+                    let listing = Self::resolve_package_listing(self.ctx, package.dupe()).await?;
+                    let build_file_path =
+                        BuildFilePath::new(package.dupe(), listing.buildfile().to_owned());
+                    let (ast, deps) = self
+                        .prepare_eval(StarlarkPath::BuildFile(&build_file_path))
+                        .await?;
+                    (
+                        listing,
+                        build_file_path,
+                        ast,
+                        deps,
+                        PackageListingStrategy::Recursive,
+                    )
                 };
-                (listing, build_file_path, parse_data.ast, deps)
-            } else {
-                let listing = Self::resolve_package_listing(self.ctx, package.dupe()).await?;
-                let build_file_path =
-                    BuildFilePath::new(package.dupe(), listing.buildfile().to_owned());
-                let (ast, deps) = self
-                    .prepare_eval(StarlarkPath::BuildFile(&build_file_path))
-                    .await?;
-                (listing, build_file_path, ast, deps)
-            };
             let super_package = self
                 .eval_package_file_for_build_file(package.dupe(), &listing)
                 .await?;
@@ -757,65 +769,100 @@ impl<'c, 'd: 'c> DiceCalculationDelegate<'c, 'd> {
             let root_buckconfig = self.ctx.get_legacy_root_config_on_dice().await?;
             let module_id = build_file_path.to_string();
             let cell_str = build_file_path.cell().as_str().to_owned();
-            let start_event = buck2_data::LoadBuildFileStart {
-                cell: cell_str.clone(),
-                module_id: module_id.clone(),
-            };
 
             let configs = &self.configs;
-            let ctx = &mut *self.ctx;
 
             now = Some(TimeSpan::start_now());
-            let provider = StarlarkEvaluatorProvider::new(ctx, eval_kind).await?;
-            let mut buckconfigs =
-                ConfigsOnDiceViewForStarlark::new(ctx, buckconfig, root_buckconfig);
-
-            let (profile_data, eval_result) = span(start_event, move || {
-                let result_with_stats = configs
-                    .eval_build_file(
-                        &build_file_path,
-                        &mut buckconfigs,
-                        listing,
-                        super_package,
-                        package_boundary_exception,
-                        ast,
-                        deps.get_loaded_modules(),
-                        provider,
-                        false,
-                        cancellation,
-                    )
-                    .with_buck_error_context(|| {
-                        format!("Error evaluating build file: `{}`", build_file_path)
-                    });
-                let error = result_with_stats.as_ref().err().map(|e| format!("{e:#}"));
-                let (
-                    starlark_peak_allocated_bytes,
-                    cpu_instruction_count,
-                    starlark_tick_count,
-                    target_count,
-                ) = match &result_with_stats {
-                    Ok((_, rs)) => (
-                        Some(rs.starlark_peak_allocated_bytes),
-                        rs.cpu_instruction_count,
-                        Some(rs.starlark_tick_count),
-                        Some(rs.result.targets().len() as u64),
-                    ),
-                    Err(_) => (None, None, None, None),
+            let (profile_data, eval_result) = loop {
+                let ctx = &mut *self.ctx;
+                let provider = StarlarkEvaluatorProvider::new(ctx, eval_kind.dupe()).await?;
+                let mut buckconfigs = ConfigsOnDiceViewForStarlark::new(
+                    ctx,
+                    buckconfig.dupe(),
+                    root_buckconfig.dupe(),
+                );
+                let start_event = buck2_data::LoadBuildFileStart {
+                    cell: cell_str.clone(),
+                    module_id: module_id.clone(),
                 };
+                let span_module_id = module_id.clone();
+                let span_cell_str = cell_str.clone();
 
-                (
-                    result_with_stats,
-                    buck2_data::LoadBuildFileEnd {
-                        module_id,
-                        cell: cell_str,
-                        target_count,
+                let eval_attempt = span(start_event, || {
+                    let result_with_stats = configs
+                        .eval_build_file(
+                            &build_file_path,
+                            &mut buckconfigs,
+                            listing.dupe(),
+                            listing_strategy.clone(),
+                            super_package.dupe(),
+                            package_boundary_exception,
+                            ast.clone(),
+                            deps.get_loaded_modules(),
+                            provider,
+                            false,
+                            cancellation,
+                        )
+                        .with_buck_error_context(|| {
+                            format!("Error evaluating build file: `{}`", build_file_path)
+                        });
+                    let error = result_with_stats.as_ref().err().map(|e| format!("{e:#}"));
+                    let (
                         starlark_peak_allocated_bytes,
                         cpu_instruction_count,
-                        error,
                         starlark_tick_count,
-                    },
-                )
-            })?;
+                        target_count,
+                    ) = match &result_with_stats {
+                        Ok(BuildFileEvalResult::Complete(_, rs)) => (
+                            Some(rs.starlark_peak_allocated_bytes),
+                            rs.cpu_instruction_count,
+                            Some(rs.starlark_tick_count),
+                            Some(rs.result.targets().len() as u64),
+                        ),
+                        Ok(BuildFileEvalResult::NeedsPackageListing(_)) => (None, None, None, None),
+                        Err(_) => (None, None, None, None),
+                    };
+
+                    (
+                        result_with_stats,
+                        buck2_data::LoadBuildFileEnd {
+                            module_id: span_module_id,
+                            cell: span_cell_str,
+                            target_count,
+                            starlark_peak_allocated_bytes,
+                            cpu_instruction_count,
+                            error,
+                            starlark_tick_count,
+                        },
+                    )
+                })?;
+                drop(buckconfigs);
+
+                match eval_attempt {
+                    BuildFileEvalResult::Complete(profile_data, eval_result) => {
+                        break (profile_data, eval_result);
+                    }
+                    BuildFileEvalResult::NeedsPackageListing(next_strategy) => {
+                        if listing_strategy.covers(&next_strategy) {
+                            return (
+                                now.unwrap().end_now(),
+                                Err(internal_error!(
+                                    "package listing restart did not expand strategy from `{:?}` to `{:?}`",
+                                    listing_strategy,
+                                    next_strategy
+                                )),
+                            );
+                        }
+                        listing_strategy = next_strategy;
+                        listing = Self::resolve_package_listing_with_strategy(
+                            self.ctx,
+                            package.dupe(),
+                            listing_strategy.clone(),
+                        )
+                        .await?;
+                    }
+                }
+            };
 
             let mut eval_result = eval_result.result;
 
