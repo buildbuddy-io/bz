@@ -2157,6 +2157,14 @@ async fn get_bazel_module_resolution(
             single_version_overrides.insert(module_name, single_version_override);
         }
 
+        for call in collect_bzl_calls(&lines, "multiple_version_override(") {
+            return Err(buck2_error!(
+                buck2_error::ErrorTag::Input,
+                "multiple_version_override is not implemented in Buck2 bzlmod resolution yet. Bazel allows multiple selected versions of the same module; refusing to silently collapse that graph: {}",
+                call
+            ));
+        }
+
         for call in collect_bzl_calls(&lines, "git_override(") {
             return Err(buck2_error!(
                 buck2_error::ErrorTag::Input,
@@ -4824,6 +4832,20 @@ fn bzlmod_single_version_override_from_call(
     let Some(module_name) = bzl_string_arg(call, "module_name") else {
         return Ok(None);
     };
+    reject_unsupported_bzlmod_override_arg(
+        "single_version_override",
+        &module_name,
+        call,
+        "registry",
+        "Bazel uses `registry` to fetch the module from a non-default registry.",
+    )?;
+    reject_unsupported_bzlmod_override_arg(
+        "single_version_override",
+        &module_name,
+        call,
+        "patch_cmds",
+        "Bazel runs `patch_cmds` after applying patch files.",
+    )?;
     let version = bzl_string_arg(call, "version");
     let patches = bzlmod_override_patch_paths_from_call(current_module_file, call)?;
     let patch_strip =
@@ -4836,6 +4858,34 @@ fn bzlmod_single_version_override_from_call(
             patch_strip,
         },
     )))
+}
+
+fn reject_unsupported_bzlmod_override_arg(
+    directive: &str,
+    module_name: &str,
+    call: &str,
+    arg: &str,
+    bazel_behavior: &str,
+) -> buck2_error::Result<()> {
+    let Some(value) = bzl_call_named_arg_value(call, arg) else {
+        return Ok(());
+    };
+    if bzl_is_default_override_value(&value) {
+        return Ok(());
+    }
+    Err(buck2_error!(
+        buck2_error::ErrorTag::Input,
+        "{} for module `{}` uses unsupported `{}`. {} Buck2 does not implement that behavior yet, so refusing to ignore it: {}",
+        directive,
+        module_name,
+        arg,
+        bazel_behavior,
+        call
+    ))
+}
+
+fn bzl_is_default_override_value(value: &str) -> bool {
+    matches!(value.trim(), "\"\"" | "''" | "[]")
 }
 
 fn bzlmod_local_path_override_from_call(
@@ -7631,6 +7681,70 @@ mod tests {
                 "https://mirror2.example.com/source.tar.gz",
             ]
         );
+    }
+
+    #[test]
+    fn test_bzlmod_single_version_override_rejects_patch_cmds() {
+        let error = super::bzlmod_single_version_override_from_call(
+            "MODULE.bazel",
+            indoc!(
+                r#"
+                single_version_override(
+                    module_name = "example",
+                    patch_cmds = ["echo patched"],
+                )
+                "#
+            ),
+        )
+        .unwrap_err();
+
+        let error = format!("{error:?}");
+        assert!(error.contains("unsupported `patch_cmds`"), "error: {error}");
+    }
+
+    #[test]
+    fn test_bzlmod_single_version_override_rejects_registry() {
+        let error = super::bzlmod_single_version_override_from_call(
+            "MODULE.bazel",
+            indoc!(
+                r#"
+                single_version_override(
+                    module_name = "example",
+                    registry = "https://registry.example.com",
+                )
+                "#
+            ),
+        )
+        .unwrap_err();
+
+        let error = format!("{error:?}");
+        assert!(error.contains("unsupported `registry`"), "error: {error}");
+    }
+
+    #[tokio::test]
+    async fn test_bzlmod_multiple_version_override_rejected() -> buck2_error::Result<()> {
+        let mut file_ops = TestConfigParserFileOps::new(&[(
+            "MODULE.bazel",
+            indoc!(
+                r#"
+                module(name = "root")
+                multiple_version_override(
+                    module_name = "example",
+                    versions = ["1.0.0", "2.0.0"],
+                )
+                "#
+            ),
+        )])?;
+
+        let error = BuckConfigBasedCells::testing_parse_with_file_ops(&mut file_ops, &[])
+            .await
+            .unwrap_err();
+        let error = format!("{error:?}");
+        assert!(
+            error.contains("multiple_version_override is not implemented"),
+            "error: {error}"
+        );
+        Ok(())
     }
 
     #[test]
