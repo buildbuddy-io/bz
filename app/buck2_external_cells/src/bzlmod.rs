@@ -509,7 +509,6 @@ exec {} "$@"
         format!("#!/usr/bin/env bash\nexec {} \"$@\"\n", shell_quote(&ar)),
     )
     .categorize_internal()?;
-    write_missing_tool_wrapper(dest, "false_wrapper.sh", "stub armeabi-v7a C++ toolchain")?;
     fs_util::write(
         dest.join(ForwardRelativePath::new("dwp_wrapper.sh")?),
         host_tool_wrapper("DWP", "dwp"),
@@ -558,7 +557,6 @@ exec {} "$@"
     for wrapper in [
         "cc_wrapper.sh",
         "ar_wrapper.sh",
-        "false_wrapper.sh",
         "dwp_wrapper.sh",
         "gcov_wrapper.sh",
         "llvm_profdata_wrapper.sh",
@@ -591,18 +589,6 @@ fn host_tool_wrapper(env_var: &str, fallback: &str) -> String {
         Some(path) => format!("#!/usr/bin/env bash\nexec {} \"$@\"\n", shell_quote(&path)),
         None => missing_tool_wrapper_content(fallback),
     }
-}
-
-fn write_missing_tool_wrapper(
-    dest: &AbsNormPath,
-    path: &str,
-    description: &str,
-) -> buck2_error::Result<()> {
-    fs_util::write(
-        dest.join(ForwardRelativePath::new(path)?),
-        missing_tool_wrapper_content(description),
-    )
-    .categorize_internal()
 }
 
 fn missing_tool_wrapper_content(description: &str) -> String {
@@ -709,11 +695,6 @@ cc_library(name = "malloc")
 filegroup(
     name = "empty",
     srcs = [],
-)
-
-filegroup(
-    name = "stub_tool_files",
-    srcs = ["false_wrapper.sh"],
 )
 
 filegroup(
@@ -869,15 +850,15 @@ cc_toolchain(
     name = "cc-compiler-armeabi-v7a",
     toolchain_identifier = "stub_armeabi-v7a",
     toolchain_config = ":stub_armeabi-v7a",
-    all_files = ":stub_tool_files",
-    ar_files = ":stub_tool_files",
-    as_files = ":stub_tool_files",
-    compiler_files = ":stub_tool_files",
-    dwp_files = ":stub_tool_files",
-    linker_files = ":stub_tool_files",
-    objcopy_files = ":stub_tool_files",
-    strip_files = ":stub_tool_files",
-    supports_param_files = True,
+    all_files = ":empty",
+    ar_files = ":empty",
+    as_files = ":empty",
+    compiler_files = ":empty",
+    dwp_files = ":empty",
+    linker_files = ":empty",
+    objcopy_files = ":empty",
+    strip_files = ":empty",
+    supports_param_files = 1,
 )
 
 armeabi_cc_toolchain_config(name = "stub_armeabi-v7a")
@@ -931,43 +912,68 @@ cc_toolchain_config = rule(
 )
 "#;
 
-const LOCAL_CONFIG_CC_ARMEABI_TOOLCHAIN_CONFIG: &str = r#"load("@rules_cc//cc/toolchains:cc_toolchain_config_info.bzl", "CcToolchainConfigInfo")
-
-def _tool_path(name, path):
-    return struct(name = name, path = path)
+const LOCAL_CONFIG_CC_ARMEABI_TOOLCHAIN_CONFIG: &str = r#"load(
+    "@rules_cc//cc:cc_toolchain_config_lib.bzl",
+    "feature",
+    "tool_path",
+)
+load("@rules_cc//cc/common:cc_common.bzl", "cc_common")
+load("@rules_cc//cc/toolchains:cc_toolchain_config_info.bzl", "CcToolchainConfigInfo")
 
 def _impl(ctx):
+    toolchain_identifier = "stub_armeabi-v7a"
+    host_system_name = "armeabi-v7a"
+    target_system_name = "armeabi-v7a"
+    target_cpu = "armeabi-v7a"
+    target_libc = "armeabi-v7a"
+    compiler = "compiler"
+    abi_version = "armeabi-v7a"
+    abi_libc_version = "armeabi-v7a"
+    cc_target_os = None
+    builtin_sysroot = None
+    action_configs = []
+
+    supports_pic_feature = feature(name = "supports_pic", enabled = True)
+    supports_dynamic_linker_feature = feature(name = "supports_dynamic_linker", enabled = True)
+    features = [supports_dynamic_linker_feature, supports_pic_feature]
+
+    cxx_builtin_include_directories = []
+    artifact_name_patterns = []
+    make_variables = []
+
     tool_paths = [
-        _tool_path("ar", "false_wrapper.sh"),
-        _tool_path("cpp", "false_wrapper.sh"),
-        _tool_path("gcc", "false_wrapper.sh"),
-        _tool_path("gcov", "false_wrapper.sh"),
-        _tool_path("ld", "false_wrapper.sh"),
-        _tool_path("nm", "false_wrapper.sh"),
-        _tool_path("objcopy", "false_wrapper.sh"),
-        _tool_path("objdump", "false_wrapper.sh"),
-        _tool_path("strip", "false_wrapper.sh"),
-        _tool_path("dwp", "false_wrapper.sh"),
-        _tool_path("llvm-profdata", "false_wrapper.sh"),
+        tool_path(name = "ar", path = "/bin/false"),
+        tool_path(name = "compat-ld", path = "/bin/false"),
+        tool_path(name = "cpp", path = "/bin/false"),
+        tool_path(name = "dwp", path = "/bin/false"),
+        tool_path(name = "gcc", path = "/bin/false"),
+        tool_path(name = "gcov", path = "/bin/false"),
+        tool_path(name = "ld", path = "/bin/false"),
+        tool_path(name = "llvm-profdata", path = "/bin/false"),
+        tool_path(name = "nm", path = "/bin/false"),
+        tool_path(name = "objcopy", path = "/bin/false"),
+        tool_path(name = "objdump", path = "/bin/false"),
+        tool_path(name = "strip", path = "/bin/false"),
     ]
-    return [cc_common.create_cc_toolchain_config_info(
+    return cc_common.create_cc_toolchain_config_info(
         ctx = ctx,
-        features = [],
-        action_configs = [],
-        artifact_name_patterns = [],
-        cxx_builtin_include_directories = [],
-        toolchain_identifier = "stub_armeabi-v7a",
-        host_system_name = "armeabi-v7a",
-        target_system_name = "armeabi-v7a",
-        target_cpu = "armeabi-v7a",
-        target_libc = "armeabi-v7a",
-        compiler = "compiler",
-        abi_version = "armeabi-v7a",
-        abi_libc_version = "armeabi-v7a",
+        features = features,
+        action_configs = action_configs,
+        artifact_name_patterns = artifact_name_patterns,
+        cxx_builtin_include_directories = cxx_builtin_include_directories,
+        toolchain_identifier = toolchain_identifier,
+        host_system_name = host_system_name,
+        target_system_name = target_system_name,
+        target_cpu = target_cpu,
+        target_libc = target_libc,
+        compiler = compiler,
+        abi_version = abi_version,
+        abi_libc_version = abi_libc_version,
         tool_paths = tool_paths,
-        builtin_sysroot = None,
-        cc_target_os = None,
-    )]
+        make_variables = make_variables,
+        builtin_sysroot = builtin_sysroot,
+        cc_target_os = cc_target_os,
+    )
 
 armeabi_cc_toolchain_config = rule(
     implementation = _impl,
