@@ -44,6 +44,7 @@ use buck2_core::cells::external::BzlmodHostPlatformSetup;
 use buck2_core::cells::external::BzlmodHttpArchiveSetup;
 use buck2_core::cells::external::BzlmodModuleExtensionRepoSetup;
 use buck2_core::cells::external::BzlmodPythonHubSetup;
+use buck2_core::cells::external::BzlmodRepositoryRuleFile;
 use buck2_core::cells::external::BzlmodRepositoryRuleInvocationSetup;
 use buck2_core::cells::external::BzlmodRepositoryRuleSetup;
 use buck2_core::cells::external::BzlmodShellConfigSetup;
@@ -90,7 +91,6 @@ use dice::ValueSerialize;
 use dupe::Dupe;
 use pagable::Pagable;
 use pagable::pagable_typetag;
-use serde::Deserialize;
 
 static BZLMOD_MATERIALIZATION_LOCKS: OnceLock<
     Mutex<BTreeMap<String, Arc<tokio::sync::Mutex<()>>>>,
@@ -379,13 +379,6 @@ fn repository_rule_invocation_not_materialized(
     .into()
 }
 
-#[derive(Deserialize)]
-struct BzlmodRepositoryRuleFile {
-    path: String,
-    content: String,
-    executable: bool,
-}
-
 fn write_repository_rule_repo(
     project_fs: &ProjectRoot,
     dest: &AbsNormPath,
@@ -398,16 +391,14 @@ fn write_repository_rule_repo(
         copy_dir_contents(&source, dest)?;
     }
     write_generated_module_file(dest, canonical_repo_name)?;
-    let files: Vec<BzlmodRepositoryRuleFile> = serde_json::from_str(&setup.files_json)
-        .buck_error_context("Invalid generated repository_rule file manifest")?;
-    for file in files {
-        let rel_path = ForwardRelativePath::new(&file.path)?;
+    for file in setup.files.iter() {
+        let rel_path = ForwardRelativePath::new(file.path.as_ref())?;
         let path = dest.join(rel_path);
         if let Some(parent) = path.parent() {
             fs_util::create_dir_all(parent)?;
         }
         fs_util::remove_all(&path).categorize_internal()?;
-        fs_util::write(&path, file.content).categorize_internal()?;
+        fs_util::write(&path, file.content.as_bytes()).categorize_internal()?;
         if file.executable {
             fs_util::set_executable(&path, true).categorize_internal()?;
         }
@@ -1881,7 +1872,9 @@ fn bzlmod_generated_materialization_stamp_content(setup: &BzlmodGeneratedCellSet
         }
         BzlmodGeneratedCellGenerator::RepositoryRule(setup) => {
             update_bzlmod_repo_contents_cache_key(&mut hasher, "repository_rule");
-            update_bzlmod_repo_contents_cache_key(&mut hasher, &setup.files_json);
+            let files_json = serde_json::to_string(&setup.files)
+                .expect("serializing repository_rule file manifest cannot fail");
+            update_bzlmod_repo_contents_cache_key(&mut hasher, &files_json);
             update_bzlmod_repo_contents_cache_key_opt(&mut hasher, setup.source_dir.as_deref());
         }
         BzlmodGeneratedCellGenerator::RepositoryRuleInvocation(setup) => {
@@ -2100,10 +2093,15 @@ async fn evaluate_and_materialize_bzlmod_repository_rule(
             cancellations,
         )
         .await?;
-    let files =
-        evaluate_bzlmod_repository_rule(ctx, invocation, path.as_str(), cancellations).await?;
-    let files_json = serde_json::to_string(&files)
-        .buck_error_context("Error serializing evaluated repository_rule file manifest")?;
+    let files = evaluate_bzlmod_repository_rule(ctx, invocation, path.as_str(), cancellations)
+        .await?
+        .into_iter()
+        .map(|file| BzlmodRepositoryRuleFile {
+            path: Arc::from(file.path),
+            content: Arc::from(file.content),
+            executable: file.executable,
+        })
+        .collect();
     ctx.get_blocking_executor()
         .execute_io(
             Box::new(BzlmodGeneratedIoRequest {
@@ -2111,7 +2109,7 @@ async fn evaluate_and_materialize_bzlmod_repository_rule(
                     canonical_repo_name: Arc::from(canonical_repo_name),
                     generator: BzlmodGeneratedCellGenerator::RepositoryRule(
                         BzlmodRepositoryRuleSetup {
-                            files_json: Arc::from(files_json),
+                            files: Arc::new(files),
                             source_dir: None,
                         },
                     ),

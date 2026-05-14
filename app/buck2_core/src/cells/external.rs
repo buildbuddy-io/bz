@@ -22,6 +22,8 @@ use derive_more::Display;
 use dupe::Dupe;
 use once_cell::sync::Lazy;
 use pagable::Pagable;
+use serde::Deserialize;
+use serde::Serialize;
 
 use crate::cells::name::CellName;
 
@@ -247,7 +249,9 @@ pub struct BzlmodOverlay {
     PartialEq,
     Eq,
     Hash,
-    Pagable
+    Pagable,
+    Serialize,
+    Deserialize
 )]
 #[display("bzlmod-generated({})", canonical_repo_name)]
 pub struct BzlmodGeneratedCellSetup {
@@ -263,8 +267,11 @@ pub struct BzlmodGeneratedCellSetup {
     PartialEq,
     Eq,
     Hash,
-    Pagable
+    Pagable,
+    Serialize,
+    Deserialize
 )]
+#[serde(tag = "kind", rename_all = "snake_case")]
 pub enum BzlmodGeneratedCellGenerator {
     BazelFeaturesGlobals(BzlmodBazelFeaturesGlobalsSetup),
     BazelFeaturesVersion(BzlmodBazelFeaturesVersionSetup),
@@ -287,7 +294,9 @@ pub enum BzlmodGeneratedCellGenerator {
     PartialEq,
     Eq,
     Hash,
-    Pagable
+    Pagable,
+    Serialize,
+    Deserialize
 )]
 pub struct BzlmodBazelFeaturesGlobalsSetup {
     pub parent_canonical_repo_name: Arc<str>,
@@ -302,7 +311,9 @@ pub struct BzlmodBazelFeaturesGlobalsSetup {
     PartialEq,
     Eq,
     Hash,
-    Pagable
+    Pagable,
+    Serialize,
+    Deserialize
 )]
 pub struct BzlmodBazelFeaturesVersionSetup {
     pub bazel_version: Arc<str>,
@@ -316,7 +327,9 @@ pub struct BzlmodBazelFeaturesVersionSetup {
     PartialEq,
     Eq,
     Hash,
-    Pagable
+    Pagable,
+    Serialize,
+    Deserialize
 )]
 pub struct BzlmodHostPlatformSetup {}
 
@@ -328,7 +341,9 @@ pub struct BzlmodHostPlatformSetup {}
     PartialEq,
     Eq,
     Hash,
-    Pagable
+    Pagable,
+    Deserialize,
+    Serialize
 )]
 pub struct BzlmodCcAutoconfToolchainsSetup {
     pub parent_canonical_repo_name: Arc<str>,
@@ -342,7 +357,9 @@ pub struct BzlmodCcAutoconfToolchainsSetup {
     PartialEq,
     Eq,
     Hash,
-    Pagable
+    Pagable,
+    Serialize,
+    Deserialize
 )]
 pub struct BzlmodCcAutoconfSetup {}
 
@@ -354,7 +371,9 @@ pub struct BzlmodCcAutoconfSetup {}
     PartialEq,
     Eq,
     Hash,
-    Pagable
+    Pagable,
+    Serialize,
+    Deserialize
 )]
 pub struct BzlmodShellConfigSetup {}
 
@@ -366,7 +385,9 @@ pub struct BzlmodShellConfigSetup {}
     PartialEq,
     Eq,
     Hash,
-    Pagable
+    Pagable,
+    Serialize,
+    Deserialize
 )]
 pub struct BzlmodHttpArchiveSetup {
     pub repo_name: Arc<str>,
@@ -384,7 +405,9 @@ pub struct BzlmodHttpArchiveSetup {
     PartialEq,
     Eq,
     Hash,
-    Pagable
+    Pagable,
+    Serialize,
+    Deserialize
 )]
 pub struct BzlmodPythonHubSetup {}
 
@@ -396,11 +419,31 @@ pub struct BzlmodPythonHubSetup {}
     PartialEq,
     Eq,
     Hash,
-    Pagable
+    Pagable,
+    Serialize,
+    Deserialize
 )]
 pub struct BzlmodRepositoryRuleSetup {
-    pub files_json: Arc<str>,
+    pub files: Arc<Vec<BzlmodRepositoryRuleFile>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_dir: Option<Arc<str>>,
+}
+
+#[derive(
+    Debug,
+    Clone,
+    allocative::Allocative,
+    PartialEq,
+    Eq,
+    Hash,
+    Pagable,
+    Serialize,
+    Deserialize
+)]
+pub struct BzlmodRepositoryRuleFile {
+    pub path: Arc<str>,
+    pub content: Arc<str>,
+    pub executable: bool,
 }
 
 #[derive(
@@ -411,7 +454,9 @@ pub struct BzlmodRepositoryRuleSetup {
     PartialEq,
     Eq,
     Hash,
-    Pagable
+    Pagable,
+    Serialize,
+    Deserialize
 )]
 pub struct BzlmodRepositoryRuleInvocationSetup {
     pub repo_name: Arc<str>,
@@ -422,7 +467,7 @@ pub struct BzlmodRepositoryRuleInvocationSetup {
     pub attrs: Arc<Vec<(Arc<str>, Arc<str>)>>,
 }
 
-#[derive(Debug, Clone, Dupe, allocative::Allocative, Pagable)]
+#[derive(Debug, Clone, Dupe, allocative::Allocative, Pagable, Serialize)]
 pub struct BzlmodModuleExtensionRepoSetup {
     pub parent_canonical_repo_name: Arc<str>,
     pub parent_is_root: bool,
@@ -431,6 +476,7 @@ pub struct BzlmodModuleExtensionRepoSetup {
     pub extension_bzl_path: Arc<str>,
     pub extension_name: Arc<str>,
     pub repo_name: Arc<str>,
+    #[serde(skip_serializing)]
     pub extension_usages_key: Arc<str>,
     pub extension_usages_json: Arc<str>,
 }
@@ -440,6 +486,41 @@ impl BzlmodModuleExtensionRepoSetup {
         blake3::hash(extension_usages_json.as_bytes())
             .to_hex()
             .to_string()
+    }
+}
+
+impl<'de> Deserialize<'de> for BzlmodModuleExtensionRepoSetup {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct BzlmodModuleExtensionRepoSetupConfig {
+            parent_canonical_repo_name: Arc<str>,
+            #[serde(default)]
+            parent_is_root: bool,
+            extension_bzl_file: Arc<str>,
+            extension_bzl_cell: Arc<str>,
+            extension_bzl_path: Arc<str>,
+            extension_name: Arc<str>,
+            repo_name: Arc<str>,
+            extension_usages_json: Arc<str>,
+        }
+
+        let config = BzlmodModuleExtensionRepoSetupConfig::deserialize(deserializer)?;
+        let extension_usages_key =
+            Self::extension_usages_key_from_json(&config.extension_usages_json);
+        Ok(Self {
+            parent_canonical_repo_name: config.parent_canonical_repo_name,
+            parent_is_root: config.parent_is_root,
+            extension_bzl_file: config.extension_bzl_file,
+            extension_bzl_cell: config.extension_bzl_cell,
+            extension_bzl_path: config.extension_bzl_path,
+            extension_name: config.extension_name,
+            repo_name: config.repo_name,
+            extension_usages_key: Arc::from(extension_usages_key),
+            extension_usages_json: config.extension_usages_json,
+        })
     }
 }
 

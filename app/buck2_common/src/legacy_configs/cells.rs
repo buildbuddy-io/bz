@@ -34,19 +34,14 @@ use buck2_core::cells::cell_root_path::CellRootPathBuf;
 use buck2_core::cells::external::BZLMOD_BAZEL_COMPAT_VERSION;
 use buck2_core::cells::external::BzlmodBazelFeaturesGlobalsSetup;
 use buck2_core::cells::external::BzlmodBazelFeaturesVersionSetup;
-use buck2_core::cells::external::BzlmodCcAutoconfSetup;
-use buck2_core::cells::external::BzlmodCcAutoconfToolchainsSetup;
 use buck2_core::cells::external::BzlmodCellSetup;
 use buck2_core::cells::external::BzlmodGeneratedCellGenerator;
 use buck2_core::cells::external::BzlmodGeneratedCellSetup;
 use buck2_core::cells::external::BzlmodHostPlatformSetup;
-use buck2_core::cells::external::BzlmodHttpArchiveSetup;
 use buck2_core::cells::external::BzlmodModuleExtensionRepoSetup;
 use buck2_core::cells::external::BzlmodOverlay;
 use buck2_core::cells::external::BzlmodPatch;
-use buck2_core::cells::external::BzlmodPythonHubSetup;
 use buck2_core::cells::external::BzlmodRepositoryRuleInvocationSetup;
-use buck2_core::cells::external::BzlmodRepositoryRuleSetup;
 use buck2_core::cells::external::BzlmodShellConfigSetup;
 use buck2_core::cells::external::ExternalCellOrigin;
 use buck2_core::cells::external::GitCellSetup;
@@ -1073,115 +1068,9 @@ impl BuckConfigBasedCells {
             }))
         } else if value == "bzlmod_generated" {
             let section = &format!("external_cell_{}", cell.as_str());
-            let generator: BzlmodGeneratedRepoConfig =
+            let generator: BzlmodGeneratedCellGenerator =
                 serde_json::from_str(get_config(section, "generator")?)
                     .buck_error_context("Invalid generated bzlmod repo configuration")?;
-            let generator = match generator {
-                BzlmodGeneratedRepoConfig::BazelFeaturesGlobals {
-                    parent_canonical_repo_name,
-                    bazel_version,
-                } => BzlmodGeneratedCellGenerator::BazelFeaturesGlobals(
-                    BzlmodBazelFeaturesGlobalsSetup {
-                        parent_canonical_repo_name: Arc::from(parent_canonical_repo_name),
-                        bazel_version: Arc::from(bazel_version),
-                    },
-                ),
-                BzlmodGeneratedRepoConfig::BazelFeaturesVersion { bazel_version } => {
-                    BzlmodGeneratedCellGenerator::BazelFeaturesVersion(
-                        BzlmodBazelFeaturesVersionSetup {
-                            bazel_version: Arc::from(bazel_version),
-                        },
-                    )
-                }
-                BzlmodGeneratedRepoConfig::HostPlatform {} => {
-                    BzlmodGeneratedCellGenerator::HostPlatform(BzlmodHostPlatformSetup {})
-                }
-                BzlmodGeneratedRepoConfig::CcAutoconfToolchains {
-                    parent_canonical_repo_name,
-                } => BzlmodGeneratedCellGenerator::CcAutoconfToolchains(
-                    BzlmodCcAutoconfToolchainsSetup {
-                        parent_canonical_repo_name: Arc::from(parent_canonical_repo_name),
-                    },
-                ),
-                BzlmodGeneratedRepoConfig::CcAutoconf {} => {
-                    BzlmodGeneratedCellGenerator::CcAutoconf(BzlmodCcAutoconfSetup {})
-                }
-                BzlmodGeneratedRepoConfig::ShellConfig {} => {
-                    BzlmodGeneratedCellGenerator::ShellConfig(BzlmodShellConfigSetup {})
-                }
-                BzlmodGeneratedRepoConfig::HttpArchive {
-                    repo_name,
-                    url,
-                    sha256,
-                    strip_prefix,
-                    archive_type,
-                } => BzlmodGeneratedCellGenerator::HttpArchive(BzlmodHttpArchiveSetup {
-                    repo_name: Arc::from(repo_name),
-                    url: Arc::from(url),
-                    sha256: Arc::from(sha256),
-                    strip_prefix: strip_prefix.map(Arc::from),
-                    archive_type: archive_type.map(Arc::from),
-                }),
-                BzlmodGeneratedRepoConfig::PythonHub {} => {
-                    BzlmodGeneratedCellGenerator::PythonHub(BzlmodPythonHubSetup {})
-                }
-                BzlmodGeneratedRepoConfig::RepositoryRule { files } => {
-                    let files_json = serde_json::to_string(&files)
-                        .buck_error_context("Error serializing repository_rule file manifest")?;
-                    BzlmodGeneratedCellGenerator::RepositoryRule(BzlmodRepositoryRuleSetup {
-                        files_json: Arc::from(files_json),
-                        source_dir: None,
-                    })
-                }
-                BzlmodGeneratedRepoConfig::RepositoryRuleInvocation {
-                    repo_name,
-                    rule_bzl_cell,
-                    rule_bzl_path,
-                    rule_bzl_build_file_cell,
-                    rule_name,
-                    attrs,
-                } => BzlmodGeneratedCellGenerator::RepositoryRuleInvocation(
-                    BzlmodRepositoryRuleInvocationSetup {
-                        repo_name: Arc::from(repo_name),
-                        rule_bzl_cell: Arc::from(rule_bzl_cell),
-                        rule_bzl_path: Arc::from(rule_bzl_path),
-                        rule_bzl_build_file_cell: Arc::from(rule_bzl_build_file_cell),
-                        rule_name: Arc::from(rule_name),
-                        attrs: Arc::new(
-                            attrs
-                                .into_iter()
-                                .map(|(key, value)| (Arc::from(key), Arc::from(value)))
-                                .collect(),
-                        ),
-                    },
-                ),
-                BzlmodGeneratedRepoConfig::ModuleExtensionRepo {
-                    parent_canonical_repo_name,
-                    parent_is_root,
-                    extension_bzl_file,
-                    extension_bzl_cell,
-                    extension_bzl_path,
-                    extension_name,
-                    repo_name,
-                    extension_usages_json,
-                } => BzlmodGeneratedCellGenerator::ModuleExtensionRepo({
-                    let extension_usages_key =
-                        BzlmodModuleExtensionRepoSetup::extension_usages_key_from_json(
-                            &extension_usages_json,
-                        );
-                    BzlmodModuleExtensionRepoSetup {
-                        parent_canonical_repo_name: Arc::from(parent_canonical_repo_name),
-                        parent_is_root,
-                        extension_bzl_file: Arc::from(extension_bzl_file),
-                        extension_bzl_cell: Arc::from(extension_bzl_cell),
-                        extension_bzl_path: Arc::from(extension_bzl_path),
-                        extension_name: Arc::from(extension_name),
-                        repo_name: Arc::from(repo_name),
-                        extension_usages_key: Arc::from(extension_usages_key),
-                        extension_usages_json: Arc::from(extension_usages_json),
-                    }
-                }),
-            };
             Ok(ExternalCellOrigin::BzlmodGenerated(
                 BzlmodGeneratedCellSetup {
                     canonical_repo_name: get_config(section, "canonical_repo_name")?.into(),
@@ -1932,61 +1821,6 @@ struct BzlmodOverlayConfig {
     path: String,
     url: String,
     integrity: String,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-enum BzlmodGeneratedRepoConfig {
-    BazelFeaturesGlobals {
-        parent_canonical_repo_name: String,
-        bazel_version: String,
-    },
-    BazelFeaturesVersion {
-        bazel_version: String,
-    },
-    HostPlatform {},
-    CcAutoconfToolchains {
-        parent_canonical_repo_name: String,
-    },
-    CcAutoconf {},
-    ShellConfig {},
-    HttpArchive {
-        repo_name: String,
-        url: String,
-        sha256: String,
-        strip_prefix: Option<String>,
-        archive_type: Option<String>,
-    },
-    PythonHub {},
-    RepositoryRule {
-        files: Vec<BzlmodRepositoryRuleFileConfig>,
-    },
-    RepositoryRuleInvocation {
-        repo_name: String,
-        rule_bzl_cell: String,
-        rule_bzl_path: String,
-        rule_bzl_build_file_cell: String,
-        rule_name: String,
-        attrs: Vec<(String, String)>,
-    },
-    ModuleExtensionRepo {
-        parent_canonical_repo_name: String,
-        #[serde(default)]
-        parent_is_root: bool,
-        extension_bzl_file: String,
-        extension_bzl_cell: String,
-        extension_bzl_path: String,
-        extension_name: String,
-        repo_name: String,
-        extension_usages_json: String,
-    },
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-struct BzlmodRepositoryRuleFileConfig {
-    path: String,
-    content: String,
-    executable: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -2864,11 +2698,12 @@ fn resolve_generated_bzlmod_repos(
                 }
                 let canonical_repo_name =
                     format!("{parent_canonical_repo_name}+sh_configure+{alias}");
-                let generator_json =
-                    serde_json::to_string(&BzlmodGeneratedRepoConfig::ShellConfig {})
-                        .buck_error_context(
-                            "Error serializing generated rules_shell configure repo configuration",
-                        )?;
+                let generator_json = serde_json::to_string(
+                    &BzlmodGeneratedCellGenerator::ShellConfig(BzlmodShellConfigSetup {}),
+                )
+                .buck_error_context(
+                    "Error serializing generated rules_shell configure repo configuration",
+                )?;
                 add_generated_bzlmod_repo(
                     &mut generated,
                     &mut generated_repo_declaring_cells,
@@ -2892,11 +2727,12 @@ fn resolve_generated_bzlmod_repos(
                     "{}+host_platform+{}",
                     parent_canonical_repo_name, import.repo_name
                 );
-                let generator_json =
-                    serde_json::to_string(&BzlmodGeneratedRepoConfig::HostPlatform {})
-                        .buck_error_context(
-                            "Error serializing generated host_platform repo configuration",
-                        )?;
+                let generator_json = serde_json::to_string(
+                    &BzlmodGeneratedCellGenerator::HostPlatform(BzlmodHostPlatformSetup {}),
+                )
+                .buck_error_context(
+                    "Error serializing generated host_platform repo configuration",
+                )?;
                 add_generated_bzlmod_repo(
                     &mut generated,
                     &mut generated_repo_declaring_cells,
@@ -2915,15 +2751,21 @@ fn resolve_generated_bzlmod_repos(
             {
                 let generator = match import.repo_name.as_str() {
                     "bazel_features_globals" => {
-                        Some(BzlmodGeneratedRepoConfig::BazelFeaturesGlobals {
-                            parent_canonical_repo_name: parent_canonical_repo_name.clone(),
-                            bazel_version: BZLMOD_BAZEL_COMPAT_VERSION.to_owned(),
-                        })
+                        Some(BzlmodGeneratedCellGenerator::BazelFeaturesGlobals(
+                            BzlmodBazelFeaturesGlobalsSetup {
+                                parent_canonical_repo_name: Arc::from(
+                                    parent_canonical_repo_name.clone(),
+                                ),
+                                bazel_version: Arc::from(BZLMOD_BAZEL_COMPAT_VERSION),
+                            },
+                        ))
                     }
                     "bazel_features_version" => {
-                        Some(BzlmodGeneratedRepoConfig::BazelFeaturesVersion {
-                            bazel_version: BZLMOD_BAZEL_COMPAT_VERSION.to_owned(),
-                        })
+                        Some(BzlmodGeneratedCellGenerator::BazelFeaturesVersion(
+                            BzlmodBazelFeaturesVersionSetup {
+                                bazel_version: Arc::from(BZLMOD_BAZEL_COMPAT_VERSION),
+                            },
+                        ))
                     }
                     _ => None,
                 };
@@ -3557,21 +3399,31 @@ fn bzlmod_module_extension_repo_config(
     usage: &BzlmodExtensionUsage,
     repo_name: &str,
     extension_usages_json: &str,
-) -> buck2_error::Result<BzlmodGeneratedRepoConfig> {
+) -> buck2_error::Result<BzlmodGeneratedCellGenerator> {
     if let Some(evaluated_extension) = evaluated_extension {
         if let Some(invocation) = evaluated_extension
             .repository_rules
             .iter()
             .find(|invocation| invocation.repo_name == repo_name)
         {
-            return Ok(BzlmodGeneratedRepoConfig::RepositoryRuleInvocation {
-                repo_name: invocation.repo_name.clone(),
-                rule_bzl_cell: invocation.rule_bzl_cell.clone(),
-                rule_bzl_path: invocation.rule_bzl_path.clone(),
-                rule_bzl_build_file_cell: invocation.rule_bzl_build_file_cell.clone(),
-                rule_name: invocation.rule_name.clone(),
-                attrs: invocation.attrs.clone(),
-            });
+            return Ok(BzlmodGeneratedCellGenerator::RepositoryRuleInvocation(
+                BzlmodRepositoryRuleInvocationSetup {
+                    repo_name: Arc::from(invocation.repo_name.clone()),
+                    rule_bzl_cell: Arc::from(invocation.rule_bzl_cell.clone()),
+                    rule_bzl_path: Arc::from(invocation.rule_bzl_path.clone()),
+                    rule_bzl_build_file_cell: Arc::from(
+                        invocation.rule_bzl_build_file_cell.clone(),
+                    ),
+                    rule_name: Arc::from(invocation.rule_name.clone()),
+                    attrs: Arc::new(
+                        invocation
+                            .attrs
+                            .iter()
+                            .map(|(key, value)| (Arc::from(key.clone()), Arc::from(value.clone())))
+                            .collect(),
+                    ),
+                },
+            ));
         }
 
         if bzlmod_module_extension_results_complete {
@@ -3594,16 +3446,21 @@ fn bzlmod_module_extension_repo_config(
         ));
     }
 
-    Ok(BzlmodGeneratedRepoConfig::ModuleExtensionRepo {
-        parent_canonical_repo_name: parent_canonical_repo_name.to_owned(),
-        parent_is_root,
-        extension_bzl_file: usage.extension_bzl_file.clone(),
-        extension_bzl_cell: resolved_extension.id.bzl_cell_name.clone(),
-        extension_bzl_path: resolved_extension.id.bzl_path.clone(),
-        extension_name: usage.extension_name.clone(),
-        repo_name: repo_name.to_owned(),
-        extension_usages_json: extension_usages_json.to_owned(),
-    })
+    let extension_usages_key =
+        BzlmodModuleExtensionRepoSetup::extension_usages_key_from_json(extension_usages_json);
+    Ok(BzlmodGeneratedCellGenerator::ModuleExtensionRepo(
+        BzlmodModuleExtensionRepoSetup {
+            parent_canonical_repo_name: Arc::from(parent_canonical_repo_name),
+            parent_is_root,
+            extension_bzl_file: Arc::from(usage.extension_bzl_file.clone()),
+            extension_bzl_cell: Arc::from(resolved_extension.id.bzl_cell_name.clone()),
+            extension_bzl_path: Arc::from(resolved_extension.id.bzl_path.clone()),
+            extension_name: Arc::from(usage.extension_name.clone()),
+            repo_name: Arc::from(repo_name),
+            extension_usages_key: Arc::from(extension_usages_key),
+            extension_usages_json: Arc::from(extension_usages_json),
+        },
+    ))
 }
 
 fn add_generated_bzlmod_repo(
@@ -3734,14 +3591,22 @@ fn resolve_bzlmod_use_repo_rule_generated_repos(
             &invocation.repo_name,
         );
         let generator_json =
-            serde_json::to_string(&BzlmodGeneratedRepoConfig::RepositoryRuleInvocation {
-                repo_name: invocation.repo_name.clone(),
-                rule_bzl_cell,
-                rule_bzl_path,
-                rule_bzl_build_file_cell: parent_cell_name.to_owned(),
-                rule_name: invocation.rule_name.clone(),
-                attrs: invocation.attrs.clone(),
-            })
+            serde_json::to_string(&BzlmodGeneratedCellGenerator::RepositoryRuleInvocation(
+                BzlmodRepositoryRuleInvocationSetup {
+                    repo_name: Arc::from(invocation.repo_name.clone()),
+                    rule_bzl_cell: Arc::from(rule_bzl_cell),
+                    rule_bzl_path: Arc::from(rule_bzl_path),
+                    rule_bzl_build_file_cell: Arc::from(parent_cell_name),
+                    rule_name: Arc::from(invocation.rule_name.clone()),
+                    attrs: Arc::new(
+                        invocation
+                            .attrs
+                            .iter()
+                            .map(|(key, value)| (Arc::from(key.clone()), Arc::from(value.clone())))
+                            .collect(),
+                    ),
+                },
+            ))
             .buck_error_context("Error serializing use_repo_rule repository configuration")?;
         add_generated_bzlmod_repo(
             generated,
