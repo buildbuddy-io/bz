@@ -29,6 +29,7 @@ use dice::TodoValueSerialize;
 use dice::ValueSerialize;
 use dice_futures::cancellation::CancellationContext;
 use dupe::Dupe;
+use futures::FutureExt;
 use futures::future::BoxFuture;
 use pagable::Pagable;
 use pagable::pagable_typetag;
@@ -38,6 +39,7 @@ use crate::file_ops::delegate::get_delegated_file_ops;
 use crate::file_ops::error::FileReadError;
 use crate::file_ops::error::extended_ignore_error;
 use crate::file_ops::metadata::RawPathMetadata;
+use crate::file_ops::metadata::RawPathMetadataForNoWatchFs;
 use crate::file_ops::metadata::ReadDirOutput;
 use crate::ignores::file_ignores::FileIgnoreResult;
 use crate::io::ReadDirError;
@@ -97,8 +99,7 @@ impl DiceFileComputations {
         ctx: &mut DiceComputations<'_>,
         path: CellPathRef<'_>,
     ) -> buck2_error::Result<Option<String>> {
-        (ctx
-            .compute(&ReadFileKey(Arc::new(path.to_owned())))
+        (ctx.compute(&ReadFileKey(Arc::new(path.to_owned())))
             .await??
             .proxy
             .0)()
@@ -171,7 +172,7 @@ pub struct FileChangeTracker {
     maybe_modified_dirs: StdBuckHashSet<CellPath>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct KnownFileStateInvalidationStats {
     pub read_files: usize,
     pub read_dirs: usize,
@@ -275,13 +276,14 @@ impl FileChangeTracker {
     }
 }
 
-pub fn invalidate_all_known_file_state(
+pub async fn invalidate_changed_file_state(
     ctx: &mut DiceTransactionUpdater,
 ) -> buck2_error::Result<KnownFileStateInvalidationStats> {
     let mut read_files = Vec::new();
     let mut read_dirs = Vec::new();
     let mut paths = Vec::new();
     let mut exists_matching_exact_case = Vec::new();
+    let mut paths_for_no_watchfs = StdBuckHashSet::default();
 
     for key in ctx.existing_keys_for_introspection() {
         if let Some(key) = key.downcast_ref::<ReadFileKey>() {
@@ -292,22 +294,288 @@ pub fn invalidate_all_known_file_state(
             paths.push(key.clone());
         } else if let Some(key) = key.downcast_ref::<ExistsMatchingExactCaseKey>() {
             exists_matching_exact_case.push(key.clone());
+        } else if let Some(key) = key.downcast_ref::<PathMetadataForNoWatchFsKey>() {
+            paths_for_no_watchfs.insert(key.0.clone());
         }
     }
 
+    let mut dice = ctx.existing_state().await;
+
+    let mut metadata_paths = StdBuckHashSet::default();
+    for key in &read_files {
+        metadata_paths.insert(key.0.as_ref().clone());
+    }
+    for key in &paths {
+        metadata_paths.insert(key.0.clone());
+    }
+
+    let mut metadata_paths_with_no_watchfs = Vec::new();
+    let mut metadata_paths_without_no_watchfs = Vec::new();
+    for path in metadata_paths {
+        if paths_for_no_watchfs.contains(&path) {
+            metadata_paths_with_no_watchfs.push(path);
+        } else {
+            metadata_paths_without_no_watchfs.push(path);
+        }
+    }
+
+    let changed_metadata_paths_with_values = dice
+        .compute_join(metadata_paths_with_no_watchfs, |ctx, path| {
+            async move {
+                let key = PathMetadataForNoWatchFsKey(path);
+                path_metadata_for_no_watchfs_key_dirty_value(ctx, &key)
+                    .await
+                    .map(|dirty| (key.0.clone(), dirty))
+            }
+            .boxed()
+        })
+        .await;
+
+    let mut dirty_metadata_paths = StdBuckHashSet::default();
+    let mut changed_path_metadata_for_no_watchfs = Vec::new();
+    let mut changed_path_metadata_for_no_watchfs_to_value = Vec::new();
+    for (path, dirty) in changed_metadata_paths_with_values.into_iter().flatten() {
+        dirty_metadata_paths.insert(path);
+        match dirty {
+            DirtyPathMetadataForNoWatchFs::WithValue(key, value) => {
+                changed_path_metadata_for_no_watchfs_to_value.push((key, value));
+            }
+            DirtyPathMetadataForNoWatchFs::WithoutValue(key) => {
+                changed_path_metadata_for_no_watchfs.push(key);
+            }
+        }
+    }
+
+    let seeded_path_metadata_for_no_watchfs = dice
+        .compute_join(metadata_paths_without_no_watchfs.clone(), |ctx, path| {
+            async move {
+                let key = PathMetadataForNoWatchFsKey(path);
+                fresh_path_metadata_for_no_watchfs(ctx, key.0.as_ref())
+                    .await
+                    .ok()
+                    .map(|fresh| (key, Ok(fresh)))
+            }
+            .boxed()
+        })
+        .await
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
+    changed_path_metadata_for_no_watchfs_to_value.extend(seeded_path_metadata_for_no_watchfs);
+
+    let metadata_paths_without_no_watchfs = metadata_paths_without_no_watchfs
+        .into_iter()
+        .collect::<StdBuckHashSet<_>>();
+
+    let mut changed_read_files = read_files
+        .iter()
+        .filter(|key| dirty_metadata_paths.contains(key.0.as_ref()))
+        .cloned()
+        .collect::<Vec<_>>();
+    let changed_read_files_from_full_check = dice
+        .compute_join(
+            read_files
+                .into_iter()
+                .filter(|key| metadata_paths_without_no_watchfs.contains(key.0.as_ref())),
+            |ctx, key| {
+                async move {
+                    if read_file_key_is_dirty(ctx, &key).await {
+                        Some(key)
+                    } else {
+                        None
+                    }
+                }
+                .boxed()
+            },
+        )
+        .await
+        .into_iter()
+        .flatten();
+    changed_read_files.extend(changed_read_files_from_full_check);
+
+    let mut changed_paths = paths
+        .iter()
+        .filter(|key| dirty_metadata_paths.contains(&key.0))
+        .cloned()
+        .collect::<Vec<_>>();
+    let changed_paths_from_full_check = dice
+        .compute_join(
+            paths
+                .into_iter()
+                .filter(|key| metadata_paths_without_no_watchfs.contains(&key.0)),
+            |ctx, key| {
+                async move {
+                    if path_metadata_key_is_dirty(ctx, &key).await {
+                        Some(key)
+                    } else {
+                        None
+                    }
+                }
+                .boxed()
+            },
+        )
+        .await
+        .into_iter()
+        .flatten();
+    changed_paths.extend(changed_paths_from_full_check);
+
+    let changed_read_dirs = dice
+        .compute_join(read_dirs, |ctx, key| {
+            async move {
+                if read_dir_key_is_dirty(ctx, &key).await {
+                    Some(key)
+                } else {
+                    None
+                }
+            }
+            .boxed()
+        })
+        .await
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
+
+    let changed_exists_matching_exact_case = dice
+        .compute_join(exists_matching_exact_case, |ctx, key| {
+            async move {
+                if exists_matching_exact_case_key_is_dirty(ctx, &key).await {
+                    Some(key)
+                } else {
+                    None
+                }
+            }
+            .boxed()
+        })
+        .await
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
+
+    drop(dice);
+
     let stats = KnownFileStateInvalidationStats {
-        read_files: read_files.len(),
-        read_dirs: read_dirs.len(),
-        paths: paths.len(),
-        exists_matching_exact_case: exists_matching_exact_case.len(),
+        read_files: changed_read_files.len(),
+        read_dirs: changed_read_dirs.len(),
+        paths: changed_paths.len(),
+        exists_matching_exact_case: changed_exists_matching_exact_case.len(),
     };
 
-    ctx.changed(read_files)?;
-    ctx.changed(read_dirs)?;
-    ctx.changed(paths)?;
-    ctx.changed(exists_matching_exact_case)?;
+    ctx.changed(changed_read_files)?;
+    ctx.changed(changed_read_dirs)?;
+    ctx.changed(changed_paths)?;
+    ctx.changed(changed_exists_matching_exact_case)?;
+    ctx.changed(changed_path_metadata_for_no_watchfs)?;
+    ctx.changed_to(changed_path_metadata_for_no_watchfs_to_value)?;
 
     Ok(stats)
+}
+
+enum DirtyPathMetadataForNoWatchFs {
+    WithValue(
+        PathMetadataForNoWatchFsKey,
+        buck2_error::Result<Option<RawPathMetadataForNoWatchFs>>,
+    ),
+    WithoutValue(PathMetadataForNoWatchFsKey),
+}
+
+async fn path_metadata_for_no_watchfs_key_dirty_value(
+    ctx: &mut DiceComputations<'_>,
+    key: &PathMetadataForNoWatchFsKey,
+) -> Option<DirtyPathMetadataForNoWatchFs> {
+    let old = ctx.compute(key).await;
+    let fresh = fresh_path_metadata_for_no_watchfs(ctx, key.0.as_ref()).await;
+
+    match (old, fresh) {
+        (Ok(Ok(old)), Ok(fresh)) if old == fresh => None,
+        (_, Ok(fresh)) => Some(DirtyPathMetadataForNoWatchFs::WithValue(
+            key.clone(),
+            Ok(fresh),
+        )),
+        _ => Some(DirtyPathMetadataForNoWatchFs::WithoutValue(key.clone())),
+    }
+}
+
+async fn read_file_key_is_dirty(ctx: &mut DiceComputations<'_>, key: &ReadFileKey) -> bool {
+    let old = ctx.compute(key).await;
+    let fresh = fresh_path_metadata(ctx, key.0.as_ref().as_ref()).await;
+
+    match (old, fresh) {
+        (Ok(Ok(old)), Ok(fresh)) => old.metadata != fresh,
+        _ => true,
+    }
+}
+
+async fn read_dir_key_is_dirty(ctx: &mut DiceComputations<'_>, key: &ReadDirKey) -> bool {
+    let old = ctx.compute(key).await;
+    let fresh = fresh_read_dir(ctx, key).await;
+
+    match (old, fresh) {
+        (Ok(Ok(old)), Ok(fresh)) => old != fresh,
+        _ => true,
+    }
+}
+
+async fn exists_matching_exact_case_key_is_dirty(
+    ctx: &mut DiceComputations<'_>,
+    key: &ExistsMatchingExactCaseKey,
+) -> bool {
+    let old = ctx.compute(key).await;
+    let fresh = fresh_exists_matching_exact_case(ctx, key).await;
+
+    match (old, fresh) {
+        (Ok(Ok(old)), Ok(fresh)) => old != fresh,
+        _ => true,
+    }
+}
+
+async fn path_metadata_key_is_dirty(ctx: &mut DiceComputations<'_>, key: &PathMetadataKey) -> bool {
+    let old = ctx.compute(key).await;
+    let fresh = fresh_path_metadata(ctx, key.0.as_ref()).await;
+
+    match (old, fresh) {
+        (Ok(Ok(old)), Ok(fresh)) => old != fresh,
+        _ => true,
+    }
+}
+
+async fn fresh_path_metadata(
+    ctx: &mut DiceComputations<'_>,
+    path: CellPathRef<'_>,
+) -> buck2_error::Result<Option<RawPathMetadata>> {
+    let file_ops = get_delegated_file_ops(ctx, path.cell(), CheckIgnores::No).await?;
+    file_ops
+        .read_path_metadata_if_exists_for_no_watchfs(ctx, path.path())
+        .await
+}
+
+async fn fresh_path_metadata_for_no_watchfs(
+    ctx: &mut DiceComputations<'_>,
+    path: CellPathRef<'_>,
+) -> buck2_error::Result<Option<RawPathMetadataForNoWatchFs>> {
+    let file_ops = get_delegated_file_ops(ctx, path.cell(), CheckIgnores::No).await?;
+    file_ops
+        .read_path_metadata_for_no_watchfs_if_exists(ctx, path.path())
+        .await
+}
+
+async fn fresh_read_dir(
+    ctx: &mut DiceComputations<'_>,
+    key: &ReadDirKey,
+) -> buck2_error::Result<ReadDirOutput> {
+    let file_ops = get_delegated_file_ops(ctx, key.path.cell(), key.check_ignores).await?;
+    file_ops
+        .read_dir_for_no_watchfs(ctx, key.path.as_ref().path())
+        .await
+}
+
+async fn fresh_exists_matching_exact_case(
+    ctx: &mut DiceComputations<'_>,
+    key: &ExistsMatchingExactCaseKey,
+) -> buck2_error::Result<bool> {
+    let file_ops = get_delegated_file_ops(ctx, key.0.cell(), CheckIgnores::Yes).await?;
+    file_ops
+        .exists_matching_exact_case_for_no_watchfs(key.0.path(), ctx)
+        .await
 }
 
 /// The return value of a `ReadFileKey` computation.
@@ -330,8 +598,6 @@ impl ReadFileProxy {
         D: Clone + Send + Sync + 'static,
         F: Future<Output = buck2_error::Result<Option<String>>> + Send + 'static,
     {
-        use futures::FutureExt;
-
         Self(Arc::new(move || {
             let data = data.clone();
             c(data).boxed()
@@ -358,6 +624,8 @@ impl Key for ReadFileKey {
         _cancellations: &CancellationContext,
     ) -> Self::Value {
         let file_ops = get_delegated_file_ops(ctx, self.0.cell(), CheckIgnores::No).await?;
+        ctx.compute(&PathMetadataForNoWatchFsKey(self.0.as_ref().clone()))
+            .await??;
         let metadata = file_ops
             .read_path_metadata_if_exists(ctx, self.0.path())
             .await?;
@@ -387,6 +655,42 @@ impl Key for ReadFileKey {
 struct ReadDirKey {
     path: CellPath,
     check_ignores: CheckIgnores,
+}
+
+#[derive(Clone, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable)]
+#[display("{}", _0)]
+#[pagable_typetag(dice::DiceKeyDyn)]
+struct PathMetadataForNoWatchFsKey(CellPath);
+
+#[async_trait]
+impl Key for PathMetadataForNoWatchFsKey {
+    type Value = buck2_error::Result<Option<RawPathMetadataForNoWatchFs>>;
+    async fn compute(
+        &self,
+        ctx: &mut DiceComputations,
+        _cancellations: &CancellationContext,
+    ) -> Self::Value {
+        fresh_path_metadata_for_no_watchfs(ctx, self.0.as_ref()).await
+    }
+
+    fn equality(x: &Self::Value, y: &Self::Value) -> bool {
+        match (x, y) {
+            (Ok(x), Ok(y)) => x == y,
+            _ => false,
+        }
+    }
+
+    fn validity(x: &Self::Value) -> bool {
+        x.is_ok()
+    }
+
+    fn invalidation_source_priority() -> InvalidationSourcePriority {
+        InvalidationSourcePriority::High
+    }
+
+    fn value_serialize() -> impl ValueSerialize<Value = Self::Value> {
+        OkPagableValueSerialize::<Self::Value>::new()
+    }
 }
 
 #[async_trait]
@@ -464,6 +768,8 @@ impl Key for PathMetadataKey {
         ctx: &mut DiceComputations,
         _cancellations: &CancellationContext,
     ) -> Self::Value {
+        ctx.compute(&PathMetadataForNoWatchFsKey(self.0.clone()))
+            .await??;
         let res = get_delegated_file_ops(ctx, self.0.cell(), CheckIgnores::No)
             .await?
             .read_path_metadata_if_exists(ctx, self.0.as_ref().path())

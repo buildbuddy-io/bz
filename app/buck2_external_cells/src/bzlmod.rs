@@ -28,6 +28,7 @@ use buck2_common::file_ops::metadata::FileDigestConfig;
 use buck2_common::file_ops::metadata::FileType;
 use buck2_common::file_ops::metadata::RawDirEntry;
 use buck2_common::file_ops::metadata::RawPathMetadata;
+use buck2_common::file_ops::metadata::RawPathMetadataForNoWatchFs;
 use buck2_common::file_ops::metadata::RawSymlink;
 use buck2_common::http::HasHttpClient;
 use buck2_common::io::IoProvider;
@@ -2760,6 +2761,60 @@ impl FileOpsDelegate for BzlmodFileOpsDelegate {
         })?))
     }
 
+    async fn read_path_metadata_if_exists_for_no_watchfs(
+        &self,
+        _ctx: &mut DiceComputations<'_>,
+        path: &'async_trait CellRelativePath,
+    ) -> buck2_error::Result<Option<RawPathMetadata>> {
+        let project_path = self.resolve_backing(path);
+        let Some(metadata) = (&self.io as &dyn IoProvider)
+            .read_path_metadata_if_exists(project_path)
+            .await
+            .with_buck_error_context(|| format!("Error accessing metadata for path `{path}`"))?
+        else {
+            return Ok(None);
+        };
+        Ok(Some(metadata.try_map(|project_path| {
+            match project_path
+                .strip_prefix_opt(self.backing_base_path.as_ref() as &ProjectRelativePath)
+            {
+                Some(path) => Ok(Arc::new(CellPath::new(self.cell, path.to_owned().into()))),
+                None => Err(internal_error!(
+                    "Non-cell internal symlink at `{}` in cell `{}`",
+                    project_path,
+                    self.cell
+                )),
+            }
+        })?))
+    }
+
+    async fn read_path_metadata_for_no_watchfs_if_exists(
+        &self,
+        _ctx: &mut DiceComputations<'_>,
+        path: &'async_trait CellRelativePath,
+    ) -> buck2_error::Result<Option<RawPathMetadataForNoWatchFs>> {
+        let project_path = self.resolve_backing(path);
+        let Some(metadata) = (&self.io as &dyn IoProvider)
+            .read_path_metadata_if_exists_for_no_watchfs(project_path)
+            .await
+            .with_buck_error_context(|| format!("Error accessing metadata for path `{path}`"))?
+        else {
+            return Ok(None);
+        };
+        Ok(Some(metadata.try_map(|project_path| {
+            match project_path
+                .strip_prefix_opt(self.backing_base_path.as_ref() as &ProjectRelativePath)
+            {
+                Some(path) => Ok(Arc::new(CellPath::new(self.cell, path.to_owned().into()))),
+                None => Err(internal_error!(
+                    "Non-cell internal symlink at `{}` in cell `{}`",
+                    project_path,
+                    self.cell
+                )),
+            }
+        })?))
+    }
+
     fn eq_token(&self) -> PartialEqAny<'_> {
         PartialEqAny::always_false()
     }
@@ -2854,6 +2909,26 @@ impl FileOpsDelegate for BzlmodGeneratedFileOpsDelegate {
         Ok(entries.into())
     }
 
+    async fn read_dir_for_no_watchfs(
+        &self,
+        _ctx: &mut DiceComputations<'_>,
+        path: &'async_trait CellRelativePath,
+    ) -> buck2_error::Result<Arc<[RawDirEntry]>> {
+        let project_path = self.resolve(path);
+        let mut entries = (&self.io as &dyn IoProvider)
+            .read_dir(project_path)
+            .await
+            .with_buck_error_context(|| format!("Error listing dir `{path}`"))?;
+        follow_bzlmod_symlinked_directory_entries(
+            self.io.project_root(),
+            self.resolve(path).as_ref(),
+            &mut entries,
+        )?;
+
+        entries.sort_by(|a, b| a.file_name.cmp(&b.file_name));
+        Ok(entries.into())
+    }
+
     async fn read_path_metadata_if_exists(
         &self,
         ctx: &mut DiceComputations<'_>,
@@ -2869,6 +2944,56 @@ impl FileOpsDelegate for BzlmodGeneratedFileOpsDelegate {
             return Ok(None);
         };
         declare_observed_source_artifact(ctx, project_path, &metadata).await?;
+        Ok(Some(metadata.try_map(
+            |path| match path.strip_prefix_opt(self.get_base_path()) {
+                Some(path) => Ok(Arc::new(CellPath::new(self.cell, path.to_owned().into()))),
+                None => Err(internal_error!(
+                    "Non-cell internal symlink at `{}` in cell `{}`",
+                    path,
+                    self.cell
+                )),
+            },
+        )?))
+    }
+
+    async fn read_path_metadata_if_exists_for_no_watchfs(
+        &self,
+        _ctx: &mut DiceComputations<'_>,
+        path: &'async_trait CellRelativePath,
+    ) -> buck2_error::Result<Option<RawPathMetadata>> {
+        let project_path = self.resolve(path);
+        let Some(metadata) = (&self.io as &dyn IoProvider)
+            .read_path_metadata_if_exists(project_path)
+            .await
+            .with_buck_error_context(|| format!("Error accessing metadata for path `{path}`"))?
+        else {
+            return Ok(None);
+        };
+        Ok(Some(metadata.try_map(
+            |path| match path.strip_prefix_opt(self.get_base_path()) {
+                Some(path) => Ok(Arc::new(CellPath::new(self.cell, path.to_owned().into()))),
+                None => Err(internal_error!(
+                    "Non-cell internal symlink at `{}` in cell `{}`",
+                    path,
+                    self.cell
+                )),
+            },
+        )?))
+    }
+
+    async fn read_path_metadata_for_no_watchfs_if_exists(
+        &self,
+        _ctx: &mut DiceComputations<'_>,
+        path: &'async_trait CellRelativePath,
+    ) -> buck2_error::Result<Option<RawPathMetadataForNoWatchFs>> {
+        let project_path = self.resolve(path);
+        let Some(metadata) = (&self.io as &dyn IoProvider)
+            .read_path_metadata_if_exists_for_no_watchfs(project_path)
+            .await
+            .with_buck_error_context(|| format!("Error accessing metadata for path `{path}`"))?
+        else {
+            return Ok(None);
+        };
         Ok(Some(metadata.try_map(
             |path| match path.strip_prefix_opt(self.get_base_path()) {
                 Some(path) => Ok(Arc::new(CellPath::new(self.cell, path.to_owned().into()))),

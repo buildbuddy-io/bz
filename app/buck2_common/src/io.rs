@@ -21,6 +21,7 @@ use buck2_error::ErrorTag;
 
 use crate::file_ops::metadata::RawDirEntry;
 use crate::file_ops::metadata::RawPathMetadata;
+use crate::file_ops::metadata::RawPathMetadataForNoWatchFs;
 use crate::ignores::file_ignores::FileIgnoreReason;
 
 #[derive(Debug, Allocative, buck2_error::Error)]
@@ -69,6 +70,16 @@ pub trait IoProvider: Allocative + Send + Sync {
         path: ProjectRelativePathBuf,
     ) -> buck2_error::Result<Option<RawPathMetadata<ProjectRelativePathBuf>>>;
 
+    async fn read_path_metadata_if_exists_for_no_watchfs_impl(
+        &self,
+        path: ProjectRelativePathBuf,
+    ) -> buck2_error::Result<Option<RawPathMetadataForNoWatchFs<ProjectRelativePathBuf>>> {
+        Ok(self
+            .read_path_metadata_if_exists_impl(path)
+            .await?
+            .map(RawPathMetadataForNoWatchFs::from))
+    }
+
     /// Request that this I/O provider be up to date with whatever I/O operations the user might
     /// have done until this point.
     async fn settle(&self) -> buck2_error::Result<()>;
@@ -105,6 +116,15 @@ impl dyn IoProvider + '_ {
         path: ProjectRelativePathBuf,
     ) -> buck2_error::Result<Option<RawPathMetadata<ProjectRelativePathBuf>>> {
         self.read_path_metadata_if_exists_impl(path)
+            .await
+            .tag(ErrorTag::IoSource)
+    }
+
+    pub async fn read_path_metadata_if_exists_for_no_watchfs(
+        &self,
+        path: ProjectRelativePathBuf,
+    ) -> buck2_error::Result<Option<RawPathMetadataForNoWatchFs<ProjectRelativePathBuf>>> {
+        self.read_path_metadata_if_exists_for_no_watchfs_impl(path)
             .await
             .tag(ErrorTag::IoSource)
     }

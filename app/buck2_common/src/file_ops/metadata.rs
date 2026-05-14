@@ -245,6 +245,97 @@ impl FileMetadata {
     }
 }
 
+#[derive(Debug, Dupe, Hash, PartialEq, Eq, Clone, Allocative, Pagable)]
+pub struct FileContentsProxy {
+    pub size: u64,
+    pub modified_secs: i64,
+    pub modified_nanos: i64,
+    pub changed_secs: i64,
+    pub changed_nanos: i64,
+    pub node_id: u64,
+    pub is_executable: bool,
+}
+
+impl FileContentsProxy {
+    pub fn new(
+        size: u64,
+        modified_secs: i64,
+        modified_nanos: i64,
+        changed_secs: i64,
+        changed_nanos: i64,
+        node_id: u64,
+        is_executable: bool,
+    ) -> Self {
+        Self {
+            size,
+            modified_secs,
+            modified_nanos,
+            changed_secs,
+            changed_nanos,
+            node_id,
+            is_executable,
+        }
+    }
+}
+
+#[derive(Debug, Dupe, Hash, PartialEq, Eq, Clone, Allocative, Pagable)]
+pub enum FileChangeMetadata {
+    Digest(FileMetadata),
+    ContentsProxy(FileContentsProxy),
+}
+
+#[derive(Debug, PartialEq, Dupe, Eq, Clone, Allocative, Pagable)]
+pub enum RawPathMetadataForNoWatchFs<T = Arc<CellPath>> {
+    Symlink { at: T, to: RawSymlink<T> },
+    File(FileChangeMetadata),
+    Directory,
+}
+
+impl<T> RawPathMetadataForNoWatchFs<T> {
+    pub fn map<O>(self, f: impl Fn(T) -> O) -> RawPathMetadataForNoWatchFs<O> {
+        match Self::try_map::<O, RawPathMetadataForNoWatchFs<O>>(self, |v| Ok(f(v))) {
+            Ok(out) => out,
+            Err(e) => e,
+        }
+    }
+
+    pub fn try_map<O, E>(
+        self,
+        f: impl Fn(T) -> Result<O, E>,
+    ) -> Result<RawPathMetadataForNoWatchFs<O>, E> {
+        match self {
+            Self::Directory => Ok(RawPathMetadataForNoWatchFs::Directory),
+            Self::File(file) => Ok(RawPathMetadataForNoWatchFs::File(file)),
+            Self::Symlink {
+                at,
+                to: RawSymlink::Relative(dest, dest_rel),
+            } => Ok(RawPathMetadataForNoWatchFs::Symlink {
+                at: f(at)?,
+                to: RawSymlink::Relative(f(dest)?, dest_rel),
+            }),
+            Self::Symlink {
+                at,
+                to: RawSymlink::External(e),
+            } => Ok(RawPathMetadataForNoWatchFs::Symlink {
+                at: f(at)?,
+                to: RawSymlink::External(e),
+            }),
+        }
+    }
+}
+
+impl<T> From<RawPathMetadata<T>> for RawPathMetadataForNoWatchFs<T> {
+    fn from(metadata: RawPathMetadata<T>) -> Self {
+        match metadata {
+            RawPathMetadata::Directory => RawPathMetadataForNoWatchFs::Directory,
+            RawPathMetadata::File(file) => {
+                RawPathMetadataForNoWatchFs::File(FileChangeMetadata::Digest(file))
+            }
+            RawPathMetadata::Symlink { at, to } => RawPathMetadataForNoWatchFs::Symlink { at, to },
+        }
+    }
+}
+
 /// Stores the relevant metadata for a path.
 #[derive(Debug, Dupe, PartialEq, Eq, Clone)]
 pub enum PathMetadata {

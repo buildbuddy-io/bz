@@ -421,6 +421,14 @@ impl FileOpsDelegate for BundledFileOpsDelegate {
         Ok(metadata)
     }
 
+    async fn read_path_metadata_if_exists_for_no_watchfs(
+        &self,
+        _ctx: &mut DiceComputations<'_>,
+        path: &'async_trait CellRelativePath,
+    ) -> buck2_error::Result<Option<RawPathMetadata>> {
+        self.read_path_metadata_if_exists(path)
+    }
+
     fn eq_token(&self) -> PartialEqAny<'_> {
         PartialEqAny::always_false()
     }

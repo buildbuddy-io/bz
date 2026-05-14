@@ -34,11 +34,14 @@ use tokio::sync::Semaphore;
 
 use crate::cas_digest::CasDigestConfig;
 use crate::external_symlink::ExternalSymlink;
+use crate::file_ops::metadata::FileChangeMetadata;
+use crate::file_ops::metadata::FileContentsProxy;
 use crate::file_ops::metadata::FileDigest;
 use crate::file_ops::metadata::FileDigestConfig;
 use crate::file_ops::metadata::FileMetadata;
 use crate::file_ops::metadata::RawDirEntry;
 use crate::file_ops::metadata::RawPathMetadata;
+use crate::file_ops::metadata::RawPathMetadataForNoWatchFs;
 use crate::file_ops::metadata::RawSymlink;
 use crate::file_ops::metadata::Symlink;
 use crate::file_ops::metadata::TrackedFileDigest;
@@ -174,6 +177,23 @@ impl IoProvider for FsIoProvider {
         .await?
     }
 
+    async fn read_path_metadata_if_exists_for_no_watchfs_impl(
+        &self,
+        path: ProjectRelativePathBuf,
+    ) -> buck2_error::Result<Option<RawPathMetadataForNoWatchFs<ProjectRelativePathBuf>>> {
+        let fs = self.fs.dupe();
+        let path = path.into_forward_relative_path_buf();
+
+        tokio::task::spawn_blocking(move || {
+            let meta = read_path_metadata_for_no_watchfs(fs.root(), &path)?.map(
+                |raw_meta_or_redirection| raw_meta_or_redirection.map(ProjectRelativePathBuf::from),
+            );
+
+            Ok(meta)
+        })
+        .await?
+    }
+
     async fn settle(&self) -> buck2_error::Result<()> {
         Ok(())
     }
@@ -261,6 +281,59 @@ fn read_path_metadata<P: AsRef<AbsPath>>(
     Ok(Some(meta))
 }
 
+fn read_path_metadata_for_no_watchfs<P: AsRef<AbsPath>>(
+    root: P,
+    relpath: &ForwardRelativePath,
+) -> buck2_error::Result<Option<RawPathMetadataForNoWatchFs<ForwardRelativePathBuf>>> {
+    let root = root.as_ref();
+
+    let mut relpath_components = relpath.iter();
+    let mut meta = None;
+
+    let curr_path_capacity = relpath.as_str().len();
+
+    let mut curr_abspath = root.to_owned();
+    curr_abspath.reserve(relpath.as_path().as_os_str().len());
+
+    let curr_abspath_capacity = curr_abspath.capacity();
+
+    let curr_path = ForwardRelativePathBuf::with_capacity(curr_path_capacity);
+
+    let mut curr = PathAndAbsPath {
+        path: curr_path,
+        abspath: curr_abspath,
+    };
+
+    while let Some(c) = relpath_components.next() {
+        // We track both paths so we don't need to convert the abspath back to a relative path if
+        // we hit a symlink.
+        curr.push(c);
+
+        match ExactPathMetadata::from_exact_path(&curr)? {
+            ExactPathMetadata::DoesNotExist => return Ok(None),
+            ExactPathMetadata::Symlink(symlink) => {
+                let rest: ForwardRelativePathBuf = relpath_components.collect();
+                return Ok(Some(
+                    symlink.into_raw_path_metadata_for_no_watchfs(curr, rest)?,
+                ));
+            }
+            ExactPathMetadata::FileOrDirectory(path_meta) => {
+                meta = Some(path_meta);
+            }
+        };
+    }
+
+    let meta = meta.ok_or_else(|| internal_error!("Attempted to access empty path"))?;
+    let meta = convert_metadata_for_no_watchfs(meta)?;
+
+    if cfg!(test) {
+        assert!(curr.abspath.as_os_str().len() <= curr_abspath_capacity);
+        assert!(curr.path.as_str().len() <= curr_path_capacity);
+    }
+
+    Ok(Some(meta))
+}
+
 fn convert_metadata(
     path: &PathAndAbsPath,
     meta: std::fs::Metadata,
@@ -281,6 +354,57 @@ fn convert_metadata(
     };
 
     Ok(meta)
+}
+
+fn convert_metadata_for_no_watchfs(
+    meta: std::fs::Metadata,
+) -> buck2_error::Result<RawPathMetadataForNoWatchFs<ForwardRelativePathBuf>> {
+    let meta = if meta.is_dir() {
+        RawPathMetadataForNoWatchFs::Directory
+    } else {
+        RawPathMetadataForNoWatchFs::File(FileChangeMetadata::ContentsProxy(file_contents_proxy(
+            &meta,
+        )))
+    };
+
+    Ok(meta)
+}
+
+#[cfg(unix)]
+fn file_contents_proxy(meta: &std::fs::Metadata) -> FileContentsProxy {
+    use std::os::unix::fs::MetadataExt;
+
+    FileContentsProxy::new(
+        meta.len(),
+        meta.mtime(),
+        meta.mtime_nsec(),
+        meta.ctime(),
+        meta.ctime_nsec(),
+        meta.ino(),
+        is_executable(meta),
+    )
+}
+
+#[cfg(not(unix))]
+fn file_contents_proxy(meta: &std::fs::Metadata) -> FileContentsProxy {
+    let modified = meta
+        .modified()
+        .ok()
+        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok());
+    let modified_secs = modified.as_ref().map_or(0, |time| time.as_secs() as i64);
+    let modified_nanos = modified
+        .as_ref()
+        .map_or(0, |time| time.subsec_nanos() as i64);
+
+    FileContentsProxy::new(
+        meta.len(),
+        modified_secs,
+        modified_nanos,
+        modified_secs,
+        modified_nanos,
+        0,
+        is_executable(meta),
+    )
 }
 
 enum ExactPathMetadata {
@@ -350,6 +474,32 @@ impl ExactPathSymlinkMetadata {
                     rel_link_path.push(&rest);
                 }
                 RawPathMetadata::Symlink {
+                    at: curr.path,
+                    to: RawSymlink::Relative(link_path, Arc::new(Symlink::new(rel_link_path))),
+                }
+            }
+        })
+    }
+
+    fn into_raw_path_metadata_for_no_watchfs(
+        self,
+        curr: PathAndAbsPath,
+        rest: ForwardRelativePathBuf,
+    ) -> buck2_error::Result<RawPathMetadataForNoWatchFs<ForwardRelativePathBuf>> {
+        Ok(match self {
+            Self::ExternalSymlink(link_path) => RawPathMetadataForNoWatchFs::Symlink {
+                at: curr.path,
+                to: RawSymlink::External(Arc::new(ExternalSymlink::new(link_path, rest)?)),
+            },
+            Self::InternalSymlink(mut link_path, mut rel_link_path) => {
+                link_path.push(&rest);
+                // FIXME(JakobDegen): The `relative_path` crate has a misbehavior where it pushes a
+                // trailing `/` onto the path if this is empty. One of many reasons to stop using
+                // that crate.
+                if !rest.is_empty() {
+                    rel_link_path.push(&rest);
+                }
+                RawPathMetadataForNoWatchFs::Symlink {
                     at: curr.path,
                     to: RawSymlink::Relative(link_path, Arc::new(Symlink::new(rel_link_path))),
                 }
