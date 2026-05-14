@@ -14,8 +14,6 @@ use std::collections::BTreeSet;
 use std::collections::VecDeque;
 use std::fs;
 use std::path::Path;
-use std::process::Command;
-use std::process::Stdio;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::sync::LazyLock;
@@ -24,6 +22,8 @@ use std::time::Duration;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 
+use crate::bzlmod_archive::archive_kind_from_type_or_url;
+use crate::bzlmod_archive::extract_archive;
 use allocative::Allocative;
 use buck2_core::buck2_env;
 use buck2_core::cells::CellAliasResolver;
@@ -4436,47 +4436,21 @@ fn extract_bzlmod_archive_override(
     let archive_type = archive_override
         .archive_type
         .as_deref()
-        .or_else(|| archive.extension().and_then(|ext| ext.to_str()))
-        .unwrap_or("");
-    let mut command = if archive_type == "zip" || archive_override.url.ends_with(".zip") {
-        let mut command = Command::new("unzip");
-        command.arg("-q").arg(archive).arg("-d").arg(extract_dir);
-        command
-    } else if matches!(
-        archive_type,
-        "tar" | "gz" | "tgz" | "tar.gz" | "tar.xz" | "tar.bz2"
-    ) || archive_override.url.ends_with(".tar.gz")
-        || archive_override.url.ends_with(".tgz")
-        || archive_override.url.ends_with(".tar.xz")
-        || archive_override.url.ends_with(".tar.bz2")
-        || archive_override.url.ends_with(".tar")
-    {
-        let mut command = Command::new("tar");
-        command.arg("-xf").arg(archive).arg("-C").arg(extract_dir);
-        command
-    } else {
-        return Err(buck2_error!(
-            buck2_error::ErrorTag::Input,
-            "unsupported archive_override archive type for `{}`",
+        .or_else(|| archive.extension().and_then(|ext| ext.to_str()));
+    let kind =
+        archive_kind_from_type_or_url(archive_type, &archive_override.url).ok_or_else(|| {
+            buck2_error!(
+                buck2_error::ErrorTag::Input,
+                "unsupported archive_override archive type for `{}`",
+                archive_override.url
+            )
+        })?;
+    extract_archive(archive, extract_dir, kind, "", 0, &[]).with_buck_error_context(|| {
+        format!(
+            "archive_override extraction failed for `{}`",
             archive_override.url
-        ));
-    };
-
-    let output = command
-        .stderr(Stdio::piped())
-        .stdout(Stdio::null())
-        .output()
-        .buck_error_context("Could not run archive_override extractor")?;
-    if !output.status.success() {
-        return Err(buck2_error!(
-            buck2_error::ErrorTag::Input,
-            "archive_override extraction failed for `{}` with exit code {:?}: {}",
-            archive_override.url,
-            output.status,
-            String::from_utf8_lossy(&output.stderr)
-        ));
-    }
-    Ok(())
+        )
+    })
 }
 
 fn verify_bzlmod_archive_integrity(

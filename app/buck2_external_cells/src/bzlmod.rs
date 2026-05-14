@@ -12,15 +12,14 @@ use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::fs;
 use std::io::ErrorKind;
-use std::process::Command;
-use std::process::ExitStatus;
-use std::process::Stdio;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::OnceLock;
 
 use base64::Engine;
 use buck2_build_api::actions::artifact::get_artifact_fs::GetArtifactFs;
+use buck2_common::bzlmod_archive::archive_kind_from_type_or_url;
+use buck2_common::bzlmod_archive::extract_archive as extract_bazel_archive;
 use buck2_common::bzlmod_patch::apply_unified_patch_file;
 use buck2_common::dice::data::HasIoProvider;
 use buck2_common::file_ops::delegate::FileOpsDelegate;
@@ -102,11 +101,6 @@ static BZLMOD_MATERIALIZATION_LOCKS: OnceLock<
 enum BzlmodError {
     #[error("Unsupported bzlmod archive type for `{0}`")]
     UnsupportedArchiveType(String),
-    #[error("Error extracting bzlmod module, exit code: {exit_code:?}, stderr:\n{stderr}")]
-    ExtractFailed {
-        exit_code: ExitStatus,
-        stderr: String,
-    },
     #[error("Expected extracted bzlmod module directory at `{0}`")]
     MissingExtractedDirectory(String),
     #[error("Expected bzlmod materialization to create a directory")]
@@ -1510,52 +1504,11 @@ fn extract_archive(
     let archive_type = setup
         .archive_type
         .as_deref()
-        .or_else(|| archive.as_path().extension().and_then(|ext| ext.to_str()))
-        .unwrap_or("");
-
-    let mut command = if archive_type == "zip" || setup.url.ends_with(".zip") {
-        let mut command = Command::new("unzip");
-        command
-            .arg("-q")
-            .arg(archive.as_path())
-            .arg("-d")
-            .arg(temp.as_path());
-        command
-    } else if matches!(
-        archive_type,
-        "tar" | "gz" | "tgz" | "tar.gz" | "tar.xz" | "tar.bz2"
-    ) || setup.url.ends_with(".tar.gz")
-        || setup.url.ends_with(".tgz")
-        || setup.url.ends_with(".tar.xz")
-        || setup.url.ends_with(".tar.bz2")
-        || setup.url.ends_with(".tar")
-    {
-        let mut command = Command::new("tar");
-        command
-            .arg("-xf")
-            .arg(archive.as_path())
-            .arg("-C")
-            .arg(temp.as_path());
-        command
-    } else {
-        return Err(BzlmodError::UnsupportedArchiveType(setup.url.to_string()).into());
-    };
-
-    let output = command
-        .stderr(Stdio::piped())
-        .stdout(Stdio::null())
-        .output()
-        .buck_error_context("Could not run archive extractor for bzlmod external cell")?;
-
-    if !output.status.success() {
-        return Err(BzlmodError::ExtractFailed {
-            exit_code: output.status,
-            stderr: String::from_utf8_lossy(&output.stderr).to_string(),
-        }
-        .into());
-    }
-
-    Ok(())
+        .or_else(|| archive.as_path().extension().and_then(|ext| ext.to_str()));
+    let kind = archive_kind_from_type_or_url(archive_type, &setup.url)
+        .ok_or_else(|| BzlmodError::UnsupportedArchiveType(setup.url.to_string()))?;
+    extract_bazel_archive(archive.as_path(), temp.as_path(), kind, "", 0, &[])
+        .buck_error_context("Could not extract archive for bzlmod external cell")
 }
 
 fn apply_patch(

@@ -29,6 +29,8 @@ use allocative::Allocative;
 use async_compression::tokio::bufread::GzipDecoder;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
+use buck2_common::bzlmod_archive::archive_kind_from_type_or_url;
+use buck2_common::bzlmod_archive::extract_archive;
 use buck2_common::bzlmod_patch::apply_unified_patch_file;
 use buck2_common::dice::cells::HasCellResolver;
 use buck2_common::file_ops::dice::DiceFileComputations;
@@ -3190,53 +3192,40 @@ fn repository_ctx_download_to_path<'v>(
 fn repository_ctx_extract_archive(
     archive: &Path,
     output: &Path,
+    archive_type: &str,
+    archive_url: &str,
     strip_prefix: &str,
     strip_components: i32,
 ) -> buck2_error::Result<()> {
-    fs::create_dir_all(output).map_err(|e| BazelRepositoryError::RepositoryCtxExtractArchive {
-        archive: archive.to_string_lossy().into_owned(),
-        error: e.to_string(),
-    })?;
-    let archive_str = archive.to_string_lossy();
-    let mut command = if archive_str.ends_with(".zip") {
-        let mut command = Command::new("unzip");
-        command.arg("-q").arg(archive).arg("-d").arg(output);
-        command
-    } else {
-        let mut command = Command::new("tar");
-        command.arg("-xf").arg(archive).arg("-C").arg(output);
-        let strip_components = if strip_components > 0 {
-            strip_components
-        } else if !strip_prefix.is_empty() {
-            strip_prefix
-                .split('/')
-                .filter(|part| !part.is_empty())
-                .count()
-                .try_into()
-                .unwrap_or(i32::MAX)
-        } else {
-            0
-        };
-        if strip_components > 0 {
-            command.arg(format!("--strip-components={strip_components}"));
-        }
-        command
-    };
-    let output =
-        command
-            .output()
-            .map_err(|e| BazelRepositoryError::RepositoryCtxExtractArchive {
-                archive: archive.to_string_lossy().into_owned(),
-                error: e.to_string(),
-            })?;
-    if !output.status.success() {
+    if strip_components < 0 {
         return Err(BazelRepositoryError::RepositoryCtxExtractArchive {
             archive: archive.to_string_lossy().into_owned(),
-            error: String::from_utf8_lossy(&output.stderr).into_owned(),
+            error: format!("strip_components must be non-negative, got {strip_components}"),
         }
         .into());
     }
-    Ok(())
+    let kind = archive_kind_from_type_or_url(
+        (!archive_type.is_empty()).then_some(archive_type),
+        archive_url,
+    )
+    .or_else(|| archive_kind_from_type_or_url(None, &archive.to_string_lossy()))
+    .ok_or_else(|| BazelRepositoryError::RepositoryCtxExtractArchive {
+        archive: archive.to_string_lossy().into_owned(),
+        error: "unsupported archive type".to_owned(),
+    })?;
+    extract_archive(
+        archive,
+        output,
+        kind,
+        strip_prefix,
+        strip_components as u32,
+        &[],
+    )
+    .map_err(|e| BazelRepositoryError::RepositoryCtxExtractArchive {
+        archive: archive.to_string_lossy().into_owned(),
+        error: e.to_string(),
+    })
+    .map_err(Into::into)
 }
 
 #[starlark_module]
@@ -3735,6 +3724,10 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
             .into());
         }
         let urls = module_ctx_urls_from_value(url, eval.heap())?;
+        let archive_url = urls
+            .first()
+            .cloned()
+            .unwrap_or_else(|| archive_path_string.clone());
         let (result, success) = repository_ctx_download_to_path(
             urls,
             archive_path_string.clone(),
@@ -3760,6 +3753,8 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
         let result = match repository_ctx_extract_archive(
             &archive_path,
             &output_path,
+            r#type,
+            &archive_url,
             strip_prefix,
             strip_components,
         ) {
