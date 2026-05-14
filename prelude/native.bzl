@@ -518,10 +518,7 @@ def _prebuilt_apple_xcframework_macro_stub(**kwargs):
     )
 
 def _is_bazel_compat_cell():
-    cell = get_cell_name()
-    if cell == "bazel_tools" or cell.startswith("bzlmod_"):
-        return True
-    return _read_config("buildfile", "includes", "") == "prelude//bazel/prelude.bzl"
+    return _read_config("bazel", "compatibility", "false") in ("true", "True")
 
 def _filegroup_macro_stub(**kwargs):
     if _is_bazel_compat_cell():
