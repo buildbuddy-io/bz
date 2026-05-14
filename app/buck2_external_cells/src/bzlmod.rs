@@ -450,6 +450,14 @@ fn write_cc_autoconf_repo(
 }
 
 fn write_cc_autoconf_support_files(dest: &AbsNormPath) -> buck2_error::Result<()> {
+    let cc = host_tool_path("CC", "cc");
+    let cxx = host_tool_path("CXX", "c++");
+    let ar = if std::env::consts::OS == "macos" {
+        host_tool_path("LIBTOOL", "libtool")
+    } else {
+        host_tool_path("AR", "ar")
+    };
+
     fs_util::write(
         dest.join(ForwardRelativePath::new("cc_toolchain_config.bzl")?),
         LOCAL_CONFIG_CC_TOOLCHAIN_CONFIG,
@@ -462,7 +470,8 @@ fn write_cc_autoconf_support_files(dest: &AbsNormPath) -> buck2_error::Result<()
     .categorize_internal()?;
     fs_util::write(
         dest.join(ForwardRelativePath::new("cc_wrapper.sh")?),
-        r#"#!/usr/bin/env bash
+        format!(
+            r#"#!/usr/bin/env bash
 has_c_source=0
 has_cxx_source=0
 previous_arg=
@@ -495,61 +504,60 @@ for arg in "$@"; do
 done
 
 if [[ "$has_c_source" == "1" && "$has_cxx_source" == "0" ]]; then
-  exec cc "$@"
+  exec {} "$@"
 fi
 
-exec c++ "$@"
+exec {} "$@"
 "#,
+            shell_quote(&cc),
+            shell_quote(&cxx),
+        ),
     )
     .categorize_internal()?;
     fs_util::write(
         dest.join(ForwardRelativePath::new("ar_wrapper.sh")?),
-        r#"#!/usr/bin/env bash
-if [[ "$(uname -s)" == "Darwin" ]]; then
-  exec libtool "$@"
-fi
-exec ar "$@"
-"#,
+        format!("#!/usr/bin/env bash\nexec {} \"$@\"\n", shell_quote(&ar)),
     )
     .categorize_internal()?;
+    write_missing_tool_wrapper(dest, "false_wrapper.sh", "stub armeabi-v7a C++ toolchain")?;
     fs_util::write(
         dest.join(ForwardRelativePath::new("dwp_wrapper.sh")?),
-        "#!/usr/bin/env bash\nexec false \"$@\"\n",
+        host_tool_wrapper("DWP", "dwp"),
     )
     .categorize_internal()?;
     fs_util::write(
         dest.join(ForwardRelativePath::new("gcov_wrapper.sh")?),
-        "#!/usr/bin/env bash\nexec gcov \"$@\"\n",
+        host_tool_wrapper("GCOV", "gcov"),
     )
     .categorize_internal()?;
     fs_util::write(
         dest.join(ForwardRelativePath::new("llvm_profdata_wrapper.sh")?),
-        "#!/usr/bin/env bash\nexec llvm-profdata \"$@\"\n",
+        host_tool_wrapper("LLVM_PROFDATA", "llvm-profdata"),
     )
     .categorize_internal()?;
     fs_util::write(
         dest.join(ForwardRelativePath::new("nm_wrapper.sh")?),
-        "#!/usr/bin/env bash\nexec nm \"$@\"\n",
+        host_tool_wrapper("NM", "nm"),
     )
     .categorize_internal()?;
     fs_util::write(
         dest.join(ForwardRelativePath::new("objcopy_wrapper.sh")?),
-        "#!/usr/bin/env bash\nexec objcopy \"$@\"\n",
+        host_tool_wrapper("OBJCOPY", "objcopy"),
     )
     .categorize_internal()?;
     fs_util::write(
         dest.join(ForwardRelativePath::new("objdump_wrapper.sh")?),
-        "#!/usr/bin/env bash\nexec objdump \"$@\"\n",
+        host_tool_wrapper("OBJDUMP", "objdump"),
     )
     .categorize_internal()?;
     fs_util::write(
         dest.join(ForwardRelativePath::new("strip_wrapper.sh")?),
-        "#!/usr/bin/env bash\nexec strip \"$@\"\n",
+        host_tool_wrapper("STRIP", "strip"),
     )
     .categorize_internal()?;
     fs_util::write(
         dest.join(ForwardRelativePath::new("deps_scanner_wrapper.sh")?),
-        "#!/usr/bin/env bash\nexec cc \"$@\"\n",
+        format!("#!/usr/bin/env bash\nexec {} \"$@\"\n", shell_quote(&cc)),
     )
     .categorize_internal()?;
     fs_util::write(
@@ -560,6 +568,7 @@ exec ar "$@"
     for wrapper in [
         "cc_wrapper.sh",
         "ar_wrapper.sh",
+        "false_wrapper.sh",
         "dwp_wrapper.sh",
         "gcov_wrapper.sh",
         "llvm_profdata_wrapper.sh",
@@ -585,6 +594,66 @@ exec ar "$@"
     )
     .categorize_internal()?;
     Ok(())
+}
+
+fn host_tool_wrapper(env_var: &str, fallback: &str) -> String {
+    match find_host_tool_path(env_var, fallback) {
+        Some(path) => format!("#!/usr/bin/env bash\nexec {} \"$@\"\n", shell_quote(&path)),
+        None => missing_tool_wrapper_content(fallback),
+    }
+}
+
+fn write_missing_tool_wrapper(
+    dest: &AbsNormPath,
+    path: &str,
+    description: &str,
+) -> buck2_error::Result<()> {
+    fs_util::write(
+        dest.join(ForwardRelativePath::new(path)?),
+        missing_tool_wrapper_content(description),
+    )
+    .categorize_internal()
+}
+
+fn missing_tool_wrapper_content(description: &str) -> String {
+    format!(
+        "#!/usr/bin/env bash\n\
+echo \"Buck2 generated local_config_cc cannot execute {description}.\" >&2\n\
+exit 1\n",
+    )
+}
+
+fn host_tool_path(env_var: &str, fallback: &str) -> String {
+    find_host_tool_path(env_var, fallback).unwrap_or_else(|| fallback.to_owned())
+}
+
+fn find_host_tool_path(env_var: &str, fallback: &str) -> Option<String> {
+    if let Ok(value) = std::env::var(env_var) {
+        if !value.trim().is_empty() {
+            return Some(value);
+        }
+    }
+    find_executable_on_path(fallback)
+}
+
+fn find_executable_on_path(name: &str) -> Option<String> {
+    if name.contains('/') || name.contains('\\') {
+        let path = std::path::Path::new(name);
+        return path.exists().then(|| path.to_string_lossy().into_owned());
+    }
+
+    let path = std::env::var_os("PATH")?;
+    for directory in std::env::split_paths(&path) {
+        let candidate = directory.join(name);
+        if candidate.is_file() {
+            return Some(candidate.to_string_lossy().into_owned());
+        }
+    }
+    None
+}
+
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
 }
 
 fn local_config_cc_build_file() -> String {
@@ -650,6 +719,11 @@ cc_library(name = "malloc")
 filegroup(
     name = "empty",
     srcs = [],
+)
+
+filegroup(
+    name = "stub_tool_files",
+    srcs = ["false_wrapper.sh"],
 )
 
 filegroup(
@@ -805,14 +879,14 @@ cc_toolchain(
     name = "cc-compiler-armeabi-v7a",
     toolchain_identifier = "stub_armeabi-v7a",
     toolchain_config = ":stub_armeabi-v7a",
-    all_files = ":empty",
-    ar_files = ":empty",
-    as_files = ":empty",
-    compiler_files = ":empty",
-    dwp_files = ":empty",
-    linker_files = ":empty",
-    objcopy_files = ":empty",
-    strip_files = ":empty",
+    all_files = ":stub_tool_files",
+    ar_files = ":stub_tool_files",
+    as_files = ":stub_tool_files",
+    compiler_files = ":stub_tool_files",
+    dwp_files = ":stub_tool_files",
+    linker_files = ":stub_tool_files",
+    objcopy_files = ":stub_tool_files",
+    strip_files = ":stub_tool_files",
     supports_param_files = True,
 )
 
@@ -874,17 +948,17 @@ def _tool_path(name, path):
 
 def _impl(ctx):
     tool_paths = [
-        _tool_path("ar", "/bin/false"),
-        _tool_path("cpp", "/bin/false"),
-        _tool_path("gcc", "/bin/false"),
-        _tool_path("gcov", "/bin/false"),
-        _tool_path("ld", "/bin/false"),
-        _tool_path("nm", "/bin/false"),
-        _tool_path("objcopy", "/bin/false"),
-        _tool_path("objdump", "/bin/false"),
-        _tool_path("strip", "/bin/false"),
-        _tool_path("dwp", "/bin/false"),
-        _tool_path("llvm-profdata", "/bin/false"),
+        _tool_path("ar", "false_wrapper.sh"),
+        _tool_path("cpp", "false_wrapper.sh"),
+        _tool_path("gcc", "false_wrapper.sh"),
+        _tool_path("gcov", "false_wrapper.sh"),
+        _tool_path("ld", "false_wrapper.sh"),
+        _tool_path("nm", "false_wrapper.sh"),
+        _tool_path("objcopy", "false_wrapper.sh"),
+        _tool_path("objdump", "false_wrapper.sh"),
+        _tool_path("strip", "false_wrapper.sh"),
+        _tool_path("dwp", "false_wrapper.sh"),
+        _tool_path("llvm-profdata", "false_wrapper.sh"),
     ]
     return [cc_common.create_cc_toolchain_config_info(
         ctx = ctx,
@@ -927,7 +1001,11 @@ fn write_shell_config_repo(
     ] {
         let is_host = host_platform_os_constraint() == Some(os);
         let sh_path = if is_host {
-            std::env::var("BAZEL_SH").unwrap_or_else(|_| default_shell_path.to_owned())
+            std::env::var("BAZEL_SH")
+                .ok()
+                .filter(|path| !path.trim().is_empty())
+                .or_else(|| find_executable_on_path("bash"))
+                .unwrap_or_else(|| default_shell_path.to_owned())
         } else {
             default_shell_path.to_owned()
         };
@@ -973,14 +1051,35 @@ fn write_python_hub_repo(
     _setup: &BzlmodPythonHubSetup,
 ) -> buck2_error::Result<()> {
     write_generated_module_file(dest, "pythons_hub")?;
-    let build = r#"toolchain(
-    name = "python_3_11_toolchain",
-    toolchain = ":python_3_11",
-    toolchain_type = "@rules_python//python:toolchain_type",
-)
+    let build = r#"package(default_visibility = ["//visibility:public"])
+
+exports_files([
+    "interpreters.bzl",
+    "versions.bzl",
+])
+"#;
+    let interpreters = r#"# Generated by Buck2 for an unpopulated rules_python hub.
+
+INTERPRETER_LABELS = {}
+"#;
+    let versions = r#"# Generated by Buck2 for an unpopulated rules_python hub.
+
+DEFAULT_PYTHON_VERSION = ""
+MINOR_MAPPING = {}
+PYTHON_VERSIONS = []
 "#;
     fs_util::write(dest.join(ForwardRelativePath::new("BUILD.bazel")?), build)
         .categorize_internal()?;
+    fs_util::write(
+        dest.join(ForwardRelativePath::new("interpreters.bzl")?),
+        interpreters,
+    )
+    .categorize_internal()?;
+    fs_util::write(
+        dest.join(ForwardRelativePath::new("versions.bzl")?),
+        versions,
+    )
+    .categorize_internal()?;
     Ok(())
 }
 
