@@ -14,25 +14,38 @@ use std::fmt::Write;
 use std::sync::Arc;
 
 use allocative::Allocative;
+use buck2_common::package_listing::listing::PackageListing;
 use buck2_common::starlark_profiler::StarlarkProfileDataAndStatsDyn;
 use buck2_core::build_file_path::BuildFilePath;
 use buck2_core::bzl::ImportPath;
 use buck2_core::package::PackageLabel;
+use buck2_core::package::package_relative_path::PackageRelativePath;
 use buck2_core::pattern::pattern::PackageSpec;
 use buck2_core::pattern::pattern_type::PatternType;
 use buck2_core::target::label::label::TargetLabel;
 use buck2_core::target::name::TargetName;
 use buck2_core::target::name::TargetNameRef;
 use dupe::Dupe;
+use dupe::OptionDupedExt;
 use gazebo::prelude::*;
 use itertools::Itertools;
 use pagable::PagablePanic;
 
+use crate::attrs::attr_type::string::StringLiteral;
 use crate::attrs::coerced_attr::CoercedAttr;
+use crate::attrs::coerced_deps_collector::CoercedDeps;
 use crate::attrs::inspect_options::AttrInspectOptions;
+use crate::attrs::spec::AttributeSpec;
+use crate::attrs::spec::internal::VISIBILITY_ATTRIBUTE;
+use crate::attrs::values::AttrValues;
 use crate::nodes::targets_map::TargetsMap;
+use crate::nodes::unconfigured::RuleKind;
 use crate::nodes::unconfigured::TargetNode;
 use crate::nodes::unconfigured::TargetNodeRef;
+use crate::package::Package;
+use crate::rule::Rule;
+use crate::rule::RuleIncomingTransition;
+use crate::rule_type::RuleType;
 use crate::super_package::SuperPackage;
 
 /// Heuristic to determine if a target is generated or not, used for UI things.
@@ -254,6 +267,8 @@ pub struct EvaluationResult {
     /// unlike a .bzl file, a build file (BUCK, TARGETS, etc) will only be loaded in
     /// its own cell, so we don't need a full ImportPath here.
     buildfile_path: Arc<BuildFilePath>,
+    package: Option<Arc<Package>>,
+    package_listing: Option<PackageListing>,
     imports: Vec<ImportPath>,
     super_package: SuperPackage,
     targets: TargetsMap,
@@ -263,12 +278,16 @@ pub struct EvaluationResult {
 impl EvaluationResult {
     pub fn new(
         buildfile_path: Arc<BuildFilePath>,
+        package: Option<Arc<Package>>,
+        package_listing: Option<PackageListing>,
         imports: Vec<ImportPath>,
         super_package: SuperPackage,
         targets: TargetsMap,
     ) -> Self {
         Self {
             buildfile_path,
+            package,
+            package_listing,
             imports,
             super_package,
             targets,
@@ -301,27 +320,72 @@ impl EvaluationResult {
         self.targets.get(name)
     }
 
+    fn maybe_bazel_input_file_target(
+        &self,
+        name: &TargetNameRef,
+    ) -> buck2_error::Result<Option<TargetNode>> {
+        if !is_bazel_compat_build_file(&self.buildfile_path) {
+            return Ok(None);
+        }
+
+        let Some(package) = &self.package else {
+            return Ok(None);
+        };
+        let Some(package_listing) = &self.package_listing else {
+            return Ok(None);
+        };
+
+        let Ok(path) = PackageRelativePath::new(name.as_str()) else {
+            return Ok(None);
+        };
+
+        // Shallow Bazel package listings only contain top-level files. If a
+        // slashy source label is requested directly or from another package,
+        // synthesize the Bazel input-file target and let later source artifact
+        // access report any real missing-file error.
+        let is_known_path =
+            package_listing.get_file(path).is_some() || package_listing.get_dir(path).is_some();
+        if !is_known_path && !name.as_str().contains('/') {
+            return Ok(None);
+        }
+
+        Ok(Some(bazel_input_file_target(
+            package.dupe(),
+            name,
+            &self.buildfile_path,
+            &self.super_package,
+        )?))
+    }
+
+    pub fn resolve_target_node(&self, path: &TargetNameRef) -> buck2_error::Result<TargetNode> {
+        if let Some(target) = self.get_target(path) {
+            return Ok(target.to_owned());
+        }
+        if let Some(target) = self.maybe_bazel_input_file_target(path)? {
+            return Ok(target);
+        }
+        Err(self.missing_target_error(path).into())
+    }
+
+    fn missing_target_error(&self, path: &TargetNameRef) -> MissingTargetError {
+        let similar_targets =
+            SuggestedSimilarTargets::suggest(path, self.package().dupe(), self.targets.keys());
+        MissingTargetError {
+            target: path.to_owned(),
+            package: self.package().dupe(),
+            num_targets: self.targets.len(),
+            buildfile_path: self.buildfile_path.dupe(),
+            all_targets: AllTargetsDisplay::new(path, self.package().dupe(), self.targets.values()),
+            similar_targets,
+        }
+    }
+
     pub fn resolve_target<'a>(
         &'a self,
         path: &TargetNameRef,
     ) -> buck2_error::Result<TargetNodeRef<'a>> {
-        self.get_target(path).ok_or_else(|| {
-            let similar_targets =
-                SuggestedSimilarTargets::suggest(path, self.package().dupe(), self.targets.keys());
-            MissingTargetError {
-                target: path.to_owned(),
-                package: self.package().dupe(),
-                num_targets: self.targets.len(),
-                buildfile_path: self.buildfile_path.dupe(),
-                all_targets: AllTargetsDisplay::new(
-                    path,
-                    self.package().dupe(),
-                    self.targets.values(),
-                ),
-                similar_targets,
-            }
-            .into()
-        })
+        self.get_target(path)
+            .ok_or_else(|| self.missing_target_error(path).into())
     }
 
     pub fn apply_spec<T: PatternType>(
@@ -346,12 +410,11 @@ impl EvaluationResult {
                 let mut label_to_node = BTreeMap::new();
                 let mut missing_targets = Vec::new();
                 for (target_name, extra) in targets {
-                    let node = self.get_target(target_name.as_ref());
-                    match node {
-                        Some(node) => {
-                            label_to_node.insert((target_name, extra), node.to_owned());
+                    match self.resolve_target_node(target_name.as_ref()) {
+                        Ok(node) => {
+                            label_to_node.insert((target_name, extra), node);
                         }
-                        None => missing_targets
+                        Err(_) => missing_targets
                             .push(TargetLabel::new(self.package(), target_name.as_ref())),
                     }
                 }
@@ -374,6 +437,72 @@ impl EvaluationResult {
             }
         }
     }
+}
+
+fn is_bazel_compat_build_file(buildfile_path: &BuildFilePath) -> bool {
+    let cell = buildfile_path.cell();
+    let cell = cell.as_str();
+    let filename = buildfile_path.filename().as_str();
+    (cell == "root" || cell == "bazel_tools" || cell.starts_with("bzlmod_"))
+        && (filename == "BUILD" || filename == "BUILD.bazel")
+}
+
+fn bazel_input_file_rule() -> buck2_error::Result<Arc<Rule>> {
+    Ok(Arc::new(Rule {
+        attributes: AttributeSpec::from(Vec::new(), false, &RuleIncomingTransition::None, false)?,
+        rule_type: RuleType::BazelInputFile,
+        rule_kind: RuleKind::Normal,
+        cfg: RuleIncomingTransition::None,
+        uses_plugins: Vec::new(),
+        bazel_toolchains: Vec::new(),
+        bazel_output_attrs: Vec::new(),
+        bazel_implicit_outputs: Vec::new(),
+        bazel_output_to_genfiles: false,
+        is_bazel_rule: false,
+        is_bazel_build_setting: false,
+    }))
+}
+
+fn attr_id(
+    spec: &AttributeSpec,
+    name: &str,
+) -> buck2_error::Result<crate::attrs::spec::AttributeId> {
+    spec.attribute_id_by_name(name).ok_or_else(|| {
+        buck2_error::internal_error!("missing attr `{name}` in Bazel input-file rule")
+    })
+}
+
+fn bazel_input_file_target(
+    package: Arc<Package>,
+    name: &TargetNameRef,
+    buildfile_path: &BuildFilePath,
+    super_package: &SuperPackage,
+) -> buck2_error::Result<TargetNode> {
+    let rule = bazel_input_file_rule()?;
+    let name_id = attr_id(&rule.attributes, "name")?;
+    let visibility_id = attr_id(&rule.attributes, VISIBILITY_ATTRIBUTE.name)?;
+
+    let mut attr_values = AttrValues::with_capacity(2);
+    attr_values.push_sorted(
+        name_id,
+        CoercedAttr::String(StringLiteral(name.as_str().into())),
+    );
+    attr_values.push_sorted(
+        visibility_id,
+        CoercedAttr::Visibility(super_package.visibility().dupe()),
+    );
+    attr_values.shrink_to_fit();
+
+    Ok(TargetNode::new(
+        rule,
+        package,
+        TargetLabel::new(buildfile_path.package().dupe(), name),
+        attr_values,
+        CoercedDeps::default(),
+        None,
+        super_package.cfg_modifiers().duped(),
+        super_package.test_config_unification_rollout(),
+    ))
 }
 
 #[derive(Debug)]

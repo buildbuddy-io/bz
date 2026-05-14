@@ -131,7 +131,7 @@ impl TargetGraphCalculation for DiceComputations<'_> {
                     )
                 })?;
                 buck2_error::Ok((
-                    res.resolve_target(target.name())?.to_owned(),
+                    res.resolve_target_node(target.name())?,
                     res.super_package().dupe(),
                 ))
             })

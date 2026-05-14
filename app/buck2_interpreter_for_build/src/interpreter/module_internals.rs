@@ -77,16 +77,25 @@ impl From<ModuleInternals> for EvaluationResult {
         };
         let super_package = super_package.into_inner();
         let mut targets = recorder.take();
-        if let Some(package) = package {
+        if let Some(package) = &package {
             populate_bazel_input_file_targets(
-                &package,
+                package,
                 &buildfile_path,
                 &package_listing,
                 &super_package,
                 &mut targets,
             );
         }
-        EvaluationResult::new(buildfile_path, imports, super_package, targets)
+        let bazel_package_listing =
+            is_bazel_compat_build_file(&buildfile_path).then_some(package_listing);
+        EvaluationResult::new(
+            buildfile_path,
+            package,
+            bazel_package_listing,
+            imports,
+            super_package,
+            targets,
+        )
     }
 }
 

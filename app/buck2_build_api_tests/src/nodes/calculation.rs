@@ -126,6 +126,8 @@ async fn test_get_node() -> buck2_error::Result<()> {
             pkg.dupe(),
             FileNameBuf::unchecked_new("BUCK"),
         )),
+        None,
+        None,
         Vec::new(),
         SuperPackage::empty::<SuperPackageValuesImpl>()?,
         TargetsMap::from_iter([node1.dupe(), node2.dupe()]),
