@@ -22,6 +22,7 @@ use std::time::Duration;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 
+use crate::bzlmod_archive::ArchiveKind;
 use crate::bzlmod_archive::archive_kind_from_type_or_url;
 use crate::bzlmod_archive::extract_archive;
 use allocative::Allocative;
@@ -4359,11 +4360,7 @@ fn extract_bzlmod_archive_override(
     extract_dir: &Path,
 ) -> buck2_error::Result<()> {
     let primary_url = bzlmod_archive_override_primary_url(archive_override);
-    let archive_type = archive_override
-        .archive_type
-        .as_deref()
-        .or_else(|| archive.extension().and_then(|ext| ext.to_str()));
-    let kind = archive_kind_from_type_or_url(archive_type, primary_url).ok_or_else(|| {
+    let kind = bzlmod_archive_override_kind(archive_override).ok_or_else(|| {
         buck2_error!(
             buck2_error::ErrorTag::Input,
             "unsupported archive_override archive type for `{}`",
@@ -4373,6 +4370,13 @@ fn extract_bzlmod_archive_override(
     extract_archive(archive, extract_dir, kind, "", 0, &[]).with_buck_error_context(|| {
         format!("archive_override extraction failed for `{}`", primary_url)
     })
+}
+
+fn bzlmod_archive_override_kind(archive_override: &BzlmodArchiveOverride) -> Option<ArchiveKind> {
+    archive_kind_from_type_or_url(
+        archive_override.archive_type.as_deref(),
+        bzlmod_archive_override_primary_url(archive_override),
+    )
 }
 
 fn bzlmod_archive_override_primary_url(archive_override: &BzlmodArchiveOverride) -> &str {
@@ -7547,6 +7551,27 @@ mod tests {
                 "https://mirror1.example.com/source.tar.gz",
                 "https://mirror2.example.com/source.tar.gz",
             ]
+        );
+    }
+
+    #[test]
+    fn test_bzlmod_archive_override_infers_kind_from_url_without_type() {
+        let archive_override = super::bzlmod_archive_override_from_call(
+            "MODULE.bazel",
+            indoc!(
+                r#"
+                archive_override(
+                    module_name = "rules_webtesting",
+                    url = "https://github.com/bazelbuild/rules_webtesting/archive/e09c04b7d4d1e91ac1cd6f08283246d350c65379.tar.gz",
+                )
+                "#
+            ),
+        )
+        .unwrap();
+
+        assert_eq!(
+            super::bzlmod_archive_override_kind(&archive_override),
+            Some(crate::bzlmod_archive::ArchiveKind::TarGz)
         );
     }
 
