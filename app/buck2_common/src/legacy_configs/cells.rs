@@ -2817,7 +2817,13 @@ fn resolve_generated_bzlmod_repos(
             &mut generated,
             &mut generated_repo_declaring_cells,
         )?;
-        if module.dep.name == "rules_shell" {
+        // Bazel obtains these repos by evaluating module extensions. During
+        // Buck2's preliminary pass we still need enough fallback repos to load
+        // and evaluate those extensions, but the finalized graph should use the
+        // emitted repository_rule results below as the source of truth.
+        let use_generated_repo_fallbacks = !bzlmod_module_extension_results_complete;
+
+        if use_generated_repo_fallbacks && module.dep.name == "rules_shell" {
             for alias in &module.use_repo_aliases {
                 if alias != "local_config_shell" {
                     continue;
@@ -2841,7 +2847,7 @@ fn resolve_generated_bzlmod_repos(
             }
         }
 
-        if module.dep.name == "platforms" {
+        if use_generated_repo_fallbacks && module.dep.name == "platforms" {
             for import in
                 bzlmod_extension_imports_from_usages(&module.extension_usages, "host_platform")
             {
@@ -2869,7 +2875,7 @@ fn resolve_generated_bzlmod_repos(
             }
         }
 
-        if module.dep.name == "bazel_features" {
+        if use_generated_repo_fallbacks && module.dep.name == "bazel_features" {
             for import in
                 bzlmod_extension_imports_from_usages(&module.extension_usages, "version_extension")
             {
