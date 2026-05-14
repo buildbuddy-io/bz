@@ -10,8 +10,8 @@ def _bazel_genquery_impl(ctx):
         fail("genquery(compressed_output = True) is not implemented")
 
     fail(
-        "genquery is not implemented in Buck2. Bazel evaluates genquery by "
-        "running the query engine over the transitive closure of the rule's "
+        "genquery is not implemented in Buck2. Bazel evaluates genquery by " +
+        "running the query engine over the transitive closure of the rule's " +
         "scope; refusing to emit a placeholder output for expression `{}`.".format(
             ctx.attr.expression,
         ),
