@@ -173,5 +173,11 @@ mod tests {
                     .unwrap()
                     .contains("unzip_fdo")
         }));
+        assert!(c.files.iter().any(|file| {
+            file.path == "third_party/ijar/BUILD.bazel"
+                && std::str::from_utf8(file.contents)
+                    .unwrap()
+                    .contains("name = \"zipper\"")
+        }));
     }
 }

@@ -13,7 +13,9 @@ filegroup(
     ) + [
         "//bazel_tools/tools/allowlists/function_transition_allowlist:pkg_sources",
         "//bazel_tools/src/conditions:pkg_sources",
+        "//bazel_tools/src/main/cpp/util:pkg_sources",
         "//bazel_tools/src/tools/launcher:pkg_sources",
+        "//bazel_tools/third_party/ijar:pkg_sources",
         "//bazel_tools/tools/android:pkg_sources",
         "//bazel_tools/tools/bash:pkg_sources",
         "//bazel_tools/tools/bash/runfiles:pkg_sources",
