@@ -38,6 +38,7 @@ rust_library(
         "//app/buck2_execute:buck2_execute",
         "//app/buck2_external_cells_bundled:buck2_external_cells_bundled",
         "//app/buck2_fs:buck2_fs",
+        "//app/buck2_http:buck2_http",
         "//app/buck2_interpreter_for_build:buck2_interpreter_for_build",
         "//app/buck2_util:buck2_util",
         "//dice/dice:dice",
