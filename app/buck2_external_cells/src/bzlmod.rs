@@ -21,6 +21,7 @@ use std::sync::OnceLock;
 
 use base64::Engine;
 use buck2_build_api::actions::artifact::get_artifact_fs::GetArtifactFs;
+use buck2_common::bzlmod_patch::apply_unified_patch_file;
 use buck2_common::dice::data::HasIoProvider;
 use buck2_common::file_ops::delegate::FileOpsDelegate;
 use buck2_common::file_ops::dice::ReadFileProxy;
@@ -103,11 +104,6 @@ enum BzlmodError {
     UnsupportedArchiveType(String),
     #[error("Error extracting bzlmod module, exit code: {exit_code:?}, stderr:\n{stderr}")]
     ExtractFailed {
-        exit_code: ExitStatus,
-        stderr: String,
-    },
-    #[error("Error applying bzlmod patch, exit code: {exit_code:?}, stderr:\n{stderr}")]
-    PatchFailed {
         exit_code: ExitStatus,
         stderr: String,
     },
@@ -1569,25 +1565,8 @@ fn apply_patch(
     patch_strip: u32,
 ) -> buck2_error::Result<()> {
     let patch = project_fs.resolve(patch);
-    let output = Command::new("patch")
-        .current_dir(dest.as_path())
-        .arg(format!("-p{patch_strip}"))
-        .arg("-i")
-        .arg(patch.as_path())
-        .stderr(Stdio::piped())
-        .stdout(Stdio::null())
-        .output()
-        .buck_error_context("Could not run patch for bzlmod external cell")?;
-
-    if !output.status.success() {
-        return Err(BzlmodError::PatchFailed {
-            exit_code: output.status,
-            stderr: String::from_utf8_lossy(&output.stderr).to_string(),
-        }
-        .into());
-    }
-
-    Ok(())
+    apply_unified_patch_file(dest.as_path(), patch.as_path(), patch_strip)
+        .buck_error_context("Could not apply patch for bzlmod external cell")
 }
 
 fn copy_dir_contents(from: &AbsNormPath, to: &AbsNormPath) -> buck2_error::Result<()> {

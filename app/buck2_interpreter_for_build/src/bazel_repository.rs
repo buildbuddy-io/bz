@@ -29,6 +29,7 @@ use allocative::Allocative;
 use async_compression::tokio::bufread::GzipDecoder;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
+use buck2_common::bzlmod_patch::apply_unified_patch_file;
 use buck2_common::dice::cells::HasCellResolver;
 use buck2_common::file_ops::dice::DiceFileComputations;
 use buck2_common::file_ops::error::FileReadErrorContext;
@@ -3441,32 +3442,17 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
                 error: error.to_string(),
             })
         })?;
-        let output = Command::new("patch")
-            .arg(format!("-p{strip}"))
-            .arg("-i")
-            .arg(&patch_path_abs)
-            .arg("-d")
-            .arg(&working_dir_abs)
-            .output()
-            .map_err(|error| {
-                buck2_error::Error::from(BazelRepositoryError::RepositoryCtxPatch {
-                    patch: patch_path.clone(),
-                    error: error.to_string(),
-                })
-            })?;
-        if !output.status.success() {
-            return Err(
-                buck2_error::Error::from(BazelRepositoryError::RepositoryCtxPatch {
-                    patch: patch_path,
-                    error: format!(
-                        "{}{}",
-                        String::from_utf8_lossy(&output.stdout),
-                        String::from_utf8_lossy(&output.stderr)
-                    ),
-                })
-                .into(),
-            );
-        }
+        apply_unified_patch_file(
+            &working_dir_abs,
+            &patch_path_abs,
+            strip.try_into().unwrap_or(0),
+        )
+        .map_err(|error| {
+            buck2_error::Error::from(BazelRepositoryError::RepositoryCtxPatch {
+                patch: patch_path,
+                error: error.to_string(),
+            })
+        })?;
         Ok(NoneType)
     }
 
