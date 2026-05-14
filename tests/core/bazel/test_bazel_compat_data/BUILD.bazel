@@ -2,6 +2,8 @@ load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library")
 load("@io_bazel_rules_go//proto:compiler.bzl", "go_proto_compiler")
 load("@io_bazel_rules_go//proto:def.bzl", "go_proto_library")
 load("@rules_proto//proto:defs.bzl", "proto_library")
+load(":aspect_rule_attrs.bzl", "go_proto_like", "proto_like")
+load(":aspect_toolchains.bzl", "consumer", "leaf")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -49,4 +51,39 @@ go_proto_library(
 go_proto_compiler(
     name = "message_compiler",
     plugin = ":hello",
+)
+
+toolchain_type(name = "consumer_toolchain_type")
+
+toolchain_type(name = "aspect_toolchain_type")
+
+leaf(name = "aspect_leaf")
+
+consumer(
+    name = "aspect_toolchain_ctx",
+    dep = ":aspect_leaf",
+)
+
+proto_like(
+    name = "aspect_leaf_proto",
+    path = "leaf.proto",
+)
+
+proto_like(
+    name = "aspect_mid_proto",
+    path = "mid.proto",
+)
+
+go_proto_like(
+    name = "aspect_leaf_go_proto",
+    importpath = "example.com/leaf",
+    proto = ":aspect_leaf_proto",
+)
+
+go_proto_like(
+    name = "aspect_mid_go_proto",
+    importpath = "example.com/mid",
+    proto = ":aspect_mid_proto",
+    deps = [":aspect_leaf_go_proto"],
+    expected_imports = ["leaf.proto=example.com/leaf"],
 )

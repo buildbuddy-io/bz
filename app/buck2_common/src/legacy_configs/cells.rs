@@ -1385,7 +1385,7 @@ fn bazelrc_native_command_line_string_option(name: &str) -> bool {
 }
 
 fn bazelrc_native_command_line_list_option(name: &str) -> bool {
-    matches!(name, "javacopt" | "host_javacopt")
+    matches!(name, "javacopt" | "host_javacopt" | "platforms")
 }
 
 fn bazelrc_label_build_setting_key(value: &str) -> bool {

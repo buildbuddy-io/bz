@@ -140,7 +140,7 @@ pub(crate) async fn apply_bazel_command_line_build_settings(
     }
 
     ConfigurationData::from_platform(
-        format!("{}-bazelrc", cfg.label()?),
+        cfg.label()?.to_owned(),
         data,
         cfg.is_marked_as_exec_platform(),
     )

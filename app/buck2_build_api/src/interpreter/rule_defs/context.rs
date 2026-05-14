@@ -174,6 +174,7 @@ pub struct BazelActionsContextOverride<'v> {
     pub label: Option<ValueTyped<'v, StarlarkConfiguredProvidersLabel>>,
     pub build_file_path: Option<String>,
     pub rule_kind_name: Option<String>,
+    pub toolchains: Option<ValueTyped<'v, AnalysisToolchains<'v>>>,
 }
 
 #[derive(ProvidesStaticType, Debug, Trace, NoSerialize, Allocative)]
@@ -278,6 +279,15 @@ impl<'v> AnalysisToolchains<'v> {
             return Self::normalize_key(key);
         }
         value.to_repr()
+    }
+
+    pub fn with_declared_values(
+        &self,
+        heap: Heap<'v>,
+        toolchains: impl IntoIterator<Item = Value<'v>>,
+    ) -> ValueTyped<'v, AnalysisToolchains<'v>> {
+        let toolchains = toolchains.into_iter().map(Self::key_from_value).collect();
+        heap.alloc_typed(Self::new(toolchains, self.resolved.clone()))
     }
 
     fn contains_value(&self, value: Value<'_>) -> bool {
@@ -411,6 +421,14 @@ impl<'v> AnalysisActions<'v> {
             .and_then(|context| context.rule_kind_name.clone())
             .or_else(|| self.rule_kind_name.clone())
             .unwrap_or_default()
+    }
+
+    pub fn bazel_toolchains(&self) -> ValueTyped<'v, AnalysisToolchains<'v>> {
+        self.bazel_context_override
+            .borrow()
+            .as_ref()
+            .and_then(|context| context.toolchains)
+            .unwrap_or(self.toolchains)
     }
 
     pub fn replace_bazel_context_override(
@@ -590,7 +608,7 @@ fn analysis_actions_methods_context(builder: &mut MethodsBuilder) {
     fn toolchains<'v>(
         this: &AnalysisActions<'v>,
     ) -> starlark::Result<ValueTyped<'v, AnalysisToolchains<'v>>> {
-        Ok(this.toolchains)
+        Ok(this.bazel_toolchains())
     }
 
     #[starlark(attribute)]
@@ -949,6 +967,42 @@ impl<'v> StarlarkValue<'v> for BazelTokenizeFunction {
 
 fn bazel_tokenize_function<'v>(heap: Heap<'v>) -> Value<'v> {
     heap.alloc(BazelTokenizeFunction)
+}
+
+#[derive(Debug, ProvidesStaticType, NoSerialize, Allocative)]
+struct BazelCoverageInstrumentedFunction;
+
+impl fmt::Display for BazelCoverageInstrumentedFunction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("<ctx.coverage_instrumented>")
+    }
+}
+
+starlark::starlark_simple_value!(BazelCoverageInstrumentedFunction);
+
+#[starlark_value(type = "function")]
+impl<'v> StarlarkValue<'v> for BazelCoverageInstrumentedFunction {
+    fn invoke(
+        &self,
+        _me: Value<'v>,
+        args: &Arguments<'v, '_>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<Value<'v>> {
+        args.no_named_args()?;
+        let positions = args.positions(eval.heap())?.collect::<Vec<_>>();
+        if positions.len() > 1 {
+            return Err(buck2_error::buck2_error!(
+                buck2_error::ErrorTag::Input,
+                "ctx.coverage_instrumented() expects at most one positional argument"
+            )
+            .into());
+        }
+        Ok(Value::new_bool(false))
+    }
+}
+
+fn bazel_coverage_instrumented_function<'v>(heap: Heap<'v>) -> Value<'v> {
+    heap.alloc(BazelCoverageInstrumentedFunction)
 }
 
 #[derive(Debug, ProvidesStaticType, NoSerialize, Allocative)]
@@ -1896,6 +1950,10 @@ pub fn analysis_actions_to_bazel_ctx_with_overrides<'v>(
             heap.alloc_str(build_file_path.as_str()).to_value(),
         ),
         ("configuration", analysis_configuration(label, heap).get()),
+        (
+            "coverage_instrumented",
+            bazel_coverage_instrumented_function(heap),
+        ),
         ("disabled_features", heap.alloc(AllocList::EMPTY)),
         ("exec_groups", heap.alloc(AllocDict::EMPTY)),
         ("executable", empty_struct),
@@ -1922,7 +1980,7 @@ pub fn analysis_actions_to_bazel_ctx_with_overrides<'v>(
         ),
         ("rule_class", heap.alloc_str(&rule_kind).to_value()),
         ("tokenize", bazel_tokenize_function(heap)),
-        ("toolchains", this.toolchains.to_value()),
+        ("toolchains", this.bazel_toolchains().to_value()),
         ("version_file", Value::new_none()),
         (
             "workspace_name",

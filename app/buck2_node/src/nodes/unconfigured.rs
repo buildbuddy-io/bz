@@ -321,6 +321,18 @@ impl TargetNode {
             .get(self.label().name())
     }
 
+    pub fn bazel_package_group_contains_target(&self, target: &TargetLabel) -> Option<bool> {
+        let package_groups = self.0.package.package_groups.get()?;
+        let group = self.bazel_package_group()?;
+        Some(group.contains_target(target, &self.label().pkg(), package_groups))
+    }
+
+    pub fn bazel_package_group_contains_package(&self, package: &PackageLabel) -> Option<bool> {
+        let package_groups = self.0.package.package_groups.get()?;
+        let group = self.bazel_package_group()?;
+        Some(group.contains_package(package, &self.label().pkg(), package_groups))
+    }
+
     pub fn is_visible_to(&self, target: &TargetLabel) -> buck2_error::Result<bool> {
         if self.label().pkg() == target.pkg() {
             return Ok(true);

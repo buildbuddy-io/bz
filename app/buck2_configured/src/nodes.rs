@@ -724,13 +724,15 @@ async fn bazel_package_groups_allow_target(
             .get_target_node(&group_label)
             .await
             .with_buck_error_context(|| format!("looking up package_group `{group_label}`"))?;
-        let Some(group) = group_node.bazel_package_group() else {
-            continue;
-        };
-        if group.contains_target(target) {
+        if group_node
+            .bazel_package_group_contains_target(target)
+            .unwrap_or(false)
+        {
             return Ok(true);
         }
-        stack.extend(group.includes.iter().cloned());
+        if let Some(group) = group_node.bazel_package_group() {
+            stack.extend(group.includes.iter().cloned());
+        }
     }
     Ok(false)
 }
@@ -750,13 +752,15 @@ async fn bazel_package_groups_allow_package(
             .get_target_node(&group_label)
             .await
             .with_buck_error_context(|| format!("looking up package_group `{group_label}`"))?;
-        let Some(group) = group_node.bazel_package_group() else {
-            continue;
-        };
-        if group.contains_package(package) {
+        if group_node
+            .bazel_package_group_contains_package(package)
+            .unwrap_or(false)
+        {
             return Ok(true);
         }
-        stack.extend(group.includes.iter().cloned());
+        if let Some(group) = group_node.bazel_package_group() {
+            stack.extend(group.includes.iter().cloned());
+        }
     }
     Ok(false)
 }

@@ -896,12 +896,13 @@ impl BazelFeatureConfiguration {
             .any(|selectable| selectable == name)
     }
 
+    fn action_is_configured(&self, action_name: &str) -> bool {
+        self.action_tools
+            .iter()
+            .any(|tool| tool.action_name == action_name)
+    }
+
     fn selected_tool(&self, action_name: &str) -> starlark::Result<&BazelActionTool> {
-        if !self.is_enabled_selectable(action_name) {
-            return Err(bazel_cc_error(format!(
-                "Action {action_name} does not have an enabled configuration in the toolchain."
-            )));
-        }
         let candidate_count = self
             .action_tools
             .iter()
@@ -1396,6 +1397,34 @@ fn bazel_cc_common_module(builder: &mut GlobalsBuilder) {
         Ok(BazelCcInternal)
     }
 
+    fn configure_features<'v>(
+        #[starlark(require = named)] ctx: Value<'v>,
+        #[starlark(require = named)] cc_toolchain: Value<'v>,
+        #[starlark(require = named, default = NoneType)] language: Value<'v>,
+        #[starlark(require = named, default = UnpackList::default())]
+        requested_features: UnpackList<String>,
+        #[starlark(require = named, default = UnpackList::default())]
+        unsupported_features: UnpackList<String>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<BazelFeatureConfiguration> {
+        let _unused = (ctx, language);
+        let unsupported_features = unsupported_features.into_iter().collect::<Vec<_>>();
+        let mut requested_features = requested_features
+            .into_iter()
+            .filter(|feature| !unsupported_features.contains(feature))
+            .collect::<Vec<_>>();
+        requested_features.sort();
+        requested_features.dedup();
+        let features = toolchain_features_from_toolchain(cc_toolchain, eval.heap())?;
+        let enabled_selectables = enabled_selectables(&features.selectables, &requested_features)?;
+        Ok(BazelFeatureConfiguration {
+            requested_features,
+            enabled_selectables,
+            action_tools: features.action_tools.clone(),
+            tools_directory: features.tools_directory.clone(),
+        })
+    }
+
     fn get_tool_for_action<'v>(
         #[starlark(require = named)] feature_configuration: ValueTyped<
             'v,
@@ -1433,7 +1462,7 @@ fn bazel_cc_common_module(builder: &mut GlobalsBuilder) {
         >,
         #[starlark(require = named)] action_name: &str,
     ) -> starlark::Result<bool> {
-        Ok(feature_configuration.is_enabled_selectable(action_name))
+        Ok(feature_configuration.action_is_configured(action_name))
     }
 
     fn get_memory_inefficient_command_line<'v>(
@@ -1451,6 +1480,24 @@ fn bazel_cc_common_module(builder: &mut GlobalsBuilder) {
     }
 
     fn empty_variables<'v>(eval: &mut Evaluator<'v, '_, '_>) -> starlark::Result<Value<'v>> {
+        Ok(eval
+            .heap()
+            .alloc(AllocStruct(Vec::<(&str, Value<'v>)>::new())))
+    }
+
+    fn create_compile_variables<'v>(
+        #[starlark(kwargs)] _kwargs: SmallMap<String, Value<'v>>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<Value<'v>> {
+        Ok(eval
+            .heap()
+            .alloc(AllocStruct(Vec::<(&str, Value<'v>)>::new())))
+    }
+
+    fn create_link_variables<'v>(
+        #[starlark(kwargs)] _kwargs: SmallMap<String, Value<'v>>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<Value<'v>> {
         Ok(eval
             .heap()
             .alloc(AllocStruct(Vec::<(&str, Value<'v>)>::new())))

@@ -109,7 +109,7 @@ fn bazel_transition_input_value<'v>(
         if let Some(value) = conf.data()?.build_settings.get(key) {
             Ok(bazel_build_setting_value_to_starlark(value, eval))
         } else {
-            Ok(eval.heap().alloc(conf.label()?).to_value())
+            Ok(eval.heap().alloc(Vec::<&str>::new()).to_value())
         }
     } else {
         let canonical_key = transition.bazel_canonical_build_setting_key(key);

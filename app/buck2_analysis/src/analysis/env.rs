@@ -1033,7 +1033,8 @@ fn collect_configured_attr_dep_labels(
             }
         }
         ConfiguredAttr::Dict(dict) => {
-            for (_key, value) in dict.iter() {
+            for (key, value) in dict.iter() {
+                collect_configured_attr_dep_labels(key, labels);
                 collect_configured_attr_dep_labels(value, labels);
             }
         }
@@ -1137,6 +1138,8 @@ fn collect_bazel_aspect_analysis_deps_for_aspect(
     aspect: &BazelAspectAnalysisSpec,
     labels: &mut StdBuckHashSet<ConfiguredTargetLabel>,
 ) -> buck2_error::Result<()> {
+    collect_bazel_aspect_base_target_deps(node, labels);
+
     for required in &aspect.requires {
         collect_bazel_aspect_analysis_deps_for_aspect(node, required, labels)?;
     }
@@ -1155,6 +1158,24 @@ fn collect_bazel_aspect_analysis_deps_for_aspect(
     }
 
     Ok(())
+}
+
+fn collect_bazel_aspect_base_target_deps(
+    node: ConfiguredTargetNodeRef<'_>,
+    labels: &mut StdBuckHashSet<ConfiguredTargetLabel>,
+) {
+    for attr in node.attrs(AttrInspectOptions::All) {
+        if is_bazel_aspect_hidden_attr(attr.name) {
+            continue;
+        }
+        let mut dep_labels = Vec::new();
+        collect_configured_attr_dep_labels(&attr.value, &mut dep_labels);
+        for dep_label in dep_labels {
+            if find_direct_dep_node(node, dep_label.target()).is_ok() {
+                labels.insert(dep_label.target().dupe());
+            }
+        }
+    }
 }
 
 fn collect_bazel_aspect_analysis_deps_from_attr(
@@ -1310,6 +1331,27 @@ fn apply_bazel_aspect_to_dep<'v>(
         .alloc_typed(StarlarkConfiguredProvidersLabel::new(dep_label.dupe()));
     let build_file_path = configured_node_build_file_path(dep_node);
     let rule_kind = dep_node.rule_type().name().to_owned();
+    let aspect_toolchains = ctx
+        .as_ref()
+        .actions
+        .as_ref()
+        .toolchains
+        .as_ref()
+        .with_declared_values(
+            eval.heap(),
+            aspect_info
+                .toolchains
+                .iter()
+                .map(|toolchain| toolchain.to_value()),
+        );
+    let actions = ctx.as_ref().actions.as_ref();
+    let previous_bazel_context =
+        actions.replace_bazel_context_override(Some(BazelActionsContextOverride {
+            label: Some(label),
+            build_file_path: Some(build_file_path.clone()),
+            rule_kind_name: Some(rule_kind.clone()),
+            toolchains: Some(aspect_toolchains),
+        }));
     let aspect_ctx = analysis_actions_to_bazel_ctx_with_overrides(
         ctx.as_ref().actions,
         eval.heap(),
@@ -1320,13 +1362,6 @@ fn apply_bazel_aspect_to_dep<'v>(
         rule_kind.clone(),
     );
 
-    let actions = ctx.as_ref().actions.as_ref();
-    let previous_bazel_context =
-        actions.replace_bazel_context_override(Some(BazelActionsContextOverride {
-            label: Some(label),
-            build_file_path: Some(build_file_path),
-            rule_kind_name: Some(rule_kind),
-        }));
     let previous_attrs = actions
         .attributes
         .replace(Some(ValueOfUnchecked::new(aspect_attrs)));
