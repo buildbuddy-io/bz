@@ -7,7 +7,7 @@ def _aspect_impl(_target, ctx):
 
 _toolchain_aspect = aspect(
     implementation = _aspect_impl,
-    toolchains = ["//:aspect_toolchain_type"],
+    toolchains = [config_common.toolchain_type("//:aspect_toolchain_type")],
 )
 
 def _leaf_impl(_ctx):

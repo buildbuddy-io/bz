@@ -1995,16 +1995,7 @@ impl RunAction {
             }
         }
 
-        // TODO(ianc) Only do this if we're actually going to run the action?
-        let host_sharing_requirements = if !shared_content_based_paths.is_empty() {
-            HostSharingRequirements::OnePerTokens(
-                shared_content_based_paths.into(),
-                self.inner.weight,
-            )
-        } else {
-            HostSharingRequirements::Shared(self.inner.weight)
-        };
-
+        let mut host_sharing_tokens = shared_content_based_paths;
         let outputs = self
             .outputs
             .iter()
@@ -2023,6 +2014,9 @@ impl RunAction {
                 } else {
                     None
                 };
+                if let Some(produced_path) = &produced_path {
+                    host_sharing_tokens.push(produced_path.as_str().to_owned());
+                }
                 Ok(CommandExecutionOutput::BuildArtifact {
                     path: b.get_path().dupe(),
                     output_type: b.output_type(),
@@ -2030,6 +2024,13 @@ impl RunAction {
                 })
             })
             .collect::<buck2_error::Result<BuckIndexSet<_>>>()?;
+
+        // TODO(ianc) Only do this if we're actually going to run the action?
+        let host_sharing_requirements = if !host_sharing_tokens.is_empty() {
+            HostSharingRequirements::OnePerTokens(host_sharing_tokens.into(), self.inner.weight)
+        } else {
+            HostSharingRequirements::Shared(self.inner.weight)
+        };
 
         let paths = CommandExecutionPaths::new(
             inputs,

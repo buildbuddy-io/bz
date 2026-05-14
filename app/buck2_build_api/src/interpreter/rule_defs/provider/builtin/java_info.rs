@@ -675,7 +675,7 @@ fn java_compile_worker_executable<'v>(
     let worker_info = synthetic_bazel_local_worker_info(
         worker_exe,
         concurrency,
-        true, // Bazel-path aliases are equivalent to Bazel's path-mapped worker case.
+        false, // Bazel only requires worker sandboxing for stripped output path mapping.
         heap,
     );
     let worker = ValueTypedComplex::<WorkerInfo>::new_err(heap.alloc(worker_info))?;

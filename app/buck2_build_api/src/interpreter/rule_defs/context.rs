@@ -278,6 +278,12 @@ impl<'v> AnalysisToolchains<'v> {
         if let Some(key) = value.unpack_str() {
             return Self::normalize_key(key);
         }
+        if let Some(toolchain_type) = StructRef::from_value(value).and_then(|st| {
+            st.iter()
+                .find_map(|(name, value)| (name.as_str() == "toolchain_type").then_some(value))
+        }) {
+            return Self::key_from_value(toolchain_type);
+        }
         value.to_repr()
     }
 
