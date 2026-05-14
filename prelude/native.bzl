@@ -517,9 +517,6 @@ def _prebuilt_apple_xcframework_macro_stub(**kwargs):
         **kwargs
     )
 
-def _repo_name():
-    return None
-
 def _is_bazel_compat_cell():
     cell = get_cell_name()
     if cell == "bazel_tools" or cell.startswith("bzlmod_"):
@@ -589,7 +586,7 @@ __shimmed_native__.update(_user_rules)
 
 # Should come after the rules which are macro overridden
 __shimmed_native__.update(__extra_rules__)
-__shimmed_native__.update({"cxx": _cxx, "python": _python, "repo_name": _repo_name})
+__shimmed_native__.update({"cxx": _cxx, "python": _python})
 __shimmed_native__.update({
     "__internal_autodeps_hacks__": struct(
         rust_link_info = RustLinkInfo,
