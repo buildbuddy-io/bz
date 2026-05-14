@@ -2084,6 +2084,7 @@ async fn get_bazel_module_resolution(
         let Some(lines) = file_ops.read_file_lines_if_exists(&path).await? else {
             continue;
         };
+        validate_bzlmod_module_lines(&module_file, &lines)?;
         root_module_lines.extend(lines.iter().cloned());
 
         for call in collect_bzl_calls(&lines, "module(") {
@@ -4205,6 +4206,7 @@ async fn fetch_local_bzlmod_module(
         .lines()
         .map(str::to_owned)
         .collect::<Vec<_>>();
+    validate_bzlmod_module_lines(&local_path_override.module_name, &module_lines)?;
     let constants = bzlmod_module_constants_from_lines(&module_lines);
     let extension_usages = bzlmod_extension_usages_from_lines(&module_lines, &constants, true);
     let use_repo_rule_invocations =
@@ -4236,6 +4238,7 @@ fn builtin_bazel_tools_module() -> buck2_error::Result<DiscoveredBcrModule> {
         .lines()
         .map(str::to_owned)
         .collect::<Vec<_>>();
+    validate_bzlmod_module_lines("bazel_tools", &module_lines)?;
     let constants = bzlmod_module_constants_from_lines(&module_lines);
     let extension_usages = bzlmod_extension_usages_from_lines(&module_lines, &constants, true);
     let use_repo_rule_invocations =
@@ -4319,6 +4322,7 @@ async fn fetch_bcr_module(
         )?;
     }
     let module_lines = module_text.lines().map(str::to_owned).collect::<Vec<_>>();
+    validate_bzlmod_module_lines(&dep.name, &module_lines)?;
     let constants = bzlmod_module_constants_from_lines(&module_lines);
     let extension_usages = bzlmod_extension_usages_from_lines(&module_lines, &constants, true);
     let use_repo_rule_invocations =
@@ -5315,6 +5319,57 @@ fn bzlmod_root_module_from_lines(lines: &[String]) -> buck2_error::Result<RootBz
         extension_usages,
         use_repo_rule_invocations,
     })
+}
+
+fn validate_bzlmod_module_lines(module_file: &str, lines: &[String]) -> buck2_error::Result<()> {
+    let mut depth = 0i32;
+    for (idx, line) in lines.iter().enumerate() {
+        let without_comment = strip_bzl_comment(line);
+        let trimmed = without_comment.trim_start();
+        if depth == 0 && !trimmed.is_empty() {
+            let invalid = if trimmed.starts_with("load(") || trimmed.starts_with("load ") {
+                Some("load statements are not allowed")
+            } else if trimmed.starts_with("def ") {
+                Some("def statements are not allowed")
+            } else if trimmed.starts_with("if ") {
+                Some("if statements are not allowed")
+            } else if trimmed.starts_with("for ") {
+                Some("for statements are not allowed")
+            } else if trimmed.starts_with("while ") {
+                Some("while statements are not allowed")
+            } else if trimmed == "return" || trimmed.starts_with("return ") {
+                Some("return statements are not allowed")
+            } else {
+                None
+            };
+            if let Some(message) = invalid {
+                return Err(buck2_error!(
+                    buck2_error::ErrorTag::Input,
+                    "Invalid MODULE.bazel syntax in `{}` at line {}: {}",
+                    module_file,
+                    idx + 1,
+                    message
+                ));
+            }
+        }
+        depth += delimiter_delta(&without_comment);
+        if depth < 0 {
+            return Err(buck2_error!(
+                buck2_error::ErrorTag::Input,
+                "Invalid MODULE.bazel syntax in `{}` at line {}: unmatched closing delimiter",
+                module_file,
+                idx + 1
+            ));
+        }
+    }
+    if depth != 0 {
+        return Err(buck2_error!(
+            buck2_error::ErrorTag::Input,
+            "Invalid MODULE.bazel syntax in `{}`: unclosed delimiter",
+            module_file
+        ));
+    }
+    Ok(())
 }
 
 fn bzlmod_use_repo_aliases_from_usages(usages: &[BzlmodExtensionUsage]) -> Vec<String> {
@@ -7693,6 +7748,15 @@ mod tests {
         assert!(super::apply_native_bzlmod_patch(&dir, patch, 0).is_err());
         let _ = fs::remove_dir_all(&dir);
         Ok(())
+    }
+
+    #[test]
+    fn test_bzlmod_module_validation_rejects_load() {
+        let lines = vec![
+            "module(name = \"demo\")".to_owned(),
+            "load(\"//:defs.bzl\", \"dep\")".to_owned(),
+        ];
+        assert!(super::validate_bzlmod_module_lines("MODULE.bazel", &lines).is_err());
     }
 
     #[tokio::test]
