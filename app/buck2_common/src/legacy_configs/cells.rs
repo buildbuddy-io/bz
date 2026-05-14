@@ -1012,6 +1012,16 @@ impl BuckConfigBasedCells {
             )
             .buck_error_context("Invalid bzlmod overlay configuration")?;
             let module_patch_strip = get_config(section, "patch_strip")?.parse()?;
+            let url = get_config(section, "url")?;
+            let urls = config
+                .get(crate::legacy_configs::key::BuckconfigKeyRef {
+                    section,
+                    property: "urls",
+                })
+                .map(|urls| serde_json::from_str::<Vec<String>>(urls))
+                .transpose()
+                .buck_error_context("Invalid bzlmod URL configuration")?
+                .unwrap_or_else(|| vec![url.to_owned()]);
             Ok(ExternalCellOrigin::Bzlmod(BzlmodCellSetup {
                 module_name: get_config(section, "module_name")?.into(),
                 version: get_config(section, "version")?.into(),
@@ -1022,7 +1032,8 @@ impl BuckConfigBasedCells {
                         property: "local_path",
                     })
                     .map(Arc::from),
-                url: get_config(section, "url")?.into(),
+                url: Arc::from(url),
+                urls: Arc::new(urls.into_iter().map(Arc::from).collect()),
                 integrity: get_config(section, "integrity")?.into(),
                 strip_prefix: config
                     .get(crate::legacy_configs::key::BuckconfigKeyRef {
@@ -1728,7 +1739,7 @@ struct BcrDiscoveryCacheKey {
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize)]
 struct BcrDiscoveryArchiveOverrideKey {
     module_name: String,
-    url: String,
+    urls: Vec<String>,
     integrity: String,
     strip_prefix: Option<String>,
     archive_type: Option<String>,
@@ -1771,13 +1782,13 @@ fn bcr_discovery_cache_key(
     root_deps.dedup();
 
     BcrDiscoveryCacheKey {
-        schema_version: 6,
+        schema_version: 7,
         root_deps,
         archive_overrides: archive_overrides
             .values()
             .map(|archive_override| BcrDiscoveryArchiveOverrideKey {
                 module_name: archive_override.module_name.clone(),
-                url: archive_override.url.clone(),
+                urls: archive_override.urls.clone(),
                 integrity: archive_override.integrity.clone(),
                 strip_prefix: archive_override.strip_prefix.clone(),
                 archive_type: archive_override.archive_type.clone(),
@@ -2025,6 +2036,7 @@ struct BzlmodModuleLockfileData {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct BcrSourceJson {
     url: String,
+    urls: Option<Vec<String>>,
     integrity: String,
     strip_prefix: Option<String>,
     archive_type: Option<String>,
@@ -2033,10 +2045,19 @@ struct BcrSourceJson {
     patch_strip: Option<u32>,
 }
 
+fn bcr_source_urls(source_json: &BcrSourceJson) -> Vec<String> {
+    source_json
+        .urls
+        .as_ref()
+        .filter(|urls| !urls.is_empty())
+        .cloned()
+        .unwrap_or_else(|| vec![source_json.url.clone()])
+}
+
 #[derive(Clone, Debug)]
 struct BzlmodArchiveOverride {
     module_name: String,
-    url: String,
+    urls: Vec<String>,
     integrity: String,
     strip_prefix: Option<String>,
     archive_type: Option<String>,
@@ -2699,6 +2720,9 @@ fn resolve_bcr_modules_from_discovered(
             })
             .or(module.source_json.patch_strip)
             .unwrap_or(0);
+        let urls = bcr_source_urls(&module.source_json);
+        let urls_json =
+            serde_json::to_string(&urls).buck_error_context("Error serializing bzlmod URLs")?;
         let cell_name = bzlmod_cell_name_for_canonical_repo_name(&canonical_repo_name);
         if module.dep.name == "bazel_tools" {
             continue;
@@ -2714,6 +2738,7 @@ fn resolve_bcr_modules_from_discovered(
                 local_path: local_path_override
                     .map(|local_path_override| local_path_override.path.clone()),
                 url: module.source_json.url.clone(),
+                urls_json,
                 integrity: module.source_json.integrity.clone(),
                 strip_prefix: module.source_json.strip_prefix.clone(),
                 archive_type: module.source_json.archive_type.clone(),
@@ -4216,6 +4241,7 @@ async fn fetch_local_bzlmod_module(
         dep,
         source_json: BcrSourceJson {
             url: String::new(),
+            urls: None,
             integrity: String::new(),
             strip_prefix: None,
             archive_type: None,
@@ -4252,6 +4278,7 @@ fn builtin_bazel_tools_module() -> buck2_error::Result<DiscoveredBcrModule> {
         },
         source_json: BcrSourceJson {
             url: String::new(),
+            urls: None,
             integrity: String::new(),
             strip_prefix: None,
             archive_type: None,
@@ -4277,8 +4304,10 @@ async fn fetch_bcr_module(
     single_version_override: Option<BzlmodSingleVersionOverride>,
 ) -> buck2_error::Result<DiscoveredBcrModule> {
     let (source_json, mut module_text) = if let Some(archive_override) = archive_override.as_ref() {
+        let url = bzlmod_archive_override_primary_url(archive_override).to_owned();
         let source_json = BcrSourceJson {
-            url: archive_override.url.clone(),
+            url,
+            urls: Some(archive_override.urls.clone()),
             integrity: archive_override.integrity.clone(),
             strip_prefix: archive_override.strip_prefix.clone(),
             archive_type: archive_override.archive_type.clone(),
@@ -4379,12 +4408,33 @@ async fn http_get_bytes(client: &HttpClient, url: &str) -> buck2_error::Result<V
     .map_err(buck2_error::Error::from)
 }
 
+async fn http_get_bytes_from_urls(
+    client: &HttpClient,
+    urls: &[String],
+) -> buck2_error::Result<(String, Vec<u8>)> {
+    let mut last_error = None;
+    for url in urls {
+        match http_get_bytes(client, url).await {
+            Ok(bytes) => return Ok((url.clone(), bytes)),
+            Err(error) => last_error = Some(error),
+        }
+    }
+    Err(buck2_error!(
+        buck2_error::ErrorTag::Input,
+        "failed to download from any archive_override URL {:?}: {}",
+        urls,
+        last_error
+            .map(|error| error.to_string())
+            .unwrap_or_else(|| "no URL provided".to_owned())
+    ))
+}
+
 async fn fetch_archive_override_module_file(
     client: &HttpClient,
     archive_override: &BzlmodArchiveOverride,
 ) -> buck2_error::Result<String> {
-    let bytes = http_get_bytes(client, &archive_override.url).await?;
-    verify_bzlmod_archive_integrity(&archive_override.url, &archive_override.integrity, &bytes)?;
+    let (url, bytes) = http_get_bytes_from_urls(client, &archive_override.urls).await?;
+    verify_bzlmod_archive_integrity(&url, &archive_override.integrity, &bytes)?;
 
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -4433,24 +4483,28 @@ fn extract_bzlmod_archive_override(
     archive: &Path,
     extract_dir: &Path,
 ) -> buck2_error::Result<()> {
+    let primary_url = bzlmod_archive_override_primary_url(archive_override);
     let archive_type = archive_override
         .archive_type
         .as_deref()
         .or_else(|| archive.extension().and_then(|ext| ext.to_str()));
-    let kind =
-        archive_kind_from_type_or_url(archive_type, &archive_override.url).ok_or_else(|| {
-            buck2_error!(
-                buck2_error::ErrorTag::Input,
-                "unsupported archive_override archive type for `{}`",
-                archive_override.url
-            )
-        })?;
-    extract_archive(archive, extract_dir, kind, "", 0, &[]).with_buck_error_context(|| {
-        format!(
-            "archive_override extraction failed for `{}`",
-            archive_override.url
+    let kind = archive_kind_from_type_or_url(archive_type, primary_url).ok_or_else(|| {
+        buck2_error!(
+            buck2_error::ErrorTag::Input,
+            "unsupported archive_override archive type for `{}`",
+            primary_url
         )
+    })?;
+    extract_archive(archive, extract_dir, kind, "", 0, &[]).with_buck_error_context(|| {
+        format!("archive_override extraction failed for `{}`", primary_url)
     })
+}
+
+fn bzlmod_archive_override_primary_url(archive_override: &BzlmodArchiveOverride) -> &str {
+    archive_override
+        .urls
+        .first()
+        .expect("archive_override URLs should be non-empty")
 }
 
 fn verify_bzlmod_archive_integrity(
@@ -4728,21 +4782,23 @@ fn bzlmod_archive_override_from_call(
             call
         )
     })?;
-    let urls = bzl_call_named_arg_value(call, "urls")
-        .as_deref()
-        .and_then(|value| bzl_string_sequence_expression_raw_values(value, &[]))
-        .unwrap_or_default();
-    let url = if let Some(url) = urls.first() {
-        url.clone()
-    } else if let Some(url) = bzl_string_arg(call, "url") {
-        url
-    } else {
+    let mut urls = Vec::new();
+    if let Some(url) = bzl_string_arg(call, "url") {
+        urls.push(url);
+    }
+    urls.extend(
+        bzl_call_named_arg_value(call, "urls")
+            .as_deref()
+            .and_then(|value| bzl_string_sequence_expression_raw_values(value, &[]))
+            .unwrap_or_default(),
+    );
+    if urls.is_empty() {
         return Err(buck2_error!(
             buck2_error::ErrorTag::Input,
             "archive_override for module `{}` must have a literal `url` or non-empty `urls`",
             module_name
         ));
-    };
+    }
     let integrity = bzl_string_arg(call, "integrity").unwrap_or_default();
     let strip_prefix = bzl_string_arg(call, "strip_prefix");
     let archive_type =
@@ -4752,7 +4808,7 @@ fn bzlmod_archive_override_from_call(
         bzlmod_override_patch_strip_from_call("archive_override", &module_name, call)?;
     Ok(BzlmodArchiveOverride {
         module_name,
-        url,
+        urls,
         integrity,
         strip_prefix,
         archive_type,
@@ -7544,6 +7600,35 @@ mod tests {
             vec![
                 "third_party/grpc-java.patch",
                 "third_party/grpc-java-addloads.patch",
+            ]
+        );
+    }
+
+    #[test]
+    fn test_bzlmod_archive_override_preserves_url_mirror_order() {
+        let archive_override = super::bzlmod_archive_override_from_call(
+            "MODULE.bazel",
+            indoc!(
+                r#"
+                archive_override(
+                    module_name = "example",
+                    url = "https://primary.example.com/source.tar.gz",
+                    urls = [
+                        "https://mirror1.example.com/source.tar.gz",
+                        "https://mirror2.example.com/source.tar.gz",
+                    ],
+                )
+                "#
+            ),
+        )
+        .unwrap();
+
+        assert_eq!(
+            archive_override.urls,
+            vec![
+                "https://primary.example.com/source.tar.gz",
+                "https://mirror1.example.com/source.tar.gz",
+                "https://mirror2.example.com/source.tar.gz",
             ]
         );
     }

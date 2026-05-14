@@ -213,6 +213,7 @@ pub struct BzlmodCellSetup {
     pub canonical_repo_name: Arc<str>,
     pub local_path: Option<Arc<str>>,
     pub url: Arc<str>,
+    pub urls: Arc<Vec<Arc<str>>>,
     pub integrity: Arc<str>,
     pub strip_prefix: Option<Arc<str>>,
     pub archive_type: Option<Arc<str>>,

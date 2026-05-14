@@ -111,6 +111,8 @@ enum BzlmodError {
     InvalidGeneratedRepoPath(String),
     #[error("Could not find `{dict}` in bazel_features globals at `{path}`")]
     MissingBazelFeaturesGlobalsDict { path: String, dict: &'static str },
+    #[error("Could not download bzlmod archive from any URL {urls:?}: {error}")]
+    DownloadFailed { urls: Vec<String>, error: String },
     #[error(
         "bzlmod module extension repo `{repo_name}` from `{parent_canonical_repo_name}` extension `{extension_bzl_file}%{extension_name}` cannot be materialized until module_extension evaluation is wired to repository_rule execution"
     )]
@@ -283,6 +285,7 @@ impl IoRequest for BzlmodGeneratedHttpArchiveIoRequest {
             canonical_repo_name: self.setup.repo_name.dupe(),
             local_path: None,
             url: self.setup.url.dupe(),
+            urls: Arc::new(vec![self.setup.url.dupe()]),
             integrity: Arc::from(""),
             strip_prefix: self.setup.strip_prefix.dupe(),
             archive_type: self.setup.archive_type.dupe(),
@@ -1426,6 +1429,7 @@ mod tests {
                 canonical_repo_name: Arc::from("module~1.0.0"),
                 local_path: None,
                 url: Arc::from("https://example.com/source.tar.gz"),
+                urls: Arc::new(vec![Arc::from("https://example.com/source.tar.gz")]),
                 integrity: Arc::from("sha256-YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXowMTIzNDU="),
                 strip_prefix: None,
                 archive_type: None,
@@ -1507,14 +1511,38 @@ fn extract_archive(
     archive: &AbsNormPath,
     temp: &AbsNormPath,
 ) -> buck2_error::Result<()> {
+    let primary_url = bzlmod_cell_setup_primary_url(setup);
     let archive_type = setup
         .archive_type
         .as_deref()
         .or_else(|| archive.as_path().extension().and_then(|ext| ext.to_str()));
-    let kind = archive_kind_from_type_or_url(archive_type, &setup.url)
-        .ok_or_else(|| BzlmodError::UnsupportedArchiveType(setup.url.to_string()))?;
+    let kind = archive_kind_from_type_or_url(archive_type, primary_url)
+        .ok_or_else(|| BzlmodError::UnsupportedArchiveType(primary_url.to_owned()))?;
     extract_bazel_archive(archive.as_path(), temp.as_path(), kind, "", 0, &[])
         .buck_error_context("Could not extract archive for bzlmod external cell")
+}
+
+fn bzlmod_cell_setup_primary_url(setup: &BzlmodCellSetup) -> &str {
+    setup
+        .urls
+        .first()
+        .map(|url| url.as_ref())
+        .filter(|url| !url.is_empty())
+        .unwrap_or_else(|| setup.url.as_ref())
+}
+
+fn bzlmod_cell_setup_urls(setup: &BzlmodCellSetup) -> Vec<String> {
+    let urls = setup
+        .urls
+        .iter()
+        .map(|url| url.to_string())
+        .filter(|url| !url.is_empty())
+        .collect::<Vec<_>>();
+    if urls.is_empty() && !setup.url.is_empty() {
+        vec![setup.url.to_string()]
+    } else {
+        urls
+    }
 }
 
 fn apply_patch(
@@ -1591,12 +1619,16 @@ fn update_bzlmod_repo_contents_cache_key(hasher: &mut blake3::Hasher, field: &st
 
 fn bzlmod_repo_contents_cache_key(setup: &BzlmodCellSetup) -> String {
     let mut hasher = blake3::Hasher::new();
-    update_bzlmod_repo_contents_cache_key(&mut hasher, "buck2-bzlmod-repo-contents-v1");
+    update_bzlmod_repo_contents_cache_key(&mut hasher, "buck2-bzlmod-repo-contents-v2");
     update_bzlmod_repo_contents_cache_key(&mut hasher, &setup.module_name);
     update_bzlmod_repo_contents_cache_key(&mut hasher, &setup.version);
     update_bzlmod_repo_contents_cache_key(&mut hasher, &setup.canonical_repo_name);
     update_bzlmod_repo_contents_cache_key_opt(&mut hasher, setup.local_path.as_deref());
-    update_bzlmod_repo_contents_cache_key(&mut hasher, &setup.url);
+    let urls = bzlmod_cell_setup_urls(setup);
+    update_bzlmod_repo_contents_cache_key(&mut hasher, &urls.len().to_string());
+    for url in urls {
+        update_bzlmod_repo_contents_cache_key(&mut hasher, &url);
+    }
     update_bzlmod_repo_contents_cache_key(&mut hasher, &setup.integrity);
     update_bzlmod_repo_contents_cache_key(&mut hasher, setup.strip_prefix.as_deref().unwrap_or(""));
     update_bzlmod_repo_contents_cache_key(&mut hasher, setup.archive_type.as_deref().unwrap_or(""));
@@ -2164,12 +2196,13 @@ async fn download_impl(
     let client = ctx.per_transaction_data().get_http_client();
     let bazel_download_headers = bazel_repository_download_headers(std::iter::empty());
     let archive_checksum = checksum_from_integrity(&setup.integrity)?;
-    http_download_with_headers(
+    let archive_urls = bzlmod_cell_setup_urls(setup);
+    http_download_any_with_headers(
         &client,
         project_root,
         digest_config.dupe(),
         &archive,
-        &setup.url,
+        &archive_urls,
         &archive_checksum,
         false,
         &bazel_download_headers,
@@ -2278,6 +2311,43 @@ async fn prepare_bzlmod_external_cell_root_from_source(
             cancellations,
         )
         .await
+}
+
+async fn http_download_any_with_headers(
+    client: &buck2_http::HttpClient,
+    fs: &ProjectRoot,
+    digest_config: buck2_execute::digest_config::DigestConfig,
+    path: &ProjectRelativePath,
+    urls: &[String],
+    checksum: &Checksum,
+    executable: bool,
+    headers: &[(String, String)],
+) -> buck2_error::Result<()> {
+    let mut last_error = None;
+    for url in urls {
+        match http_download_with_headers(
+            client,
+            fs,
+            digest_config.dupe(),
+            path,
+            url,
+            checksum,
+            executable,
+            headers,
+        )
+        .await
+        {
+            Ok(_) => return Ok(()),
+            Err(error) => last_error = Some(error),
+        }
+    }
+    Err(BzlmodError::DownloadFailed {
+        urls: urls.to_owned(),
+        error: last_error
+            .map(|error| error.to_string())
+            .unwrap_or_else(|| "no URL provided".to_owned()),
+    }
+    .into())
 }
 
 async fn declare_existing_directory(
