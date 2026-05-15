@@ -338,14 +338,24 @@ impl FileOpsDelegateWithIgnores {
         Ok(read_dir_output)
     }
 
-    /// Return the list of file outputs, sorted.
-    pub(crate) async fn read_dir(
+    pub(crate) fn exists_matching_exact_case_from_raw_dir(
         &self,
-        ctx: &mut DiceComputations<'_>,
         path: &CellRelativePath,
-    ) -> buck2_error::Result<ReadDirOutput> {
-        let entries = self.delegate.read_dir(ctx, path).await?;
-        self.make_read_dir_output(path, entries)
+        entries: Arc<[RawDirEntry]>,
+    ) -> buck2_error::Result<bool> {
+        if self
+            .check_ignores(UncheckedCellRelativePath::new(path))
+            .is_ignored()
+        {
+            return Ok(false);
+        }
+
+        let Some(_parent) = path.parent() else {
+            // Preserve the existing behavior for cell roots.
+            return Ok(true);
+        };
+        let entry = path.file_name().expect("path with parent has file name");
+        Ok(entries.iter().any(|f| &*f.file_name == entry))
     }
 
     pub(crate) async fn read_raw_dir_for_no_watchfs_without_dice(
@@ -361,21 +371,6 @@ impl FileOpsDelegateWithIgnores {
                 metadata_cache,
             )
             .await
-    }
-
-    pub(crate) async fn exists_matching_exact_case(
-        &self,
-        path: &CellRelativePath,
-        dice: &mut DiceComputations<'_>,
-    ) -> buck2_error::Result<bool> {
-        if self
-            .check_ignores(UncheckedCellRelativePath::new(path))
-            .is_ignored()
-        {
-            return Ok(false);
-        }
-
-        self.delegate.exists_matching_exact_case(dice, path).await
     }
 
     pub async fn read_path_metadata_if_exists(
