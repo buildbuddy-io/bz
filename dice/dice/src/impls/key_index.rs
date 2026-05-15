@@ -158,6 +158,13 @@ impl DiceKeyIndex {
             .get(unpack.index_in_shard as usize)
             .unwrap()
     }
+
+    pub(crate) fn get_typed_key<K>(&self, key: DiceKey) -> Option<K>
+    where
+        K: Key + Clone,
+    {
+        self.get(key).as_any().downcast_ref::<K>().cloned()
+    }
 }
 
 mod introspect {

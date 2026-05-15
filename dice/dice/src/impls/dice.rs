@@ -19,6 +19,7 @@ use crate::DiceTransactionUpdater;
 use crate::DiceTransactionUpdaterImpl;
 use crate::api::cycles::DetectCycles;
 use crate::api::data::DiceData;
+use crate::api::key::Key;
 use crate::api::user_data::UserComputationData;
 use crate::impls::core::state::CoreStateHandle;
 use crate::impls::core::state::init_state;
@@ -104,6 +105,17 @@ impl Dice {
 
     pub fn metrics(&self) -> Metrics {
         self.state_handle.metrics()
+    }
+
+    pub(crate) fn existing_keys_of_type_for_introspection<K>(&self) -> Vec<K>
+    where
+        K: Key + Clone,
+    {
+        self.state_handle
+            .existing_graph_keys()
+            .into_iter()
+            .filter_map(|key| self.key_index.get_typed_key::<K>(key))
+            .collect()
     }
 
     pub fn to_introspectable(&self) -> GraphIntrospectable {

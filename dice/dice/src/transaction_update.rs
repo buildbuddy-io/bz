@@ -58,6 +58,10 @@ impl DiceTransactionUpdaterImpl {
         self.0.changed_to(changed)
     }
 
+    pub(crate) fn pending_change_count(&self) -> usize {
+        self.0.pending_change_count()
+    }
+
     /// Commit the changes registered via 'changed' and 'changed_to' to the current newest version.
     pub(crate) fn commit(self) -> impl Future<Output = DiceTransaction> {
         self.0
@@ -88,5 +92,12 @@ impl DiceTransactionUpdaterImpl {
 
     pub(crate) fn existing_keys_for_introspection(&self) -> Vec<AnyKey> {
         self.0.existing_keys_for_introspection()
+    }
+
+    pub(crate) fn existing_keys_of_type_for_introspection<K>(&self) -> Vec<K>
+    where
+        K: Key + Clone,
+    {
+        self.0.existing_keys_of_type_for_introspection::<K>()
     }
 }

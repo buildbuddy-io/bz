@@ -39,12 +39,15 @@ use crate::file_ops::metadata::FileMetadata;
 use crate::file_ops::metadata::FileType;
 use crate::file_ops::metadata::RawDirEntry;
 use crate::file_ops::metadata::RawPathMetadata;
+use crate::file_ops::metadata::RawPathMetadataForNoWatchFs;
 use crate::file_ops::metadata::RawSymlink;
 use crate::file_ops::metadata::ReadDirOutput;
 use crate::file_ops::metadata::SimpleDirEntry;
 use crate::file_ops::metadata::TrackedFileDigest;
 use crate::file_ops::trait_::FileOps;
 use crate::ignores::file_ignores::FileIgnoreResult;
+use crate::io::IoProvider;
+use crate::io::NoWatchFsMetadataCache;
 
 enum TestFileOpsEntry {
     File(String /*data*/, FileMetadata),
@@ -262,15 +265,15 @@ impl FileOpsDelegate for TestCellFileOps {
         _ctx: &mut DiceComputations<'_>,
         path: &'async_trait CellRelativePath,
     ) -> buck2_error::Result<Arc<[RawDirEntry]>> {
-        let path = CellPath::new(self.0, path.to_owned());
-        let simple_entries = FileOps::read_dir(&self.1, path.as_ref()).await?.included;
-        Ok(simple_entries
-            .iter()
-            .map(|e| RawDirEntry {
-                file_name: e.file_name.clone().into_inner(),
-                file_type: e.file_type,
-            })
-            .collect())
+        self.read_dir_without_dice(path).await
+    }
+
+    async fn read_dir_for_no_watchfs_without_dice(
+        &self,
+        _io_provider: Arc<dyn IoProvider>,
+        path: &'async_trait CellRelativePath,
+    ) -> buck2_error::Result<Arc<[RawDirEntry]>> {
+        self.read_dir_without_dice(path).await
     }
 
     async fn read_path_metadata_if_exists(
@@ -282,7 +285,38 @@ impl FileOpsDelegate for TestCellFileOps {
         FileOps::read_path_metadata_if_exists(&self.1, path.as_ref()).await
     }
 
+    async fn read_path_metadata_for_no_watchfs_if_exists_without_dice(
+        &self,
+        _io_provider: Arc<dyn IoProvider>,
+        path: &'async_trait CellRelativePath,
+        _cache: Option<Arc<NoWatchFsMetadataCache>>,
+    ) -> buck2_error::Result<Option<RawPathMetadataForNoWatchFs>> {
+        let path = CellPath::new(self.0, path.to_owned());
+        Ok(
+            FileOps::read_path_metadata_if_exists(&self.1, path.as_ref())
+                .await?
+                .map(RawPathMetadataForNoWatchFs::from),
+        )
+    }
+
     fn eq_token(&self) -> PartialEqAny<'_> {
         PartialEqAny::always_false()
+    }
+}
+
+impl TestCellFileOps {
+    async fn read_dir_without_dice(
+        &self,
+        path: &CellRelativePath,
+    ) -> buck2_error::Result<Arc<[RawDirEntry]>> {
+        let path = CellPath::new(self.0, path.to_owned());
+        let simple_entries = FileOps::read_dir(&self.1, path.as_ref()).await?.included;
+        Ok(simple_entries
+            .iter()
+            .map(|e| RawDirEntry {
+                file_name: e.file_name.clone().into_inner(),
+                file_type: e.file_type,
+            })
+            .collect())
     }
 }

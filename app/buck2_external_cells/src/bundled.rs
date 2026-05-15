@@ -24,7 +24,10 @@ use buck2_common::file_ops::metadata::FileMetadata;
 use buck2_common::file_ops::metadata::FileType;
 use buck2_common::file_ops::metadata::RawDirEntry;
 use buck2_common::file_ops::metadata::RawPathMetadata;
+use buck2_common::file_ops::metadata::RawPathMetadataForNoWatchFs;
 use buck2_common::file_ops::metadata::TrackedFileDigest;
+use buck2_common::io::IoProvider;
+use buck2_common::io::NoWatchFsMetadataCache;
 use buck2_common::io::fs::is_executable;
 use buck2_core::cells::external::ExternalCellOrigin;
 use buck2_core::cells::name::CellName;
@@ -408,6 +411,14 @@ impl FileOpsDelegate for BundledFileOpsDelegate {
         self.read_dir(path).await
     }
 
+    async fn read_dir_for_no_watchfs_without_dice(
+        &self,
+        _io_provider: Arc<dyn IoProvider>,
+        path: &'async_trait CellRelativePath,
+    ) -> buck2_error::Result<Arc<[RawDirEntry]>> {
+        self.read_dir(path).await
+    }
+
     async fn read_path_metadata_if_exists(
         &self,
         ctx: &mut DiceComputations<'_>,
@@ -427,6 +438,17 @@ impl FileOpsDelegate for BundledFileOpsDelegate {
         path: &'async_trait CellRelativePath,
     ) -> buck2_error::Result<Option<RawPathMetadata>> {
         self.read_path_metadata_if_exists(path)
+    }
+
+    async fn read_path_metadata_for_no_watchfs_if_exists_without_dice(
+        &self,
+        _io_provider: Arc<dyn IoProvider>,
+        path: &'async_trait CellRelativePath,
+        _cache: Option<Arc<NoWatchFsMetadataCache>>,
+    ) -> buck2_error::Result<Option<RawPathMetadataForNoWatchFs>> {
+        Ok(self
+            .read_path_metadata_if_exists(path)?
+            .map(RawPathMetadataForNoWatchFs::from))
     }
 
     fn eq_token(&self) -> PartialEqAny<'_> {

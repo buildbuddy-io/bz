@@ -90,6 +90,10 @@ impl TransactionUpdater {
         })
     }
 
+    pub(crate) fn pending_change_count(&self) -> usize {
+        self.scheduled_changes.len()
+    }
+
     /// Commit the changes registered via 'changed' and 'changed_to' to the current newest version.
     pub(crate) async fn commit(self) -> BaseComputeCtx {
         let user_data = self.user_data.dupe();
@@ -123,6 +127,13 @@ impl TransactionUpdater {
 
     pub(crate) fn existing_keys_for_introspection(&self) -> Vec<AnyKey> {
         self.dice.to_introspectable().keys().collect()
+    }
+
+    pub(crate) fn existing_keys_of_type_for_introspection<K>(&self) -> Vec<K>
+    where
+        K: Key + Clone,
+    {
+        self.dice.existing_keys_of_type_for_introspection::<K>()
     }
 
     async fn commit_to_state(self) -> (SharedLiveTransactionCtx, ActiveTransactionGuard) {
@@ -202,6 +213,10 @@ impl Changes {
                 }
             }
         }
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.changes.len()
     }
 }
 

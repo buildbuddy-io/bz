@@ -60,6 +60,10 @@ impl DiceTransactionUpdater {
         self.0.changed_to(changed)
     }
 
+    pub fn pending_change_count(&self) -> usize {
+        self.0.pending_change_count()
+    }
+
     /// Commit the changes registered via 'changed' and 'changed_to' to the current newest version.
     pub fn commit(self) -> impl Future<Output = DiceTransaction> {
         self.0.commit()
@@ -84,6 +88,13 @@ impl DiceTransactionUpdater {
     /// already-observed state without discovering new filesystem state.
     pub fn existing_keys_for_introspection(&self) -> Vec<AnyKey> {
         self.0.existing_keys_for_introspection()
+    }
+
+    pub fn existing_keys_of_type_for_introspection<K>(&self) -> Vec<K>
+    where
+        K: Key + Clone,
+    {
+        self.0.existing_keys_of_type_for_introspection::<K>()
     }
 }
 

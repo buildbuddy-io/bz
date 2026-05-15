@@ -202,6 +202,13 @@ impl CoreStateHandle {
         tokio::task::block_in_place(|| recv.blocking_recv().unwrap())
     }
 
+    pub(crate) fn existing_graph_keys(&self) -> Vec<DiceKey> {
+        let (resp, recv) = oneshot::channel();
+        self.request(StateRequest::ExistingGraphKeys { resp });
+
+        tokio::task::block_in_place(|| recv.blocking_recv().unwrap())
+    }
+
     /// Collects the introspectable dice state
     pub(crate) fn introspection(&self) -> (VersionedGraphIntrospectable, VersionIntrospectable) {
         let (resp, recv) = oneshot::channel();
@@ -313,6 +320,11 @@ pub(super) enum StateRequest {
     },
     /// Collect metrics
     Metrics { resp: Sender<Metrics> },
+    /// Returns the graph keys currently present in the DICE graph.
+    ExistingGraphKeys {
+        #[derivative(Debug = "ignore")]
+        resp: Sender<Vec<DiceKey>>,
+    },
     /// Collects the introspectable dice state
     Introspection {
         #[derivative(Debug = "ignore")]

@@ -10,6 +10,7 @@
 
 use allocative::Allocative;
 use async_trait::async_trait;
+use buck2_common::file_ops::dice::KnownFileStateInvalidationStats;
 use buck2_common::file_ops::dice::invalidate_changed_file_state;
 use buck2_events::dispatch::span_async;
 use dice::DiceTransactionUpdater;
@@ -38,12 +39,38 @@ impl FileWatcher for NoWatchFs {
             },
             async {
                 let (stats, res) = match invalidate_changed_file_state(&mut dice).await {
-                    Ok(_stats) => (Some(Default::default()), Ok((dice, Mergebase::default()))),
+                    Ok(stats) => (
+                        Some(no_watchfs_file_watcher_stats(stats)),
+                        Ok((dice, Mergebase::default())),
+                    ),
                     Err(e) => (None, Err(e)),
                 };
                 (res, buck2_data::FileWatcherEnd { stats })
             },
         )
         .await
+    }
+}
+
+fn no_watchfs_file_watcher_stats(
+    stats: KnownFileStateInvalidationStats,
+) -> buck2_data::FileWatcherStats {
+    let total = stats.total() as u64;
+    buck2_data::FileWatcherStats {
+        events_total: total,
+        events_processed: total,
+        incomplete_events_reason: Some(format!(
+            "no-watchfs invalidated keys: read_files={}, read_dirs={}, paths={}, exists_matching_exact_case={}; timings_us: introspection={}, file_ops={}, read_dirs={}, metadata={}, full_check={}",
+            stats.read_files,
+            stats.read_dirs,
+            stats.paths,
+            stats.exists_matching_exact_case,
+            stats.timings.introspection_us,
+            stats.timings.file_ops_us,
+            stats.timings.read_dirs_us,
+            stats.timings.metadata_us,
+            stats.timings.full_check_us
+        )),
+        ..Default::default()
     }
 }

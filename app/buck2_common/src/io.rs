@@ -21,8 +21,10 @@ use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
 use buck2_error::BuckErrorContext;
 use buck2_error::ErrorTag;
 use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
+use buck2_fs::paths::file_name::FileName;
 use buck2_hash::BuckDashMap;
 
+use crate::file_ops::metadata::FileType;
 use crate::file_ops::metadata::RawDirEntry;
 use crate::file_ops::metadata::RawPathMetadata;
 use crate::file_ops::metadata::RawPathMetadataForNoWatchFs;
@@ -38,6 +40,32 @@ pub struct NoWatchFsMetadataCache(
 impl Default for NoWatchFsMetadataCache {
     fn default() -> Self {
         Self(Default::default())
+    }
+}
+
+impl NoWatchFsMetadataCache {
+    pub fn seed_readdir(
+        &self,
+        dir: ForwardRelativePathBuf,
+        entries: &[RawDirEntry],
+    ) {
+        self.0
+            .entry(dir.clone())
+            .or_insert(Some(RawPathMetadataForNoWatchFs::Directory));
+
+        for entry in entries {
+            if entry.file_type != FileType::Directory {
+                continue;
+            }
+            let Ok(file_name) = FileName::new(entry.file_name.as_str()) else {
+                continue;
+            };
+            let mut child = dir.clone();
+            child.push(file_name);
+            self.0
+                .entry(child)
+                .or_insert(Some(RawPathMetadataForNoWatchFs::Directory));
+        }
     }
 }
 

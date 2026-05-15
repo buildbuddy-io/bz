@@ -18,6 +18,7 @@ use allocative::Allocative;
 use buck2_build_api::interpreter::rule_defs::context::init_action_has_content_based_path_default;
 use buck2_build_api::interpreter::rule_defs::context::init_declare_output_has_content_based_path_default;
 use buck2_build_api::spawner::BuckSpawner;
+use buck2_cli_proto::ConfigOverride;
 use buck2_cli_proto::unstable_dice_dump_request::DiceDumpFormat;
 use buck2_common::cas_digest::DigestAlgorithm;
 use buck2_common::cas_digest::DigestAlgorithmFamily;
@@ -29,6 +30,7 @@ use buck2_common::init::Timeout;
 use buck2_common::invocation_paths::InvocationPaths;
 use buck2_common::io::IoProvider;
 use buck2_common::legacy_configs::cells::BuckConfigBasedCells;
+use buck2_common::legacy_configs::file_ops::ConfigPath;
 use buck2_common::legacy_configs::key::BuckconfigKeyRef;
 use buck2_common::sqlite::sqlite_db::SqliteDb;
 use buck2_common::sqlite::sqlite_db::SqliteIdentity;
@@ -139,6 +141,21 @@ fn merge_ignore_specs_for_file_watcher(project_ignore: &str, bazelignore: &str) 
     }
 }
 
+#[derive(Clone, PartialEq, Eq)]
+pub(crate) enum ConfigPathSnapshot {
+    Missing,
+    File(Vec<u8>),
+    Directory(Vec<String>),
+    Other,
+}
+
+#[derive(Clone)]
+pub(crate) struct CachedBuckConfigBasedCells {
+    pub(crate) config_overrides: Vec<ConfigOverride>,
+    pub(crate) cells: BuckConfigBasedCells,
+    pub(crate) snapshots: StdBuckHashMap<ConfigPath, ConfigPathSnapshot>,
+}
+
 fn use_minimal_bazel_daemon_startup_config(fs: &ProjectRoot) -> buck2_error::Result<bool> {
     let module_file = fs.resolve(ProjectRelativePathBuf::unchecked_new(
         "MODULE.bazel".to_owned(),
@@ -243,6 +260,10 @@ pub struct DaemonStateData {
 
     /// Tracks data about previous command (e.g. configs)
     pub previous_command_data: Arc<LockedPreviousCommandData>,
+
+    /// Parsed cells and Bazel-compat module configuration from the previous command.
+    #[allocative(skip)]
+    pub(crate) cached_buckconfig_based_cells: Arc<Mutex<Option<CachedBuckConfigBasedCells>>>,
 
     /// State of the Incremental Action DB for content-based hash paths
     #[allocative(skip)]
@@ -834,6 +855,7 @@ impl DaemonState {
                 system_warning_config,
                 memory_tracker,
                 previous_command_data: LockedPreviousCommandData::new(),
+                cached_buckconfig_based_cells: Arc::new(Mutex::new(None)),
                 incremental_db_state,
                 local_action_cache,
                 daemon_id: daemon_id.dupe(),

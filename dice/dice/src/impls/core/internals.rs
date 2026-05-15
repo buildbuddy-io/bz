@@ -214,6 +214,10 @@ impl CoreState {
         }
     }
 
+    pub(super) fn existing_graph_keys(&self) -> Vec<DiceKey> {
+        self.graph.nodes.keys().copied().collect()
+    }
+
     pub(super) fn introspection(&self) -> (VersionedGraphIntrospectable, VersionIntrospectable) {
         let graph = self.graph.introspect();
         let version_data = self.version_tracker.introspect();

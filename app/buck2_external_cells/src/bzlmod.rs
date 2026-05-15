@@ -2711,19 +2711,15 @@ impl FileOpsDelegate for BzlmodFileOpsDelegate {
         _ctx: &mut DiceComputations<'_>,
         path: &'async_trait CellRelativePath,
     ) -> buck2_error::Result<Arc<[RawDirEntry]>> {
-        let project_path = self.resolve_backing(path);
-        let mut entries = (&self.io as &dyn IoProvider)
-            .read_dir(project_path)
-            .await
-            .with_buck_error_context(|| format!("Error listing dir `{path}`"))?;
-        follow_bzlmod_symlinked_directory_entries(
-            self.io.project_root(),
-            self.resolve_backing(path).as_ref(),
-            &mut entries,
-        )?;
+        self.read_dir_without_dice(path).await
+    }
 
-        entries.sort_by(|a, b| a.file_name.cmp(&b.file_name));
-        Ok(entries.into())
+    async fn read_dir_for_no_watchfs_without_dice(
+        &self,
+        _io_provider: Arc<dyn IoProvider>,
+        path: &'async_trait CellRelativePath,
+    ) -> buck2_error::Result<Arc<[RawDirEntry]>> {
+        self.read_dir_without_dice(path).await
     }
 
     async fn read_path_metadata_if_exists(
@@ -2808,12 +2804,41 @@ impl FileOpsDelegate for BzlmodFileOpsDelegate {
             .await
     }
 
+    async fn read_path_metadata_for_no_watchfs_if_exists_without_dice(
+        &self,
+        _io_provider: Arc<dyn IoProvider>,
+        path: &'async_trait CellRelativePath,
+        cache: Option<Arc<NoWatchFsMetadataCache>>,
+    ) -> buck2_error::Result<Option<RawPathMetadataForNoWatchFs>> {
+        self.read_path_metadata_for_no_watchfs_if_exists_with_cache_impl(cache, path)
+            .await
+    }
+
     fn eq_token(&self) -> PartialEqAny<'_> {
         PartialEqAny::always_false()
     }
 }
 
 impl BzlmodFileOpsDelegate {
+    async fn read_dir_without_dice(
+        &self,
+        path: &CellRelativePath,
+    ) -> buck2_error::Result<Arc<[RawDirEntry]>> {
+        let project_path = self.resolve_backing(path);
+        let mut entries = (&self.io as &dyn IoProvider)
+            .read_dir(project_path)
+            .await
+            .with_buck_error_context(|| format!("Error listing dir `{path}`"))?;
+        follow_bzlmod_symlinked_directory_entries(
+            self.io.project_root(),
+            self.resolve_backing(path).as_ref(),
+            &mut entries,
+        )?;
+
+        entries.sort_by(|a, b| a.file_name.cmp(&b.file_name));
+        Ok(entries.into())
+    }
+
     async fn read_path_metadata_for_no_watchfs_if_exists_with_cache_impl(
         &self,
         cache: Option<Arc<NoWatchFsMetadataCache>>,
@@ -2936,19 +2961,15 @@ impl FileOpsDelegate for BzlmodGeneratedFileOpsDelegate {
         _ctx: &mut DiceComputations<'_>,
         path: &'async_trait CellRelativePath,
     ) -> buck2_error::Result<Arc<[RawDirEntry]>> {
-        let project_path = self.resolve(path);
-        let mut entries = (&self.io as &dyn IoProvider)
-            .read_dir(project_path)
-            .await
-            .with_buck_error_context(|| format!("Error listing dir `{path}`"))?;
-        follow_bzlmod_symlinked_directory_entries(
-            self.io.project_root(),
-            self.resolve(path).as_ref(),
-            &mut entries,
-        )?;
+        self.read_dir_for_no_watchfs_without_dice_impl(path).await
+    }
 
-        entries.sort_by(|a, b| a.file_name.cmp(&b.file_name));
-        Ok(entries.into())
+    async fn read_dir_for_no_watchfs_without_dice(
+        &self,
+        _io_provider: Arc<dyn IoProvider>,
+        path: &'async_trait CellRelativePath,
+    ) -> buck2_error::Result<Arc<[RawDirEntry]>> {
+        self.read_dir_for_no_watchfs_without_dice_impl(path).await
     }
 
     async fn read_path_metadata_if_exists(
@@ -3022,12 +3043,40 @@ impl FileOpsDelegate for BzlmodGeneratedFileOpsDelegate {
             .await
     }
 
+    async fn read_path_metadata_for_no_watchfs_if_exists_without_dice(
+        &self,
+        _io_provider: Arc<dyn IoProvider>,
+        path: &'async_trait CellRelativePath,
+        cache: Option<Arc<NoWatchFsMetadataCache>>,
+    ) -> buck2_error::Result<Option<RawPathMetadataForNoWatchFs>> {
+        self.read_path_metadata_for_no_watchfs_if_exists_with_cache_impl(cache, path)
+            .await
+    }
+
     fn eq_token(&self) -> PartialEqAny<'_> {
         PartialEqAny::always_false()
     }
 }
 
 impl BzlmodGeneratedFileOpsDelegate {
+    async fn read_dir_for_no_watchfs_without_dice_impl(
+        &self,
+        path: &CellRelativePath,
+    ) -> buck2_error::Result<Arc<[RawDirEntry]>> {
+        let project_path = self.resolve(path);
+        let mut entries = (&self.io as &dyn IoProvider)
+            .read_dir(project_path)
+            .await
+            .with_buck_error_context(|| format!("Error listing dir `{path}`"))?;
+        follow_bzlmod_symlinked_directory_entries(
+            self.io.project_root(),
+            self.resolve(path).as_ref(),
+            &mut entries,
+        )?;
+
+        entries.sort_by(|a, b| a.file_name.cmp(&b.file_name));
+        Ok(entries.into())
+    }
     async fn read_path_metadata_for_no_watchfs_if_exists_with_cache_impl(
         &self,
         cache: Option<Arc<NoWatchFsMetadataCache>>,

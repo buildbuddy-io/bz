@@ -43,6 +43,7 @@ use crate::file_ops::metadata::SimpleDirEntry;
 use crate::ignores::all_cells::HasCellFileIgnores;
 use crate::ignores::file_ignores::CellFileIgnores;
 use crate::ignores::file_ignores::FileIgnoreResult;
+use crate::io::IoProvider;
 use crate::io::NoWatchFsMetadataCache;
 
 /// Note: Everything in this mini-module exists only so that it can be replaced by a `TestFileOps`
@@ -94,6 +95,22 @@ pub trait FileOpsDelegate: PagableTagged + Send + Sync {
         self.read_dir(ctx, path).await
     }
 
+    async fn read_dir_for_no_watchfs_without_dice(
+        &self,
+        io_provider: Arc<dyn IoProvider>,
+        path: &'async_trait CellRelativePath,
+    ) -> buck2_error::Result<Arc<[RawDirEntry]>>;
+
+    async fn read_dir_for_no_watchfs_without_dice_with_metadata_cache(
+        &self,
+        io_provider: Arc<dyn IoProvider>,
+        path: &'async_trait CellRelativePath,
+        _metadata_cache: Option<Arc<NoWatchFsMetadataCache>>,
+    ) -> buck2_error::Result<Arc<[RawDirEntry]>> {
+        self.read_dir_for_no_watchfs_without_dice(io_provider, path)
+            .await
+    }
+
     async fn read_path_metadata_if_exists(
         &self,
         ctx: &mut DiceComputations<'_>,
@@ -128,6 +145,13 @@ pub trait FileOpsDelegate: PagableTagged + Send + Sync {
         self.read_path_metadata_for_no_watchfs_if_exists(ctx, path)
             .await
     }
+
+    async fn read_path_metadata_for_no_watchfs_if_exists_without_dice(
+        &self,
+        io_provider: Arc<dyn IoProvider>,
+        path: &'async_trait CellRelativePath,
+        cache: Option<Arc<NoWatchFsMetadataCache>>,
+    ) -> buck2_error::Result<Option<RawPathMetadataForNoWatchFs>>;
 
     /// Check if a path exists in the exact case given.
     ///
@@ -256,21 +280,14 @@ impl FileOpsDelegateWithIgnores {
         self.delegate.read_file_if_exists(ctx, path).await
     }
 
-    async fn read_dir_impl(
+    pub(crate) fn make_read_dir_output(
         &self,
-        ctx: &mut DiceComputations<'_>,
         path: &CellRelativePath,
-        for_no_watchfs: bool,
+        entries: Arc<[RawDirEntry]>,
     ) -> buck2_error::Result<ReadDirOutput> {
         // TODO(cjhopman): This should also probably verify that the parent chain is not ignored.
         self.check_ignores(UncheckedCellRelativePath::new(path))
             .into_result()?;
-
-        let entries = if for_no_watchfs {
-            self.delegate.read_dir_for_no_watchfs(ctx, path).await?
-        } else {
-            self.delegate.read_dir(ctx, path).await?
-        };
 
         let is_ignored = |file_name: &str| {
             let mut cell_relative_path_buf;
@@ -327,15 +344,23 @@ impl FileOpsDelegateWithIgnores {
         ctx: &mut DiceComputations<'_>,
         path: &CellRelativePath,
     ) -> buck2_error::Result<ReadDirOutput> {
-        self.read_dir_impl(ctx, path, false).await
+        let entries = self.delegate.read_dir(ctx, path).await?;
+        self.make_read_dir_output(path, entries)
     }
 
-    pub(crate) async fn read_dir_for_no_watchfs(
+    pub(crate) async fn read_raw_dir_for_no_watchfs_without_dice(
         &self,
-        ctx: &mut DiceComputations<'_>,
+        io_provider: Arc<dyn IoProvider>,
         path: &CellRelativePath,
-    ) -> buck2_error::Result<ReadDirOutput> {
-        self.read_dir_impl(ctx, path, true).await
+        metadata_cache: Option<Arc<NoWatchFsMetadataCache>>,
+    ) -> buck2_error::Result<Arc<[RawDirEntry]>> {
+        self.delegate
+            .read_dir_for_no_watchfs_without_dice_with_metadata_cache(
+                io_provider,
+                path,
+                metadata_cache,
+            )
+            .await
     }
 
     pub(crate) async fn exists_matching_exact_case(
@@ -351,23 +376,6 @@ impl FileOpsDelegateWithIgnores {
         }
 
         self.delegate.exists_matching_exact_case(dice, path).await
-    }
-
-    pub(crate) async fn exists_matching_exact_case_for_no_watchfs(
-        &self,
-        path: &CellRelativePath,
-        dice: &mut DiceComputations<'_>,
-    ) -> buck2_error::Result<bool> {
-        if self
-            .check_ignores(UncheckedCellRelativePath::new(path))
-            .is_ignored()
-        {
-            return Ok(false);
-        }
-
-        self.delegate
-            .exists_matching_exact_case_for_no_watchfs(dice, path)
-            .await
     }
 
     pub async fn read_path_metadata_if_exists(
@@ -406,6 +414,17 @@ impl FileOpsDelegateWithIgnores {
     ) -> buck2_error::Result<Option<RawPathMetadataForNoWatchFs>> {
         self.delegate
             .read_path_metadata_for_no_watchfs_if_exists_with_cache(ctx, path, cache)
+            .await
+    }
+
+    pub async fn read_path_metadata_for_no_watchfs_if_exists_without_dice(
+        &self,
+        io_provider: Arc<dyn IoProvider>,
+        path: &CellRelativePath,
+        cache: Option<Arc<NoWatchFsMetadataCache>>,
+    ) -> buck2_error::Result<Option<RawPathMetadataForNoWatchFs>> {
+        self.delegate
+            .read_path_metadata_for_no_watchfs_if_exists_without_dice(io_provider, path, cache)
             .await
     }
 

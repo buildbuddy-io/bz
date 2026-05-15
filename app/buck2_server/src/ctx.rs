@@ -10,6 +10,7 @@
 
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
+use std::fs as std_fs;
 use std::io::BufWriter;
 use std::marker::PhantomData;
 use std::sync::Arc;
@@ -158,6 +159,8 @@ use tracing::warn;
 use crate::active_commands::ActiveCommandDropGuard;
 use crate::daemon::common::CommandExecutorFactory;
 use crate::daemon::common::get_default_executor_config;
+use crate::daemon::state::CachedBuckConfigBasedCells;
+use crate::daemon::state::ConfigPathSnapshot;
 use crate::daemon::state::DaemonStateData;
 use crate::dice_tracker::BuckDiceTracker;
 use crate::heartbeat_guard::HeartbeatGuard;
@@ -509,6 +512,24 @@ impl ServerCommandContext<'_> {
         &self,
         dice_ctx: &mut DiceComputations<'_>,
     ) -> buck2_error::Result<BuckConfigBasedCells> {
+        let cached_configs = self
+            .base_context
+            .daemon
+            .cached_buckconfig_based_cells
+            .lock()
+            .await
+            .clone();
+        if let Some(cached_configs) = cached_configs
+            && cached_configs.config_overrides == self.config_overrides
+            && config_path_snapshots_match(
+                &self.base_context.project_root,
+                &cached_configs.snapshots,
+            )?
+        {
+            self.report_traced_config_paths(&cached_configs.cells.config_paths)?;
+            return Ok(cached_configs.cells);
+        }
+
         let new_configs = BuckConfigBasedCells::parse_with_config_args(
             &self.base_context.project_root,
             &self.config_overrides,
@@ -516,6 +537,8 @@ impl ServerCommandContext<'_> {
         .await?;
 
         self.report_traced_config_paths(&new_configs.config_paths)?;
+        self.store_cached_configs(&new_configs).await?;
+
         if self.reuse_current_config {
             if dice_ctx
                 .is_injected_external_buckconfig_data_key_set()
@@ -570,10 +593,12 @@ impl ServerCommandContext<'_> {
                 match config_path {
                     ConfigPath::Global(p) => {
                         // FIXME(JakobDegen): This is wrong, since we might fail to add symlinks that we depend on.
-                        let p = fs_util::canonicalize(p)
+                        if let Ok(p) = fs_util::canonicalize(p)
                             // input path could be from --config-file
-                            .categorize_input()?;
-                        tracing_provider.add_external_path(p)
+                            .categorize_input()
+                        {
+                            tracing_provider.add_external_path(p)
+                        }
                     }
                     ConfigPath::Project(p) => tracing_provider.add_project_path(p.clone()),
                 }
@@ -582,6 +607,110 @@ impl ServerCommandContext<'_> {
 
         Ok(())
     }
+
+    async fn store_cached_configs(
+        &self,
+        cells: &BuckConfigBasedCells,
+    ) -> buck2_error::Result<()> {
+        let snapshots = snapshot_config_paths(&self.base_context.project_root, &cells.config_paths)?;
+        *self
+            .base_context
+            .daemon
+            .cached_buckconfig_based_cells
+            .lock()
+            .await = Some(CachedBuckConfigBasedCells {
+            config_overrides: self.config_overrides.clone(),
+            cells: cells.clone(),
+            snapshots,
+        });
+
+        Ok(())
+    }
+}
+
+fn bzlmod_graph_results_already_loaded(
+    cells_and_configs: &BuckConfigBasedCells,
+    requests: &[BzlmodModuleExtensionEvaluationRequest],
+    previous_results: &[BzlmodEvaluatedModuleExtension],
+    previous_results_complete: bool,
+) -> bool {
+    let current_results = if previous_results_complete {
+        cells_and_configs
+            .external_data
+            .matching_complete_bzlmod_module_extension_results(requests)
+    } else {
+        cells_and_configs
+            .external_data
+            .matching_bzlmod_module_extension_graph_results(requests)
+    };
+
+    current_results
+        .as_ref()
+        .is_some_and(|current_results| current_results == previous_results)
+}
+
+fn config_path_snapshots_match(
+    project_root: &ProjectRoot,
+    snapshots: &StdBuckHashMap<ConfigPath, ConfigPathSnapshot>,
+) -> buck2_error::Result<bool> {
+    for (path, old_snapshot) in snapshots {
+        if &snapshot_config_path(project_root, path)? != old_snapshot {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+fn snapshot_config_paths(
+    project_root: &ProjectRoot,
+    paths: &StdBuckHashSet<ConfigPath>,
+) -> buck2_error::Result<StdBuckHashMap<ConfigPath, ConfigPathSnapshot>> {
+    paths
+        .iter()
+        .map(|path| {
+            Ok((
+                path.clone(),
+                snapshot_config_path(project_root, path)
+                    .with_buck_error_context(|| format!("Snapshotting config path `{path}`"))?,
+            ))
+        })
+        .collect()
+}
+
+fn snapshot_config_path(
+    project_root: &ProjectRoot,
+    path: &ConfigPath,
+) -> buck2_error::Result<ConfigPathSnapshot> {
+    let path = match path {
+        ConfigPath::Project(path) => project_root.resolve(path).into_abs_path_buf(),
+        ConfigPath::Global(path) => path.clone(),
+    };
+    let metadata = match std_fs::symlink_metadata(path.as_path()) {
+        Ok(metadata) => metadata,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(ConfigPathSnapshot::Missing);
+        }
+        Err(e) => return Err(e.into()),
+    };
+    if metadata.is_file() {
+        return Ok(ConfigPathSnapshot::File(std_fs::read(path.as_path())?));
+    }
+    if metadata.is_dir() {
+        let mut entries = Vec::new();
+        for entry in std_fs::read_dir(path.as_path())? {
+            let entry = entry?;
+            let file_type = entry.file_type()?;
+            entries.push(format!(
+                "{}:{}:{}",
+                entry.file_name().to_string_lossy(),
+                file_type.is_file(),
+                file_type.is_dir()
+            ));
+        }
+        entries.sort_unstable();
+        return Ok(ConfigPathSnapshot::Directory(entries));
+    }
+    Ok(ConfigPathSnapshot::Other)
 }
 
 struct DiceCommandUpdater<'s, 'a: 's> {
@@ -804,7 +933,14 @@ impl DiceUpdater for DiceCommandUpdater<'_, '_> {
                         )
                     })
                 });
-        if let Some(previous_results) = &previous_bzlmod_module_extension_graph_results {
+        if let Some(previous_results) = &previous_bzlmod_module_extension_graph_results
+            && !bzlmod_graph_results_already_loaded(
+                &cells_and_configs,
+                &bzlmod_module_extension_evaluation_requests,
+                previous_results,
+                previous_bzlmod_module_extension_results_complete,
+            )
+        {
             cells_and_configs =
                 BuckConfigBasedCells::parse_with_config_args_and_bzlmod_module_extension_results(
                     &self.cmd_ctx.base_context.project_root,
@@ -815,6 +951,7 @@ impl DiceUpdater for DiceCommandUpdater<'_, '_> {
                 .await?;
             self.cmd_ctx
                 .report_traced_config_paths(&cells_and_configs.config_paths)?;
+            self.cmd_ctx.store_cached_configs(&cells_and_configs).await?;
         }
 
         // Validate agent context against buckconfig schema if entries were provided.
@@ -869,6 +1006,7 @@ impl DiceUpdater for DiceCommandUpdater<'_, '_> {
             self.cmd_ctx.unstable_typecheck,
         )?;
 
+        let pending_changes_before_file_watcher = ctx.pending_change_count();
         early_timings.start_span(FILE_WATCHER_WAIT.to_owned());
         let (ctx, mergebase) = self
             .cmd_ctx
@@ -878,11 +1016,26 @@ impl DiceUpdater for DiceCommandUpdater<'_, '_> {
             .sync(ctx)
             .await?;
         early_timings.end_known_span();
+        let file_watcher_added_changes =
+            ctx.pending_change_count() != pending_changes_before_file_watcher;
 
         let mut user_data = self.make_user_computation_data(&cells_and_configs.root_config)?;
         user_data.set_mergebase(mergebase.dupe());
 
         if !bzlmod_module_extension_evaluation_requests.is_empty() {
+            if let Some(previous_complete_results) =
+                &previous_complete_bzlmod_module_extension_results
+                && !file_watcher_added_changes
+                && current_external_data
+                    .matching_complete_bzlmod_module_extension_results(
+                        &bzlmod_module_extension_evaluation_requests,
+                    )
+                    .as_ref()
+                    .is_some_and(|current_results| current_results == previous_complete_results)
+            {
+                return Ok((ctx, user_data));
+            }
+
             let (preliminary_dice, final_cells_and_configs) = if let Some(previous_results) =
                 previous_bzlmod_module_extension_results
             {
@@ -926,6 +1079,9 @@ impl DiceUpdater for DiceCommandUpdater<'_, '_> {
             }?;
             self.cmd_ctx
                 .report_traced_config_paths(&final_cells_and_configs.config_paths)?;
+            self.cmd_ctx
+                .store_cached_configs(&final_cells_and_configs)
+                .await?;
 
             let final_cell_resolver = final_cells_and_configs.cell_resolver;
             let final_configuror = BuildInterpreterConfiguror::new(
@@ -1222,15 +1378,24 @@ impl DiceCommandUpdater<'_, '_> {
                 continue;
             }
 
+            let final_results = bzlmod_module_extension_results_for_cell_graph(&results_by_key);
+            let final_cells_and_configs =
+                BuckConfigBasedCells::parse_with_config_args_and_bzlmod_module_extension_results(
+                    &self.cmd_ctx.base_context.project_root,
+                    &self.cmd_ctx.config_overrides,
+                    true,
+                    final_results,
+                )
+                .await?;
             dice = self
                 .commit_bzlmod_cell_graph(
                     dice,
-                    &candidate_cells_and_configs,
+                    &final_cells_and_configs,
                     optional_validations,
                     profiler_instrumentation_override,
                 )
                 .await?;
-            return Ok((dice, candidate_cells_and_configs));
+            return Ok((dice, final_cells_and_configs));
         }
     }
 

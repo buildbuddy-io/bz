@@ -435,6 +435,7 @@ impl ExternalBuckconfigData {
 ///
 /// We don't (currently) enforce that all aliases appear in the root config, but
 /// unlike v1, our cells implementation works just fine if that isn't the case.
+#[derive(Clone)]
 pub struct BuckConfigBasedCells {
     pub cell_resolver: CellResolver,
     pub root_config: LegacyBuckConfig,
@@ -661,19 +662,15 @@ impl BuckConfigBasedCells {
                 &mut self,
                 path: &ConfigPath,
             ) -> buck2_error::Result<Option<Vec<String>>> {
-                let res = self.inner.read_file_lines_if_exists(path).await?;
-
-                if res.is_some() {
-                    self.trace.insert(path.clone());
-                }
-
-                Ok(res)
+                self.trace.insert(path.clone());
+                self.inner.read_file_lines_if_exists(path).await
             }
 
             async fn read_dir(
                 &mut self,
                 path: &ConfigPath,
             ) -> buck2_error::Result<Vec<ConfigDirEntry>> {
+                self.trace.insert(path.clone());
                 self.inner.read_dir(path).await
             }
         }

@@ -34,6 +34,7 @@ use crate::file_ops::dice::ReadFileProxy;
 use crate::file_ops::metadata::RawDirEntry;
 use crate::file_ops::metadata::RawPathMetadata;
 use crate::file_ops::metadata::RawPathMetadataForNoWatchFs;
+use crate::io::IoProvider;
 use crate::io::NoWatchFsMetadataCache;
 
 /// A `FileOpsDelegate` implementation that calls out to the `IoProvider` to read files.
@@ -61,31 +62,54 @@ impl IoFileOpsDelegate {
         ctx: &mut DiceComputations<'_>,
         path: &CellRelativePath,
     ) -> buck2_error::Result<Arc<[RawDirEntry]>> {
+        self.read_dir_uncached_with_io_provider(ctx.global_data().get_io_provider(), path)
+            .await
+    }
+
+    async fn read_dir_uncached_with_io_provider(
+        &self,
+        io_provider: Arc<dyn IoProvider>,
+        path: &CellRelativePath,
+    ) -> buck2_error::Result<Arc<[RawDirEntry]>> {
+        self.read_dir_uncached_with_io_provider_and_metadata_cache(io_provider, path, None)
+            .await
+    }
+
+    async fn read_dir_uncached_with_io_provider_and_metadata_cache(
+        &self,
+        io_provider: Arc<dyn IoProvider>,
+        path: &CellRelativePath,
+        metadata_cache: Option<Arc<NoWatchFsMetadataCache>>,
+    ) -> buck2_error::Result<Arc<[RawDirEntry]>> {
         let project_path = self.resolve(path)?;
-        let mut entries = ctx
-            .global_data()
-            .get_io_provider()
+        let forward_project_path = metadata_cache
+            .as_ref()
+            .map(|_| project_path.as_forward_relative_path().to_owned());
+        let mut entries = io_provider
             .read_dir(project_path)
             .await
             .with_buck_error_context(|| format!("Error listing dir `{path}`"))?;
 
         // Make sure entries are deterministic, since read_dir isn't.
         entries.sort_by(|a, b| a.file_name.cmp(&b.file_name));
+        if let (Some(metadata_cache), Some(forward_project_path)) =
+            (metadata_cache, forward_project_path)
+        {
+            metadata_cache.seed_readdir(forward_project_path, &entries);
+        }
 
         Ok(Arc::from(entries))
     }
 
     async fn read_path_metadata_for_no_watchfs_if_exists_impl(
         &self,
-        ctx: &mut DiceComputations<'_>,
+        io_provider: Arc<dyn IoProvider>,
         path: &CellRelativePath,
         cache: Option<Arc<NoWatchFsMetadataCache>>,
     ) -> buck2_error::Result<Option<RawPathMetadataForNoWatchFs>> {
         let project_path = self.resolve(path)?;
 
-        let res = ctx
-            .global_data()
-            .get_io_provider()
+        let res = io_provider
             .read_path_metadata_if_exists_for_no_watchfs_with_cache(project_path, cache)
             .await
             .with_buck_error_context(|| format!("Error accessing metadata for path `{path}`"))?;
@@ -142,6 +166,28 @@ impl FileOpsDelegate for IoFileOpsDelegate {
         self.read_dir_uncached(ctx, path).await
     }
 
+    async fn read_dir_for_no_watchfs_without_dice(
+        &self,
+        io_provider: Arc<dyn IoProvider>,
+        path: &'async_trait CellRelativePath,
+    ) -> buck2_error::Result<Arc<[RawDirEntry]>> {
+        self.read_dir_uncached_with_io_provider(io_provider, path).await
+    }
+
+    async fn read_dir_for_no_watchfs_without_dice_with_metadata_cache(
+        &self,
+        io_provider: Arc<dyn IoProvider>,
+        path: &'async_trait CellRelativePath,
+        metadata_cache: Option<Arc<NoWatchFsMetadataCache>>,
+    ) -> buck2_error::Result<Arc<[RawDirEntry]>> {
+        self.read_dir_uncached_with_io_provider_and_metadata_cache(
+            io_provider,
+            path,
+            metadata_cache,
+        )
+        .await
+    }
+
     async fn read_path_metadata_if_exists(
         &self,
         ctx: &mut DiceComputations<'_>,
@@ -170,7 +216,21 @@ impl FileOpsDelegate for IoFileOpsDelegate {
             .ok()
             .map(|cache| cache.dupe());
 
-        self.read_path_metadata_for_no_watchfs_if_exists_impl(ctx, path, cache)
+        self.read_path_metadata_for_no_watchfs_if_exists_impl(
+            ctx.global_data().get_io_provider(),
+            path,
+            cache,
+        )
+        .await
+    }
+
+    async fn read_path_metadata_for_no_watchfs_if_exists_without_dice(
+        &self,
+        io_provider: Arc<dyn IoProvider>,
+        path: &'async_trait CellRelativePath,
+        cache: Option<Arc<NoWatchFsMetadataCache>>,
+    ) -> buck2_error::Result<Option<RawPathMetadataForNoWatchFs>> {
+        self.read_path_metadata_for_no_watchfs_if_exists_impl(io_provider, path, cache)
             .await
     }
 
@@ -180,8 +240,12 @@ impl FileOpsDelegate for IoFileOpsDelegate {
         path: &'async_trait CellRelativePath,
         cache: Option<Arc<NoWatchFsMetadataCache>>,
     ) -> buck2_error::Result<Option<RawPathMetadataForNoWatchFs>> {
-        self.read_path_metadata_for_no_watchfs_if_exists_impl(ctx, path, cache)
-            .await
+        self.read_path_metadata_for_no_watchfs_if_exists_impl(
+            ctx.global_data().get_io_provider(),
+            path,
+            cache,
+        )
+        .await
     }
 
     async fn exists_matching_exact_case(

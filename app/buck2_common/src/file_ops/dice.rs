@@ -11,16 +11,22 @@
 use std::fmt::Debug;
 use std::hash::Hash;
 use std::sync::Arc;
+use std::time::Instant;
 
 use allocative::Allocative;
 use async_trait::async_trait;
 use buck2_core::cells::cell_path::CellPath;
 use buck2_core::cells::cell_path::CellPathRef;
 use buck2_core::cells::name::CellName;
+use buck2_error::internal_error;
 use buck2_fs::paths::file_name::FileNameBuf;
+use buck2_hash::BuckDashMap;
+use buck2_hash::StdBuckHashMap;
 use buck2_hash::StdBuckHashSet;
 use derive_more::Display;
 use dice::DiceComputations;
+use dice::DiceData;
+use dice::DiceDataBuilder;
 use dice::DiceTransactionUpdater;
 use dice::InvalidationSourcePriority;
 use dice::Key;
@@ -30,11 +36,15 @@ use dice::ValueSerialize;
 use dice_futures::cancellation::CancellationContext;
 use dupe::Dupe;
 use futures::FutureExt;
+use futures::StreamExt;
 use futures::future::BoxFuture;
+use futures::stream;
 use pagable::Pagable;
 use pagable::pagable_typetag;
 
 use crate::buildfiles::HasBuildfiles;
+use crate::dice::data::HasIoProvider;
+use crate::file_ops::delegate::FileOpsDelegateWithIgnores;
 use crate::file_ops::delegate::get_delegated_file_ops;
 use crate::file_ops::error::FileReadError;
 use crate::file_ops::error::extended_ignore_error;
@@ -42,10 +52,89 @@ use crate::file_ops::metadata::RawPathMetadata;
 use crate::file_ops::metadata::RawPathMetadataForNoWatchFs;
 use crate::file_ops::metadata::ReadDirOutput;
 use crate::ignores::file_ignores::FileIgnoreResult;
+use crate::io::IoProvider;
 use crate::io::NoWatchFsMetadataCache;
 use crate::io::ReadDirError;
 
 pub struct DiceFileComputations;
+
+const NO_WATCHFS_METADATA_CHECK_CONCURRENCY: usize = 200;
+
+#[derive(Default)]
+pub struct NoWatchFsKnownFileState {
+    path_metadata: BuckDashMap<CellPath, Option<RawPathMetadataForNoWatchFs>>,
+    read_dirs: BuckDashMap<ReadDirKey, ReadDirOutput>,
+    exists_matching_exact_case: BuckDashMap<ExistsMatchingExactCaseKey, bool>,
+}
+
+impl NoWatchFsKnownFileState {
+    fn update_path_metadata(
+        &self,
+        path: &CellPath,
+        value: &buck2_error::Result<Option<RawPathMetadataForNoWatchFs>>,
+    ) {
+        match value {
+            Ok(value) => {
+                self.path_metadata.insert(path.clone(), value.dupe());
+            }
+            Err(_) => {
+                self.path_metadata.remove(path);
+            }
+        }
+    }
+
+    fn update_read_dir(
+        &self,
+        key: &ReadDirKey,
+        value: &buck2_error::Result<ReadDirOutput>,
+    ) {
+        match value {
+            Ok(value) => {
+                self.read_dirs.insert(key.clone(), value.dupe());
+            }
+            Err(_) => {
+                self.read_dirs.remove(key);
+            }
+        }
+    }
+
+    fn update_exists_matching_exact_case(
+        &self,
+        key: &ExistsMatchingExactCaseKey,
+        value: &buck2_error::Result<bool>,
+    ) {
+        match value {
+            Ok(value) => {
+                self.exists_matching_exact_case.insert(key.clone(), *value);
+            }
+            Err(_) => {
+                self.exists_matching_exact_case.remove(key);
+            }
+        }
+    }
+}
+
+pub trait HasNoWatchFsKnownFileState {
+    fn get_no_watchfs_known_file_state(&self) -> Option<Arc<NoWatchFsKnownFileState>>;
+}
+
+impl HasNoWatchFsKnownFileState for DiceData {
+    fn get_no_watchfs_known_file_state(&self) -> Option<Arc<NoWatchFsKnownFileState>> {
+        self.get::<Arc<NoWatchFsKnownFileState>>()
+            .ok()
+            .map(|state| state.dupe())
+    }
+}
+
+pub trait SetNoWatchFsKnownFileState {
+    fn set_no_watchfs_known_file_state(&mut self);
+}
+
+impl SetNoWatchFsKnownFileState for DiceDataBuilder {
+    fn set_no_watchfs_known_file_state(&mut self) {
+        self.set(Arc::new(NoWatchFsKnownFileState::default()))
+    }
+}
 
 /// Functions for accessing files with keys on the dice graph.
 impl DiceFileComputations {
@@ -179,12 +268,22 @@ pub struct KnownFileStateInvalidationStats {
     pub read_dirs: usize,
     pub paths: usize,
     pub exists_matching_exact_case: usize,
+    pub timings: KnownFileStateInvalidationTimings,
 }
 
 impl KnownFileStateInvalidationStats {
     pub fn total(&self) -> usize {
         self.read_files + self.read_dirs + self.paths + self.exists_matching_exact_case
     }
+}
+
+#[derive(Debug, Default)]
+pub struct KnownFileStateInvalidationTimings {
+    pub introspection_us: u64,
+    pub file_ops_us: u64,
+    pub read_dirs_us: u64,
+    pub metadata_us: u64,
+    pub full_check_us: u64,
 }
 
 impl FileChangeTracker {
@@ -280,182 +379,172 @@ impl FileChangeTracker {
 pub async fn invalidate_changed_file_state(
     ctx: &mut DiceTransactionUpdater,
 ) -> buck2_error::Result<KnownFileStateInvalidationStats> {
+    let total_start = Instant::now();
     let mut read_files = Vec::new();
     let mut read_dirs = Vec::new();
     let mut paths = Vec::new();
     let mut exists_matching_exact_case = Vec::new();
-    let mut paths_for_no_watchfs = StdBuckHashSet::default();
+    let mut metadata_paths = StdBuckHashSet::default();
 
-    for key in ctx.existing_keys_for_introspection() {
-        if let Some(key) = key.downcast_ref::<ReadFileKey>() {
-            read_files.push(key.clone());
-        } else if let Some(key) = key.downcast_ref::<ReadDirKey>() {
-            read_dirs.push(key.clone());
-        } else if let Some(key) = key.downcast_ref::<PathMetadataKey>() {
-            paths.push(key.clone());
-        } else if let Some(key) = key.downcast_ref::<ExistsMatchingExactCaseKey>() {
-            exists_matching_exact_case.push(key.clone());
-        } else if let Some(key) = key.downcast_ref::<PathMetadataForNoWatchFsKey>() {
-            paths_for_no_watchfs.insert(key.0.clone());
-        }
-    }
+    read_files.extend(ctx.existing_keys_of_type_for_introspection::<ReadFileKey>());
+    read_dirs.extend(ctx.existing_keys_of_type_for_introspection::<ReadDirKey>());
+    paths.extend(ctx.existing_keys_of_type_for_introspection::<PathMetadataKey>());
+    exists_matching_exact_case
+        .extend(ctx.existing_keys_of_type_for_introspection::<ExistsMatchingExactCaseKey>());
+    metadata_paths.extend(
+        ctx.existing_keys_of_type_for_introspection::<PathMetadataForNoWatchFsKey>()
+            .into_iter()
+            .map(|key| key.0),
+    );
+    let introspection_us = total_start.elapsed().as_micros() as u64;
 
     let mut dice = ctx.existing_state().await;
+    let known_file_state = dice
+        .global_data()
+        .get_no_watchfs_known_file_state()
+        .unwrap_or_else(|| Arc::new(NoWatchFsKnownFileState::default()));
     let no_watchfs_metadata_cache = Arc::new(NoWatchFsMetadataCache::default());
 
-    let mut metadata_paths = StdBuckHashSet::default();
     for key in &read_files {
         metadata_paths.insert(key.0.as_ref().clone());
     }
     for key in &paths {
         metadata_paths.insert(key.0.clone());
     }
+    let metadata_paths = metadata_paths.into_iter().collect::<Vec<_>>();
 
-    let mut metadata_paths_with_no_watchfs = Vec::new();
-    let mut metadata_paths_without_no_watchfs = Vec::new();
-    for path in metadata_paths {
-        if paths_for_no_watchfs.contains(&path) {
-            metadata_paths_with_no_watchfs.push(path);
-        } else {
-            metadata_paths_without_no_watchfs.push(path);
-        }
+    let mut no_watchfs_cells = StdBuckHashSet::default();
+    for path in &metadata_paths {
+        no_watchfs_cells.insert((path.cell(), CheckIgnores::No));
     }
-
-    let checked_path_metadata_for_no_watchfs = dice
-        .compute_join(metadata_paths_with_no_watchfs, |ctx, path| {
-            let no_watchfs_metadata_cache = no_watchfs_metadata_cache.dupe();
+    for key in &read_dirs {
+        no_watchfs_cells.insert((key.path.cell(), key.check_ignores));
+    }
+    for key in &exists_matching_exact_case {
+        no_watchfs_cells.insert((key.0.cell(), CheckIgnores::No));
+        no_watchfs_cells.insert((key.0.cell(), CheckIgnores::Yes));
+    }
+    let file_ops_by_cell = dice
+        .compute_join(no_watchfs_cells, |ctx, (cell, check_ignores)| {
             async move {
-                let key = PathMetadataForNoWatchFsKey(path);
-                let fresh = fresh_path_metadata_for_no_watchfs(
-                    ctx,
-                    key.0.as_ref(),
-                    Some(no_watchfs_metadata_cache),
-                )
-                .await;
-
-                match fresh {
-                    Ok(fresh) => DirtyPathMetadataForNoWatchFs::WithValue(key, Ok(fresh)),
-                    Err(_) => DirtyPathMetadataForNoWatchFs::WithoutValue(key),
-                }
+                buck2_error::Ok((
+                    (cell, check_ignores),
+                    get_delegated_file_ops(ctx, cell, check_ignores).await?,
+                ))
             }
             .boxed()
         })
+        .await
+        .into_iter()
+        .collect::<buck2_error::Result<StdBuckHashMap<_, _>>>()?;
+    let file_ops_by_cell = Arc::new(file_ops_by_cell);
+    let io_provider = dice.global_data().get_io_provider();
+    let no_watchfs_read_dir_cache = Arc::new(NoWatchFsReadDirCache::default());
+    let file_ops_us = total_start.elapsed().as_micros() as u64 - introspection_us;
+
+    let read_dirs_start = Instant::now();
+    let checked_read_dirs = stream::iter(read_dirs)
+        .map(|key| {
+            check_read_dir_for_no_watchfs_direct(
+                key,
+                file_ops_by_cell.dupe(),
+                io_provider.dupe(),
+                no_watchfs_read_dir_cache.dupe(),
+                no_watchfs_metadata_cache.dupe(),
+                known_file_state.dupe(),
+            )
+        })
+        .buffer_unordered(NO_WATCHFS_METADATA_CHECK_CONCURRENCY)
+        .collect::<Vec<_>>()
+        .await;
+
+    let mut changed_read_dirs = Vec::new();
+    let mut changed_read_dirs_to_value = Vec::new();
+    for dirty in checked_read_dirs {
+        match dirty {
+            DirtyReadDirForNoWatchFs::WithValue(key, value) => {
+                changed_read_dirs_to_value.push((key, value));
+            }
+            DirtyReadDirForNoWatchFs::WithoutValue(key) => {
+                changed_read_dirs.push(key);
+            }
+            DirtyReadDirForNoWatchFs::Unchanged => {}
+        }
+    }
+
+    let checked_exists_matching_exact_case = stream::iter(exists_matching_exact_case)
+        .map(|key| {
+            check_exists_matching_exact_case_for_no_watchfs_direct(
+                key,
+                file_ops_by_cell.dupe(),
+                io_provider.dupe(),
+                no_watchfs_read_dir_cache.dupe(),
+                no_watchfs_metadata_cache.dupe(),
+                known_file_state.dupe(),
+            )
+        })
+        .buffer_unordered(NO_WATCHFS_METADATA_CHECK_CONCURRENCY)
+        .collect::<Vec<_>>()
+        .await;
+
+    let mut changed_exists_matching_exact_case = Vec::new();
+    let mut changed_exists_matching_exact_case_to_value = Vec::new();
+    for dirty in checked_exists_matching_exact_case {
+        match dirty {
+            DirtyExistsMatchingExactCaseForNoWatchFs::WithValue(key, value) => {
+                changed_exists_matching_exact_case_to_value.push((key, value));
+            }
+            DirtyExistsMatchingExactCaseForNoWatchFs::WithoutValue(key) => {
+                changed_exists_matching_exact_case.push(key);
+            }
+            DirtyExistsMatchingExactCaseForNoWatchFs::Unchanged => {}
+        }
+    }
+    let read_dirs_us = read_dirs_start.elapsed().as_micros() as u64;
+
+    let metadata_start = Instant::now();
+    let checked_path_metadata_for_no_watchfs = stream::iter(metadata_paths)
+        .map(|path| {
+            check_path_metadata_for_no_watchfs_direct(
+                path,
+                file_ops_by_cell.dupe(),
+                io_provider.dupe(),
+                no_watchfs_metadata_cache.dupe(),
+                known_file_state.dupe(),
+            )
+        })
+        .buffer_unordered(NO_WATCHFS_METADATA_CHECK_CONCURRENCY)
+        .collect::<Vec<_>>()
         .await;
 
     let mut changed_path_metadata_for_no_watchfs = Vec::new();
     let mut changed_path_metadata_for_no_watchfs_to_value = Vec::new();
+    let mut changed_metadata_paths = StdBuckHashSet::default();
     for dirty in checked_path_metadata_for_no_watchfs {
         match dirty {
             DirtyPathMetadataForNoWatchFs::WithValue(key, value) => {
+                changed_metadata_paths.insert(key.0.clone());
                 changed_path_metadata_for_no_watchfs_to_value.push((key, value));
             }
             DirtyPathMetadataForNoWatchFs::WithoutValue(key) => {
+                changed_metadata_paths.insert(key.0.clone());
                 changed_path_metadata_for_no_watchfs.push(key);
             }
+            DirtyPathMetadataForNoWatchFs::Unchanged => {}
         }
     }
+    let metadata_us = metadata_start.elapsed().as_micros() as u64;
 
-    let seeded_path_metadata_for_no_watchfs = dice
-        .compute_join(metadata_paths_without_no_watchfs.clone(), |ctx, path| {
-            let no_watchfs_metadata_cache = no_watchfs_metadata_cache.dupe();
-            async move {
-                let key = PathMetadataForNoWatchFsKey(path);
-                fresh_path_metadata_for_no_watchfs(
-                    ctx,
-                    key.0.as_ref(),
-                    Some(no_watchfs_metadata_cache),
-                )
-                .await
-                .ok()
-                .map(|fresh| (key, Ok(fresh)))
-            }
-            .boxed()
-        })
-        .await
+    let full_check_start = Instant::now();
+    let changed_read_files = read_files
         .into_iter()
-        .flatten()
+        .filter(|key| changed_metadata_paths.contains(key.0.as_ref()))
         .collect::<Vec<_>>();
-    changed_path_metadata_for_no_watchfs_to_value.extend(seeded_path_metadata_for_no_watchfs);
-
-    let metadata_paths_without_no_watchfs = metadata_paths_without_no_watchfs
+    let changed_paths = paths
         .into_iter()
-        .collect::<StdBuckHashSet<_>>();
-
-    let mut changed_read_files = Vec::new();
-    let changed_read_files_from_full_check = dice
-        .compute_join(
-            read_files
-                .into_iter()
-                .filter(|key| metadata_paths_without_no_watchfs.contains(key.0.as_ref())),
-            |ctx, key| {
-                async move {
-                    if read_file_key_is_dirty(ctx, &key).await {
-                        Some(key)
-                    } else {
-                        None
-                    }
-                }
-                .boxed()
-            },
-        )
-        .await
-        .into_iter()
-        .flatten();
-    changed_read_files.extend(changed_read_files_from_full_check);
-
-    let mut changed_paths = Vec::new();
-    let changed_paths_from_full_check = dice
-        .compute_join(
-            paths
-                .into_iter()
-                .filter(|key| metadata_paths_without_no_watchfs.contains(&key.0)),
-            |ctx, key| {
-                async move {
-                    if path_metadata_key_is_dirty(ctx, &key).await {
-                        Some(key)
-                    } else {
-                        None
-                    }
-                }
-                .boxed()
-            },
-        )
-        .await
-        .into_iter()
-        .flatten();
-    changed_paths.extend(changed_paths_from_full_check);
-
-    let changed_read_dirs = dice
-        .compute_join(read_dirs, |ctx, key| {
-            async move {
-                if read_dir_key_is_dirty(ctx, &key).await {
-                    Some(key)
-                } else {
-                    None
-                }
-            }
-            .boxed()
-        })
-        .await
-        .into_iter()
-        .flatten()
+        .filter(|key| changed_metadata_paths.contains(&key.0))
         .collect::<Vec<_>>();
-
-    let changed_exists_matching_exact_case = dice
-        .compute_join(exists_matching_exact_case, |ctx, key| {
-            async move {
-                if exists_matching_exact_case_key_is_dirty(ctx, &key).await {
-                    Some(key)
-                } else {
-                    None
-                }
-            }
-            .boxed()
-        })
-        .await
-        .into_iter()
-        .flatten()
-        .collect::<Vec<_>>();
+    let full_check_us = full_check_start.elapsed().as_micros() as u64;
 
     drop(dice);
 
@@ -464,6 +553,13 @@ pub async fn invalidate_changed_file_state(
         read_dirs: changed_read_dirs.len(),
         paths: changed_paths.len(),
         exists_matching_exact_case: changed_exists_matching_exact_case.len(),
+        timings: KnownFileStateInvalidationTimings {
+            introspection_us,
+            file_ops_us,
+            read_dirs_us,
+            metadata_us,
+            full_check_us,
+        },
     };
 
     ctx.changed(changed_read_files)?;
@@ -472,6 +568,8 @@ pub async fn invalidate_changed_file_state(
     ctx.changed(changed_exists_matching_exact_case)?;
     ctx.changed(changed_path_metadata_for_no_watchfs)?;
     ctx.changed_to(changed_path_metadata_for_no_watchfs_to_value)?;
+    ctx.changed_to(changed_read_dirs_to_value)?;
+    ctx.changed_to(changed_exists_matching_exact_case_to_value)?;
 
     Ok(stats)
 }
@@ -482,59 +580,237 @@ enum DirtyPathMetadataForNoWatchFs {
         buck2_error::Result<Option<RawPathMetadataForNoWatchFs>>,
     ),
     WithoutValue(PathMetadataForNoWatchFsKey),
+    Unchanged,
 }
 
-async fn read_file_key_is_dirty(ctx: &mut DiceComputations<'_>, key: &ReadFileKey) -> bool {
-    let old = ctx.compute(key).await;
-    let fresh = fresh_path_metadata(ctx, key.0.as_ref().as_ref()).await;
-
-    match (old, fresh) {
-        (Ok(Ok(old)), Ok(fresh)) => old.metadata != fresh,
-        _ => true,
-    }
+enum DirtyReadDirForNoWatchFs {
+    WithValue(ReadDirKey, buck2_error::Result<ReadDirOutput>),
+    WithoutValue(ReadDirKey),
+    Unchanged,
 }
 
-async fn read_dir_key_is_dirty(ctx: &mut DiceComputations<'_>, key: &ReadDirKey) -> bool {
-    let old = ctx.compute(key).await;
-    let fresh = fresh_read_dir(ctx, key).await;
-
-    match (old, fresh) {
-        (Ok(Ok(old)), Ok(fresh)) => old != fresh,
-        _ => true,
-    }
+enum DirtyExistsMatchingExactCaseForNoWatchFs {
+    WithValue(ExistsMatchingExactCaseKey, buck2_error::Result<bool>),
+    WithoutValue(ExistsMatchingExactCaseKey),
+    Unchanged,
 }
 
-async fn exists_matching_exact_case_key_is_dirty(
-    ctx: &mut DiceComputations<'_>,
-    key: &ExistsMatchingExactCaseKey,
-) -> bool {
-    let old = ctx.compute(key).await;
-    let fresh = fresh_exists_matching_exact_case(ctx, key).await;
-
-    match (old, fresh) {
-        (Ok(Ok(old)), Ok(fresh)) => old != fresh,
-        _ => true,
-    }
+#[derive(Default)]
+struct NoWatchFsReadDirCache {
+    raw: BuckDashMap<CellPath, Arc<[crate::file_ops::metadata::RawDirEntry]>>,
+    filtered: BuckDashMap<ReadDirKey, ReadDirOutput>,
 }
 
-async fn path_metadata_key_is_dirty(ctx: &mut DiceComputations<'_>, key: &PathMetadataKey) -> bool {
-    let old = ctx.compute(key).await;
-    let fresh = fresh_path_metadata(ctx, key.0.as_ref()).await;
-
-    match (old, fresh) {
-        (Ok(Ok(old)), Ok(fresh)) => old != fresh,
-        _ => true,
-    }
-}
-
-async fn fresh_path_metadata(
-    ctx: &mut DiceComputations<'_>,
+async fn read_path_metadata_for_no_watchfs_direct(
     path: CellPathRef<'_>,
-) -> buck2_error::Result<Option<RawPathMetadata>> {
-    let file_ops = get_delegated_file_ops(ctx, path.cell(), CheckIgnores::No).await?;
+    file_ops_by_cell: &StdBuckHashMap<(CellName, CheckIgnores), FileOpsDelegateWithIgnores>,
+    io_provider: Arc<dyn IoProvider>,
+    no_watchfs_metadata_cache: Arc<NoWatchFsMetadataCache>,
+) -> buck2_error::Result<Option<RawPathMetadataForNoWatchFs>> {
+    let file_ops = file_ops_by_cell
+        .get(&(path.cell(), CheckIgnores::No))
+        .ok_or_else(|| internal_error!("missing file ops for no-watchfs cell `{}`", path.cell()))?;
     file_ops
-        .read_path_metadata_if_exists_for_no_watchfs(ctx, path.path())
+        .read_path_metadata_for_no_watchfs_if_exists_without_dice(
+            io_provider,
+            path.path(),
+            Some(no_watchfs_metadata_cache),
+        )
         .await
+}
+
+async fn check_path_metadata_for_no_watchfs_direct(
+    path: CellPath,
+    file_ops_by_cell: Arc<StdBuckHashMap<(CellName, CheckIgnores), FileOpsDelegateWithIgnores>>,
+    io_provider: Arc<dyn IoProvider>,
+    no_watchfs_metadata_cache: Arc<NoWatchFsMetadataCache>,
+    known_file_state: Arc<NoWatchFsKnownFileState>,
+) -> DirtyPathMetadataForNoWatchFs {
+    let fresh = read_path_metadata_for_no_watchfs_direct(
+        path.as_ref(),
+        &file_ops_by_cell,
+        io_provider,
+        no_watchfs_metadata_cache,
+    )
+    .await;
+    let key = PathMetadataForNoWatchFsKey(path);
+
+    match fresh {
+        Ok(fresh) => {
+            let old = known_file_state.path_metadata.get(&key.0).map(|old| old.dupe());
+            known_file_state.path_metadata.insert(key.0.clone(), fresh.dupe());
+            if old.as_ref() == Some(&fresh) {
+                DirtyPathMetadataForNoWatchFs::Unchanged
+            } else {
+                DirtyPathMetadataForNoWatchFs::WithValue(key, Ok(fresh))
+            }
+        }
+        Err(_) => {
+            known_file_state.path_metadata.remove(&key.0);
+            DirtyPathMetadataForNoWatchFs::WithoutValue(key)
+        }
+    }
+}
+
+async fn read_dir_for_no_watchfs_direct(
+    key: &ReadDirKey,
+    file_ops_by_cell: &StdBuckHashMap<(CellName, CheckIgnores), FileOpsDelegateWithIgnores>,
+    io_provider: Arc<dyn IoProvider>,
+    no_watchfs_read_dir_cache: Arc<NoWatchFsReadDirCache>,
+    no_watchfs_metadata_cache: Arc<NoWatchFsMetadataCache>,
+) -> buck2_error::Result<ReadDirOutput> {
+    if let Some(fresh) = no_watchfs_read_dir_cache.filtered.get(key) {
+        return Ok(fresh.dupe());
+    }
+
+    let file_ops = file_ops_by_cell
+        .get(&(key.path.cell(), key.check_ignores))
+        .ok_or_else(|| {
+            internal_error!(
+                "missing file ops for no-watchfs cell `{}`",
+                key.path.cell()
+            )
+        })?;
+    let raw = match no_watchfs_read_dir_cache.raw.get(&key.path) {
+        Some(raw) => raw.clone(),
+        None => {
+            let raw = file_ops
+                .read_raw_dir_for_no_watchfs_without_dice(
+                    io_provider,
+                    key.path.as_ref().path(),
+                    Some(no_watchfs_metadata_cache),
+                )
+                .await?;
+            no_watchfs_read_dir_cache
+                .raw
+                .insert(key.path.clone(), raw.clone());
+            raw
+        }
+    };
+    let fresh = file_ops.make_read_dir_output(key.path.as_ref().path(), raw)?;
+    no_watchfs_read_dir_cache
+        .filtered
+        .insert(key.clone(), fresh.dupe());
+    Ok(fresh)
+}
+
+async fn check_read_dir_for_no_watchfs_direct(
+    key: ReadDirKey,
+    file_ops_by_cell: Arc<StdBuckHashMap<(CellName, CheckIgnores), FileOpsDelegateWithIgnores>>,
+    io_provider: Arc<dyn IoProvider>,
+    no_watchfs_read_dir_cache: Arc<NoWatchFsReadDirCache>,
+    no_watchfs_metadata_cache: Arc<NoWatchFsMetadataCache>,
+    known_file_state: Arc<NoWatchFsKnownFileState>,
+) -> DirtyReadDirForNoWatchFs {
+    let fresh = read_dir_for_no_watchfs_direct(
+        &key,
+        &file_ops_by_cell,
+        io_provider,
+        no_watchfs_read_dir_cache,
+        no_watchfs_metadata_cache,
+    )
+    .await;
+
+    match fresh {
+        Ok(fresh) => {
+            let old = known_file_state.read_dirs.get(&key).map(|old| old.dupe());
+            known_file_state.read_dirs.insert(key.clone(), fresh.dupe());
+            if old.as_ref() == Some(&fresh) {
+                DirtyReadDirForNoWatchFs::Unchanged
+            } else {
+                DirtyReadDirForNoWatchFs::WithValue(key, Ok(fresh))
+            }
+        }
+        Err(_) => {
+            known_file_state.read_dirs.remove(&key);
+            DirtyReadDirForNoWatchFs::WithoutValue(key)
+        }
+    }
+}
+
+async fn exists_matching_exact_case_for_no_watchfs_direct(
+    key: &ExistsMatchingExactCaseKey,
+    file_ops_by_cell: &StdBuckHashMap<(CellName, CheckIgnores), FileOpsDelegateWithIgnores>,
+    io_provider: Arc<dyn IoProvider>,
+    no_watchfs_read_dir_cache: Arc<NoWatchFsReadDirCache>,
+    no_watchfs_metadata_cache: Arc<NoWatchFsMetadataCache>,
+) -> buck2_error::Result<bool> {
+    let file_ops_with_ignores = file_ops_by_cell
+        .get(&(key.0.cell(), CheckIgnores::Yes))
+        .ok_or_else(|| {
+            internal_error!(
+                "missing file ops for no-watchfs cell `{}`",
+                key.0.cell()
+            )
+        })?;
+    if file_ops_with_ignores
+        .is_ignored(key.0.path())
+        .await?
+        .is_ignored()
+    {
+        return Ok(false);
+    }
+
+    let Some(parent) = key.0.parent() else {
+        return Ok(true);
+    };
+    let file_name = key
+        .0
+        .path()
+        .file_name()
+        .ok_or_else(|| internal_error!("path with parent has no file name: `{}`", key.0))?;
+    let read_dir_key = ReadDirKey {
+        path: parent.to_owned(),
+        check_ignores: CheckIgnores::No,
+    };
+    let fresh = read_dir_for_no_watchfs_direct(
+        &read_dir_key,
+        file_ops_by_cell,
+        io_provider,
+        no_watchfs_read_dir_cache,
+        no_watchfs_metadata_cache,
+    )
+    .await?;
+    Ok(fresh.contains(file_name))
+}
+
+async fn check_exists_matching_exact_case_for_no_watchfs_direct(
+    key: ExistsMatchingExactCaseKey,
+    file_ops_by_cell: Arc<StdBuckHashMap<(CellName, CheckIgnores), FileOpsDelegateWithIgnores>>,
+    io_provider: Arc<dyn IoProvider>,
+    no_watchfs_read_dir_cache: Arc<NoWatchFsReadDirCache>,
+    no_watchfs_metadata_cache: Arc<NoWatchFsMetadataCache>,
+    known_file_state: Arc<NoWatchFsKnownFileState>,
+) -> DirtyExistsMatchingExactCaseForNoWatchFs {
+    let fresh = exists_matching_exact_case_for_no_watchfs_direct(
+        &key,
+        &file_ops_by_cell,
+        io_provider,
+        no_watchfs_read_dir_cache,
+        no_watchfs_metadata_cache,
+    )
+    .await;
+
+    match fresh {
+        Ok(fresh) => {
+            let old = known_file_state
+                .exists_matching_exact_case
+                .get(&key)
+                .map(|old| *old);
+            known_file_state
+                .exists_matching_exact_case
+                .insert(key.clone(), fresh);
+            if old == Some(fresh) {
+                DirtyExistsMatchingExactCaseForNoWatchFs::Unchanged
+            } else {
+                DirtyExistsMatchingExactCaseForNoWatchFs::WithValue(key, Ok(fresh))
+            }
+        }
+        Err(_) => {
+            known_file_state.exists_matching_exact_case.remove(&key);
+            DirtyExistsMatchingExactCaseForNoWatchFs::WithoutValue(key)
+        }
+    }
 }
 
 async fn fresh_path_metadata_for_no_watchfs(
@@ -549,26 +825,6 @@ async fn fresh_path_metadata_for_no_watchfs(
             path.path(),
             no_watchfs_metadata_cache,
         )
-        .await
-}
-
-async fn fresh_read_dir(
-    ctx: &mut DiceComputations<'_>,
-    key: &ReadDirKey,
-) -> buck2_error::Result<ReadDirOutput> {
-    let file_ops = get_delegated_file_ops(ctx, key.path.cell(), key.check_ignores).await?;
-    file_ops
-        .read_dir_for_no_watchfs(ctx, key.path.as_ref().path())
-        .await
-}
-
-async fn fresh_exists_matching_exact_case(
-    ctx: &mut DiceComputations<'_>,
-    key: &ExistsMatchingExactCaseKey,
-) -> buck2_error::Result<bool> {
-    let file_ops = get_delegated_file_ops(ctx, key.0.cell(), CheckIgnores::Yes).await?;
-    file_ops
-        .exists_matching_exact_case_for_no_watchfs(key.0.path(), ctx)
         .await
 }
 
@@ -664,7 +920,11 @@ impl Key for PathMetadataForNoWatchFsKey {
         ctx: &mut DiceComputations,
         _cancellations: &CancellationContext,
     ) -> Self::Value {
-        fresh_path_metadata_for_no_watchfs(ctx, self.0.as_ref(), None).await
+        let value = fresh_path_metadata_for_no_watchfs(ctx, self.0.as_ref(), None).await;
+        if let Some(known_file_state) = ctx.global_data().get_no_watchfs_known_file_state() {
+            known_file_state.update_path_metadata(&self.0, &value);
+        }
+        value
     }
 
     fn equality(x: &Self::Value, y: &Self::Value) -> bool {
@@ -696,7 +956,11 @@ impl Key for ReadDirKey {
         _cancellations: &CancellationContext,
     ) -> Self::Value {
         let file_ops = get_delegated_file_ops(ctx, self.path.cell(), self.check_ignores).await?;
-        file_ops.read_dir(ctx, self.path.as_ref().path()).await
+        let value = file_ops.read_dir(ctx, self.path.as_ref().path()).await;
+        if let Some(known_file_state) = ctx.global_data().get_no_watchfs_known_file_state() {
+            known_file_state.update_read_dir(self, &value);
+        }
+        value
     }
 
     fn equality(x: &Self::Value, y: &Self::Value) -> bool {
@@ -728,10 +992,14 @@ impl Key for ExistsMatchingExactCaseKey {
         ctx: &mut DiceComputations,
         _cancellations: &CancellationContext,
     ) -> Self::Value {
-        get_delegated_file_ops(ctx, self.0.cell(), CheckIgnores::Yes)
+        let value = get_delegated_file_ops(ctx, self.0.cell(), CheckIgnores::Yes)
             .await?
             .exists_matching_exact_case(self.0.path(), ctx)
-            .await
+            .await;
+        if let Some(known_file_state) = ctx.global_data().get_no_watchfs_known_file_state() {
+            known_file_state.update_exists_matching_exact_case(self, &value);
+        }
+        value
     }
 
     fn equality(x: &Self::Value, y: &Self::Value) -> bool {
