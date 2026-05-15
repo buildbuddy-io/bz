@@ -78,6 +78,8 @@ use crate::interpreter::rule_defs::depset::BazelDepset;
 use crate::interpreter::rule_defs::depset::FrozenBazelDepset;
 use crate::interpreter::rule_defs::depset::bazel_depset_empty;
 use crate::interpreter::rule_defs::depset::bazel_depset_empty_frozen;
+use crate::interpreter::rule_defs::depset::bazel_depset_from_direct_and_transitive;
+use crate::interpreter::rule_defs::depset::bazel_depset_from_transitive;
 use crate::interpreter::rule_defs::depset::bazel_depset_from_values;
 use crate::interpreter::rule_defs::depset::bazel_depset_to_list;
 use crate::interpreter::rule_defs::provider::ProviderCollection;
@@ -223,23 +225,15 @@ where
     let mut root_symlinks = Vec::new();
     let mut empty_filenames = Vec::new();
     for runfiles in runfiles {
-        for file in bazel_depset_to_list(runfiles.files.get().to_value())? {
-            push_unique_value(&mut files, file)?;
-        }
-        for symlink in bazel_depset_to_list(runfiles.symlinks.get().to_value())? {
-            push_unique_value(&mut symlinks, symlink)?;
-        }
-        for root_symlink in bazel_depset_to_list(runfiles.root_symlinks.get().to_value())? {
-            push_unique_value(&mut root_symlinks, root_symlink)?;
-        }
-        for empty_filename in bazel_depset_to_list(runfiles.empty_filenames.get().to_value())? {
-            push_unique_value(&mut empty_filenames, empty_filename)?;
-        }
+        files.push(runfiles.files.get().to_value());
+        symlinks.push(runfiles.symlinks.get().to_value());
+        root_symlinks.push(runfiles.root_symlinks.get().to_value());
+        empty_filenames.push(runfiles.empty_filenames.get().to_value());
     }
-    let files = bazel_depset_from_values(heap, files)?;
-    let symlinks = bazel_depset_from_values(heap, symlinks)?;
-    let root_symlinks = bazel_depset_from_values(heap, root_symlinks)?;
-    let empty_filenames = bazel_depset_from_values(heap, empty_filenames)?;
+    let files = bazel_depset_from_transitive(heap, files)?;
+    let symlinks = bazel_depset_from_transitive(heap, symlinks)?;
+    let root_symlinks = bazel_depset_from_transitive(heap, root_symlinks)?;
+    let empty_filenames = bazel_depset_from_transitive(heap, empty_filenames)?;
     Ok(bazel_runfiles_from_depsets(
         files,
         symlinks,
@@ -257,14 +251,13 @@ pub(crate) fn bazel_runfiles_from_files<'v>(
 ) -> starlark::Result<BazelRunfiles<'v>> {
     let mut files = Vec::new();
     for file in direct_files {
-        push_unique_value(&mut files, file)?;
+        files.push(file);
     }
-    if let Some(transitive_files) = transitive_files {
-        for file in bazel_depset_to_list(transitive_files)? {
-            push_unique_value(&mut files, file)?;
-        }
-    }
-    let files = bazel_depset_from_values(heap, files)?;
+    let files = bazel_depset_from_direct_and_transitive(
+        heap,
+        files,
+        transitive_files.into_iter().collect(),
+    )?;
     let symlinks = bazel_runfiles_symlinks_from_value(heap, symlinks, "symlinks")?;
     let root_symlinks = bazel_runfiles_symlinks_from_value(heap, root_symlinks, "root_symlinks")?;
     Ok(bazel_runfiles_from_depsets(

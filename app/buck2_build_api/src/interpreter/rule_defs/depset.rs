@@ -547,19 +547,13 @@ pub(crate) fn bazel_depset_from_direct<'v>(
     })
 }
 
-pub(crate) fn bazel_depset_from_values<'v>(
-    heap: Heap<'v>,
+fn bazel_depset_from_direct_and_transitive_values<'v>(
     direct: Vec<Value<'v>>,
-) -> starlark::Result<Value<'v>> {
-    Ok(heap.alloc(bazel_depset_from_direct(direct)?))
-}
-
-pub(crate) fn bazel_depset_from_transitive<'v>(
-    heap: Heap<'v>,
     transitive: Vec<Value<'v>>,
-) -> starlark::Result<Value<'v>> {
-    let order = BazelDepsetOrder::Default;
-    let mut element_type: Option<String> = None;
+    order: BazelDepsetOrder,
+) -> starlark::Result<BazelDepset<'v>> {
+    let mut depset = bazel_depset_from_direct(direct)?;
+    let mut element_type = depset.element_type.clone();
 
     for value in &transitive {
         let transitive_depset = depset_from_value(*value)?;
@@ -586,13 +580,37 @@ pub(crate) fn bazel_depset_from_transitive<'v>(
         }
     }
 
-    Ok(heap.alloc(BazelDepset {
-        direct: Vec::new().into_boxed_slice(),
-        transitive: transitive.into_boxed_slice(),
-        order,
-        element_type,
-        _marker: PhantomData,
-    }))
+    depset.transitive = transitive.into_boxed_slice();
+    depset.order = order;
+    depset.element_type = element_type;
+
+    Ok(depset)
+}
+
+pub(crate) fn bazel_depset_from_values<'v>(
+    heap: Heap<'v>,
+    direct: Vec<Value<'v>>,
+) -> starlark::Result<Value<'v>> {
+    Ok(heap.alloc(bazel_depset_from_direct(direct)?))
+}
+
+pub(crate) fn bazel_depset_from_direct_and_transitive<'v>(
+    heap: Heap<'v>,
+    direct: Vec<Value<'v>>,
+    transitive: Vec<Value<'v>>,
+) -> starlark::Result<Value<'v>> {
+    Ok(heap.alloc(bazel_depset_from_direct_and_transitive_values(
+        direct,
+        transitive,
+        BazelDepsetOrder::Default,
+    )?))
+}
+
+pub(crate) fn bazel_depset_from_transitive<'v>(
+    heap: Heap<'v>,
+    transitive: Vec<Value<'v>>,
+) -> starlark::Result<Value<'v>> {
+    bazel_depset_from_direct_and_transitive(heap, Vec::new(), transitive)
 }
 
 pub(crate) fn bazel_depset_empty<'v>(heap: Heap<'v>) -> Value<'v> {
@@ -633,38 +651,6 @@ pub fn register_bazel_depset(builder: &mut GlobalsBuilder) {
         let order = BazelDepsetOrder::parse(order)?;
         let direct = direct.into_option().unwrap_or_default().items;
         let transitive = transitive.into_option().unwrap_or_default().items;
-        let mut depset = bazel_depset_from_direct(direct)?;
-        let mut element_type = depset.element_type.clone();
-
-        for value in &transitive {
-            let transitive_depset = depset_from_value(*value)?;
-            let transitive_order = transitive_depset.order();
-            if !order.is_compatible(transitive_order) {
-                return Err(buck2_error::Error::from(BazelDepsetError::OrderMismatch {
-                    parent: order.starlark_name(),
-                    transitive: transitive_order.starlark_name(),
-                })
-                .into());
-            }
-            match (element_type.as_deref(), transitive_depset.element_type()) {
-                (Some(expected), Some(actual)) if expected != actual => {
-                    return Err(
-                        buck2_error::Error::from(BazelDepsetError::ElementTypeMismatch {
-                            expected: expected.to_owned(),
-                            actual: actual.to_owned(),
-                        })
-                        .into(),
-                    );
-                }
-                (None, Some(actual)) => element_type = Some(actual.to_owned()),
-                _ => {}
-            }
-        }
-
-        depset.transitive = transitive.into_boxed_slice();
-        depset.order = order;
-        depset.element_type = element_type;
-
-        Ok(depset)
+        bazel_depset_from_direct_and_transitive_values(direct, transitive, order)
     }
 }

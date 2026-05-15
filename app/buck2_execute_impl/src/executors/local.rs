@@ -818,7 +818,7 @@ impl LocalExecutor {
                 // it, that's detected when BuckActionExecutor.execute validates
                 // that all outputs were actually returned.
                 let (outputs, hashing_time) = match self
-                    .calculate_and_declare_output_values(request, digest_config, true)
+                    .calculate_and_declare_output_values(request, digest_config, true, true)
                     .boxed()
                     .await
                 {
@@ -931,7 +931,7 @@ impl LocalExecutor {
             }
             GatherOutputStatus::TimedOut(duration) => {
                 let (outputs, hashing_time) = match self
-                    .calculate_and_declare_output_values(request, digest_config, true)
+                    .calculate_and_declare_output_values(request, digest_config, true, true)
                     .boxed()
                     .await
                 {
@@ -991,6 +991,7 @@ impl LocalExecutor {
         request: &CommandExecutionRequest,
         digest_config: DigestConfig,
         declare_outputs: bool,
+        promote_outputs: bool,
     ) -> buck2_error::Result<(
         BuckIndexMap<CommandExecutionOutput, ArtifactValue>,
         HashingInfo,
@@ -1014,7 +1015,7 @@ impl LocalExecutor {
                     Some(&ContentBasedPathHash::for_output_artifact()),
                 )?
                 .into_path();
-            if declare_outputs {
+            if promote_outputs {
                 promote_produced_output_path(&self.artifact_fs, &produced_path, &path)?;
             }
             let abspath = self.root.join(&path);
@@ -1587,8 +1588,18 @@ impl PreparedCommandOptionalExecutor for LocalExecutor {
             }
         }
 
+        // The persisted cache entry proves these outputs should exist, and the
+        // fingerprint check below proves the bytes still match. Declare the
+        // verified outputs so a cold daemon can reuse materializer metadata on
+        // the next invocation, but do not promote produced paths: this is a
+        // cache hit, so nothing just wrote to the execution-only output path.
         let (outputs, hashing_info) = match self
-            .calculate_and_declare_output_values(command.request, command.digest_config, false)
+            .calculate_and_declare_output_values(
+                command.request,
+                command.digest_config,
+                true,
+                false,
+            )
             .boxed()
             .await
         {
