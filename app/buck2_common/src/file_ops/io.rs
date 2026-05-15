@@ -95,7 +95,9 @@ impl IoFileOpsDelegate {
         if let (Some(metadata_cache), Some(forward_project_path)) =
             (metadata_cache, forward_project_path)
         {
-            metadata_cache.seed_readdir(forward_project_path, &entries);
+            let entries = Arc::<[RawDirEntry]>::from(entries);
+            metadata_cache.seed_readdir(forward_project_path, entries.clone());
+            return Ok(entries);
         }
 
         Ok(Arc::from(entries))
@@ -171,7 +173,8 @@ impl FileOpsDelegate for IoFileOpsDelegate {
         io_provider: Arc<dyn IoProvider>,
         path: &'async_trait CellRelativePath,
     ) -> buck2_error::Result<Arc<[RawDirEntry]>> {
-        self.read_dir_uncached_with_io_provider(io_provider, path).await
+        self.read_dir_uncached_with_io_provider(io_provider, path)
+            .await
     }
 
     async fn read_dir_for_no_watchfs_without_dice_with_metadata_cache(

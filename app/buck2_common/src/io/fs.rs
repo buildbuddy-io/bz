@@ -40,12 +40,14 @@ use crate::file_ops::metadata::FileContentsProxy;
 use crate::file_ops::metadata::FileDigest;
 use crate::file_ops::metadata::FileDigestConfig;
 use crate::file_ops::metadata::FileMetadata;
+use crate::file_ops::metadata::FileType;
 use crate::file_ops::metadata::RawDirEntry;
 use crate::file_ops::metadata::RawPathMetadata;
 use crate::file_ops::metadata::RawPathMetadataForNoWatchFs;
 use crate::file_ops::metadata::RawSymlink;
 use crate::file_ops::metadata::Symlink;
 use crate::file_ops::metadata::TrackedFileDigest;
+use crate::io::CachedDirentType;
 use crate::io::IoProvider;
 use crate::io::NoWatchFsMetadataCache;
 
@@ -422,14 +424,36 @@ fn exact_path_metadata_for_no_watchfs_cached(
     curr: &PathAndAbsPath,
     cache: &NoWatchFsMetadataCache,
 ) -> buck2_error::Result<Option<RawPathMetadataForNoWatchFs<ForwardRelativePathBuf>>> {
-    match cache.0.entry(curr.path.clone()) {
+    match cache.metadata.entry(curr.path.clone()) {
         Entry::Occupied(cached) => Ok(cached.get().clone()),
         Entry::Vacant(vacant) => {
-            let meta = exact_path_metadata_for_no_watchfs(curr)?;
+            let meta = exact_path_metadata_for_no_watchfs_with_cached_type(curr, cache)?;
             vacant.insert(meta.clone());
             Ok(meta)
         }
     }
+}
+
+fn exact_path_metadata_for_no_watchfs_with_cached_type(
+    curr: &PathAndAbsPath,
+    cache: &NoWatchFsMetadataCache,
+) -> buck2_error::Result<Option<RawPathMetadataForNoWatchFs<ForwardRelativePathBuf>>> {
+    Ok(match cache.cached_dirent_type(&curr.path) {
+        CachedDirentType::Found(FileType::Directory) => {
+            Some(RawPathMetadataForNoWatchFs::Directory)
+        }
+        CachedDirentType::Found(FileType::Symlink) => Some(
+            ExactPathSymlinkMetadata::from_symlink_path(curr)?
+                .into_raw_path_metadata_for_no_watchfs(
+                    curr.clone(),
+                    ForwardRelativePathBuf::default(),
+                )?,
+        ),
+        CachedDirentType::NotFound => None,
+        CachedDirentType::Found(FileType::File | FileType::Unknown) | CachedDirentType::Unknown => {
+            exact_path_metadata_for_no_watchfs(curr)?
+        }
+    })
 }
 
 fn exact_path_metadata_for_no_watchfs(
@@ -628,29 +652,7 @@ impl ExactPathMetadata {
     fn from_exact_path(curr: &PathAndAbsPath) -> buck2_error::Result<Self> {
         Ok(match fs_util::symlink_metadata_if_exists(&curr.abspath)? {
             Some(meta) if meta.file_type().is_symlink() => {
-                let dest = fs_util::read_link(&curr.abspath).categorize_input()?;
-
-                let out = if dest.has_root() {
-                    ExactPathSymlinkMetadata::ExternalSymlink(dest)
-                } else {
-                    // Remove the symlink name.
-                    let link_path = curr
-                        .path
-                        .parent()
-                        .expect("We pushed a component to this so it cannot be empty")
-                        .join_system_normalized(&dest)
-                        .with_buck_error_context(|| {
-                            format!("Invalid symlink at `{}`: `{}`", curr.path, dest.display())
-                        })?;
-
-                    // FIXME(JakobDegen): Remove the `unwrap` after we fork `relative_path`
-                    ExactPathSymlinkMetadata::InternalSymlink(
-                        link_path,
-                        RelativePathBuf::from_path(dest).unwrap(),
-                    )
-                };
-
-                ExactPathMetadata::Symlink(out)
+                ExactPathMetadata::Symlink(ExactPathSymlinkMetadata::from_symlink_path(curr)?)
             }
             Some(meta) => ExactPathMetadata::FileOrDirectory(meta),
             None => ExactPathMetadata::DoesNotExist,
@@ -666,6 +668,30 @@ enum ExactPathSymlinkMetadata {
 }
 
 impl ExactPathSymlinkMetadata {
+    fn from_symlink_path(curr: &PathAndAbsPath) -> buck2_error::Result<Self> {
+        let dest = fs_util::read_link(&curr.abspath).categorize_input()?;
+
+        if dest.has_root() {
+            Ok(ExactPathSymlinkMetadata::ExternalSymlink(dest))
+        } else {
+            // Remove the symlink name.
+            let link_path = curr
+                .path
+                .parent()
+                .expect("We pushed a component to this so it cannot be empty")
+                .join_system_normalized(&dest)
+                .with_buck_error_context(|| {
+                    format!("Invalid symlink at `{}`: `{}`", curr.path, dest.display())
+                })?;
+
+            // FIXME(JakobDegen): Remove the `unwrap` after we fork `relative_path`
+            Ok(ExactPathSymlinkMetadata::InternalSymlink(
+                link_path,
+                RelativePathBuf::from_path(dest).unwrap(),
+            ))
+        }
+    }
+
     fn into_raw_path_metadata(
         self,
         curr: PathAndAbsPath,

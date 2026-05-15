@@ -20,8 +20,9 @@ use buck2_core::fs::project::ProjectRoot;
 use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
 use buck2_error::BuckErrorContext;
 use buck2_error::ErrorTag;
-use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
 use buck2_fs::paths::file_name::FileName;
+use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
+use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
 use buck2_hash::BuckDashMap;
 
 use crate::file_ops::metadata::FileType;
@@ -30,30 +31,39 @@ use crate::file_ops::metadata::RawPathMetadata;
 use crate::file_ops::metadata::RawPathMetadataForNoWatchFs;
 use crate::ignores::file_ignores::FileIgnoreReason;
 
-pub struct NoWatchFsMetadataCache(
-    pub(crate) BuckDashMap<
+pub(crate) enum CachedDirentType {
+    Found(FileType),
+    NotFound,
+    Unknown,
+}
+
+pub struct NoWatchFsMetadataCache {
+    pub(crate) metadata: BuckDashMap<
         ForwardRelativePathBuf,
         Option<RawPathMetadataForNoWatchFs<ForwardRelativePathBuf>>,
     >,
-);
+    readdirs: BuckDashMap<ForwardRelativePathBuf, Arc<[RawDirEntry]>>,
+}
 
 impl Default for NoWatchFsMetadataCache {
     fn default() -> Self {
-        Self(Default::default())
+        Self {
+            metadata: Default::default(),
+            readdirs: Default::default(),
+        }
     }
 }
 
 impl NoWatchFsMetadataCache {
-    pub fn seed_readdir(
-        &self,
-        dir: ForwardRelativePathBuf,
-        entries: &[RawDirEntry],
-    ) {
-        self.0
+    pub fn seed_readdir(&self, dir: ForwardRelativePathBuf, entries: Arc<[RawDirEntry]>) {
+        self.readdirs
+            .entry(dir.clone())
+            .or_insert_with(|| entries.clone());
+        self.metadata
             .entry(dir.clone())
             .or_insert(Some(RawPathMetadataForNoWatchFs::Directory));
 
-        for entry in entries {
+        for entry in entries.iter() {
             if entry.file_type != FileType::Directory {
                 continue;
             }
@@ -62,11 +72,48 @@ impl NoWatchFsMetadataCache {
             };
             let mut child = dir.clone();
             child.push(file_name);
-            self.0
+            self.metadata
                 .entry(child)
                 .or_insert(Some(RawPathMetadataForNoWatchFs::Directory));
         }
     }
+
+    pub(crate) fn cached_dirent_type(&self, path: &ForwardRelativePath) -> CachedDirentType {
+        let Some((parent, file_name)) = path.split_last() else {
+            return CachedDirentType::Unknown;
+        };
+        let Some(parent) = self.readdirs.get(parent) else {
+            return CachedDirentType::Unknown;
+        };
+        match parent.binary_search_by(|entry| entry.file_name.as_str().cmp(file_name.as_str())) {
+            Ok(index) => CachedDirentType::Found(parent[index].file_type),
+            Err(_) => {
+                if cached_readdir_proves_absence(file_name.as_str(), parent.iter()) {
+                    CachedDirentType::NotFound
+                } else {
+                    CachedDirentType::Unknown
+                }
+            }
+        }
+    }
+}
+
+fn cached_readdir_proves_absence<'a>(
+    file_name: &str,
+    entries: impl IntoIterator<Item = &'a RawDirEntry>,
+) -> bool {
+    if !cfg!(any(target_os = "macos", windows)) {
+        return true;
+    }
+
+    if !file_name.is_ascii() {
+        return false;
+    }
+
+    !entries.into_iter().any(|entry| {
+        let entry_name = entry.file_name.as_str();
+        !entry_name.is_ascii() || entry_name.eq_ignore_ascii_case(file_name)
+    })
 }
 
 #[derive(Debug, Allocative, buck2_error::Error)]

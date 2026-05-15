@@ -341,58 +341,60 @@ pub async fn invalidate_changed_file_state(
     let mut changed_path_metadata_for_no_watchfs = Vec::new();
     let mut changed_path_metadata_for_no_watchfs_to_value = Vec::new();
 
-    let file_state_start = Instant::now();
-    let checked_file_state = stream::iter(
-        read_dirs
-            .into_iter()
-            .map(|(key, old_value)| NoWatchFsFileStateCheck::ReadDir(key, old_value))
-            .chain(
-                path_metadata_for_no_watchfs
-                    .into_iter()
-                    .map(|(key, old_value)| NoWatchFsFileStateCheck::PathMetadata(key, old_value)),
-            ),
-    )
-    .map(|check| {
-        check_file_state_for_no_watchfs_direct(
-            check,
-            file_ops_by_cell.dupe(),
-            io_provider.dupe(),
-            no_watchfs_metadata_cache.dupe(),
-        )
-    })
-    .buffer_unordered(NO_WATCHFS_METADATA_CHECK_CONCURRENCY)
-    .collect::<Vec<_>>()
-    .await;
-    let file_state_us = file_state_start.elapsed().as_micros() as u64;
-
-    for dirty in checked_file_state {
-        match dirty {
-            DirtyFileStateForNoWatchFs::ReadDir(DirtyReadDirForNoWatchFs::WithValue(
+    let read_dirs_start = Instant::now();
+    let checked_read_dirs = stream::iter(read_dirs)
+        .map(|(key, old_value)| {
+            check_read_dir_for_no_watchfs_direct(
                 key,
-                value,
-            )) => {
+                old_value,
+                file_ops_by_cell.dupe(),
+                io_provider.dupe(),
+                no_watchfs_metadata_cache.dupe(),
+            )
+        })
+        .buffer_unordered(NO_WATCHFS_METADATA_CHECK_CONCURRENCY)
+        .collect::<Vec<_>>()
+        .await;
+    let read_dirs_us = read_dirs_start.elapsed().as_micros() as u64;
+
+    let metadata_start = Instant::now();
+    let checked_path_metadata = stream::iter(path_metadata_for_no_watchfs)
+        .map(|(key, old_value)| {
+            check_path_metadata_for_no_watchfs_direct(
+                key,
+                old_value,
+                file_ops_by_cell.dupe(),
+                io_provider.dupe(),
+                no_watchfs_metadata_cache.dupe(),
+            )
+        })
+        .buffer_unordered(NO_WATCHFS_METADATA_CHECK_CONCURRENCY)
+        .collect::<Vec<_>>()
+        .await;
+    let metadata_us = metadata_start.elapsed().as_micros() as u64;
+    let file_state_us = read_dirs_us + metadata_us;
+
+    for dirty in checked_read_dirs {
+        match dirty {
+            DirtyReadDirForNoWatchFs::WithValue(key, value) => {
                 changed_read_dirs_to_value.push((key, value));
             }
-            DirtyFileStateForNoWatchFs::ReadDir(DirtyReadDirForNoWatchFs::WithoutValue(key)) => {
-                changed_read_dirs.push(key);
-            }
-            DirtyFileStateForNoWatchFs::ReadDir(DirtyReadDirForNoWatchFs::Unchanged) => {}
-            DirtyFileStateForNoWatchFs::PathMetadata(DirtyPathMetadataForNoWatchFs::WithValue(
-                key,
-                value,
-            )) => {
-                changed_path_metadata_for_no_watchfs_to_value.push((key, value));
-            }
-            DirtyFileStateForNoWatchFs::PathMetadata(
-                DirtyPathMetadataForNoWatchFs::WithoutValue(key),
-            ) => {
-                changed_path_metadata_for_no_watchfs.push(key);
-            }
-            DirtyFileStateForNoWatchFs::PathMetadata(DirtyPathMetadataForNoWatchFs::Unchanged) => {}
+            DirtyReadDirForNoWatchFs::WithoutValue(key) => changed_read_dirs.push(key),
+            DirtyReadDirForNoWatchFs::Unchanged => {}
         }
     }
-    let read_dirs_us = 0;
-    let metadata_us = 0;
+
+    for dirty in checked_path_metadata {
+        match dirty {
+            DirtyPathMetadataForNoWatchFs::WithValue(key, value) => {
+                changed_path_metadata_for_no_watchfs_to_value.push((key, value));
+            }
+            DirtyPathMetadataForNoWatchFs::WithoutValue(key) => {
+                changed_path_metadata_for_no_watchfs.push(key)
+            }
+            DirtyPathMetadataForNoWatchFs::Unchanged => {}
+        }
+    }
 
     let full_check_start = Instant::now();
     let full_check_us = full_check_start.elapsed().as_micros() as u64;
@@ -485,22 +487,6 @@ enum DirtyReadDirForNoWatchFs {
     ),
     WithoutValue(ReadDirForNoWatchFsKey),
     Unchanged,
-}
-
-enum NoWatchFsFileStateCheck {
-    ReadDir(
-        ReadDirForNoWatchFsKey,
-        Option<buck2_error::Result<Arc<[RawDirEntry]>>>,
-    ),
-    PathMetadata(
-        PathMetadataForNoWatchFsKey,
-        Option<buck2_error::Result<Option<RawPathMetadataForNoWatchFs>>>,
-    ),
-}
-
-enum DirtyFileStateForNoWatchFs {
-    ReadDir(DirtyReadDirForNoWatchFs),
-    PathMetadata(DirtyPathMetadataForNoWatchFs),
 }
 
 enum DirtyExternalPathMetadata {
@@ -609,38 +595,6 @@ async fn check_read_dir_for_no_watchfs_direct(
             }
         }
         Err(_) => DirtyReadDirForNoWatchFs::WithoutValue(key),
-    }
-}
-
-async fn check_file_state_for_no_watchfs_direct(
-    check: NoWatchFsFileStateCheck,
-    file_ops_by_cell: Arc<StdBuckHashMap<(CellName, CheckIgnores), FileOpsDelegateWithIgnores>>,
-    io_provider: Arc<dyn IoProvider>,
-    no_watchfs_metadata_cache: Arc<NoWatchFsMetadataCache>,
-) -> DirtyFileStateForNoWatchFs {
-    match check {
-        NoWatchFsFileStateCheck::ReadDir(key, old) => DirtyFileStateForNoWatchFs::ReadDir(
-            check_read_dir_for_no_watchfs_direct(
-                key,
-                old,
-                file_ops_by_cell,
-                io_provider,
-                no_watchfs_metadata_cache,
-            )
-            .await,
-        ),
-        NoWatchFsFileStateCheck::PathMetadata(path, old) => {
-            DirtyFileStateForNoWatchFs::PathMetadata(
-                check_path_metadata_for_no_watchfs_direct(
-                    path,
-                    old,
-                    file_ops_by_cell,
-                    io_provider,
-                    no_watchfs_metadata_cache,
-                )
-                .await,
-            )
-        }
     }
 }
 
