@@ -247,6 +247,9 @@ impl FileOps for TestFileOps {
     ) -> buck2_error::Result<Option<String>> {
         Ok(self.entries.get(&path.to_owned()).and_then(|e| match e {
             TestFileOpsEntry::File(data, ..) => Some(data.clone()),
+            TestFileOpsEntry::ExternalSymlink(sym) => {
+                std::fs::read_to_string(sym.to_path_buf()).ok()
+            }
             TestFileOpsEntry::RelativeSymlink(target, ..) => match self.entries.get(target) {
                 Some(TestFileOpsEntry::File(data, ..)) => Some(data.clone()),
                 _ => None,

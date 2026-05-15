@@ -99,6 +99,13 @@ impl FsIoProvider {
     }
 }
 
+pub(crate) async fn read_external_path_metadata_for_no_watchfs(
+    path: Arc<ExternalSymlink>,
+) -> buck2_error::Result<Option<RawPathMetadataForNoWatchFs<Arc<ExternalSymlink>>>> {
+    tokio::task::spawn_blocking(move || read_external_path_metadata_for_no_watchfs_impl(path))
+        .await?
+}
+
 #[derive(Debug, buck2_error::Error)]
 #[buck2(tag = Input)]
 enum FsIoError {
@@ -440,6 +447,73 @@ fn exact_path_metadata_for_no_watchfs(
             Some(convert_metadata_for_no_watchfs(path_meta)?)
         }
     })
+}
+
+fn read_external_path_metadata_for_no_watchfs_impl(
+    path: Arc<ExternalSymlink>,
+) -> buck2_error::Result<Option<RawPathMetadataForNoWatchFs<Arc<ExternalSymlink>>>> {
+    let full_path = path.to_path_buf();
+    if !full_path.is_absolute() {
+        return Err(internal_error!(
+            "external symlink target is not absolute: `{}`",
+            full_path.display()
+        ));
+    }
+
+    let mut components = full_path.components();
+    let mut curr = PathBuf::new();
+    let mut meta = None;
+
+    while let Some(component) = components.next() {
+        curr.push(component.as_os_str());
+
+        match fs_util::symlink_metadata_if_exists(AbsPath::new(&curr)?)? {
+            Some(m) if m.file_type().is_symlink() => {
+                let dest = fs_util::read_link(AbsPath::new(&curr)?).categorize_input()?;
+                let mut target = if dest.has_root() {
+                    dest
+                } else if let Some(parent) = curr.parent() {
+                    parent.join(dest)
+                } else {
+                    dest
+                };
+                for rest in components {
+                    target.push(rest.as_os_str());
+                }
+                let at = Arc::new(ExternalSymlink::new(
+                    curr,
+                    ForwardRelativePathBuf::default(),
+                )?);
+                let to = Arc::new(ExternalSymlink::new(
+                    target,
+                    ForwardRelativePathBuf::default(),
+                )?);
+                return Ok(Some(RawPathMetadataForNoWatchFs::Symlink {
+                    at,
+                    to: RawSymlink::External(to),
+                }));
+            }
+            Some(m) => meta = Some(m),
+            None => return Ok(None),
+        }
+    }
+
+    match meta {
+        Some(meta) => Ok(Some(convert_external_metadata_for_no_watchfs(meta))),
+        None => Ok(None),
+    }
+}
+
+fn convert_external_metadata_for_no_watchfs(
+    meta: std::fs::Metadata,
+) -> RawPathMetadataForNoWatchFs<Arc<ExternalSymlink>> {
+    if meta.is_dir() {
+        RawPathMetadataForNoWatchFs::Directory
+    } else {
+        RawPathMetadataForNoWatchFs::File(FileChangeMetadata::ContentsProxy(file_contents_proxy(
+            &meta,
+        )))
+    }
 }
 
 fn append_symlink_rest_for_no_watchfs(

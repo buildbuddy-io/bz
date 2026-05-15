@@ -51,6 +51,7 @@ use buck2_common::dice::cells::SetExternalCellOrigins;
 use buck2_common::dice::cells::cell_resolver_graph_shape_equal;
 use buck2_common::dice::cycles::CycleDetectorAdapter;
 use buck2_common::dice::cycles::PairDiceCycleDetector;
+use buck2_common::file_ops::dice::invalidate_changed_external_file_state;
 use buck2_common::file_ops::io::initialize_read_dir_cache;
 use buck2_common::http::SetHttpClient;
 use buck2_common::invocation_paths::InvocationPaths;
@@ -1015,6 +1016,8 @@ impl DiceUpdater for DiceCommandUpdater<'_, '_> {
             .file_watcher
             .sync(ctx)
             .await?;
+        let mut ctx = ctx;
+        let _external_file_state_stats = invalidate_changed_external_file_state(&mut ctx).await?;
         early_timings.end_known_span();
         let file_watcher_added_changes =
             ctx.pending_change_count() != pending_changes_before_file_watcher;

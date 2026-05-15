@@ -11,6 +11,8 @@
 use std::fmt::Debug;
 use std::hash::Hash;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
 use std::time::Instant;
 
 use allocative::Allocative;
@@ -42,6 +44,7 @@ use pagable::pagable_typetag;
 
 use crate::buildfiles::HasBuildfiles;
 use crate::dice::data::HasIoProvider;
+use crate::external_symlink::ExternalSymlink;
 use crate::file_ops::delegate::FileOpsDelegateWithIgnores;
 use crate::file_ops::delegate::get_delegated_file_ops;
 use crate::file_ops::error::FileReadError;
@@ -54,10 +57,13 @@ use crate::ignores::file_ignores::FileIgnoreResult;
 use crate::io::IoProvider;
 use crate::io::NoWatchFsMetadataCache;
 use crate::io::ReadDirError;
+use crate::io::fs::read_external_path_metadata_for_no_watchfs;
 
 pub struct DiceFileComputations;
 
 const NO_WATCHFS_METADATA_CHECK_CONCURRENCY: usize = 200;
+const MAX_EXTERNAL_SYMLINK_EXPANSIONS: usize = 256;
+static EXTERNAL_FILE_STATE_SEEN: AtomicBool = AtomicBool::new(false);
 
 /// Functions for accessing files with keys on the dice graph.
 impl DiceFileComputations {
@@ -207,6 +213,12 @@ pub struct KnownFileStateInvalidationTimings {
     pub read_dirs_us: u64,
     pub metadata_us: u64,
     pub full_check_us: u64,
+}
+
+#[derive(Debug, Default)]
+pub struct KnownExternalFileStateInvalidationStats {
+    pub paths: usize,
+    pub changed: usize,
 }
 
 impl FileChangeTracker {
@@ -502,6 +514,52 @@ pub async fn invalidate_changed_file_state(
     Ok(stats)
 }
 
+pub async fn invalidate_changed_external_file_state(
+    ctx: &mut DiceTransactionUpdater,
+) -> buck2_error::Result<KnownExternalFileStateInvalidationStats> {
+    if !EXTERNAL_FILE_STATE_SEEN.load(Ordering::Relaxed) {
+        return Ok(KnownExternalFileStateInvalidationStats::default());
+    }
+
+    let external_paths =
+        ctx.existing_key_values_of_type_for_introspection::<ExternalPathMetadataKey>();
+    let paths = external_paths.len();
+    if paths == 0 {
+        EXTERNAL_FILE_STATE_SEEN.store(false, Ordering::Relaxed);
+        return Ok(KnownExternalFileStateInvalidationStats::default());
+    }
+
+    let checked =
+        stream::iter(external_paths)
+            .map(|(key, old_value)| async move {
+                check_external_path_metadata_direct(key, old_value).await
+            })
+            .buffer_unordered(NO_WATCHFS_METADATA_CHECK_CONCURRENCY)
+            .collect::<Vec<_>>()
+            .await;
+
+    let mut changed_external_paths = Vec::new();
+    let mut changed_external_paths_to_value = Vec::new();
+
+    for dirty in checked {
+        match dirty {
+            DirtyExternalPathMetadata::WithValue(key, value) => {
+                changed_external_paths_to_value.push((key, value));
+            }
+            DirtyExternalPathMetadata::WithoutValue(key) => {
+                changed_external_paths.push(key);
+            }
+            DirtyExternalPathMetadata::Unchanged => {}
+        }
+    }
+
+    let changed = changed_external_paths.len() + changed_external_paths_to_value.len();
+    ctx.changed(changed_external_paths)?;
+    ctx.changed_to(changed_external_paths_to_value)?;
+
+    Ok(KnownExternalFileStateInvalidationStats { paths, changed })
+}
+
 enum DirtyPathMetadataForNoWatchFs {
     WithValue(
         PathMetadataForNoWatchFsKey,
@@ -520,6 +578,15 @@ enum DirtyReadDirForNoWatchFs {
 enum DirtyExistsMatchingExactCaseForNoWatchFs {
     WithValue(ExistsMatchingExactCaseKey, buck2_error::Result<bool>),
     WithoutValue(ExistsMatchingExactCaseKey),
+    Unchanged,
+}
+
+enum DirtyExternalPathMetadata {
+    WithValue(
+        ExternalPathMetadataKey,
+        buck2_error::Result<ExternalPathMetadata>,
+    ),
+    WithoutValue(ExternalPathMetadataKey),
     Unchanged,
 }
 
@@ -742,6 +809,95 @@ async fn fresh_path_metadata_for_no_watchfs(
         .await
 }
 
+async fn check_external_path_metadata_direct(
+    key: ExternalPathMetadataKey,
+    old: Option<buck2_error::Result<ExternalPathMetadata>>,
+) -> DirtyExternalPathMetadata {
+    let fresh = read_external_path_metadata(key.0.dupe()).await;
+
+    match fresh {
+        Ok(fresh) => {
+            let fresh = Ok(fresh);
+            if old
+                .as_ref()
+                .is_some_and(|old| ExternalPathMetadataKey::equality(old, &fresh))
+            {
+                DirtyExternalPathMetadata::Unchanged
+            } else {
+                DirtyExternalPathMetadata::WithValue(key, fresh)
+            }
+        }
+        Err(_) => DirtyExternalPathMetadata::WithoutValue(key),
+    }
+}
+
+#[derive(Clone, Dupe, PartialEq, Eq, Allocative)]
+struct ExternalPathMetadata {
+    logical_chain: Arc<[ExternalPathState]>,
+}
+
+#[derive(Clone, Dupe, PartialEq, Eq, Allocative)]
+struct ExternalPathState {
+    path: Arc<ExternalSymlink>,
+    metadata: Option<RawPathMetadataForNoWatchFs<Arc<ExternalSymlink>>>,
+}
+
+async fn read_external_path_metadata(
+    path: Arc<ExternalSymlink>,
+) -> buck2_error::Result<ExternalPathMetadata> {
+    EXTERNAL_FILE_STATE_SEEN.store(true, Ordering::Relaxed);
+
+    let mut path = path.with_full_target()?;
+    let mut seen = StdBuckHashSet::default();
+    let mut logical_chain = Vec::new();
+
+    loop {
+        if logical_chain.len() >= MAX_EXTERNAL_SYMLINK_EXPANSIONS {
+            return Err(internal_error!(
+                "too many external symlink expansions while resolving read-file metadata at `{}`",
+                path
+            ));
+        }
+        if !seen.insert(path.dupe()) {
+            return Err(internal_error!(
+                "external symlink cycle while resolving read-file metadata at `{}`",
+                path
+            ));
+        }
+
+        let metadata = read_external_path_metadata_for_no_watchfs(path.dupe()).await?;
+        logical_chain.push(ExternalPathState {
+            path: path.dupe(),
+            metadata: metadata.dupe(),
+        });
+
+        match metadata {
+            Some(RawPathMetadataForNoWatchFs::Symlink {
+                at: _,
+                to: RawSymlink::External(target),
+            }) => {
+                path = target.with_full_target()?;
+            }
+            Some(RawPathMetadataForNoWatchFs::Symlink {
+                at: _,
+                to: RawSymlink::Relative(..),
+            }) => {
+                return Err(internal_error!(
+                    "external path metadata unexpectedly resolved to a relative symlink at `{}`",
+                    path
+                ));
+            }
+            Some(RawPathMetadataForNoWatchFs::File(_))
+            | Some(RawPathMetadataForNoWatchFs::Directory)
+            | None => {
+                return Ok(ExternalPathMetadata {
+                    logical_chain: logical_chain.into(),
+                });
+            }
+        }
+    }
+}
+
 /// The return value of a `ReadFileKey` computation.
 ///
 /// Instead of the actual file contents, this is a closure that reads the actual file contents from
@@ -773,7 +929,13 @@ impl ReadFileProxy {
 struct ReadFileValue {
     proxy: ReadFileProxy,
     metadata: Option<RawPathMetadata>,
-    resolved_metadata: Option<RawPathMetadata>,
+    resolved_metadata: ReadFileResolvedMetadata,
+}
+
+#[derive(Clone, Dupe, PartialEq, Eq, Allocative)]
+struct ReadFileResolvedMetadata {
+    cell_metadata: Option<RawPathMetadata>,
+    external_metadata: Option<ExternalPathMetadata>,
 }
 
 #[derive(Clone, Dupe, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable)]
@@ -824,34 +986,56 @@ impl Key for ReadFileKey {
 async fn resolve_read_file_metadata(
     ctx: &mut DiceComputations<'_>,
     metadata: Option<RawPathMetadata>,
-) -> buck2_error::Result<Option<RawPathMetadata>> {
+) -> buck2_error::Result<ReadFileResolvedMetadata> {
     let mut resolved_metadata = metadata;
     let mut seen = StdBuckHashSet::default();
     loop {
-        let target = match &resolved_metadata {
+        match &resolved_metadata {
             Some(RawPathMetadata::Symlink {
                 at: _,
                 to: RawSymlink::Relative(target, _),
-            }) => target.as_ref().clone(),
-            _ => return Ok(resolved_metadata),
-        };
-        if !seen.insert(target.clone()) {
-            return Err(internal_error!(
-                "symlink cycle while resolving read-file metadata at `{}`",
-                target
-            ));
+            }) => {
+                let target = target.as_ref().clone();
+                if !seen.insert(target.clone()) {
+                    return Err(internal_error!(
+                        "symlink cycle while resolving read-file metadata at `{}`",
+                        target
+                    ));
+                }
+                resolved_metadata = ctx.compute(&PathMetadataKey(target)).await??;
+            }
+            Some(RawPathMetadata::Symlink {
+                at: _,
+                to: RawSymlink::External(target),
+            }) => {
+                let external_metadata = ctx
+                    .compute(&ExternalPathMetadataKey(target.with_full_target()?))
+                    .await??;
+                return Ok(ReadFileResolvedMetadata {
+                    cell_metadata: resolved_metadata,
+                    external_metadata: Some(external_metadata),
+                });
+            }
+            _ => {
+                return Ok(ReadFileResolvedMetadata {
+                    cell_metadata: resolved_metadata,
+                    external_metadata: None,
+                });
+            }
         }
-        resolved_metadata = ctx.compute(&PathMetadataKey(target)).await??;
     }
 }
 
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
+    use std::sync::Arc;
 
     use buck2_core::cells::paths::CellRelativePathBuf;
+    use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
     use dice::UserComputationData;
     use dice::testing::DiceBuilder;
+    use tempfile::TempDir;
 
     use super::*;
     use crate::file_ops::testing::TestFileOps;
@@ -897,6 +1081,45 @@ mod tests {
 
         Ok(())
     }
+
+    #[tokio::test]
+    async fn read_file_key_tracks_external_symlink_target_metadata() -> buck2_error::Result<()> {
+        let cell = CellName::testing_new("cell");
+        let link = cell_path(cell, "link");
+        let tempdir = TempDir::new()?;
+        let external_file = tempdir.path().join("external");
+        std::fs::write(&external_file, "old")?;
+
+        let symlink = Arc::new(ExternalSymlink::new(
+            external_file.clone(),
+            ForwardRelativePathBuf::default(),
+        )?);
+        let file_ops = TestFileOps::new_with_symlinks(BTreeMap::from([(link.clone(), symlink)]));
+        let mut ctx = file_ops
+            .mock_in_cell(cell, DiceBuilder::new())
+            .build(UserComputationData::new())
+            .unwrap()
+            .commit()
+            .await;
+
+        assert_eq!(
+            DiceFileComputations::read_file_if_exists(&mut ctx, link.as_ref()).await?,
+            Some("old".to_owned())
+        );
+
+        std::fs::write(&external_file, "new")?;
+        let mut updater = ctx.into_updater();
+        let stats = invalidate_changed_external_file_state(&mut updater).await?;
+        assert_eq!(stats.changed, 1);
+        let mut ctx = updater.commit().await;
+
+        assert_eq!(
+            DiceFileComputations::read_file_if_exists(&mut ctx, link.as_ref()).await?,
+            Some("new".to_owned())
+        );
+
+        Ok(())
+    }
 }
 
 #[derive(Clone, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable)]
@@ -905,6 +1128,43 @@ mod tests {
 struct ReadDirKey {
     path: CellPath,
     check_ignores: CheckIgnores,
+}
+
+#[derive(Clone, Dupe, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable)]
+#[display("{}", _0)]
+#[pagable_typetag(dice::DiceKeyDyn)]
+struct ExternalPathMetadataKey(Arc<ExternalSymlink>);
+
+#[async_trait]
+impl Key for ExternalPathMetadataKey {
+    type Value = buck2_error::Result<ExternalPathMetadata>;
+
+    async fn compute(
+        &self,
+        _ctx: &mut DiceComputations,
+        _cancellations: &CancellationContext,
+    ) -> Self::Value {
+        read_external_path_metadata(self.0.dupe()).await
+    }
+
+    fn equality(x: &Self::Value, y: &Self::Value) -> bool {
+        match (x, y) {
+            (Ok(x), Ok(y)) => x == y,
+            _ => false,
+        }
+    }
+
+    fn validity(x: &Self::Value) -> bool {
+        x.is_ok()
+    }
+
+    fn invalidation_source_priority() -> InvalidationSourcePriority {
+        InvalidationSourcePriority::High
+    }
+
+    fn value_serialize() -> impl ValueSerialize<Value = Self::Value> {
+        TodoValueSerialize::<Self::Value>::new()
+    }
 }
 
 #[derive(Clone, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable)]
