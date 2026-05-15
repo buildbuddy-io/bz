@@ -609,6 +609,44 @@ async fn build_configured_label_inner<'a>(
         outputs: outputs.dupe(),
     })?;
 
+    let queue_tracker = ctx
+        .get()
+        .per_transaction_data()
+        .get_materialization_queue_tracker();
+
+    let output_builds: Vec<_> = outputs
+        .iter()
+        .duped()
+        .enumerate()
+        .map(|(index, (output, provider_type))| {
+            let queue_tracker = queue_tracker.dupe();
+
+            let fut = ctx.spawned(move |ctx, _cancellations| {
+                async move {
+                    materialize_and_upload_artifact_group(
+                        ctx,
+                        &output,
+                        materialization_and_upload,
+                        &queue_tracker,
+                    )
+                    .await
+                }
+                .boxed()
+            });
+
+            Either::Left(fut.map(move |v| {
+                let res = match v {
+                    Ok(values) => Ok(ProviderArtifacts {
+                        values,
+                        provider_type,
+                    }),
+                    Err(e) => Err(e),
+                };
+                ConfiguredBuildEventExecutionVariant::BuildOutput { index, output: res }
+            }))
+        })
+        .collect();
+
     let target_rule_type_name =
         get_target_rule_type_name(&mut ctx.get(), providers_label.target()).await?;
 
@@ -664,43 +702,7 @@ async fn build_configured_label_inner<'a>(
         ));
     }
 
-    let queue_tracker = ctx
-        .get()
-        .per_transaction_data()
-        .get_materialization_queue_tracker();
-
-    let mut outputs: Vec<_> = outputs
-        .iter()
-        .duped()
-        .enumerate()
-        .map(|(index, (output, provider_type))| {
-            let queue_tracker = queue_tracker.dupe();
-
-            let fut = ctx.spawned(move |ctx, _cancellations| {
-                async move {
-                    materialize_and_upload_artifact_group(
-                        ctx,
-                        &output,
-                        materialization_and_upload,
-                        &queue_tracker,
-                    )
-                    .await
-                }
-                .boxed()
-            });
-
-            Either::Left(fut.map(move |v| {
-                let res = match v {
-                    Ok(values) => Ok(ProviderArtifacts {
-                        values,
-                        provider_type,
-                    }),
-                    Err(e) => Err(e),
-                };
-                ConfiguredBuildEventExecutionVariant::BuildOutput { index, output: res }
-            }))
-        })
-        .collect();
+    let mut outputs: Vec<_> = output_builds;
 
     let validation_result = {
         let validation_impl = VALIDATION_IMPL.get()?;

@@ -1700,6 +1700,7 @@ dependencies = [
  "indexmap",
  "indoc",
  "itertools 0.14.0",
+ "lru",
  "nix 0.30.1",
  "num_enum",
  "once_cell",
