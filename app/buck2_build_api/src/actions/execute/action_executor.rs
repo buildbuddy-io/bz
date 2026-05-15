@@ -50,8 +50,10 @@ use buck2_execute::execute::kind::CommandExecutionKind;
 use buck2_execute::execute::manager::CommandExecutionManager;
 use buck2_execute::execute::prepared::PreparedAction;
 use buck2_execute::execute::prepared::PreparedCommand;
+use buck2_execute::execute::request::CommandExecutionOutput;
 use buck2_execute::execute::request::CommandExecutionRequest;
 use buck2_execute::execute::request::ExecutorPreference;
+use buck2_execute::execute::request::LocalActionCacheKey;
 use buck2_execute::execute::request::OutputType;
 use buck2_execute::execute::result::CommandExecutionReport;
 use buck2_execute::execute::result::CommandExecutionResult;
@@ -495,6 +497,26 @@ impl ActionExecutionCtx for BuckActionExecutionContext<'_> {
                     prepared_action,
                     digest_config: self.digest_config(),
                 },
+                self.cancellations,
+            )
+            .await
+    }
+
+    async fn unprepared_action_cache(
+        &mut self,
+        manager: CommandExecutionManager,
+        local_action_cache_key: &LocalActionCacheKey,
+        outputs: &BuckIndexSet<CommandExecutionOutput>,
+    ) -> ControlFlow<CommandExecutionResult, CommandExecutionManager> {
+        let action = self.target();
+        self.executor
+            .command_executor
+            .unprepared_action_cache(
+                manager,
+                &action as _,
+                local_action_cache_key,
+                outputs,
+                self.digest_config(),
                 self.cancellations,
             )
             .await

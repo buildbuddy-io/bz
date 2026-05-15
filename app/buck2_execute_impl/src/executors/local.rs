@@ -62,6 +62,7 @@ use buck2_execute::execute::output::CommandStdStreams;
 use buck2_execute::execute::prepared::PreparedCommand;
 use buck2_execute::execute::prepared::PreparedCommandExecutor;
 use buck2_execute::execute::prepared::PreparedCommandOptionalExecutor;
+use buck2_execute::execute::prepared::UnpreparedCommand;
 use buck2_execute::execute::request::CommandExecutionInput;
 use buck2_execute::execute::request::CommandExecutionOutput;
 use buck2_execute::execute::request::CommandExecutionOutputRef;
@@ -865,9 +866,14 @@ impl LocalExecutor {
                         };
                     if let Err(e) = self
                         .local_action_cache
-                        .insert(action_digest, outputs_fingerprint)
+                        .insert(action_digest, outputs_fingerprint.clone())
                     {
                         return manager.error("local_action_cache_insert_failed", e);
+                    }
+                    if let Err(e) =
+                        self.insert_local_action_cache_metadata(request, &outputs_fingerprint)
+                    {
+                        return manager.error("local_action_cache_insert_metadata_failed", e);
                     }
                     manager.success(execution_kind, outputs, std_streams, *timing)
                 } else {
@@ -1158,20 +1164,21 @@ impl LocalExecutor {
 
     async fn local_action_cache_outputs_from_materializer(
         &self,
-        request: &CommandExecutionRequest,
+        outputs_to_check: Vec<CommandExecutionOutput>,
         expected_fingerprint: &[u8],
     ) -> buck2_error::Result<LocalActionCacheMetadataLookup> {
         let mut output_paths = Vec::new();
         let mut output_keys = Vec::new();
-        for output in request.outputs() {
+        for output in outputs_to_check {
             let path = output
+                .as_ref()
                 .resolve(
                     &self.artifact_fs,
                     Some(&ContentBasedPathHash::for_output_artifact()),
                 )?
                 .into_path();
             output_paths.push(path);
-            output_keys.push(output.cloned());
+            output_keys.push(output);
         }
 
         let values = self
@@ -1230,6 +1237,21 @@ impl LocalExecutor {
         }
 
         Ok(LocalActionCacheMetadataLookup::Hit(outputs))
+    }
+
+    fn insert_local_action_cache_metadata(
+        &self,
+        request: &CommandExecutionRequest,
+        outputs_fingerprint: &[u8],
+    ) -> buck2_error::Result<()> {
+        if let Some(local_action_cache_key) = request.local_action_cache_key() {
+            self.local_action_cache.insert_action_metadata(
+                local_action_cache_key.key.clone(),
+                local_action_cache_key.fingerprint.clone(),
+                outputs_fingerprint.to_vec(),
+            )?;
+        }
+        Ok(())
     }
 
     async fn acquire_worker_permit(
@@ -1520,6 +1542,88 @@ impl PreparedCommandExecutor for LocalExecutor {
 
 #[async_trait]
 impl PreparedCommandOptionalExecutor for LocalExecutor {
+    async fn maybe_execute_unprepared(
+        &self,
+        command: &UnpreparedCommand<'_, '_>,
+        manager: CommandExecutionManager,
+        _cancellations: &CancellationContext,
+    ) -> ControlFlow<CommandExecutionResult, CommandExecutionManager> {
+        let Some(entry) = self
+            .local_action_cache
+            .get_action_metadata(&command.local_action_cache_key.key)
+        else {
+            return ControlFlow::Continue(manager);
+        };
+        if entry.action_fingerprint.as_ref()
+            != command.local_action_cache_key.fingerprint.as_slice()
+        {
+            if let Err(e) = self
+                .local_action_cache
+                .remove_action_metadata(&command.local_action_cache_key.key)
+            {
+                return ControlFlow::Break(
+                    manager.error("local_action_cache_remove_metadata_failed", e),
+                );
+            }
+            return ControlFlow::Continue(manager);
+        }
+
+        let start = TimeSpan::start_now();
+        let start_time = SystemTime::now();
+        match self
+            .local_action_cache_outputs_from_materializer(
+                command.outputs.iter().cloned().collect(),
+                entry.outputs_fingerprint.as_ref(),
+            )
+            .await
+        {
+            Ok(LocalActionCacheMetadataLookup::Hit(outputs)) => {
+                let time_span = start.end_now();
+                let timing = CommandExecutionMetadata {
+                    time_span,
+                    execution_time: Duration::ZERO,
+                    start_time,
+                    execution_stats: None,
+                    input_materialization_duration: Duration::ZERO,
+                    hashing_duration: Duration::ZERO,
+                    hashed_artifacts_count: 0,
+                    queue_duration: None,
+                    suspend_duration: None,
+                    suspend_count: None,
+                };
+                let digest = ActionDigest::from_content(
+                    &command.local_action_cache_key.fingerprint,
+                    command.digest_config.cas_digest_config(),
+                );
+
+                ControlFlow::Break(manager.success_without_claim(
+                    CommandExecutionKind::LocalActionCache { digest },
+                    outputs,
+                    CommandStdStreams::Local {
+                        stdout: Vec::new(),
+                        stderr: Vec::new(),
+                    },
+                    timing,
+                ))
+            }
+            Ok(LocalActionCacheMetadataLookup::MissingMetadata) => ControlFlow::Continue(manager),
+            Ok(LocalActionCacheMetadataLookup::Stale) => {
+                if let Err(e) = self
+                    .local_action_cache
+                    .remove_action_metadata(&command.local_action_cache_key.key)
+                {
+                    return ControlFlow::Break(
+                        manager.error("local_action_cache_remove_metadata_failed", e),
+                    );
+                }
+                ControlFlow::Continue(manager)
+            }
+            Err(e) => {
+                ControlFlow::Break(manager.error("local_action_cache_metadata_lookup_failed", e))
+            }
+        }
+    }
+
     async fn maybe_execute(
         &self,
         command: &PreparedCommand<'_, '_>,
@@ -1536,12 +1640,24 @@ impl PreparedCommandOptionalExecutor for LocalExecutor {
         let start_time = SystemTime::now();
         match self
             .local_action_cache_outputs_from_materializer(
-                command.request,
+                command
+                    .request
+                    .outputs()
+                    .map(|output| output.cloned())
+                    .collect(),
                 expected_fingerprint.as_ref(),
             )
             .await
         {
             Ok(LocalActionCacheMetadataLookup::Hit(outputs)) => {
+                if let Err(e) = self.insert_local_action_cache_metadata(
+                    command.request,
+                    expected_fingerprint.as_ref(),
+                ) {
+                    return ControlFlow::Break(
+                        manager.error("local_action_cache_insert_metadata_failed", e),
+                    );
+                }
                 let time_span = start.end_now();
                 let timing = CommandExecutionMetadata {
                     time_span,
@@ -1644,6 +1760,13 @@ impl PreparedCommandOptionalExecutor for LocalExecutor {
             .keys()
             .any(CommandExecutionOutput::has_content_based_path)
         {
+            if let Err(e) = self
+                .insert_local_action_cache_metadata(command.request, expected_fingerprint.as_ref())
+            {
+                return ControlFlow::Break(
+                    manager.error("local_action_cache_insert_metadata_failed", e),
+                );
+            }
             let time_span = start.end_now();
             let timing = CommandExecutionMetadata {
                 time_span,
@@ -1709,6 +1832,13 @@ impl PreparedCommandOptionalExecutor for LocalExecutor {
         }
 
         let time_span = start.end_now();
+        if let Err(e) =
+            self.insert_local_action_cache_metadata(command.request, expected_fingerprint.as_ref())
+        {
+            return ControlFlow::Break(
+                manager.error("local_action_cache_insert_metadata_failed", e),
+            );
+        }
         let timing = CommandExecutionMetadata {
             time_span,
             execution_time: Duration::ZERO,

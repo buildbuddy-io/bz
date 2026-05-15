@@ -56,8 +56,10 @@ use buck2_execute::execute::cache_uploader::CacheUploadResults;
 use buck2_execute::execute::cache_uploader::IntoRemoteDepFile;
 use buck2_execute::execute::manager::CommandExecutionManager;
 use buck2_execute::execute::prepared::PreparedAction;
+use buck2_execute::execute::request::CommandExecutionOutput;
 use buck2_execute::execute::request::CommandExecutionRequest;
 use buck2_execute::execute::request::ExecutorPreference;
+use buck2_execute::execute::request::LocalActionCacheKey;
 use buck2_execute::execute::result::CommandExecutionResult;
 use buck2_execute::materialize::materializer::Materializer;
 use buck2_execute::re::manager::UnconfiguredRemoteExecutionClient;
@@ -279,6 +281,15 @@ pub trait ActionExecutionCtx: Send + Sync {
         request: &CommandExecutionRequest,
         prepared_action: &PreparedAction,
     ) -> ControlFlow<CommandExecutionResult, CommandExecutionManager>;
+
+    async fn unprepared_action_cache(
+        &mut self,
+        manager: CommandExecutionManager,
+        _local_action_cache_key: &LocalActionCacheKey,
+        _outputs: &BuckIndexSet<CommandExecutionOutput>,
+    ) -> ControlFlow<CommandExecutionResult, CommandExecutionManager> {
+        ControlFlow::Continue(manager)
+    }
 
     async fn remote_dep_file_cache(
         &mut self,

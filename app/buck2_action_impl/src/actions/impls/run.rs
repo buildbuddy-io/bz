@@ -62,6 +62,8 @@ use buck2_build_api::interpreter::rule_defs::provider::builtin::worker_info::Fro
 use buck2_build_api::interpreter::rule_defs::provider::builtin::worker_info::WorkerInfo;
 use buck2_build_signals::env::WaitingCategory;
 use buck2_build_signals::env::WaitingData;
+use buck2_common::cas_digest::CasDigestData;
+use buck2_common::cas_digest::DataDigester;
 use buck2_common::file_ops::metadata::FileMetadata;
 use buck2_common::file_ops::metadata::TrackedFileDigest;
 use buck2_common::io::trace::TracingIoProvider;
@@ -81,6 +83,8 @@ use buck2_core::fs::buck_out_path::BuckOutScratchPath;
 use buck2_core::fs::buck_out_path::BuildArtifactPath;
 use buck2_core::fs::project_rel_path::ProjectRelativePath;
 use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
+use buck2_directory::directory::dashmap_directory_interner::DashMapDirectoryInterner;
+use buck2_directory::directory::fingerprinted_directory::FingerprintedDirectory;
 use buck2_error::BuckErrorContext;
 use buck2_error::buck2_error;
 use buck2_error::internal_error;
@@ -89,6 +93,7 @@ use buck2_execute::artifact::artifact_dyn::ArtifactDyn;
 use buck2_execute::artifact::fs::ExecutorFs;
 use buck2_execute::artifact_value::ArtifactValue;
 use buck2_execute::digest_config::DigestConfig;
+use buck2_execute::directory::ActionDirectoryMember;
 use buck2_execute::execute::action_digest::ActionDigest;
 use buck2_execute::execute::action_digest_and_blobs::ActionDigestAndBlobs;
 use buck2_execute::execute::cache_uploader::IntoRemoteDepFile;
@@ -102,6 +107,7 @@ use buck2_execute::execute::request::CommandExecutionOutput;
 use buck2_execute::execute::request::CommandExecutionPaths;
 use buck2_execute::execute::request::CommandExecutionRequest;
 use buck2_execute::execute::request::ExecutorPreference;
+use buck2_execute::execute::request::LocalActionCacheKey;
 use buck2_execute::execute::request::RemoteWorkerSpec;
 use buck2_execute::execute::request::WorkerId;
 use buck2_execute::execute::request::WorkerProtocol;
@@ -450,6 +456,10 @@ pub(crate) struct RunAction {
 #[allow(clippy::large_enum_variant)]
 enum ExecuteResult {
     LocalDepFileHit(ActionOutputs, ActionExecutionMetadata),
+    LocalActionCacheHit {
+        result: CommandExecutionResult,
+        executor_preference: ExecutorPreference,
+    },
     ExecutedOrReHit {
         result: CommandExecutionResult,
         dep_file_bundle: DepFileBundle,
@@ -896,6 +906,91 @@ fn bazel_normalize_command_env(env: &mut SortedVectorMap<String, String>) {
     for (_, value) in env.iter_mut() {
         *value = bazel_normalize_buck_owned_exec_paths(value);
     }
+}
+
+fn action_cache_add_bytes(fingerprint: &mut DataDigester, bytes: &[u8]) {
+    fingerprint.update(&(bytes.len() as u64).to_le_bytes());
+    fingerprint.update(bytes);
+}
+
+fn action_cache_add_str(fingerprint: &mut DataDigester, value: &str) {
+    action_cache_add_bytes(fingerprint, value.as_bytes());
+}
+
+fn action_cache_add_bool(fingerprint: &mut DataDigester, value: bool) {
+    fingerprint.update(&[value as u8]);
+}
+
+fn action_cache_add_debug(fingerprint: &mut DataDigester, value: impl std::fmt::Debug) {
+    action_cache_add_str(fingerprint, &format!("{value:?}"));
+}
+
+fn fingerprint_command_execution_input(
+    fingerprint: &mut DataDigester,
+    fs: &ArtifactFs,
+    input: &CommandExecutionInput,
+) -> buck2_error::Result<()> {
+    match input {
+        CommandExecutionInput::Artifact(values) => {
+            action_cache_add_str(fingerprint, "artifact_group");
+            for (artifact, value) in values.iter() {
+                let path = artifact.resolve_path(
+                    fs,
+                    if artifact.has_content_based_path() {
+                        Some(value.content_based_path_hash())
+                    } else {
+                        None
+                    }
+                    .as_ref(),
+                )?;
+                action_cache_add_str(fingerprint, path.as_str());
+                action_cache_add_str(fingerprint, &value.action_cache_fingerprint());
+            }
+        }
+        CommandExecutionInput::ArtifactPathAlias {
+            source_path,
+            source_requires_materialization,
+            path,
+            value,
+        } => {
+            action_cache_add_str(fingerprint, "artifact_path_alias");
+            action_cache_add_str(fingerprint, source_path.as_str());
+            action_cache_add_bool(fingerprint, *source_requires_materialization);
+            action_cache_add_str(fingerprint, path.as_str());
+            action_cache_add_str(fingerprint, &value.action_cache_fingerprint());
+        }
+        CommandExecutionInput::ActionMetadata(metadata) => {
+            action_cache_add_str(fingerprint, "action_metadata");
+            action_cache_add_str(fingerprint, &metadata.digest.to_string());
+            action_cache_add_str(fingerprint, metadata.path.path().as_str());
+            action_cache_add_str(fingerprint, metadata.content_hash.as_str());
+        }
+        CommandExecutionInput::ScratchPath(path) => {
+            action_cache_add_str(fingerprint, "scratch_path");
+            action_cache_add_debug(fingerprint, path);
+        }
+        CommandExecutionInput::IncrementalRemoteOutput(path, entry) => {
+            action_cache_add_str(fingerprint, "incremental_remote_output");
+            action_cache_add_str(fingerprint, path.as_str());
+            action_cache_add_debug(fingerprint, entry);
+        }
+    }
+    Ok(())
+}
+
+fn fingerprint_command_execution_output(
+    fingerprint: &mut DataDigester,
+    fs: &ArtifactFs,
+    output: &CommandExecutionOutput,
+) -> buck2_error::Result<()> {
+    let resolved_path = output
+        .as_ref()
+        .resolve(fs, Some(&ContentBasedPathHash::for_output_artifact()))?
+        .into_path();
+    action_cache_add_str(fingerprint, "output");
+    action_cache_add_str(fingerprint, resolved_path.as_str());
+    action_cache_add_debug(fingerprint, output);
+    Ok(())
 }
 
 struct RunActionOutputFilteringArtifactVisitor<'a, 'v> {
@@ -1892,7 +1987,7 @@ impl RunAction {
         visitor: &mut RunActionVisitor<'v>,
         ctx: &mut dyn ActionExecutionCtx,
     ) -> buck2_error::Result<(
-        PreparedRunAction,
+        UnpreparedRunAction,
         ExpandedCommandLineDigestForDepFiles,
         HostSharingRequirements,
     )> {
@@ -2024,6 +2119,7 @@ impl RunAction {
                 })
             })
             .collect::<buck2_error::Result<BuckIndexSet<_>>>()?;
+        let outputs = CommandExecutionPaths::sort_outputs_for_execution(outputs, ctx.fs());
 
         // TODO(ianc) Only do this if we're actually going to run the action?
         let host_sharing_requirements = if !host_sharing_tokens.is_empty() {
@@ -2032,21 +2128,25 @@ impl RunAction {
             HostSharingRequirements::Shared(self.inner.weight)
         };
 
-        let paths = CommandExecutionPaths::new(
-            inputs,
-            outputs,
-            ctx.fs(),
-            ctx.digest_config(),
-            ctx.run_action_knobs().action_paths_interner.as_ref(),
+        let local_action_cache_key = self.local_action_cache_key(
+            ctx,
+            &expanded,
+            &extra_env,
+            &inputs,
+            &outputs,
+            worker.as_ref(),
+            remote_worker.as_ref(),
         )?;
 
         Ok((
-            PreparedRunAction {
+            UnpreparedRunAction {
                 expanded,
                 extra_env,
-                paths,
+                inputs,
+                outputs,
                 worker,
                 remote_worker,
+                local_action_cache_key,
             },
             expanded_command_line_digest_for_dep_files,
             host_sharing_requirements,
@@ -2194,6 +2294,118 @@ impl RunAction {
         Ok(())
     }
 
+    fn local_action_cache_key(
+        &self,
+        ctx: &dyn ActionExecutionCtx,
+        expanded: &ExpandedCommandLine,
+        extra_env: &[(String, String)],
+        inputs: &[CommandExecutionInput],
+        outputs: &BuckIndexSet<CommandExecutionOutput>,
+        worker: Option<&WorkerSpec>,
+        remote_worker: Option<&RemoteWorkerSpec>,
+    ) -> buck2_error::Result<Option<LocalActionCacheKey>> {
+        let Some(first_output) = outputs.iter().next() else {
+            return Ok(None);
+        };
+        let key = first_output
+            .as_ref()
+            .resolve(ctx.fs(), Some(&ContentBasedPathHash::for_output_artifact()))?
+            .into_path()
+            .to_string();
+
+        let mut fingerprint = CasDigestData::digester(ctx.digest_config().cas_digest_config());
+        action_cache_add_str(&mut fingerprint, "buck2-local-action-cache-v3");
+        action_cache_add_str(&mut fingerprint, &ctx.fs().fs().root().to_string());
+        action_cache_add_debug(&mut fingerprint, self.inner.executor_preference);
+        action_cache_add_debug(&mut fingerprint, self.inner.timeout);
+        action_cache_add_bool(&mut fingerprint, self.inner.no_outputs_cleanup);
+        action_cache_add_bool(&mut fingerprint, self.inner.unique_input_inodes);
+        action_cache_add_debug(&mut fingerprint, self.inner.bazel_use_default_shell_env);
+        action_cache_add_debug(&mut fingerprint, &self.inner.remote_execution_dependencies);
+        action_cache_add_debug(&mut fingerprint, &self.inner.re_gang_workers);
+        action_cache_add_debug(&mut fingerprint, &self.inner.remote_execution_custom_image);
+        action_cache_add_debug(&mut fingerprint, &self.inner.meta_internal_extra_params);
+
+        action_cache_add_str(&mut fingerprint, "exe");
+        for arg in &expanded.exe {
+            action_cache_add_str(&mut fingerprint, arg);
+        }
+        action_cache_add_str(&mut fingerprint, "args");
+        for arg in &expanded.args {
+            action_cache_add_str(&mut fingerprint, arg);
+        }
+        action_cache_add_str(&mut fingerprint, "env");
+        for (key, value) in &expanded.env {
+            action_cache_add_str(&mut fingerprint, key);
+            action_cache_add_str(&mut fingerprint, value);
+        }
+        action_cache_add_str(&mut fingerprint, "extra_env");
+        for (key, value) in extra_env {
+            action_cache_add_str(&mut fingerprint, key);
+            action_cache_add_str(&mut fingerprint, value);
+        }
+
+        action_cache_add_str(&mut fingerprint, "inputs");
+        for input in inputs {
+            fingerprint_command_execution_input(&mut fingerprint, ctx.fs(), input)?;
+        }
+        action_cache_add_str(&mut fingerprint, "outputs");
+        for output in outputs {
+            fingerprint_command_execution_output(&mut fingerprint, ctx.fs(), output)?;
+        }
+
+        action_cache_add_str(&mut fingerprint, "worker");
+        if let Some(worker) = worker {
+            action_cache_add_debug(&mut fingerprint, worker.id);
+            action_cache_add_debug(&mut fingerprint, worker.protocol);
+            action_cache_add_debug(&mut fingerprint, worker.concurrency);
+            action_cache_add_bool(&mut fingerprint, worker.streaming);
+            action_cache_add_bool(&mut fingerprint, worker.bazel_worker_sandboxing);
+            action_cache_add_debug(&mut fingerprint, &worker.remote_key);
+            for arg in &worker.exe {
+                action_cache_add_str(&mut fingerprint, arg);
+            }
+            for (key, value) in &worker.env {
+                action_cache_add_str(&mut fingerprint, key);
+                action_cache_add_str(&mut fingerprint, value);
+            }
+            action_cache_add_str(
+                &mut fingerprint,
+                &worker
+                    .input_paths
+                    .input_directory()
+                    .fingerprint()
+                    .to_string(),
+            );
+        }
+
+        action_cache_add_str(&mut fingerprint, "remote_worker");
+        if let Some(remote_worker) = remote_worker {
+            action_cache_add_debug(&mut fingerprint, remote_worker.id);
+            action_cache_add_debug(&mut fingerprint, remote_worker.concurrency);
+            for arg in &remote_worker.init {
+                action_cache_add_str(&mut fingerprint, arg);
+            }
+            for (key, value) in &remote_worker.env {
+                action_cache_add_str(&mut fingerprint, key);
+                action_cache_add_str(&mut fingerprint, value);
+            }
+            action_cache_add_str(
+                &mut fingerprint,
+                &remote_worker
+                    .input_paths
+                    .input_directory()
+                    .fingerprint()
+                    .to_string(),
+            );
+        }
+
+        Ok(Some(LocalActionCacheKey {
+            key,
+            fingerprint: fingerprint.finalize().raw_digest().as_bytes().to_vec(),
+        }))
+    }
+
     pub(crate) async fn check_cache_result_is_useable(
         &self,
         ctx: &mut dyn ActionExecutionCtx,
@@ -2252,8 +2464,39 @@ impl RunAction {
         let mut run_action_visitor =
             RunActionVisitor::new(&self.inner.dep_files, incremental_action_ignore_tags);
         waiting_data.start_waiting_category_now(WaitingCategory::PreparingAction);
-        let (prepared_run_action, cmdline_digest_for_dep_files, host_sharing_requirements) =
+        let (unprepared_run_action, cmdline_digest_for_dep_files, host_sharing_requirements) =
             self.prepare(&mut run_action_visitor, ctx).await?;
+
+        waiting_data.start_waiting_category_now(WaitingCategory::CheckingCaches);
+        let manager = ctx.command_execution_manager(waiting_data);
+        let manager = if let Some(local_action_cache_key) =
+            unprepared_run_action.local_action_cache_key.as_ref()
+        {
+            match ctx
+                .unprepared_action_cache(
+                    manager,
+                    local_action_cache_key,
+                    &unprepared_run_action.outputs,
+                )
+                .await
+            {
+                ControlFlow::Break(result) => {
+                    return Ok(ExecuteResult::LocalActionCacheHit {
+                        result,
+                        executor_preference: self.inner.executor_preference,
+                    });
+                }
+                ControlFlow::Continue(manager) => manager,
+            }
+        } else {
+            manager
+        };
+
+        let prepared_run_action = unprepared_run_action.into_prepared(
+            ctx.fs(),
+            ctx.digest_config(),
+            ctx.run_action_knobs().action_paths_interner.as_ref(),
+        )?;
 
         let dep_file_bundle = make_dep_file_bundle(
             ctx,
@@ -2278,8 +2521,6 @@ impl RunAction {
 
         // Prepare the action, check the action cache, fully check the local dep file cache if needed, then execute the command
         let prepared_action = ctx.prepare_action(&req, true)?;
-        waiting_data.start_waiting_category_now(WaitingCategory::CheckingCaches);
-        let manager = ctx.command_execution_manager(waiting_data);
 
         let action_cache_result = ctx.action_cache(manager, &req, &prepared_action).await;
 
@@ -2493,6 +2734,45 @@ impl RunAction {
     }
 }
 
+pub(crate) struct UnpreparedRunAction {
+    expanded: ExpandedCommandLine,
+    /// Environment which is added on top of the one coming from `ExpandedCommandLine::env`
+    extra_env: Vec<(String, String)>,
+    inputs: Vec<CommandExecutionInput>,
+    outputs: BuckIndexSet<CommandExecutionOutput>,
+    worker: Option<WorkerSpec>,
+    remote_worker: Option<RemoteWorkerSpec>,
+    local_action_cache_key: Option<LocalActionCacheKey>,
+}
+
+impl UnpreparedRunAction {
+    fn into_prepared(
+        self,
+        fs: &ArtifactFs,
+        digest_config: DigestConfig,
+        interner: Option<&DashMapDirectoryInterner<ActionDirectoryMember, TrackedFileDigest>>,
+    ) -> buck2_error::Result<PreparedRunAction> {
+        let Self {
+            expanded,
+            extra_env,
+            inputs,
+            outputs,
+            worker,
+            remote_worker,
+            local_action_cache_key,
+        } = self;
+        let paths = CommandExecutionPaths::new(inputs, outputs, fs, digest_config, interner)?;
+        Ok(PreparedRunAction {
+            expanded,
+            extra_env,
+            paths,
+            worker,
+            remote_worker,
+            local_action_cache_key,
+        })
+    }
+}
+
 pub(crate) struct PreparedRunAction {
     expanded: ExpandedCommandLine,
     /// Environment which is added on top of the one coming from `ExpandedCommandLine::env`
@@ -2500,6 +2780,7 @@ pub(crate) struct PreparedRunAction {
     paths: CommandExecutionPaths,
     worker: Option<WorkerSpec>,
     remote_worker: Option<RemoteWorkerSpec>,
+    local_action_cache_key: Option<LocalActionCacheKey>,
 }
 
 impl PreparedRunAction {
@@ -2510,6 +2791,7 @@ impl PreparedRunAction {
             paths,
             worker,
             remote_worker,
+            local_action_cache_key,
         } = self;
 
         for (k, v) in extra_env {
@@ -2519,6 +2801,7 @@ impl PreparedRunAction {
         CommandExecutionRequest::new(exe, args, paths, env)
             .with_worker(worker)
             .with_remote_worker(remote_worker)
+            .with_local_action_cache_key(local_action_cache_key)
     }
 }
 
@@ -2813,6 +3096,20 @@ impl Action for RunAction {
             // Cache miss - fall through to normal execution
         }
 
+        let allow_cache_upload = self
+            .inner
+            .allow_cache_upload
+            .unwrap_or_else(|| ctx.run_action_knobs().default_allow_cache_upload);
+        let incremental_kind = match (
+            self.inner.no_outputs_cleanup,
+            self.inner.incremental_remote_outputs,
+        ) {
+            (true, true) => buck2_data::IncrementalKind::IncrementalLocalAndRemote,
+            (false, true) => buck2_data::IncrementalKind::IncrementalRemote,
+            (true, false) => buck2_data::IncrementalKind::IncrementalLocal,
+            (false, false) => buck2_data::IncrementalKind::NonIncremental,
+        };
+
         let (
             mut result,
             mut dep_file_bundle,
@@ -2822,6 +3119,19 @@ impl Action for RunAction {
         ) = match self.execute_inner(ctx, waiting_data).await? {
             ExecuteResult::LocalDepFileHit(outputs, metadata) => {
                 return Ok((outputs, metadata));
+            }
+            ExecuteResult::LocalActionCacheHit {
+                result,
+                executor_preference,
+            } => {
+                return ctx.unpack_command_execution_result(
+                    executor_preference,
+                    result,
+                    allow_cache_upload,
+                    self.inner.allow_dep_file_cache_upload,
+                    None,
+                    incremental_kind,
+                );
             }
             ExecuteResult::ExecutedOrReHit {
                 result,
@@ -2838,21 +3148,8 @@ impl Action for RunAction {
             ),
         };
 
-        let allow_cache_upload = self
-            .inner
-            .allow_cache_upload
-            .unwrap_or_else(|| ctx.run_action_knobs().default_allow_cache_upload);
         let supports_remote_dep_files =
             self.inner.allow_dep_file_cache_upload && dep_file_bundle.has_dep_files();
-        let incremental_kind = match (
-            self.inner.no_outputs_cleanup,
-            self.inner.incremental_remote_outputs,
-        ) {
-            (true, true) => buck2_data::IncrementalKind::IncrementalLocalAndRemote,
-            (false, true) => buck2_data::IncrementalKind::IncrementalRemote,
-            (true, false) => buck2_data::IncrementalKind::IncrementalLocal,
-            (false, false) => buck2_data::IncrementalKind::NonIncremental,
-        };
 
         // If there is a dep file entry AND if dep file cache upload is enabled, upload it
         if result.was_success()

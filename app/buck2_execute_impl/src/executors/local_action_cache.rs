@@ -7,7 +7,6 @@
  * You may select, at your option, one of the above-listed licenses.
  */
 
-use std::fmt::Write;
 use std::ops::ControlFlow;
 use std::sync::Arc;
 
@@ -16,16 +15,14 @@ use buck2_common::sqlite::sqlite_db::SqliteTable;
 use buck2_common::sqlite::sqlite_db::SqliteTables;
 use buck2_core::async_once_cell::AsyncOnceCell;
 use buck2_core::fs::artifact_path_resolver::ArtifactFs;
-use buck2_directory::directory::entry::DirectoryEntry;
 use buck2_error::BuckErrorContext;
 use buck2_execute::artifact_value::ArtifactValue;
-use buck2_execute::directory::ActionDirectoryMember;
-use buck2_execute::directory::ActionSharedDirectory;
 use buck2_execute::execute::action_digest::ActionDigest;
 use buck2_execute::execute::blocking::BlockingExecutor;
 use buck2_execute::execute::manager::CommandExecutionManager;
 use buck2_execute::execute::prepared::PreparedCommand;
 use buck2_execute::execute::prepared::PreparedCommandOptionalExecutor;
+use buck2_execute::execute::prepared::UnpreparedCommand;
 use buck2_execute::execute::request::CommandExecutionOutput;
 use buck2_execute::execute::result::CommandExecutionResult;
 use buck2_fs::error::IoResultExt;
@@ -40,6 +37,7 @@ use parking_lot::Mutex;
 use rusqlite::Connection;
 
 const STATE_TABLE_NAME: &str = "local_action_cache_v2";
+const ACTION_METADATA_TABLE_NAME: &str = "local_action_cache_v3";
 
 pub struct LocalActionCache {
     state: LocalActionCacheState,
@@ -58,7 +56,14 @@ enum LocalActionCacheState {
 
 struct LoadedLocalActionCache {
     entries: BuckDashMap<String, Arc<[u8]>>,
+    action_metadata_entries: BuckDashMap<String, LocalActionCacheEntry>,
     connection: Arc<Mutex<Connection>>,
+}
+
+#[derive(Clone)]
+pub struct LocalActionCacheEntry {
+    pub action_fingerprint: Arc<[u8]>,
+    pub outputs_fingerprint: Arc<[u8]>,
 }
 
 impl LocalActionCache {
@@ -69,6 +74,7 @@ impl LocalActionCache {
         Ok(Self {
             state: LocalActionCacheState::Loaded(LoadedLocalActionCache {
                 entries: BuckDashMap::default(),
+                action_metadata_entries: BuckDashMap::default(),
                 connection,
             }),
         })
@@ -134,6 +140,10 @@ impl LocalActionCache {
         self.loaded()?.get(action_digest)
     }
 
+    pub fn get_action_metadata(&self, key: &str) -> Option<LocalActionCacheEntry> {
+        self.loaded()?.get_action_metadata(key)
+    }
+
     pub fn insert(
         &self,
         action_digest: &ActionDigest,
@@ -150,6 +160,25 @@ impl LocalActionCache {
             return Ok(());
         };
         cache.remove(action_digest)
+    }
+
+    pub fn insert_action_metadata(
+        &self,
+        key: String,
+        action_fingerprint: Vec<u8>,
+        outputs_fingerprint: Vec<u8>,
+    ) -> buck2_error::Result<()> {
+        let Some(cache) = self.loaded() else {
+            return Ok(());
+        };
+        cache.insert_action_metadata(key, action_fingerprint, outputs_fingerprint)
+    }
+
+    pub fn remove_action_metadata(&self, key: &str) -> buck2_error::Result<()> {
+        let Some(cache) = self.loaded() else {
+            return Ok(());
+        };
+        cache.remove_action_metadata(key)
     }
 }
 
@@ -177,9 +206,11 @@ impl LoadedLocalActionCache {
         let connection = SqliteTables::<LocalActionCacheSqliteTable>::create_connection(&db_path)?;
         let table = LocalActionCacheSqliteTable::new(connection.dupe());
         table.create_table()?;
-        let entries = table.read_all()?;
+        let entries = table.read_all_action_digest_entries()?;
+        let action_metadata_entries = table.read_all_action_metadata_entries()?;
         Ok(Self {
             entries,
+            action_metadata_entries,
             connection,
         })
     }
@@ -202,10 +233,43 @@ impl LoadedLocalActionCache {
             .insert_or_replace(key, outputs_fingerprint)
     }
 
+    fn get_action_metadata(&self, key: &str) -> Option<LocalActionCacheEntry> {
+        self.action_metadata_entries
+            .get(key)
+            .map(|entry| entry.value().clone())
+    }
+
+    fn insert_action_metadata(
+        &self,
+        key: String,
+        action_fingerprint: Vec<u8>,
+        outputs_fingerprint: Vec<u8>,
+    ) -> buck2_error::Result<()> {
+        self.action_metadata_entries.insert(
+            key.clone(),
+            LocalActionCacheEntry {
+                action_fingerprint: Arc::from(action_fingerprint.as_slice()),
+                outputs_fingerprint: Arc::from(outputs_fingerprint.as_slice()),
+            },
+        );
+        LocalActionCacheSqliteTable::new(self.connection.dupe()).insert_or_replace_action_metadata(
+            key,
+            action_fingerprint,
+            outputs_fingerprint,
+        )
+    }
+
     fn remove(&self, action_digest: &ActionDigest) -> buck2_error::Result<()> {
         let key = action_digest.to_string();
         self.entries.remove(key.as_str());
         LocalActionCacheSqliteTable::new(self.connection.dupe()).delete(key)?;
+        Ok(())
+    }
+
+    fn remove_action_metadata(&self, key: &str) -> buck2_error::Result<()> {
+        self.action_metadata_entries.remove(key);
+        LocalActionCacheSqliteTable::new(self.connection.dupe())
+            .delete_action_metadata(key.to_owned())?;
         Ok(())
     }
 }
@@ -236,10 +300,25 @@ impl LocalActionCacheSqliteTable {
             .lock()
             .execute(&sql, [])
             .with_buck_error_context(|| format!("creating sqlite table {STATE_TABLE_NAME}"))?;
+        let sql = format!(
+            "CREATE TABLE IF NOT EXISTS {ACTION_METADATA_TABLE_NAME} (
+                cache_key           TEXT PRIMARY KEY NOT NULL,
+                action_fingerprint  BLOB NOT NULL,
+                outputs_fingerprint BLOB NOT NULL
+            )",
+        );
+        self.connection
+            .lock()
+            .execute(&sql, [])
+            .with_buck_error_context(|| {
+                format!("creating sqlite table {ACTION_METADATA_TABLE_NAME}")
+            })?;
         Ok(())
     }
 
-    fn read_all(&self) -> buck2_error::Result<BuckDashMap<String, Arc<[u8]>>> {
+    fn read_all_action_digest_entries(
+        &self,
+    ) -> buck2_error::Result<BuckDashMap<String, Arc<[u8]>>> {
         let sql = format!("SELECT action_digest, outputs_fingerprint FROM {STATE_TABLE_NAME}");
         let entries = BuckDashMap::default();
         let connection = self.connection.lock();
@@ -250,6 +329,35 @@ impl LocalActionCacheSqliteTable {
         for row in rows {
             let (action_digest, outputs_fingerprint) = row?;
             entries.insert(action_digest, Arc::from(outputs_fingerprint.as_slice()));
+        }
+        Ok(entries)
+    }
+
+    fn read_all_action_metadata_entries(
+        &self,
+    ) -> buck2_error::Result<BuckDashMap<String, LocalActionCacheEntry>> {
+        let sql = format!(
+            "SELECT cache_key, action_fingerprint, outputs_fingerprint FROM {ACTION_METADATA_TABLE_NAME}"
+        );
+        let entries = BuckDashMap::default();
+        let connection = self.connection.lock();
+        let mut stmt = connection.prepare(&sql)?;
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, Vec<u8>>(1)?,
+                row.get::<_, Vec<u8>>(2)?,
+            ))
+        })?;
+        for row in rows {
+            let (key, action_fingerprint, outputs_fingerprint) = row?;
+            entries.insert(
+                key,
+                LocalActionCacheEntry {
+                    action_fingerprint: Arc::from(action_fingerprint.as_slice()),
+                    outputs_fingerprint: Arc::from(outputs_fingerprint.as_slice()),
+                },
+            );
         }
         Ok(entries)
     }
@@ -272,12 +380,45 @@ impl LocalActionCacheSqliteTable {
         Ok(())
     }
 
+    fn insert_or_replace_action_metadata(
+        &self,
+        key: String,
+        action_fingerprint: Vec<u8>,
+        outputs_fingerprint: Vec<u8>,
+    ) -> buck2_error::Result<()> {
+        let sql = format!(
+            "INSERT OR REPLACE INTO {ACTION_METADATA_TABLE_NAME} \
+                (cache_key, action_fingerprint, outputs_fingerprint) VALUES (?1, ?2, ?3)"
+        );
+        self.connection
+            .lock()
+            .execute(
+                &sql,
+                rusqlite::params![key, action_fingerprint, outputs_fingerprint],
+            )
+            .with_buck_error_context(|| {
+                format!("inserting into sqlite table {ACTION_METADATA_TABLE_NAME}")
+            })?;
+        Ok(())
+    }
+
     fn delete(&self, action_digest: String) -> buck2_error::Result<()> {
         let sql = format!("DELETE FROM {STATE_TABLE_NAME} WHERE action_digest = ?1");
         self.connection
             .lock()
             .execute(&sql, rusqlite::params![action_digest])
             .with_buck_error_context(|| format!("deleting from sqlite table {STATE_TABLE_NAME}"))?;
+        Ok(())
+    }
+
+    fn delete_action_metadata(&self, key: String) -> buck2_error::Result<()> {
+        let sql = format!("DELETE FROM {ACTION_METADATA_TABLE_NAME} WHERE cache_key = ?1");
+        self.connection
+            .lock()
+            .execute(&sql, rusqlite::params![key])
+            .with_buck_error_context(|| {
+                format!("deleting from sqlite table {ACTION_METADATA_TABLE_NAME}")
+            })?;
         Ok(())
     }
 }
@@ -308,6 +449,26 @@ impl PreparedCommandOptionalExecutor for ChainedCommandOptionalExecutor {
             }
         }
     }
+
+    async fn maybe_execute_unprepared(
+        &self,
+        command: &UnpreparedCommand<'_, '_>,
+        manager: CommandExecutionManager,
+        cancellations: &CancellationContext,
+    ) -> ControlFlow<CommandExecutionResult, CommandExecutionManager> {
+        match self
+            .first
+            .maybe_execute_unprepared(command, manager, cancellations)
+            .await
+        {
+            ControlFlow::Break(result) => ControlFlow::Break(result),
+            ControlFlow::Continue(manager) => {
+                self.second
+                    .maybe_execute_unprepared(command, manager, cancellations)
+                    .await
+            }
+        }
+    }
 }
 
 pub(crate) fn local_action_cache_outputs_fingerprint(
@@ -326,64 +487,8 @@ pub(crate) fn local_action_cache_outputs_fingerprint(
         fingerprint.push(0);
         fingerprint.extend_from_slice(format!("{output:?}").as_bytes());
         fingerprint.push(0);
-        fingerprint.extend_from_slice(artifact_value_fingerprint(value)?.as_bytes());
+        fingerprint.extend_from_slice(value.action_cache_fingerprint().as_bytes());
         fingerprint.push(b'\n');
-    }
-    Ok(fingerprint)
-}
-
-fn artifact_value_fingerprint(value: &ArtifactValue) -> buck2_error::Result<String> {
-    let mut fingerprint = String::new();
-    write!(
-        &mut fingerprint,
-        "entry:{}\0content_hash:{}",
-        entry_fingerprint(value.entry())?,
-        value.content_based_path_hash().as_str()
-    )
-    .expect("writing to a string cannot fail");
-    if let Some(deps) = value.deps() {
-        write!(
-            &mut fingerprint,
-            "\0deps:{}:{}",
-            deps.fingerprint(),
-            deps.size()
-        )
-        .expect("writing to a string cannot fail");
-    }
-    Ok(fingerprint)
-}
-
-fn entry_fingerprint(
-    entry: &DirectoryEntry<ActionSharedDirectory, ActionDirectoryMember>,
-) -> buck2_error::Result<String> {
-    let mut fingerprint = String::new();
-    match entry {
-        DirectoryEntry::Dir(dir) => {
-            write!(&mut fingerprint, "dir:{}:{}", dir.fingerprint(), dir.size())
-                .expect("writing to a string cannot fail");
-        }
-        DirectoryEntry::Leaf(ActionDirectoryMember::File(file)) => {
-            write!(
-                &mut fingerprint,
-                "file:{}:{}:{}",
-                file.digest,
-                file.digest.size(),
-                file.is_executable
-            )
-            .expect("writing to a string cannot fail");
-        }
-        DirectoryEntry::Leaf(ActionDirectoryMember::Symlink(symlink)) => {
-            write!(&mut fingerprint, "symlink:{}", symlink.target())
-                .expect("writing to a string cannot fail");
-        }
-        DirectoryEntry::Leaf(ActionDirectoryMember::ExternalSymlink(symlink)) => {
-            write!(
-                &mut fingerprint,
-                "external_symlink:{}",
-                symlink.target_str()
-            )
-            .expect("writing to a string cannot fail");
-        }
     }
     Ok(fingerprint)
 }

@@ -8,6 +8,7 @@
  * above-listed licenses.
  */
 
+use std::fmt::Write;
 use std::hash::Hash;
 use std::sync::Arc;
 
@@ -166,4 +167,60 @@ impl ArtifactValue {
         }
         .expect("Constructed valid content-based path hash")
     }
+
+    pub fn action_cache_fingerprint(&self) -> String {
+        let mut fingerprint = String::new();
+        write!(
+            &mut fingerprint,
+            "entry:{}\0content_hash:{}",
+            entry_action_cache_fingerprint(self.entry()),
+            self.content_based_path_hash().as_str()
+        )
+        .expect("writing to a string cannot fail");
+        if let Some(deps) = self.deps() {
+            write!(
+                &mut fingerprint,
+                "\0deps:{}:{}",
+                deps.fingerprint(),
+                deps.size()
+            )
+            .expect("writing to a string cannot fail");
+        }
+        fingerprint
+    }
+}
+
+fn entry_action_cache_fingerprint(
+    entry: &DirectoryEntry<ActionSharedDirectory, ActionDirectoryMember>,
+) -> String {
+    let mut fingerprint = String::new();
+    match entry {
+        DirectoryEntry::Dir(dir) => {
+            write!(&mut fingerprint, "dir:{}:{}", dir.fingerprint(), dir.size())
+                .expect("writing to a string cannot fail");
+        }
+        DirectoryEntry::Leaf(ActionDirectoryMember::File(file)) => {
+            write!(
+                &mut fingerprint,
+                "file:{}:{}:{}",
+                file.digest,
+                file.digest.size(),
+                file.is_executable
+            )
+            .expect("writing to a string cannot fail");
+        }
+        DirectoryEntry::Leaf(ActionDirectoryMember::Symlink(symlink)) => {
+            write!(&mut fingerprint, "symlink:{}", symlink.target())
+                .expect("writing to a string cannot fail");
+        }
+        DirectoryEntry::Leaf(ActionDirectoryMember::ExternalSymlink(symlink)) => {
+            write!(
+                &mut fingerprint,
+                "external_symlink:{}",
+                symlink.target_str()
+            )
+            .expect("writing to a string cannot fail");
+        }
+    }
+    fingerprint
 }

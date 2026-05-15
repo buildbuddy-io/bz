@@ -225,6 +225,12 @@ pub struct CommandExecutionPaths {
     input_files_bytes: u64,
 }
 
+#[derive(Clone, Debug)]
+pub struct LocalActionCacheKey {
+    pub key: String,
+    pub fingerprint: Vec<u8>,
+}
+
 impl CommandExecutionPaths {
     pub fn new(
         inputs: Vec<CommandExecutionInput>,
@@ -238,16 +244,7 @@ impl CommandExecutionPaths {
         // RE spec requires outputs to be sorted:
         // https://github.com/bazelbuild/remote-apis/blob/1f36c310b28d762b258ea577ed08e8203274efae/build/bazel/remote/execution/v2/remote_execution.proto#L667-L669
         // We sort early here and not when we create RE action in order for local and remote actions to be in-sync.
-        let outputs: BuckIndexSet<_> = outputs
-            .into_iter()
-            .sorted_by_key(|e| {
-                let resolved = e
-                    .as_ref()
-                    .resolve_for_execution(fs, Some(&ContentBasedPathHash::for_output_artifact()))
-                    .expect("Failed to resolve output path");
-                resolved.into_path()
-            })
-            .collect();
+        let outputs = Self::sort_outputs_for_execution(outputs, fs);
 
         let output_paths = outputs
             .iter()
@@ -284,6 +281,22 @@ impl CommandExecutionPaths {
             output_paths,
             input_files_bytes,
         })
+    }
+
+    pub fn sort_outputs_for_execution(
+        outputs: BuckIndexSet<CommandExecutionOutput>,
+        fs: &ArtifactFs,
+    ) -> BuckIndexSet<CommandExecutionOutput> {
+        outputs
+            .into_iter()
+            .sorted_by_key(|e| {
+                let resolved = e
+                    .as_ref()
+                    .resolve_for_execution(fs, Some(&ContentBasedPathHash::for_output_artifact()))
+                    .expect("Failed to resolve output path");
+                resolved.into_path()
+            })
+            .collect()
     }
 
     fn calculate_inputs_size_bytes(input_directory: &ActionImmutableDirectory) -> u64 {
@@ -415,6 +428,7 @@ pub struct CommandExecutionRequest {
     outputs_for_error_handler: Vec<BuildArtifactPath>,
     /// String representation of a key that uniquely identifies a RunAction
     run_action_key: Option<String>,
+    local_action_cache_key: Option<LocalActionCacheKey>,
 
     is_test: bool,
     /// Whether to skip resource control (cgroup) for this command.
@@ -458,6 +472,7 @@ impl CommandExecutionRequest {
             meta_internal_extra_params: MetaInternalExtraParams::default_arc(),
             outputs_for_error_handler: Vec::new(),
             run_action_key: None,
+            local_action_cache_key: None,
             is_test: false,
             skip_resource_control: false,
             network_access: None,
@@ -480,6 +495,7 @@ impl CommandExecutionRequest {
                 .add_outputs_as_inputs(output_paths, fs, digest_config, interner)?;
         Ok(Self {
             paths: override_paths,
+            local_action_cache_key: None,
             ..self
         })
     }
@@ -733,6 +749,18 @@ impl CommandExecutionRequest {
         &self.run_action_key
     }
 
+    pub fn with_local_action_cache_key(
+        mut self,
+        local_action_cache_key: Option<LocalActionCacheKey>,
+    ) -> Self {
+        self.local_action_cache_key = local_action_cache_key;
+        self
+    }
+
+    pub fn local_action_cache_key(&self) -> Option<&LocalActionCacheKey> {
+        self.local_action_cache_key.as_ref()
+    }
+
     pub fn with_is_test(mut self) -> Self {
         self.is_test = true;
         self
@@ -942,7 +970,7 @@ impl CommandExecutionOutputRef<'_> {
     }
 }
 
-#[derive(UnpackVariants, PartialEq, Eq, Hash, Debug)]
+#[derive(UnpackVariants, PartialEq, Eq, Hash, Debug, Clone)]
 pub enum CommandExecutionOutput {
     BuildArtifact {
         path: BuildArtifactPath,

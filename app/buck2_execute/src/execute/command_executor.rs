@@ -46,12 +46,16 @@ use crate::execute::prepared::PreparedAction;
 use crate::execute::prepared::PreparedCommand;
 use crate::execute::prepared::PreparedCommandExecutor;
 use crate::execute::prepared::PreparedCommandOptionalExecutor;
+use crate::execute::prepared::UnpreparedCommand;
+use crate::execute::request::CommandExecutionOutput;
 use crate::execute::request::CommandExecutionRequest;
 use crate::execute::request::ExecutorPreference;
+use crate::execute::request::LocalActionCacheKey;
 use crate::execute::request::OutputType;
 use crate::execute::request::RemoteWorkerSpec;
 use crate::execute::result::CommandExecutionMetadata;
 use crate::execute::result::CommandExecutionResult;
+use buck2_hash::BuckIndexSet;
 
 #[derive(Copy, Dupe, Clone, Debug, PartialEq, Eq)]
 pub struct ActionExecutionTimingData {
@@ -130,6 +134,30 @@ impl CommandExecutor {
         self.0
             .action_cache_checker
             .maybe_execute(prepared_command, manager, cancellations)
+            .await
+    }
+
+    pub async fn unprepared_action_cache(
+        &self,
+        manager: CommandExecutionManager,
+        target: &dyn crate::execute::target::CommandExecutionTarget,
+        local_action_cache_key: &LocalActionCacheKey,
+        outputs: &BuckIndexSet<CommandExecutionOutput>,
+        digest_config: DigestConfig,
+        cancellations: &CancellationContext,
+    ) -> ControlFlow<CommandExecutionResult, CommandExecutionManager> {
+        self.0
+            .action_cache_checker
+            .maybe_execute_unprepared(
+                &UnpreparedCommand {
+                    target,
+                    local_action_cache_key,
+                    outputs,
+                    digest_config,
+                },
+                manager,
+                cancellations,
+            )
             .await
     }
 
