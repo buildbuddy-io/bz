@@ -43,6 +43,7 @@ use crate::file_ops::metadata::SimpleDirEntry;
 use crate::ignores::all_cells::HasCellFileIgnores;
 use crate::ignores::file_ignores::CellFileIgnores;
 use crate::ignores::file_ignores::FileIgnoreResult;
+use crate::io::NoWatchFsMetadataCache;
 
 /// Note: Everything in this mini-module exists only so that it can be replaced by a `TestFileOps`
 /// in unittests
@@ -116,6 +117,16 @@ pub trait FileOpsDelegate: PagableTagged + Send + Sync {
             .read_path_metadata_if_exists_for_no_watchfs(ctx, path)
             .await?
             .map(RawPathMetadataForNoWatchFs::from))
+    }
+
+    async fn read_path_metadata_for_no_watchfs_if_exists_with_cache(
+        &self,
+        ctx: &mut DiceComputations<'_>,
+        path: &'async_trait CellRelativePath,
+        _cache: Option<Arc<NoWatchFsMetadataCache>>,
+    ) -> buck2_error::Result<Option<RawPathMetadataForNoWatchFs>> {
+        self.read_path_metadata_for_no_watchfs_if_exists(ctx, path)
+            .await
     }
 
     /// Check if a path exists in the exact case given.
@@ -384,6 +395,17 @@ impl FileOpsDelegateWithIgnores {
     ) -> buck2_error::Result<Option<RawPathMetadataForNoWatchFs>> {
         self.delegate
             .read_path_metadata_for_no_watchfs_if_exists(ctx, path)
+            .await
+    }
+
+    pub async fn read_path_metadata_for_no_watchfs_if_exists_with_cache(
+        &self,
+        ctx: &mut DiceComputations<'_>,
+        path: &CellRelativePath,
+        cache: Option<Arc<NoWatchFsMetadataCache>>,
+    ) -> buck2_error::Result<Option<RawPathMetadataForNoWatchFs>> {
+        self.delegate
+            .read_path_metadata_for_no_watchfs_if_exists_with_cache(ctx, path, cache)
             .await
     }
 

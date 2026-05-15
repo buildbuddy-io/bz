@@ -42,6 +42,7 @@ use crate::file_ops::metadata::RawPathMetadata;
 use crate::file_ops::metadata::RawPathMetadataForNoWatchFs;
 use crate::file_ops::metadata::ReadDirOutput;
 use crate::ignores::file_ignores::FileIgnoreResult;
+use crate::io::NoWatchFsMetadataCache;
 use crate::io::ReadDirError;
 
 pub struct DiceFileComputations;
@@ -300,6 +301,7 @@ pub async fn invalidate_changed_file_state(
     }
 
     let mut dice = ctx.existing_state().await;
+    let no_watchfs_metadata_cache = Arc::new(NoWatchFsMetadataCache::default());
 
     let mut metadata_paths = StdBuckHashSet::default();
     for key in &read_files {
@@ -319,23 +321,30 @@ pub async fn invalidate_changed_file_state(
         }
     }
 
-    let changed_metadata_paths_with_values = dice
+    let checked_path_metadata_for_no_watchfs = dice
         .compute_join(metadata_paths_with_no_watchfs, |ctx, path| {
+            let no_watchfs_metadata_cache = no_watchfs_metadata_cache.dupe();
             async move {
                 let key = PathMetadataForNoWatchFsKey(path);
-                path_metadata_for_no_watchfs_key_dirty_value(ctx, &key)
-                    .await
-                    .map(|dirty| (key.0.clone(), dirty))
+                let fresh = fresh_path_metadata_for_no_watchfs(
+                    ctx,
+                    key.0.as_ref(),
+                    Some(no_watchfs_metadata_cache),
+                )
+                .await;
+
+                match fresh {
+                    Ok(fresh) => DirtyPathMetadataForNoWatchFs::WithValue(key, Ok(fresh)),
+                    Err(_) => DirtyPathMetadataForNoWatchFs::WithoutValue(key),
+                }
             }
             .boxed()
         })
         .await;
 
-    let mut dirty_metadata_paths = StdBuckHashSet::default();
     let mut changed_path_metadata_for_no_watchfs = Vec::new();
     let mut changed_path_metadata_for_no_watchfs_to_value = Vec::new();
-    for (path, dirty) in changed_metadata_paths_with_values.into_iter().flatten() {
-        dirty_metadata_paths.insert(path);
+    for dirty in checked_path_metadata_for_no_watchfs {
         match dirty {
             DirtyPathMetadataForNoWatchFs::WithValue(key, value) => {
                 changed_path_metadata_for_no_watchfs_to_value.push((key, value));
@@ -348,12 +357,17 @@ pub async fn invalidate_changed_file_state(
 
     let seeded_path_metadata_for_no_watchfs = dice
         .compute_join(metadata_paths_without_no_watchfs.clone(), |ctx, path| {
+            let no_watchfs_metadata_cache = no_watchfs_metadata_cache.dupe();
             async move {
                 let key = PathMetadataForNoWatchFsKey(path);
-                fresh_path_metadata_for_no_watchfs(ctx, key.0.as_ref())
-                    .await
-                    .ok()
-                    .map(|fresh| (key, Ok(fresh)))
+                fresh_path_metadata_for_no_watchfs(
+                    ctx,
+                    key.0.as_ref(),
+                    Some(no_watchfs_metadata_cache),
+                )
+                .await
+                .ok()
+                .map(|fresh| (key, Ok(fresh)))
             }
             .boxed()
         })
@@ -367,11 +381,7 @@ pub async fn invalidate_changed_file_state(
         .into_iter()
         .collect::<StdBuckHashSet<_>>();
 
-    let mut changed_read_files = read_files
-        .iter()
-        .filter(|key| dirty_metadata_paths.contains(key.0.as_ref()))
-        .cloned()
-        .collect::<Vec<_>>();
+    let mut changed_read_files = Vec::new();
     let changed_read_files_from_full_check = dice
         .compute_join(
             read_files
@@ -393,11 +403,7 @@ pub async fn invalidate_changed_file_state(
         .flatten();
     changed_read_files.extend(changed_read_files_from_full_check);
 
-    let mut changed_paths = paths
-        .iter()
-        .filter(|key| dirty_metadata_paths.contains(&key.0))
-        .cloned()
-        .collect::<Vec<_>>();
+    let mut changed_paths = Vec::new();
     let changed_paths_from_full_check = dice
         .compute_join(
             paths
@@ -478,23 +484,6 @@ enum DirtyPathMetadataForNoWatchFs {
     WithoutValue(PathMetadataForNoWatchFsKey),
 }
 
-async fn path_metadata_for_no_watchfs_key_dirty_value(
-    ctx: &mut DiceComputations<'_>,
-    key: &PathMetadataForNoWatchFsKey,
-) -> Option<DirtyPathMetadataForNoWatchFs> {
-    let old = ctx.compute(key).await;
-    let fresh = fresh_path_metadata_for_no_watchfs(ctx, key.0.as_ref()).await;
-
-    match (old, fresh) {
-        (Ok(Ok(old)), Ok(fresh)) if old == fresh => None,
-        (_, Ok(fresh)) => Some(DirtyPathMetadataForNoWatchFs::WithValue(
-            key.clone(),
-            Ok(fresh),
-        )),
-        _ => Some(DirtyPathMetadataForNoWatchFs::WithoutValue(key.clone())),
-    }
-}
-
 async fn read_file_key_is_dirty(ctx: &mut DiceComputations<'_>, key: &ReadFileKey) -> bool {
     let old = ctx.compute(key).await;
     let fresh = fresh_path_metadata(ctx, key.0.as_ref().as_ref()).await;
@@ -551,10 +540,15 @@ async fn fresh_path_metadata(
 async fn fresh_path_metadata_for_no_watchfs(
     ctx: &mut DiceComputations<'_>,
     path: CellPathRef<'_>,
+    no_watchfs_metadata_cache: Option<Arc<NoWatchFsMetadataCache>>,
 ) -> buck2_error::Result<Option<RawPathMetadataForNoWatchFs>> {
     let file_ops = get_delegated_file_ops(ctx, path.cell(), CheckIgnores::No).await?;
     file_ops
-        .read_path_metadata_for_no_watchfs_if_exists(ctx, path.path())
+        .read_path_metadata_for_no_watchfs_if_exists_with_cache(
+            ctx,
+            path.path(),
+            no_watchfs_metadata_cache,
+        )
         .await
 }
 
@@ -670,7 +664,7 @@ impl Key for PathMetadataForNoWatchFsKey {
         ctx: &mut DiceComputations,
         _cancellations: &CancellationContext,
     ) -> Self::Value {
-        fresh_path_metadata_for_no_watchfs(ctx, self.0.as_ref()).await
+        fresh_path_metadata_for_no_watchfs(ctx, self.0.as_ref(), None).await
     }
 
     fn equality(x: &Self::Value, y: &Self::Value) -> bool {

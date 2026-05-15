@@ -34,6 +34,7 @@ use crate::file_ops::dice::ReadFileProxy;
 use crate::file_ops::metadata::RawDirEntry;
 use crate::file_ops::metadata::RawPathMetadata;
 use crate::file_ops::metadata::RawPathMetadataForNoWatchFs;
+use crate::io::NoWatchFsMetadataCache;
 
 /// A `FileOpsDelegate` implementation that calls out to the `IoProvider` to read files.
 ///
@@ -72,6 +73,23 @@ impl IoFileOpsDelegate {
         entries.sort_by(|a, b| a.file_name.cmp(&b.file_name));
 
         Ok(Arc::from(entries))
+    }
+
+    async fn read_path_metadata_for_no_watchfs_if_exists_impl(
+        &self,
+        ctx: &mut DiceComputations<'_>,
+        path: &CellRelativePath,
+        cache: Option<Arc<NoWatchFsMetadataCache>>,
+    ) -> buck2_error::Result<Option<RawPathMetadataForNoWatchFs>> {
+        let project_path = self.resolve(path)?;
+
+        let res = ctx
+            .global_data()
+            .get_io_provider()
+            .read_path_metadata_if_exists_for_no_watchfs_with_cache(project_path, cache)
+            .await
+            .with_buck_error_context(|| format!("Error accessing metadata for path `{path}`"))?;
+        Ok(res.map(|meta| meta.map(|path| Arc::new(self.get_cell_path(&path)))))
     }
 }
 
@@ -145,15 +163,25 @@ impl FileOpsDelegate for IoFileOpsDelegate {
         ctx: &mut DiceComputations<'_>,
         path: &'async_trait CellRelativePath,
     ) -> buck2_error::Result<Option<RawPathMetadataForNoWatchFs>> {
-        let project_path = self.resolve(path)?;
+        let cache = ctx
+            .per_transaction_data()
+            .data
+            .get::<Arc<NoWatchFsMetadataCache>>()
+            .ok()
+            .map(|cache| cache.dupe());
 
-        let res = ctx
-            .global_data()
-            .get_io_provider()
-            .read_path_metadata_if_exists_for_no_watchfs(project_path)
+        self.read_path_metadata_for_no_watchfs_if_exists_impl(ctx, path, cache)
             .await
-            .with_buck_error_context(|| format!("Error accessing metadata for path `{path}`"))?;
-        Ok(res.map(|meta| meta.map(|path| Arc::new(self.get_cell_path(&path)))))
+    }
+
+    async fn read_path_metadata_for_no_watchfs_if_exists_with_cache(
+        &self,
+        ctx: &mut DiceComputations<'_>,
+        path: &'async_trait CellRelativePath,
+        cache: Option<Arc<NoWatchFsMetadataCache>>,
+    ) -> buck2_error::Result<Option<RawPathMetadataForNoWatchFs>> {
+        self.read_path_metadata_for_no_watchfs_if_exists_impl(ctx, path, cache)
+            .await
     }
 
     async fn exists_matching_exact_case(
@@ -199,4 +227,5 @@ struct ReadDirCache(BuckDashMap<ProjectRelativePathBuf, Arc<[RawDirEntry]>>);
 
 pub fn initialize_read_dir_cache(data: &mut UserComputationData) {
     data.data.set(ReadDirCache(Default::default()));
+    data.data.set(Arc::new(NoWatchFsMetadataCache::default()));
 }

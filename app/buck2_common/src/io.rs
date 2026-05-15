@@ -11,6 +11,8 @@
 pub mod fs;
 pub mod trace;
 
+use std::sync::Arc;
+
 use allocative::Allocative;
 use async_trait::async_trait;
 use buck2_core::cells::cell_path::CellPath;
@@ -18,11 +20,26 @@ use buck2_core::fs::project::ProjectRoot;
 use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
 use buck2_error::BuckErrorContext;
 use buck2_error::ErrorTag;
+use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
+use buck2_hash::BuckDashMap;
 
 use crate::file_ops::metadata::RawDirEntry;
 use crate::file_ops::metadata::RawPathMetadata;
 use crate::file_ops::metadata::RawPathMetadataForNoWatchFs;
 use crate::ignores::file_ignores::FileIgnoreReason;
+
+pub struct NoWatchFsMetadataCache(
+    pub(crate) BuckDashMap<
+        ForwardRelativePathBuf,
+        Option<RawPathMetadataForNoWatchFs<ForwardRelativePathBuf>>,
+    >,
+);
+
+impl Default for NoWatchFsMetadataCache {
+    fn default() -> Self {
+        Self(Default::default())
+    }
+}
 
 #[derive(Debug, Allocative, buck2_error::Error)]
 #[buck2(tag = Input)]
@@ -80,6 +97,15 @@ pub trait IoProvider: Allocative + Send + Sync {
             .map(RawPathMetadataForNoWatchFs::from))
     }
 
+    async fn read_path_metadata_if_exists_for_no_watchfs_impl_with_cache(
+        &self,
+        path: ProjectRelativePathBuf,
+        _cache: Option<Arc<NoWatchFsMetadataCache>>,
+    ) -> buck2_error::Result<Option<RawPathMetadataForNoWatchFs<ProjectRelativePathBuf>>> {
+        self.read_path_metadata_if_exists_for_no_watchfs_impl(path)
+            .await
+    }
+
     /// Request that this I/O provider be up to date with whatever I/O operations the user might
     /// have done until this point.
     async fn settle(&self) -> buck2_error::Result<()>;
@@ -125,6 +151,16 @@ impl dyn IoProvider + '_ {
         path: ProjectRelativePathBuf,
     ) -> buck2_error::Result<Option<RawPathMetadataForNoWatchFs<ProjectRelativePathBuf>>> {
         self.read_path_metadata_if_exists_for_no_watchfs_impl(path)
+            .await
+            .tag(ErrorTag::IoSource)
+    }
+
+    pub async fn read_path_metadata_if_exists_for_no_watchfs_with_cache(
+        &self,
+        path: ProjectRelativePathBuf,
+        cache: Option<Arc<NoWatchFsMetadataCache>>,
+    ) -> buck2_error::Result<Option<RawPathMetadataForNoWatchFs<ProjectRelativePathBuf>>> {
+        self.read_path_metadata_if_exists_for_no_watchfs_impl_with_cache(path, cache)
             .await
             .tag(ErrorTag::IoSource)
     }

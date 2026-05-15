@@ -27,6 +27,7 @@ use buck2_fs::paths::file_name::FileName;
 use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
 use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
 use compact_str::CompactString;
+use dashmap::mapref::entry::Entry;
 use dupe::Dupe;
 use once_cell::sync::Lazy;
 use pagable::Pagable;
@@ -46,6 +47,7 @@ use crate::file_ops::metadata::RawSymlink;
 use crate::file_ops::metadata::Symlink;
 use crate::file_ops::metadata::TrackedFileDigest;
 use crate::io::IoProvider;
+use crate::io::NoWatchFsMetadataCache;
 
 #[derive(Clone, Dupe, Allocative, Pagable)]
 pub struct FsIoProvider {
@@ -194,6 +196,28 @@ impl IoProvider for FsIoProvider {
         .await?
     }
 
+    async fn read_path_metadata_if_exists_for_no_watchfs_impl_with_cache(
+        &self,
+        path: ProjectRelativePathBuf,
+        cache: Option<Arc<NoWatchFsMetadataCache>>,
+    ) -> buck2_error::Result<Option<RawPathMetadataForNoWatchFs<ProjectRelativePathBuf>>> {
+        let fs = self.fs.dupe();
+        let path = path.into_forward_relative_path_buf();
+
+        tokio::task::spawn_blocking(move || {
+            let meta = match cache {
+                Some(cache) => read_path_metadata_for_no_watchfs_cached(fs.root(), &path, &cache)?,
+                None => read_path_metadata_for_no_watchfs(fs.root(), &path)?,
+            }
+            .map(|raw_meta_or_redirection| {
+                raw_meta_or_redirection.map(ProjectRelativePathBuf::from)
+            });
+
+            Ok(meta)
+        })
+        .await?
+    }
+
     async fn settle(&self) -> buck2_error::Result<()> {
         Ok(())
     }
@@ -216,6 +240,7 @@ impl IoProvider for FsIoProvider {
 }
 
 /// A path and the corresponding absolute path.
+#[derive(Clone)]
 struct PathAndAbsPath {
     path: ForwardRelativePathBuf,
     abspath: AbsPathBuf,
@@ -332,6 +357,118 @@ fn read_path_metadata_for_no_watchfs<P: AsRef<AbsPath>>(
     }
 
     Ok(Some(meta))
+}
+
+fn read_path_metadata_for_no_watchfs_cached<P: AsRef<AbsPath>>(
+    root: P,
+    relpath: &ForwardRelativePath,
+    cache: &NoWatchFsMetadataCache,
+) -> buck2_error::Result<Option<RawPathMetadataForNoWatchFs<ForwardRelativePathBuf>>> {
+    let root = root.as_ref();
+
+    let mut relpath_components = relpath.iter();
+    let mut meta = None;
+
+    let curr_path_capacity = relpath.as_str().len();
+
+    let mut curr_abspath = root.to_owned();
+    curr_abspath.reserve(relpath.as_path().as_os_str().len());
+
+    let curr_abspath_capacity = curr_abspath.capacity();
+
+    let curr_path = ForwardRelativePathBuf::with_capacity(curr_path_capacity);
+
+    let mut curr = PathAndAbsPath {
+        path: curr_path,
+        abspath: curr_abspath,
+    };
+
+    while let Some(c) = relpath_components.next() {
+        // We track both paths so we don't need to convert the abspath back to a relative path if
+        // we hit a symlink.
+        curr.push(c);
+
+        match exact_path_metadata_for_no_watchfs_cached(&curr, cache)? {
+            None => return Ok(None),
+            Some(RawPathMetadataForNoWatchFs::Symlink { at, to }) => {
+                let rest: ForwardRelativePathBuf = relpath_components.collect();
+                return Ok(Some(append_symlink_rest_for_no_watchfs(at, to, rest)?));
+            }
+            Some(path_meta @ RawPathMetadataForNoWatchFs::File(_))
+            | Some(path_meta @ RawPathMetadataForNoWatchFs::Directory) => {
+                meta = Some(path_meta);
+            }
+        };
+    }
+
+    let meta = meta.ok_or_else(|| internal_error!("Attempted to access empty path"))?;
+
+    if cfg!(test) {
+        assert!(curr.abspath.as_os_str().len() <= curr_abspath_capacity);
+        assert!(curr.path.as_str().len() <= curr_path_capacity);
+    }
+
+    Ok(Some(meta))
+}
+
+fn exact_path_metadata_for_no_watchfs_cached(
+    curr: &PathAndAbsPath,
+    cache: &NoWatchFsMetadataCache,
+) -> buck2_error::Result<Option<RawPathMetadataForNoWatchFs<ForwardRelativePathBuf>>> {
+    match cache.0.entry(curr.path.clone()) {
+        Entry::Occupied(cached) => Ok(cached.get().clone()),
+        Entry::Vacant(vacant) => {
+            let meta = exact_path_metadata_for_no_watchfs(curr)?;
+            vacant.insert(meta.clone());
+            Ok(meta)
+        }
+    }
+}
+
+fn exact_path_metadata_for_no_watchfs(
+    curr: &PathAndAbsPath,
+) -> buck2_error::Result<Option<RawPathMetadataForNoWatchFs<ForwardRelativePathBuf>>> {
+    Ok(match ExactPathMetadata::from_exact_path(curr)? {
+        ExactPathMetadata::DoesNotExist => None,
+        ExactPathMetadata::Symlink(symlink) => {
+            Some(symlink.into_raw_path_metadata_for_no_watchfs(
+                curr.clone(),
+                ForwardRelativePathBuf::default(),
+            )?)
+        }
+        ExactPathMetadata::FileOrDirectory(path_meta) => {
+            Some(convert_metadata_for_no_watchfs(path_meta)?)
+        }
+    })
+}
+
+fn append_symlink_rest_for_no_watchfs(
+    at: ForwardRelativePathBuf,
+    to: RawSymlink<ForwardRelativePathBuf>,
+    rest: ForwardRelativePathBuf,
+) -> buck2_error::Result<RawPathMetadataForNoWatchFs<ForwardRelativePathBuf>> {
+    let to = if rest.is_empty() {
+        to
+    } else {
+        match to {
+            RawSymlink::External(external) => {
+                let mut remaining_path = external.remaining_path().to_owned();
+                remaining_path.push(&rest);
+                RawSymlink::External(Arc::new(ExternalSymlink::new(
+                    external.target().to_owned(),
+                    remaining_path,
+                )?))
+            }
+            RawSymlink::Relative(mut link_path, rel_link_path) => {
+                link_path.push(&rest);
+                let mut rel_link_path = rel_link_path.target().to_owned();
+                rel_link_path.push(&rest);
+                RawSymlink::Relative(link_path, Arc::new(Symlink::new(rel_link_path)))
+            }
+        }
+    };
+
+    Ok(RawPathMetadataForNoWatchFs::Symlink { at, to })
 }
 
 fn convert_metadata(

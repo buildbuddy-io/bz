@@ -32,6 +32,7 @@ use buck2_common::file_ops::metadata::RawPathMetadataForNoWatchFs;
 use buck2_common::file_ops::metadata::RawSymlink;
 use buck2_common::http::HasHttpClient;
 use buck2_common::io::IoProvider;
+use buck2_common::io::NoWatchFsMetadataCache;
 use buck2_common::io::fs::FsIoProvider;
 use buck2_core::cells::cell_path::CellPath;
 use buck2_core::cells::external::BZLMOD_EXTERNAL_CELL_KIND;
@@ -2793,9 +2794,34 @@ impl FileOpsDelegate for BzlmodFileOpsDelegate {
         _ctx: &mut DiceComputations<'_>,
         path: &'async_trait CellRelativePath,
     ) -> buck2_error::Result<Option<RawPathMetadataForNoWatchFs>> {
+        self.read_path_metadata_for_no_watchfs_if_exists_with_cache_impl(None, path)
+            .await
+    }
+
+    async fn read_path_metadata_for_no_watchfs_if_exists_with_cache(
+        &self,
+        _ctx: &mut DiceComputations<'_>,
+        path: &'async_trait CellRelativePath,
+        cache: Option<Arc<NoWatchFsMetadataCache>>,
+    ) -> buck2_error::Result<Option<RawPathMetadataForNoWatchFs>> {
+        self.read_path_metadata_for_no_watchfs_if_exists_with_cache_impl(cache, path)
+            .await
+    }
+
+    fn eq_token(&self) -> PartialEqAny<'_> {
+        PartialEqAny::always_false()
+    }
+}
+
+impl BzlmodFileOpsDelegate {
+    async fn read_path_metadata_for_no_watchfs_if_exists_with_cache_impl(
+        &self,
+        cache: Option<Arc<NoWatchFsMetadataCache>>,
+        path: &CellRelativePath,
+    ) -> buck2_error::Result<Option<RawPathMetadataForNoWatchFs>> {
         let project_path = self.resolve_backing(path);
         let Some(metadata) = (&self.io as &dyn IoProvider)
-            .read_path_metadata_if_exists_for_no_watchfs(project_path)
+            .read_path_metadata_if_exists_for_no_watchfs_with_cache(project_path, cache)
             .await
             .with_buck_error_context(|| format!("Error accessing metadata for path `{path}`"))?
         else {
@@ -2813,10 +2839,6 @@ impl FileOpsDelegate for BzlmodFileOpsDelegate {
                 )),
             }
         })?))
-    }
-
-    fn eq_token(&self) -> PartialEqAny<'_> {
-        PartialEqAny::always_false()
     }
 }
 
@@ -2986,9 +3008,34 @@ impl FileOpsDelegate for BzlmodGeneratedFileOpsDelegate {
         _ctx: &mut DiceComputations<'_>,
         path: &'async_trait CellRelativePath,
     ) -> buck2_error::Result<Option<RawPathMetadataForNoWatchFs>> {
+        self.read_path_metadata_for_no_watchfs_if_exists_with_cache_impl(None, path)
+            .await
+    }
+
+    async fn read_path_metadata_for_no_watchfs_if_exists_with_cache(
+        &self,
+        _ctx: &mut DiceComputations<'_>,
+        path: &'async_trait CellRelativePath,
+        cache: Option<Arc<NoWatchFsMetadataCache>>,
+    ) -> buck2_error::Result<Option<RawPathMetadataForNoWatchFs>> {
+        self.read_path_metadata_for_no_watchfs_if_exists_with_cache_impl(cache, path)
+            .await
+    }
+
+    fn eq_token(&self) -> PartialEqAny<'_> {
+        PartialEqAny::always_false()
+    }
+}
+
+impl BzlmodGeneratedFileOpsDelegate {
+    async fn read_path_metadata_for_no_watchfs_if_exists_with_cache_impl(
+        &self,
+        cache: Option<Arc<NoWatchFsMetadataCache>>,
+        path: &CellRelativePath,
+    ) -> buck2_error::Result<Option<RawPathMetadataForNoWatchFs>> {
         let project_path = self.resolve(path);
         let Some(metadata) = (&self.io as &dyn IoProvider)
-            .read_path_metadata_if_exists_for_no_watchfs(project_path)
+            .read_path_metadata_if_exists_for_no_watchfs_with_cache(project_path, cache)
             .await
             .with_buck_error_context(|| format!("Error accessing metadata for path `{path}`"))?
         else {
@@ -3004,10 +3051,6 @@ impl FileOpsDelegate for BzlmodGeneratedFileOpsDelegate {
                 )),
             },
         )?))
-    }
-
-    fn eq_token(&self) -> PartialEqAny<'_> {
-        PartialEqAny::always_false()
     }
 }
 
