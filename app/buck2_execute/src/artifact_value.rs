@@ -13,6 +13,7 @@ use std::hash::Hash;
 use std::sync::Arc;
 
 use allocative::Allocative;
+use buck2_common::cas_digest::DataDigester;
 use buck2_common::external_symlink::ExternalSymlink;
 use buck2_common::file_ops::metadata::FileDigest;
 use buck2_common::file_ops::metadata::FileMetadata;
@@ -188,6 +189,24 @@ impl ArtifactValue {
         }
         fingerprint
     }
+
+    pub fn hash_action_cache_fingerprint(&self, fingerprint: &mut DataDigester) {
+        action_cache_hash_entry(fingerprint, self.entry());
+        match &self.content_based_path_hash {
+            UnderlyingContentBasedPathHash::Inferred => {
+                action_cache_add_str(fingerprint, "content_hash_inferred");
+            }
+            UnderlyingContentBasedPathHash::Explicit(hash) => {
+                action_cache_add_str(fingerprint, "content_hash_explicit");
+                action_cache_add_str(fingerprint, hash.as_str());
+            }
+        }
+        if let Some(deps) = self.deps() {
+            action_cache_add_str(fingerprint, "deps");
+            action_cache_add_tracked_file_digest(fingerprint, deps.fingerprint());
+            action_cache_add_u64(fingerprint, deps.size());
+        }
+    }
 }
 
 fn entry_action_cache_fingerprint(
@@ -223,4 +242,64 @@ fn entry_action_cache_fingerprint(
         }
     }
     fingerprint
+}
+
+fn action_cache_add_bytes(fingerprint: &mut DataDigester, bytes: &[u8]) {
+    fingerprint.update(&(bytes.len() as u64).to_le_bytes());
+    fingerprint.update(bytes);
+}
+
+fn action_cache_add_str(fingerprint: &mut DataDigester, value: &str) {
+    action_cache_add_bytes(fingerprint, value.as_bytes());
+}
+
+fn action_cache_add_u64(fingerprint: &mut DataDigester, value: u64) {
+    fingerprint.update(&value.to_le_bytes());
+}
+
+fn action_cache_add_bool(fingerprint: &mut DataDigester, value: bool) {
+    fingerprint.update(&[value as u8]);
+}
+
+fn action_cache_add_file_digest(fingerprint: &mut DataDigester, digest: &FileDigest) {
+    let raw_digest = digest.raw_digest();
+    fingerprint.update(&[raw_digest.algorithm() as u8]);
+    action_cache_add_bytes(fingerprint, raw_digest.as_bytes());
+    action_cache_add_u64(fingerprint, digest.size());
+}
+
+fn action_cache_add_tracked_file_digest(
+    fingerprint: &mut DataDigester,
+    digest: &buck2_common::file_ops::metadata::TrackedFileDigest,
+) {
+    let raw_digest = digest.raw_digest();
+    fingerprint.update(&[raw_digest.algorithm() as u8]);
+    action_cache_add_bytes(fingerprint, raw_digest.as_bytes());
+    action_cache_add_u64(fingerprint, digest.size());
+}
+
+fn action_cache_hash_entry(
+    fingerprint: &mut DataDigester,
+    entry: &DirectoryEntry<ActionSharedDirectory, ActionDirectoryMember>,
+) {
+    match entry {
+        DirectoryEntry::Dir(dir) => {
+            action_cache_add_str(fingerprint, "dir");
+            action_cache_add_tracked_file_digest(fingerprint, dir.fingerprint());
+            action_cache_add_u64(fingerprint, dir.size());
+        }
+        DirectoryEntry::Leaf(ActionDirectoryMember::File(file)) => {
+            action_cache_add_str(fingerprint, "file");
+            action_cache_add_file_digest(fingerprint, file.digest.data());
+            action_cache_add_bool(fingerprint, file.is_executable);
+        }
+        DirectoryEntry::Leaf(ActionDirectoryMember::Symlink(symlink)) => {
+            action_cache_add_str(fingerprint, "symlink");
+            action_cache_add_str(fingerprint, symlink.target().as_str());
+        }
+        DirectoryEntry::Leaf(ActionDirectoryMember::ExternalSymlink(symlink)) => {
+            action_cache_add_str(fingerprint, "external_symlink");
+            action_cache_add_str(fingerprint, symlink.target_str());
+        }
+    }
 }

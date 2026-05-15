@@ -108,6 +108,8 @@ use buck2_execute::execute::request::CommandExecutionPaths;
 use buck2_execute::execute::request::CommandExecutionRequest;
 use buck2_execute::execute::request::ExecutorPreference;
 use buck2_execute::execute::request::LocalActionCacheKey;
+use buck2_execute::execute::request::OutputCreationBehavior;
+use buck2_execute::execute::request::OutputType;
 use buck2_execute::execute::request::RemoteWorkerSpec;
 use buck2_execute::execute::request::WorkerId;
 use buck2_execute::execute::request::WorkerProtocol;
@@ -921,8 +923,99 @@ fn action_cache_add_bool(fingerprint: &mut DataDigester, value: bool) {
     fingerprint.update(&[value as u8]);
 }
 
+fn action_cache_add_u64(fingerprint: &mut DataDigester, value: u64) {
+    fingerprint.update(&value.to_le_bytes());
+}
+
+fn action_cache_add_option_usize(fingerprint: &mut DataDigester, value: Option<usize>) {
+    match value {
+        Some(value) => {
+            action_cache_add_bool(fingerprint, true);
+            action_cache_add_u64(fingerprint, value as u64);
+        }
+        None => action_cache_add_bool(fingerprint, false),
+    }
+}
+
+fn action_cache_add_option_bool(fingerprint: &mut DataDigester, value: Option<bool>) {
+    match value {
+        Some(value) => {
+            action_cache_add_bool(fingerprint, true);
+            action_cache_add_bool(fingerprint, value);
+        }
+        None => action_cache_add_bool(fingerprint, false),
+    }
+}
+
+fn action_cache_add_option_duration(fingerprint: &mut DataDigester, value: Option<Duration>) {
+    match value {
+        Some(value) => {
+            action_cache_add_bool(fingerprint, true);
+            action_cache_add_u64(fingerprint, value.as_secs());
+            action_cache_add_u64(fingerprint, u64::from(value.subsec_nanos()));
+        }
+        None => action_cache_add_bool(fingerprint, false),
+    }
+}
+
+fn action_cache_add_tracked_file_digest(
+    fingerprint: &mut DataDigester,
+    digest: &TrackedFileDigest,
+) {
+    let raw_digest = digest.raw_digest();
+    fingerprint.update(&[raw_digest.algorithm() as u8]);
+    action_cache_add_bytes(fingerprint, raw_digest.as_bytes());
+    action_cache_add_u64(fingerprint, digest.size());
+}
+
+fn action_cache_add_option_tracked_file_digest(
+    fingerprint: &mut DataDigester,
+    digest: Option<&TrackedFileDigest>,
+) {
+    match digest {
+        Some(digest) => {
+            action_cache_add_bool(fingerprint, true);
+            action_cache_add_tracked_file_digest(fingerprint, digest);
+        }
+        None => action_cache_add_bool(fingerprint, false),
+    }
+}
+
 fn action_cache_add_debug(fingerprint: &mut DataDigester, value: impl std::fmt::Debug) {
     action_cache_add_str(fingerprint, &format!("{value:?}"));
+}
+
+fn action_cache_add_output_type(fingerprint: &mut DataDigester, output_type: OutputType) {
+    let value = match output_type {
+        OutputType::FileOrDirectory => 0,
+        OutputType::File => 1,
+        OutputType::Directory => 2,
+        OutputType::Symlink => 3,
+    };
+    fingerprint.update(&[value]);
+}
+
+fn action_cache_add_output_creation_behavior(
+    fingerprint: &mut DataDigester,
+    behavior: OutputCreationBehavior,
+) {
+    let value = match behavior {
+        OutputCreationBehavior::Create => 0,
+        OutputCreationBehavior::Parent => 1,
+    };
+    fingerprint.update(&[value]);
+}
+
+fn action_cache_add_worker_id(fingerprint: &mut DataDigester, worker_id: WorkerId) {
+    action_cache_add_u64(fingerprint, worker_id.0);
+}
+
+fn action_cache_add_worker_protocol(fingerprint: &mut DataDigester, protocol: WorkerProtocol) {
+    let value = match protocol {
+        WorkerProtocol::Buck2 => 0,
+        WorkerProtocol::Bazel => 1,
+    };
+    fingerprint.update(&[value]);
 }
 
 fn fingerprint_command_execution_input(
@@ -944,7 +1037,7 @@ fn fingerprint_command_execution_input(
                     .as_ref(),
                 )?;
                 action_cache_add_str(fingerprint, path.as_str());
-                action_cache_add_str(fingerprint, &value.action_cache_fingerprint());
+                value.hash_action_cache_fingerprint(fingerprint);
             }
         }
         CommandExecutionInput::ArtifactPathAlias {
@@ -957,11 +1050,11 @@ fn fingerprint_command_execution_input(
             action_cache_add_str(fingerprint, source_path.as_str());
             action_cache_add_bool(fingerprint, *source_requires_materialization);
             action_cache_add_str(fingerprint, path.as_str());
-            action_cache_add_str(fingerprint, &value.action_cache_fingerprint());
+            value.hash_action_cache_fingerprint(fingerprint);
         }
         CommandExecutionInput::ActionMetadata(metadata) => {
             action_cache_add_str(fingerprint, "action_metadata");
-            action_cache_add_str(fingerprint, &metadata.digest.to_string());
+            action_cache_add_tracked_file_digest(fingerprint, &metadata.digest);
             action_cache_add_str(fingerprint, metadata.path.path().as_str());
             action_cache_add_str(fingerprint, metadata.content_hash.as_str());
         }
@@ -989,7 +1082,26 @@ fn fingerprint_command_execution_output(
         .into_path();
     action_cache_add_str(fingerprint, "output");
     action_cache_add_str(fingerprint, resolved_path.as_str());
-    action_cache_add_debug(fingerprint, output);
+    match output {
+        CommandExecutionOutput::BuildArtifact {
+            output_type,
+            produced_path,
+            ..
+        } => {
+            action_cache_add_str(fingerprint, "build_artifact");
+            action_cache_add_output_type(fingerprint, *output_type);
+            if let Some(produced_path) = produced_path {
+                action_cache_add_bool(fingerprint, true);
+                action_cache_add_str(fingerprint, produced_path.as_str());
+            } else {
+                action_cache_add_bool(fingerprint, false);
+            }
+        }
+        CommandExecutionOutput::TestPath { create, .. } => {
+            action_cache_add_str(fingerprint, "test_path");
+            action_cache_add_output_creation_behavior(fingerprint, *create);
+        }
+    }
     Ok(())
 }
 
@@ -2314,13 +2426,16 @@ impl RunAction {
             .to_string();
 
         let mut fingerprint = CasDigestData::digester(ctx.digest_config().cas_digest_config());
-        action_cache_add_str(&mut fingerprint, "buck2-local-action-cache-v3");
+        action_cache_add_str(
+            &mut fingerprint,
+            "buck2-local-action-cache-v4-structured-metadata",
+        );
         action_cache_add_str(&mut fingerprint, &ctx.fs().fs().root().to_string());
         action_cache_add_debug(&mut fingerprint, self.inner.executor_preference);
-        action_cache_add_debug(&mut fingerprint, self.inner.timeout);
+        action_cache_add_option_duration(&mut fingerprint, self.inner.timeout);
         action_cache_add_bool(&mut fingerprint, self.inner.no_outputs_cleanup);
         action_cache_add_bool(&mut fingerprint, self.inner.unique_input_inodes);
-        action_cache_add_debug(&mut fingerprint, self.inner.bazel_use_default_shell_env);
+        action_cache_add_option_bool(&mut fingerprint, self.inner.bazel_use_default_shell_env);
         action_cache_add_debug(&mut fingerprint, &self.inner.remote_execution_dependencies);
         action_cache_add_debug(&mut fingerprint, &self.inner.re_gang_workers);
         action_cache_add_debug(&mut fingerprint, &self.inner.remote_execution_custom_image);
@@ -2356,12 +2471,15 @@ impl RunAction {
 
         action_cache_add_str(&mut fingerprint, "worker");
         if let Some(worker) = worker {
-            action_cache_add_debug(&mut fingerprint, worker.id);
-            action_cache_add_debug(&mut fingerprint, worker.protocol);
-            action_cache_add_debug(&mut fingerprint, worker.concurrency);
+            action_cache_add_worker_id(&mut fingerprint, worker.id);
+            action_cache_add_worker_protocol(&mut fingerprint, worker.protocol);
+            action_cache_add_option_usize(&mut fingerprint, worker.concurrency);
             action_cache_add_bool(&mut fingerprint, worker.streaming);
             action_cache_add_bool(&mut fingerprint, worker.bazel_worker_sandboxing);
-            action_cache_add_debug(&mut fingerprint, &worker.remote_key);
+            action_cache_add_option_tracked_file_digest(
+                &mut fingerprint,
+                worker.remote_key.as_ref(),
+            );
             for arg in &worker.exe {
                 action_cache_add_str(&mut fingerprint, arg);
             }
@@ -2369,20 +2487,17 @@ impl RunAction {
                 action_cache_add_str(&mut fingerprint, key);
                 action_cache_add_str(&mut fingerprint, value);
             }
-            action_cache_add_str(
+            action_cache_add_str(&mut fingerprint, "input_directory");
+            action_cache_add_tracked_file_digest(
                 &mut fingerprint,
-                &worker
-                    .input_paths
-                    .input_directory()
-                    .fingerprint()
-                    .to_string(),
+                worker.input_paths.input_directory().fingerprint(),
             );
         }
 
         action_cache_add_str(&mut fingerprint, "remote_worker");
         if let Some(remote_worker) = remote_worker {
-            action_cache_add_debug(&mut fingerprint, remote_worker.id);
-            action_cache_add_debug(&mut fingerprint, remote_worker.concurrency);
+            action_cache_add_worker_id(&mut fingerprint, remote_worker.id);
+            action_cache_add_option_usize(&mut fingerprint, remote_worker.concurrency);
             for arg in &remote_worker.init {
                 action_cache_add_str(&mut fingerprint, arg);
             }
@@ -2390,13 +2505,10 @@ impl RunAction {
                 action_cache_add_str(&mut fingerprint, key);
                 action_cache_add_str(&mut fingerprint, value);
             }
-            action_cache_add_str(
+            action_cache_add_str(&mut fingerprint, "input_directory");
+            action_cache_add_tracked_file_digest(
                 &mut fingerprint,
-                &remote_worker
-                    .input_paths
-                    .input_directory()
-                    .fingerprint()
-                    .to_string(),
+                remote_worker.input_paths.input_directory().fingerprint(),
             );
         }
 
