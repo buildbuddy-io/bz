@@ -60,13 +60,14 @@ fn no_watchfs_file_watcher_stats(
         events_total: total,
         events_processed: total,
         incomplete_events_reason: Some(format!(
-            "no-watchfs invalidated keys: read_files={}, read_dirs={}, paths={}, exists_matching_exact_case={}; timings_us: introspection={}, file_ops={}, read_dirs={}, metadata={}, full_check={}",
+            "no-watchfs invalidated keys: read_files={}, read_dirs={}, paths={}, exists_matching_exact_case={}; timings_us: introspection={}, file_ops={}, file_state={}, read_dirs={}, metadata={}, full_check={}",
             stats.read_files,
             stats.read_dirs,
             stats.paths,
             stats.exists_matching_exact_case,
             stats.timings.introspection_us,
             stats.timings.file_ops_us,
+            stats.timings.file_state_us,
             stats.timings.read_dirs_us,
             stats.timings.metadata_us,
             stats.timings.full_check_us

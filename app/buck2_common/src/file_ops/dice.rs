@@ -208,6 +208,7 @@ impl KnownFileStateInvalidationStats {
 pub struct KnownFileStateInvalidationTimings {
     pub introspection_us: u64,
     pub file_ops_us: u64,
+    pub file_state_us: u64,
     pub read_dirs_us: u64,
     pub metadata_us: u64,
     pub full_check_us: u64,
@@ -302,13 +303,13 @@ pub async fn invalidate_changed_file_state(
 ) -> buck2_error::Result<KnownFileStateInvalidationStats> {
     let total_start = Instant::now();
     let mut read_dirs = Vec::new();
-    let mut path_metadata_for_no_watchfs = StdBuckHashMap::default();
+    let mut path_metadata_for_no_watchfs = Vec::new();
 
     read_dirs.extend(ctx.existing_key_values_of_type_for_introspection::<ReadDirForNoWatchFsKey>());
     for (key, value) in
         ctx.existing_key_values_of_type_for_introspection::<PathMetadataForNoWatchFsKey>()
     {
-        path_metadata_for_no_watchfs.insert(key.0, value);
+        path_metadata_for_no_watchfs.push((key.0, value));
     }
     let introspection_us = total_start.elapsed().as_micros() as u64;
 
@@ -316,7 +317,7 @@ pub async fn invalidate_changed_file_state(
     let no_watchfs_metadata_cache = Arc::new(NoWatchFsMetadataCache::default());
 
     let mut no_watchfs_cells = StdBuckHashSet::default();
-    for path in path_metadata_for_no_watchfs.keys() {
+    for (path, _) in &path_metadata_for_no_watchfs {
         no_watchfs_cells.insert((path.cell(), CheckIgnores::No));
     }
     for (key, _) in &read_dirs {
@@ -339,67 +340,65 @@ pub async fn invalidate_changed_file_state(
     let io_provider = dice.global_data().get_io_provider();
     let file_ops_us = total_start.elapsed().as_micros() as u64 - introspection_us;
 
-    let read_dirs_start = Instant::now();
-    let checked_read_dirs = stream::iter(read_dirs)
-        .map(|(key, old_value)| {
-            check_read_dir_for_no_watchfs_direct(
-                key,
-                old_value,
-                file_ops_by_cell.dupe(),
-                io_provider.dupe(),
-                no_watchfs_metadata_cache.dupe(),
-            )
-        })
-        .buffer_unordered(NO_WATCHFS_METADATA_CHECK_CONCURRENCY)
-        .collect::<Vec<_>>()
-        .await;
-
     let mut changed_read_dirs = Vec::new();
     let mut changed_read_dirs_to_value = Vec::new();
-    for dirty in checked_read_dirs {
-        match dirty {
-            DirtyReadDirForNoWatchFs::WithValue(key, value) => {
-                changed_read_dirs_to_value.push((key, value));
-            }
-            DirtyReadDirForNoWatchFs::WithoutValue(key) => {
-                changed_read_dirs.push(key);
-            }
-            DirtyReadDirForNoWatchFs::Unchanged => {}
-        }
-    }
-
-    let read_dirs_us = read_dirs_start.elapsed().as_micros() as u64;
-
-    let metadata_start = Instant::now();
-    let metadata_paths = path_metadata_for_no_watchfs.into_iter().collect::<Vec<_>>();
-    let checked_path_metadata_for_no_watchfs = stream::iter(metadata_paths)
-        .map(|(path, old_value)| {
-            check_path_metadata_for_no_watchfs_direct(
-                path,
-                old_value,
-                file_ops_by_cell.dupe(),
-                io_provider.dupe(),
-                no_watchfs_metadata_cache.dupe(),
-            )
-        })
-        .buffer_unordered(NO_WATCHFS_METADATA_CHECK_CONCURRENCY)
-        .collect::<Vec<_>>()
-        .await;
-
     let mut changed_path_metadata_for_no_watchfs = Vec::new();
     let mut changed_path_metadata_for_no_watchfs_to_value = Vec::new();
-    for dirty in checked_path_metadata_for_no_watchfs {
+
+    let file_state_start = Instant::now();
+    let checked_file_state = stream::iter(
+        read_dirs
+            .into_iter()
+            .map(|(key, old_value)| NoWatchFsFileStateCheck::ReadDir(key, old_value))
+            .chain(
+                path_metadata_for_no_watchfs
+                    .into_iter()
+                    .map(|(path, old_value)| {
+                        NoWatchFsFileStateCheck::PathMetadata(path, old_value)
+                    }),
+            ),
+    )
+    .map(|check| {
+        check_file_state_for_no_watchfs_direct(
+            check,
+            file_ops_by_cell.dupe(),
+            io_provider.dupe(),
+            no_watchfs_metadata_cache.dupe(),
+        )
+    })
+    .buffer_unordered(NO_WATCHFS_METADATA_CHECK_CONCURRENCY)
+    .collect::<Vec<_>>()
+    .await;
+    let file_state_us = file_state_start.elapsed().as_micros() as u64;
+
+    for dirty in checked_file_state {
         match dirty {
-            DirtyPathMetadataForNoWatchFs::WithValue(key, value) => {
+            DirtyFileStateForNoWatchFs::ReadDir(DirtyReadDirForNoWatchFs::WithValue(
+                key,
+                value,
+            )) => {
+                changed_read_dirs_to_value.push((key, value));
+            }
+            DirtyFileStateForNoWatchFs::ReadDir(DirtyReadDirForNoWatchFs::WithoutValue(key)) => {
+                changed_read_dirs.push(key);
+            }
+            DirtyFileStateForNoWatchFs::ReadDir(DirtyReadDirForNoWatchFs::Unchanged) => {}
+            DirtyFileStateForNoWatchFs::PathMetadata(DirtyPathMetadataForNoWatchFs::WithValue(
+                key,
+                value,
+            )) => {
                 changed_path_metadata_for_no_watchfs_to_value.push((key, value));
             }
-            DirtyPathMetadataForNoWatchFs::WithoutValue(key) => {
+            DirtyFileStateForNoWatchFs::PathMetadata(
+                DirtyPathMetadataForNoWatchFs::WithoutValue(key),
+            ) => {
                 changed_path_metadata_for_no_watchfs.push(key);
             }
-            DirtyPathMetadataForNoWatchFs::Unchanged => {}
+            DirtyFileStateForNoWatchFs::PathMetadata(DirtyPathMetadataForNoWatchFs::Unchanged) => {}
         }
     }
-    let metadata_us = metadata_start.elapsed().as_micros() as u64;
+    let read_dirs_us = 0;
+    let metadata_us = 0;
 
     let full_check_start = Instant::now();
     let full_check_us = full_check_start.elapsed().as_micros() as u64;
@@ -415,6 +414,7 @@ pub async fn invalidate_changed_file_state(
         timings: KnownFileStateInvalidationTimings {
             introspection_us,
             file_ops_us,
+            file_state_us,
             read_dirs_us,
             metadata_us,
             full_check_us,
@@ -491,6 +491,22 @@ enum DirtyReadDirForNoWatchFs {
     ),
     WithoutValue(ReadDirForNoWatchFsKey),
     Unchanged,
+}
+
+enum NoWatchFsFileStateCheck {
+    ReadDir(
+        ReadDirForNoWatchFsKey,
+        Option<buck2_error::Result<Arc<[RawDirEntry]>>>,
+    ),
+    PathMetadata(
+        CellPath,
+        Option<buck2_error::Result<Option<RawPathMetadataForNoWatchFs>>>,
+    ),
+}
+
+enum DirtyFileStateForNoWatchFs {
+    ReadDir(DirtyReadDirForNoWatchFs),
+    PathMetadata(DirtyPathMetadataForNoWatchFs),
 }
 
 enum DirtyExternalPathMetadata {
@@ -600,6 +616,38 @@ async fn check_read_dir_for_no_watchfs_direct(
             }
         }
         Err(_) => DirtyReadDirForNoWatchFs::WithoutValue(key),
+    }
+}
+
+async fn check_file_state_for_no_watchfs_direct(
+    check: NoWatchFsFileStateCheck,
+    file_ops_by_cell: Arc<StdBuckHashMap<(CellName, CheckIgnores), FileOpsDelegateWithIgnores>>,
+    io_provider: Arc<dyn IoProvider>,
+    no_watchfs_metadata_cache: Arc<NoWatchFsMetadataCache>,
+) -> DirtyFileStateForNoWatchFs {
+    match check {
+        NoWatchFsFileStateCheck::ReadDir(key, old) => DirtyFileStateForNoWatchFs::ReadDir(
+            check_read_dir_for_no_watchfs_direct(
+                key,
+                old,
+                file_ops_by_cell,
+                io_provider,
+                no_watchfs_metadata_cache,
+            )
+            .await,
+        ),
+        NoWatchFsFileStateCheck::PathMetadata(path, old) => {
+            DirtyFileStateForNoWatchFs::PathMetadata(
+                check_path_metadata_for_no_watchfs_direct(
+                    path,
+                    old,
+                    file_ops_by_cell,
+                    io_provider,
+                    no_watchfs_metadata_cache,
+                )
+                .await,
+            )
+        }
     }
 }
 
