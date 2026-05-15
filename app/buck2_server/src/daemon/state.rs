@@ -670,6 +670,7 @@ impl DaemonState {
             let local_action_cache = Arc::new(LocalActionCache::new(
                 paths.local_action_cache_path(),
                 blocking_executor.dupe(),
+                digest_config,
                 local_action_cache_enabled,
             ));
 

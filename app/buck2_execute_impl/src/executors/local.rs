@@ -119,9 +119,7 @@ use tokio_stream::wrappers::UnboundedReceiverStream;
 use tracing::info;
 
 use crate::executors::local_action_cache::LocalActionCache;
-use crate::executors::local_action_cache::deserialize_output_values;
 use crate::executors::local_action_cache::local_action_cache_outputs_fingerprint;
-use crate::executors::local_action_cache::serialize_output_values;
 use crate::executors::worker::WorkerHandle;
 use crate::executors::worker::WorkerPool;
 use crate::incremental_actions_helper::get_incremental_path_map;
@@ -1251,39 +1249,33 @@ impl LocalExecutor {
         outputs: &BuckIndexMap<CommandExecutionOutput, ArtifactValue>,
     ) -> buck2_error::Result<()> {
         if let Some(local_action_cache_key) = request.local_action_cache_key() {
+            let output_values: Arc<[ArtifactValue]> =
+                outputs.values().cloned().collect::<Vec<_>>().into();
             self.local_action_cache.insert_action_metadata(
                 local_action_cache_key.key.clone(),
                 local_action_cache_key.action_key_digest.clone(),
                 local_action_cache_key.input_metadata_digest.clone(),
                 local_action_cache_key.fingerprint.clone(),
                 outputs_fingerprint.to_vec(),
-                serialize_output_values(outputs)?,
+                output_values,
             )?;
         }
         Ok(())
     }
 
     fn local_action_cache_outputs_from_entry(
-        &self,
         outputs_to_check: &BuckIndexSet<CommandExecutionOutput>,
         entry: &crate::executors::local_action_cache::LocalActionCacheEntry,
-        digest_config: DigestConfig,
     ) -> buck2_error::Result<Option<BuckIndexMap<CommandExecutionOutput, ArtifactValue>>> {
-        let values = deserialize_output_values(entry.output_values.as_ref(), digest_config)?;
-        if values.len() != outputs_to_check.len() {
+        if entry.output_values.len() != outputs_to_check.len() {
             return Ok(None);
         }
 
         let outputs = outputs_to_check
             .iter()
             .cloned()
-            .zip(values)
+            .zip(entry.output_values.iter().cloned())
             .collect::<BuckIndexMap<_, _>>();
-        let actual_fingerprint =
-            local_action_cache_outputs_fingerprint(&self.artifact_fs, &outputs)?;
-        if actual_fingerprint.as_slice() != entry.outputs_fingerprint.as_ref() {
-            return Ok(None);
-        }
 
         Ok(Some(outputs))
     }
@@ -1611,11 +1603,7 @@ impl PreparedCommandOptionalExecutor for LocalExecutor {
 
         let start = TimeSpan::start_now();
         let start_time = SystemTime::now();
-        match self.local_action_cache_outputs_from_entry(
-            command.outputs,
-            &entry,
-            command.digest_config,
-        ) {
+        match Self::local_action_cache_outputs_from_entry(command.outputs, &entry) {
             Ok(Some(outputs)) => {
                 let time_span = start.end_now();
                 let timing = CommandExecutionMetadata {

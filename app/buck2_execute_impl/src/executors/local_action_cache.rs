@@ -50,6 +50,7 @@ enum LocalActionCacheState {
     Lazy {
         cache_dir: AbsNormPathBuf,
         io_executor: Arc<dyn BlockingExecutor>,
+        digest_config: DigestConfig,
         cache: AsyncOnceCell<LoadedLocalActionCache>,
     },
     #[cfg(test)]
@@ -68,16 +69,14 @@ pub struct LocalActionCacheEntry {
     pub input_metadata_digest: Arc<[u8]>,
     pub action_fingerprint: Arc<[u8]>,
     pub outputs_fingerprint: Arc<[u8]>,
-    pub output_values: Arc<[u8]>,
+    pub output_values: Arc<[ArtifactValue]>,
 }
 
-pub fn serialize_output_values(
-    outputs: &BuckIndexMap<CommandExecutionOutput, ArtifactValue>,
-) -> buck2_error::Result<Vec<u8>> {
+fn serialize_output_values(output_values: &[ArtifactValue]) -> buck2_error::Result<Vec<u8>> {
     let mut bytes = Vec::new();
     bytes.push(OUTPUT_VALUES_VERSION);
-    write_u64(&mut bytes, outputs.len().try_into()?);
-    for value in outputs.values() {
+    write_u64(&mut bytes, output_values.len().try_into()?);
+    for value in output_values {
         let mut value_bytes = Vec::new();
         value.write_local_action_cache_bytes(&mut value_bytes)?;
         write_bytes(&mut bytes, &value_bytes)?;
@@ -190,6 +189,7 @@ impl LocalActionCache {
     pub fn new(
         cache_dir: AbsNormPathBuf,
         io_executor: Arc<dyn BlockingExecutor>,
+        digest_config: DigestConfig,
         enabled: bool,
     ) -> Self {
         if !enabled {
@@ -202,6 +202,7 @@ impl LocalActionCache {
             state: LocalActionCacheState::Lazy {
                 cache_dir,
                 io_executor,
+                digest_config,
                 cache: AsyncOnceCell::new(),
             },
         }
@@ -215,16 +216,21 @@ impl LocalActionCache {
             LocalActionCacheState::Lazy {
                 cache_dir,
                 io_executor,
+                digest_config,
                 cache,
             } => {
                 let cache_dir = cache_dir.clone();
                 let io_executor = io_executor.dupe();
+                let digest_config = *digest_config;
                 cache
                     .get_or_try_init(async move {
                         tracing::info!("Loading local action cache...");
                         io_executor
                             .execute_io_inline(|| {
-                                LoadedLocalActionCache::initialize_blocking(cache_dir)
+                                LoadedLocalActionCache::initialize_blocking(
+                                    cache_dir,
+                                    digest_config,
+                                )
                             })
                             .await
                     })
@@ -276,7 +282,7 @@ impl LocalActionCache {
         input_metadata_digest: Vec<u8>,
         action_fingerprint: Vec<u8>,
         outputs_fingerprint: Vec<u8>,
-        output_values: Vec<u8>,
+        output_values: Arc<[ArtifactValue]>,
     ) -> buck2_error::Result<()> {
         let Some(cache) = self.loaded() else {
             return Ok(());
@@ -300,8 +306,11 @@ impl LocalActionCache {
 }
 
 impl LoadedLocalActionCache {
-    fn initialize_blocking(cache_dir: AbsNormPathBuf) -> buck2_error::Result<Self> {
-        match Self::open_blocking(&cache_dir) {
+    fn initialize_blocking(
+        cache_dir: AbsNormPathBuf,
+        digest_config: DigestConfig,
+    ) -> buck2_error::Result<Self> {
+        match Self::open_blocking(&cache_dir, digest_config) {
             Ok(cache) => Ok(cache),
             Err(e) => {
                 tracing::warn!(
@@ -312,19 +321,22 @@ impl LoadedLocalActionCache {
                 if cache_dir.exists() {
                     fs_util::remove_dir_all(&cache_dir).categorize_internal()?;
                 }
-                Self::open_blocking(&cache_dir)
+                Self::open_blocking(&cache_dir, digest_config)
             }
         }
     }
 
-    fn open_blocking(cache_dir: &AbsNormPathBuf) -> buck2_error::Result<Self> {
+    fn open_blocking(
+        cache_dir: &AbsNormPathBuf,
+        digest_config: DigestConfig,
+    ) -> buck2_error::Result<Self> {
         fs_util::create_dir_all(cache_dir)?;
         let db_path = cache_dir.join(FileName::unchecked_new("db.sqlite"));
         let connection = SqliteTables::<LocalActionCacheSqliteTable>::create_connection(&db_path)?;
         let table = LocalActionCacheSqliteTable::new(connection.dupe());
         table.create_table()?;
         let entries = table.read_all_action_digest_entries()?;
-        let action_metadata_entries = table.read_all_action_metadata_entries()?;
+        let action_metadata_entries = table.read_all_action_metadata_entries(digest_config)?;
         Ok(Self {
             entries,
             action_metadata_entries,
@@ -363,8 +375,9 @@ impl LoadedLocalActionCache {
         input_metadata_digest: Vec<u8>,
         action_fingerprint: Vec<u8>,
         outputs_fingerprint: Vec<u8>,
-        output_values: Vec<u8>,
+        output_values: Arc<[ArtifactValue]>,
     ) -> buck2_error::Result<()> {
+        let serialized_output_values = serialize_output_values(output_values.as_ref())?;
         self.action_metadata_entries.insert(
             key.clone(),
             LocalActionCacheEntry {
@@ -372,7 +385,7 @@ impl LoadedLocalActionCache {
                 input_metadata_digest: Arc::from(input_metadata_digest.as_slice()),
                 action_fingerprint: Arc::from(action_fingerprint.as_slice()),
                 outputs_fingerprint: Arc::from(outputs_fingerprint.as_slice()),
-                output_values: Arc::from(output_values.as_slice()),
+                output_values,
             },
         );
         LocalActionCacheSqliteTable::new(self.connection.dupe()).insert_or_replace_action_metadata(
@@ -381,7 +394,7 @@ impl LoadedLocalActionCache {
             input_metadata_digest,
             action_fingerprint,
             outputs_fingerprint,
-            output_values,
+            serialized_output_values,
         )
     }
 
@@ -464,6 +477,7 @@ impl LocalActionCacheSqliteTable {
 
     fn read_all_action_metadata_entries(
         &self,
+        digest_config: DigestConfig,
     ) -> buck2_error::Result<BuckDashMap<String, LocalActionCacheEntry>> {
         let sql = format!(
             "SELECT cache_key, action_key_digest, input_metadata_digest, action_fingerprint, outputs_fingerprint, output_values FROM {ACTION_METADATA_TABLE_NAME}"
@@ -497,7 +511,8 @@ impl LocalActionCacheSqliteTable {
                     input_metadata_digest: Arc::from(input_metadata_digest.as_slice()),
                     action_fingerprint: Arc::from(action_fingerprint.as_slice()),
                     outputs_fingerprint: Arc::from(outputs_fingerprint.as_slice()),
-                    output_values: Arc::from(output_values.as_slice()),
+                    output_values: deserialize_output_values(&output_values, digest_config)?
+                        .into(),
                 },
             );
         }
