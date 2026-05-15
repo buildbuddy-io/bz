@@ -39,6 +39,7 @@ use crate::impls::transaction::ActiveTransactionGuard;
 use crate::impls::transaction::ChangeType;
 use crate::impls::value::DiceComputedValue;
 use crate::impls::value::DiceValidValue;
+use crate::impls::value::MaybeValidDiceValue;
 use crate::impls::value::TrackedInvalidationPaths;
 use crate::metrics::Metrics;
 use crate::versions::VersionNumber;
@@ -209,6 +210,16 @@ impl CoreStateHandle {
         tokio::task::block_in_place(|| recv.blocking_recv().unwrap())
     }
 
+    pub(crate) fn current_graph_values(
+        &self,
+        keys: Vec<DiceKey>,
+    ) -> Vec<Option<MaybeValidDiceValue>> {
+        let (resp, recv) = oneshot::channel();
+        self.request(StateRequest::CurrentGraphValues { keys, resp });
+
+        tokio::task::block_in_place(|| recv.blocking_recv().unwrap())
+    }
+
     /// Collects the introspectable dice state
     pub(crate) fn introspection(&self) -> (VersionedGraphIntrospectable, VersionIntrospectable) {
         let (resp, recv) = oneshot::channel();
@@ -324,6 +335,13 @@ pub(super) enum StateRequest {
     ExistingGraphKeys {
         #[derivative(Debug = "ignore")]
         resp: Sender<Vec<DiceKey>>,
+    },
+    /// Returns current memoized values for selected graph keys.
+    CurrentGraphValues {
+        #[derivative(Debug = "ignore")]
+        keys: Vec<DiceKey>,
+        #[derivative(Debug = "ignore")]
+        resp: Sender<Vec<Option<MaybeValidDiceValue>>>,
     },
     /// Collects the introspectable dice state
     Introspection {

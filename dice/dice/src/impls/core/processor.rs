@@ -128,6 +128,9 @@ impl StateProcessor {
             StateRequest::ExistingGraphKeys { resp } => {
                 let _ignored = resp.send(self.state.existing_graph_keys());
             }
+            StateRequest::CurrentGraphValues { keys, resp } => {
+                let _ignored = resp.send(self.state.current_graph_values(keys));
+            }
             StateRequest::Introspection { resp } => {
                 let _ignored = resp.send(self.state.introspection());
             }

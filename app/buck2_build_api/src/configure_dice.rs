@@ -12,7 +12,6 @@ use std::sync::Arc;
 
 use buck2_common::dice::cells::SetCellResolver;
 use buck2_common::dice::data::SetIoProvider;
-use buck2_common::file_ops::dice::SetNoWatchFsKnownFileState;
 use buck2_common::io::IoProvider;
 use buck2_common::legacy_configs::configs::LegacyBuckConfig;
 use buck2_common::legacy_configs::dice::SetLegacyConfigs;
@@ -53,7 +52,6 @@ pub async fn configure_dice_for_buck(
 
     let mut dice = Dice::builder();
     dice.set_io_provider(io);
-    dice.set_no_watchfs_known_file_state();
     dice.set_digest_config(digest_config);
     let invalidation_tracking_enabled = match root_config {
         Some(c) => c

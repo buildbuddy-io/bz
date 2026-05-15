@@ -17,8 +17,8 @@ use futures::FutureExt;
 use crate::DiceTransaction;
 use crate::api::key::Key;
 use crate::api::user_data::UserComputationData;
-use crate::introspection::graph::AnyKey;
 use crate::impls::transaction::TransactionUpdater;
+use crate::introspection::graph::AnyKey;
 use crate::transaction::DiceTransactionImpl;
 
 /// The struct for which we build transactions. This is where changes are recorded, and committed
@@ -99,5 +99,15 @@ impl DiceTransactionUpdaterImpl {
         K: Key + Clone,
     {
         self.0.existing_keys_of_type_for_introspection::<K>()
+    }
+
+    pub(crate) fn existing_key_values_of_type_for_introspection<K>(
+        &self,
+    ) -> Vec<(K, Option<K::Value>)>
+    where
+        K: Key + Clone,
+        K::Value: Clone,
+    {
+        self.0.existing_key_values_of_type_for_introspection::<K>()
     }
 }

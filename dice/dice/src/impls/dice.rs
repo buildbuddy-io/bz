@@ -118,6 +118,37 @@ impl Dice {
             .collect()
     }
 
+    pub(crate) fn existing_key_values_of_type_for_introspection<K>(
+        &self,
+    ) -> Vec<(K, Option<K::Value>)>
+    where
+        K: Key + Clone,
+        K::Value: Clone,
+    {
+        let keys: Vec<_> = self
+            .state_handle
+            .existing_graph_keys()
+            .into_iter()
+            .filter_map(|dice_key| {
+                self.key_index
+                    .get_typed_key::<K>(dice_key)
+                    .map(|key| (dice_key, key))
+            })
+            .collect();
+        let values = self
+            .state_handle
+            .current_graph_values(keys.iter().map(|(dice_key, _)| *dice_key).collect());
+
+        keys.into_iter()
+            .zip(values)
+            .map(|((_, key), value)| {
+                let value =
+                    value.and_then(|value| value.downcast_maybe_transient::<K::Value>().cloned());
+                (key, value)
+            })
+            .collect()
+    }
+
     pub fn to_introspectable(&self) -> GraphIntrospectable {
         let (graph_introspectable, version_introspectable) = self.state_handle.introspection();
         // a bit subtle, but make sure we introspect the key_index after we get the graphs as

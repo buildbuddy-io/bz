@@ -37,6 +37,7 @@ use crate::impls::task::dice::TerminationObserver;
 use crate::impls::transaction::ChangeType;
 use crate::impls::value::DiceComputedValue;
 use crate::impls::value::DiceValidValue;
+use crate::impls::value::MaybeValidDiceValue;
 use crate::impls::value::TrackedInvalidationPaths;
 use crate::metrics::Metrics;
 use crate::versions::VersionNumber;
@@ -216,6 +217,27 @@ impl CoreState {
 
     pub(super) fn existing_graph_keys(&self) -> Vec<DiceKey> {
         self.graph.nodes.keys().copied().collect()
+    }
+
+    pub(super) fn current_graph_values(
+        &self,
+        keys: Vec<DiceKey>,
+    ) -> Vec<Option<MaybeValidDiceValue>> {
+        let version = self.current_version();
+        keys.into_iter()
+            .map(|key| {
+                self.graph
+                    .nodes
+                    .get(&key)
+                    .and_then(|node| match node.at_version(version) {
+                        VersionedGraphResult::Match(value) => Some(value.value().clone()),
+                        VersionedGraphResult::CheckDeps(mismatch) => {
+                            Some(MaybeValidDiceValue::valid(mismatch.entry))
+                        }
+                        _ => None,
+                    })
+            })
+            .collect()
     }
 
     pub(super) fn introspection(&self) -> (VersionedGraphIntrospectable, VersionIntrospectable) {

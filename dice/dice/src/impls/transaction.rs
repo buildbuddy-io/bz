@@ -26,11 +26,11 @@ use crate::impls::core::state::CoreStateHandle;
 use crate::impls::ctx::BaseComputeCtx;
 use crate::impls::ctx::SharedLiveTransactionCtx;
 use crate::impls::key::DiceKey;
-use crate::introspection::graph::AnyKey;
 use crate::impls::value::DiceKeyValue;
 use crate::impls::value::DiceValidValue;
 use crate::impls::value::DiceValidity;
 use crate::impls::value::MaybeValidDiceValue;
+use crate::introspection::graph::AnyKey;
 use crate::versions::VersionNumber;
 
 // TODO fill this more
@@ -134,6 +134,17 @@ impl TransactionUpdater {
         K: Key + Clone,
     {
         self.dice.existing_keys_of_type_for_introspection::<K>()
+    }
+
+    pub(crate) fn existing_key_values_of_type_for_introspection<K>(
+        &self,
+    ) -> Vec<(K, Option<K::Value>)>
+    where
+        K: Key + Clone,
+        K::Value: Clone,
+    {
+        self.dice
+            .existing_key_values_of_type_for_introspection::<K>()
     }
 
     async fn commit_to_state(self) -> (SharedLiveTransactionCtx, ActiveTransactionGuard) {

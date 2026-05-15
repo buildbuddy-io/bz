@@ -96,6 +96,14 @@ impl DiceTransactionUpdater {
     {
         self.0.existing_keys_of_type_for_introspection::<K>()
     }
+
+    pub fn existing_key_values_of_type_for_introspection<K>(&self) -> Vec<(K, Option<K::Value>)>
+    where
+        K: Key + Clone,
+        K::Value: Clone,
+    {
+        self.0.existing_key_values_of_type_for_introspection::<K>()
+    }
 }
 
 /// The base struct for which all computations start. This is clonable, and dupe, and can be
