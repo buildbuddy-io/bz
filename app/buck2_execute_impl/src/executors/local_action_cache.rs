@@ -17,6 +17,7 @@ use buck2_core::async_once_cell::AsyncOnceCell;
 use buck2_core::fs::artifact_path_resolver::ArtifactFs;
 use buck2_error::BuckErrorContext;
 use buck2_execute::artifact_value::ArtifactValue;
+use buck2_execute::digest_config::DigestConfig;
 use buck2_execute::execute::action_digest::ActionDigest;
 use buck2_execute::execute::blocking::BlockingExecutor;
 use buck2_execute::execute::manager::CommandExecutionManager;
@@ -37,7 +38,8 @@ use parking_lot::Mutex;
 use rusqlite::Connection;
 
 const STATE_TABLE_NAME: &str = "local_action_cache_v2";
-const ACTION_METADATA_TABLE_NAME: &str = "local_action_cache_v3";
+const ACTION_METADATA_TABLE_NAME: &str = "local_action_cache_v5";
+const OUTPUT_VALUES_VERSION: u8 = 1;
 
 pub struct LocalActionCache {
     state: LocalActionCacheState,
@@ -62,8 +64,113 @@ struct LoadedLocalActionCache {
 
 #[derive(Clone)]
 pub struct LocalActionCacheEntry {
+    pub action_key_digest: Arc<[u8]>,
+    pub input_metadata_digest: Arc<[u8]>,
     pub action_fingerprint: Arc<[u8]>,
     pub outputs_fingerprint: Arc<[u8]>,
+    pub output_values: Arc<[u8]>,
+}
+
+pub fn serialize_output_values(
+    outputs: &BuckIndexMap<CommandExecutionOutput, ArtifactValue>,
+) -> buck2_error::Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    bytes.push(OUTPUT_VALUES_VERSION);
+    write_u64(&mut bytes, outputs.len().try_into()?);
+    for value in outputs.values() {
+        let mut value_bytes = Vec::new();
+        value.write_local_action_cache_bytes(&mut value_bytes)?;
+        write_bytes(&mut bytes, &value_bytes)?;
+    }
+    Ok(bytes)
+}
+
+pub fn deserialize_output_values(
+    bytes: &[u8],
+    digest_config: DigestConfig,
+) -> buck2_error::Result<Vec<ArtifactValue>> {
+    let mut reader = OutputValuesReader::new(bytes);
+    let version = reader.read_u8()?;
+    if version != OUTPUT_VALUES_VERSION {
+        return Err(buck2_error::buck2_error!(
+            buck2_error::ErrorTag::Tier0,
+            "unsupported local action cache output values version `{}`",
+            version
+        ));
+    }
+
+    let len = reader.read_u64()?;
+    let mut values = Vec::with_capacity(len.try_into()?);
+    for _ in 0..len {
+        values.push(ArtifactValue::read_local_action_cache_bytes(
+            reader.read_bytes()?,
+            digest_config,
+        )?);
+    }
+    reader.expect_eof()?;
+    Ok(values)
+}
+
+fn write_u64(bytes: &mut Vec<u8>, value: u64) {
+    bytes.extend(value.to_le_bytes());
+}
+
+fn write_bytes(bytes: &mut Vec<u8>, value: &[u8]) -> buck2_error::Result<()> {
+    write_u64(bytes, value.len().try_into()?);
+    bytes.extend(value);
+    Ok(())
+}
+
+struct OutputValuesReader<'a> {
+    bytes: &'a [u8],
+    position: usize,
+}
+
+impl<'a> OutputValuesReader<'a> {
+    fn new(bytes: &'a [u8]) -> Self {
+        Self { bytes, position: 0 }
+    }
+
+    fn read_exact(&mut self, len: usize) -> buck2_error::Result<&'a [u8]> {
+        let end = self.position.checked_add(len).ok_or_else(|| {
+            buck2_error::buck2_error!(
+                buck2_error::ErrorTag::Tier0,
+                "local action cache output values length overflow"
+            )
+        })?;
+        if end > self.bytes.len() {
+            return Err(buck2_error::buck2_error!(
+                buck2_error::ErrorTag::Tier0,
+                "truncated local action cache output values"
+            ));
+        }
+        let value = &self.bytes[self.position..end];
+        self.position = end;
+        Ok(value)
+    }
+
+    fn read_u8(&mut self) -> buck2_error::Result<u8> {
+        Ok(self.read_exact(1)?[0])
+    }
+
+    fn read_u64(&mut self) -> buck2_error::Result<u64> {
+        Ok(u64::from_le_bytes(self.read_exact(8)?.try_into()?))
+    }
+
+    fn read_bytes(&mut self) -> buck2_error::Result<&'a [u8]> {
+        let len: usize = self.read_u64()?.try_into()?;
+        self.read_exact(len)
+    }
+
+    fn expect_eof(&self) -> buck2_error::Result<()> {
+        if self.position != self.bytes.len() {
+            return Err(buck2_error::buck2_error!(
+                buck2_error::ErrorTag::Tier0,
+                "trailing data in local action cache output values"
+            ));
+        }
+        Ok(())
+    }
 }
 
 impl LocalActionCache {
@@ -165,13 +272,23 @@ impl LocalActionCache {
     pub fn insert_action_metadata(
         &self,
         key: String,
+        action_key_digest: Vec<u8>,
+        input_metadata_digest: Vec<u8>,
         action_fingerprint: Vec<u8>,
         outputs_fingerprint: Vec<u8>,
+        output_values: Vec<u8>,
     ) -> buck2_error::Result<()> {
         let Some(cache) = self.loaded() else {
             return Ok(());
         };
-        cache.insert_action_metadata(key, action_fingerprint, outputs_fingerprint)
+        cache.insert_action_metadata(
+            key,
+            action_key_digest,
+            input_metadata_digest,
+            action_fingerprint,
+            outputs_fingerprint,
+            output_values,
+        )
     }
 
     pub fn remove_action_metadata(&self, key: &str) -> buck2_error::Result<()> {
@@ -242,20 +359,29 @@ impl LoadedLocalActionCache {
     fn insert_action_metadata(
         &self,
         key: String,
+        action_key_digest: Vec<u8>,
+        input_metadata_digest: Vec<u8>,
         action_fingerprint: Vec<u8>,
         outputs_fingerprint: Vec<u8>,
+        output_values: Vec<u8>,
     ) -> buck2_error::Result<()> {
         self.action_metadata_entries.insert(
             key.clone(),
             LocalActionCacheEntry {
+                action_key_digest: Arc::from(action_key_digest.as_slice()),
+                input_metadata_digest: Arc::from(input_metadata_digest.as_slice()),
                 action_fingerprint: Arc::from(action_fingerprint.as_slice()),
                 outputs_fingerprint: Arc::from(outputs_fingerprint.as_slice()),
+                output_values: Arc::from(output_values.as_slice()),
             },
         );
         LocalActionCacheSqliteTable::new(self.connection.dupe()).insert_or_replace_action_metadata(
             key,
+            action_key_digest,
+            input_metadata_digest,
             action_fingerprint,
             outputs_fingerprint,
+            output_values,
         )
     }
 
@@ -302,9 +428,12 @@ impl LocalActionCacheSqliteTable {
             .with_buck_error_context(|| format!("creating sqlite table {STATE_TABLE_NAME}"))?;
         let sql = format!(
             "CREATE TABLE IF NOT EXISTS {ACTION_METADATA_TABLE_NAME} (
-                cache_key           TEXT PRIMARY KEY NOT NULL,
-                action_fingerprint  BLOB NOT NULL,
-                outputs_fingerprint BLOB NOT NULL
+                cache_key             TEXT PRIMARY KEY NOT NULL,
+                action_key_digest     BLOB NOT NULL,
+                input_metadata_digest BLOB NOT NULL,
+                action_fingerprint    BLOB NOT NULL,
+                outputs_fingerprint   BLOB NOT NULL,
+                output_values         BLOB NOT NULL
             )",
         );
         self.connection
@@ -337,7 +466,7 @@ impl LocalActionCacheSqliteTable {
         &self,
     ) -> buck2_error::Result<BuckDashMap<String, LocalActionCacheEntry>> {
         let sql = format!(
-            "SELECT cache_key, action_fingerprint, outputs_fingerprint FROM {ACTION_METADATA_TABLE_NAME}"
+            "SELECT cache_key, action_key_digest, input_metadata_digest, action_fingerprint, outputs_fingerprint, output_values FROM {ACTION_METADATA_TABLE_NAME}"
         );
         let entries = BuckDashMap::default();
         let connection = self.connection.lock();
@@ -347,15 +476,28 @@ impl LocalActionCacheSqliteTable {
                 row.get::<_, String>(0)?,
                 row.get::<_, Vec<u8>>(1)?,
                 row.get::<_, Vec<u8>>(2)?,
+                row.get::<_, Vec<u8>>(3)?,
+                row.get::<_, Vec<u8>>(4)?,
+                row.get::<_, Vec<u8>>(5)?,
             ))
         })?;
         for row in rows {
-            let (key, action_fingerprint, outputs_fingerprint) = row?;
+            let (
+                key,
+                action_key_digest,
+                input_metadata_digest,
+                action_fingerprint,
+                outputs_fingerprint,
+                output_values,
+            ) = row?;
             entries.insert(
                 key,
                 LocalActionCacheEntry {
+                    action_key_digest: Arc::from(action_key_digest.as_slice()),
+                    input_metadata_digest: Arc::from(input_metadata_digest.as_slice()),
                     action_fingerprint: Arc::from(action_fingerprint.as_slice()),
                     outputs_fingerprint: Arc::from(outputs_fingerprint.as_slice()),
+                    output_values: Arc::from(output_values.as_slice()),
                 },
             );
         }
@@ -383,18 +525,28 @@ impl LocalActionCacheSqliteTable {
     fn insert_or_replace_action_metadata(
         &self,
         key: String,
+        action_key_digest: Vec<u8>,
+        input_metadata_digest: Vec<u8>,
         action_fingerprint: Vec<u8>,
         outputs_fingerprint: Vec<u8>,
+        output_values: Vec<u8>,
     ) -> buck2_error::Result<()> {
         let sql = format!(
             "INSERT OR REPLACE INTO {ACTION_METADATA_TABLE_NAME} \
-                (cache_key, action_fingerprint, outputs_fingerprint) VALUES (?1, ?2, ?3)"
+                (cache_key, action_key_digest, input_metadata_digest, action_fingerprint, outputs_fingerprint, output_values) VALUES (?1, ?2, ?3, ?4, ?5, ?6)"
         );
         self.connection
             .lock()
             .execute(
                 &sql,
-                rusqlite::params![key, action_fingerprint, outputs_fingerprint],
+                rusqlite::params![
+                    key,
+                    action_key_digest,
+                    input_metadata_digest,
+                    action_fingerprint,
+                    outputs_fingerprint,
+                    output_values
+                ],
             )
             .with_buck_error_context(|| {
                 format!("inserting into sqlite table {ACTION_METADATA_TABLE_NAME}")

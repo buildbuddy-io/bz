@@ -228,6 +228,8 @@ pub struct CommandExecutionPaths {
 #[derive(Clone, Debug)]
 pub struct LocalActionCacheKey {
     pub key: String,
+    pub action_key_digest: Vec<u8>,
+    pub input_metadata_digest: Vec<u8>,
     pub fingerprint: Vec<u8>,
 }
 
