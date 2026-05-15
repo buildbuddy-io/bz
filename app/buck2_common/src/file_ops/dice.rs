@@ -48,6 +48,7 @@ use crate::file_ops::error::FileReadError;
 use crate::file_ops::error::extended_ignore_error;
 use crate::file_ops::metadata::RawPathMetadata;
 use crate::file_ops::metadata::RawPathMetadataForNoWatchFs;
+use crate::file_ops::metadata::RawSymlink;
 use crate::file_ops::metadata::ReadDirOutput;
 use crate::ignores::file_ignores::FileIgnoreResult;
 use crate::io::IoProvider;
@@ -772,6 +773,7 @@ impl ReadFileProxy {
 struct ReadFileValue {
     proxy: ReadFileProxy,
     metadata: Option<RawPathMetadata>,
+    resolved_metadata: Option<RawPathMetadata>,
 }
 
 #[derive(Clone, Dupe, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable)]
@@ -792,13 +794,20 @@ impl Key for ReadFileKey {
         let metadata = file_ops
             .read_path_metadata_if_exists(ctx, self.0.path())
             .await?;
+        let resolved_metadata = resolve_read_file_metadata(ctx, metadata.dupe()).await?;
         let proxy = file_ops.read_file_if_exists(ctx, self.0.path()).await?;
-        Ok(ReadFileValue { proxy, metadata })
+        Ok(ReadFileValue {
+            proxy,
+            metadata,
+            resolved_metadata,
+        })
     }
 
     fn equality(x: &Self::Value, y: &Self::Value) -> bool {
         match (x, y) {
-            (Ok(x), Ok(y)) => x.metadata == y.metadata,
+            (Ok(x), Ok(y)) => {
+                x.metadata == y.metadata && x.resolved_metadata == y.resolved_metadata
+            }
             _ => false,
         }
     }
@@ -809,6 +818,84 @@ impl Key for ReadFileKey {
 
     fn value_serialize() -> impl ValueSerialize<Value = Self::Value> {
         TodoValueSerialize::<Self::Value>::new()
+    }
+}
+
+async fn resolve_read_file_metadata(
+    ctx: &mut DiceComputations<'_>,
+    metadata: Option<RawPathMetadata>,
+) -> buck2_error::Result<Option<RawPathMetadata>> {
+    let mut resolved_metadata = metadata;
+    let mut seen = StdBuckHashSet::default();
+    loop {
+        let target = match &resolved_metadata {
+            Some(RawPathMetadata::Symlink {
+                at: _,
+                to: RawSymlink::Relative(target, _),
+            }) => target.as_ref().clone(),
+            _ => return Ok(resolved_metadata),
+        };
+        if !seen.insert(target.clone()) {
+            return Err(internal_error!(
+                "symlink cycle while resolving read-file metadata at `{}`",
+                target
+            ));
+        }
+        resolved_metadata = ctx.compute(&PathMetadataKey(target)).await??;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use buck2_core::cells::paths::CellRelativePathBuf;
+    use dice::UserComputationData;
+    use dice::testing::DiceBuilder;
+
+    use super::*;
+    use crate::file_ops::testing::TestFileOps;
+
+    fn cell_path(cell: CellName, path: &str) -> CellPath {
+        CellPath::new(cell, CellRelativePathBuf::unchecked_new(path.to_owned()))
+    }
+
+    #[tokio::test]
+    async fn read_file_key_tracks_relative_symlink_target_metadata() -> buck2_error::Result<()> {
+        let cell = CellName::testing_new("cell");
+        let link = cell_path(cell, "link");
+        let target = cell_path(cell, "target");
+
+        let initial = TestFileOps::new_with_files_and_relative_symlinks(
+            BTreeMap::from([(target.clone(), "old".to_owned())]),
+            BTreeMap::from([(link.clone(), target.clone())]),
+        );
+        let mut ctx = initial
+            .mock_in_cell(cell, DiceBuilder::new())
+            .build(UserComputationData::new())
+            .unwrap()
+            .commit()
+            .await;
+
+        assert_eq!(
+            DiceFileComputations::read_file_if_exists(&mut ctx, link.as_ref()).await?,
+            Some("old".to_owned())
+        );
+
+        let updated = TestFileOps::new_with_files_and_relative_symlinks(
+            BTreeMap::from([(target.clone(), "new".to_owned())]),
+            BTreeMap::from([(link.clone(), target)]),
+        );
+        let mut updater = ctx.into_updater();
+        updated.update_in_cell(cell, &mut updater)?;
+        let mut ctx = updater.commit().await;
+
+        assert_eq!(
+            DiceFileComputations::read_file_if_exists(&mut ctx, link.as_ref()).await?,
+            Some("new".to_owned())
+        );
+
+        Ok(())
     }
 }
 
@@ -937,14 +1024,6 @@ impl Key for PathMetadataKey {
             .await?
             .read_path_metadata_if_exists(ctx, self.0.as_ref().path())
             .await?;
-
-        if let Some(RawPathMetadata::Symlink {
-            at: ref path,
-            to: _,
-        }) = res
-        {
-            ctx.compute(&ReadFileKey(path.dupe())).await??;
-        }
 
         Ok(res)
     }
