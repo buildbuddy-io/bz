@@ -302,23 +302,19 @@ pub async fn invalidate_changed_file_state(
     ctx: &mut DiceTransactionUpdater,
 ) -> buck2_error::Result<KnownFileStateInvalidationStats> {
     let total_start = Instant::now();
-    let mut read_dirs = Vec::new();
-    let mut path_metadata_for_no_watchfs = Vec::new();
-
-    read_dirs.extend(ctx.existing_key_values_of_type_for_introspection::<ReadDirForNoWatchFsKey>());
-    for (key, value) in
-        ctx.existing_key_values_of_type_for_introspection::<PathMetadataForNoWatchFsKey>()
-    {
-        path_metadata_for_no_watchfs.push((key.0, value));
-    }
+    let (read_dirs, path_metadata_for_no_watchfs) =
+        ctx.existing_key_values_of_two_types_for_introspection::<
+            ReadDirForNoWatchFsKey,
+            PathMetadataForNoWatchFsKey,
+        >();
     let introspection_us = total_start.elapsed().as_micros() as u64;
 
     let mut dice = ctx.existing_state().await;
     let no_watchfs_metadata_cache = Arc::new(NoWatchFsMetadataCache::default());
 
     let mut no_watchfs_cells = StdBuckHashSet::default();
-    for (path, _) in &path_metadata_for_no_watchfs {
-        no_watchfs_cells.insert((path.cell(), CheckIgnores::No));
+    for (key, _) in &path_metadata_for_no_watchfs {
+        no_watchfs_cells.insert((key.0.cell(), CheckIgnores::No));
     }
     for (key, _) in &read_dirs {
         no_watchfs_cells.insert((key.0.cell(), CheckIgnores::No));
@@ -353,9 +349,7 @@ pub async fn invalidate_changed_file_state(
             .chain(
                 path_metadata_for_no_watchfs
                     .into_iter()
-                    .map(|(path, old_value)| {
-                        NoWatchFsFileStateCheck::PathMetadata(path, old_value)
-                    }),
+                    .map(|(key, old_value)| NoWatchFsFileStateCheck::PathMetadata(key, old_value)),
             ),
     )
     .map(|check| {
@@ -499,7 +493,7 @@ enum NoWatchFsFileStateCheck {
         Option<buck2_error::Result<Arc<[RawDirEntry]>>>,
     ),
     PathMetadata(
-        CellPath,
+        PathMetadataForNoWatchFsKey,
         Option<buck2_error::Result<Option<RawPathMetadataForNoWatchFs>>>,
     ),
 }
@@ -537,20 +531,19 @@ async fn read_path_metadata_for_no_watchfs_direct(
 }
 
 async fn check_path_metadata_for_no_watchfs_direct(
-    path: CellPath,
+    key: PathMetadataForNoWatchFsKey,
     old: Option<buck2_error::Result<Option<RawPathMetadataForNoWatchFs>>>,
     file_ops_by_cell: Arc<StdBuckHashMap<(CellName, CheckIgnores), FileOpsDelegateWithIgnores>>,
     io_provider: Arc<dyn IoProvider>,
     no_watchfs_metadata_cache: Arc<NoWatchFsMetadataCache>,
 ) -> DirtyPathMetadataForNoWatchFs {
     let fresh = read_path_metadata_for_no_watchfs_direct(
-        path.as_ref(),
+        key.0.as_ref(),
         &file_ops_by_cell,
         io_provider,
         no_watchfs_metadata_cache,
     )
     .await;
-    let key = PathMetadataForNoWatchFsKey(path);
 
     match fresh {
         Ok(fresh) => {

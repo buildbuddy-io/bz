@@ -104,6 +104,23 @@ impl DiceTransactionUpdater {
     {
         self.0.existing_key_values_of_type_for_introspection::<K>()
     }
+
+    /// Returns current values for two key types using a single scan of the existing graph.
+    ///
+    /// This is intended for invalidation strategies that apply a union dirtiness checker over
+    /// already-observed state.
+    pub fn existing_key_values_of_two_types_for_introspection<K1, K2>(
+        &self,
+    ) -> (Vec<(K1, Option<K1::Value>)>, Vec<(K2, Option<K2::Value>)>)
+    where
+        K1: Key + Clone,
+        K1::Value: Clone,
+        K2: Key + Clone,
+        K2::Value: Clone,
+    {
+        self.0
+            .existing_key_values_of_two_types_for_introspection::<K1, K2>()
+    }
 }
 
 /// The base struct for which all computations start. This is clonable, and dupe, and can be

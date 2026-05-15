@@ -45,6 +45,11 @@ impl Debug for Dice {
     }
 }
 
+enum ExistingKeyOfTwoTypes<K1, K2> {
+    First(K1),
+    Second(K2),
+}
+
 pub struct DiceDataBuilder {
     data: DiceData,
     pagable_storage: Option<DiceStorage>,
@@ -147,6 +152,54 @@ impl Dice {
                 (key, value)
             })
             .collect()
+    }
+
+    pub(crate) fn existing_key_values_of_two_types_for_introspection<K1, K2>(
+        &self,
+    ) -> (Vec<(K1, Option<K1::Value>)>, Vec<(K2, Option<K2::Value>)>)
+    where
+        K1: Key + Clone,
+        K1::Value: Clone,
+        K2: Key + Clone,
+        K2::Value: Clone,
+    {
+        let keys: Vec<_> = self
+            .state_handle
+            .existing_graph_keys()
+            .into_iter()
+            .filter_map(|dice_key| {
+                if let Some(key) = self.key_index.get_typed_key::<K1>(dice_key) {
+                    Some((dice_key, ExistingKeyOfTwoTypes::First(key)))
+                } else {
+                    self.key_index
+                        .get_typed_key::<K2>(dice_key)
+                        .map(|key| (dice_key, ExistingKeyOfTwoTypes::Second(key)))
+                }
+            })
+            .collect();
+        let values = self
+            .state_handle
+            .current_graph_values(keys.iter().map(|(dice_key, _)| *dice_key).collect());
+
+        let mut first = Vec::new();
+        let mut second = Vec::new();
+
+        for ((_, key), value) in keys.into_iter().zip(values) {
+            match key {
+                ExistingKeyOfTwoTypes::First(key) => {
+                    let value = value
+                        .and_then(|value| value.downcast_maybe_transient::<K1::Value>().cloned());
+                    first.push((key, value));
+                }
+                ExistingKeyOfTwoTypes::Second(key) => {
+                    let value = value
+                        .and_then(|value| value.downcast_maybe_transient::<K2::Value>().cloned());
+                    second.push((key, value));
+                }
+            }
+        }
+
+        (first, second)
     }
 
     pub fn to_introspectable(&self) -> GraphIntrospectable {

@@ -147,6 +147,19 @@ impl TransactionUpdater {
             .existing_key_values_of_type_for_introspection::<K>()
     }
 
+    pub(crate) fn existing_key_values_of_two_types_for_introspection<K1, K2>(
+        &self,
+    ) -> (Vec<(K1, Option<K1::Value>)>, Vec<(K2, Option<K2::Value>)>)
+    where
+        K1: Key + Clone,
+        K1::Value: Clone,
+        K2: Key + Clone,
+        K2::Value: Clone,
+    {
+        self.dice
+            .existing_key_values_of_two_types_for_introspection::<K1, K2>()
+    }
+
     async fn commit_to_state(self) -> (SharedLiveTransactionCtx, ActiveTransactionGuard) {
         let v = self
             .dice
