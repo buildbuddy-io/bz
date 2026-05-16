@@ -282,6 +282,7 @@ async fn get_analysis_result_inner(
 
     // For precision, grab the *actual* rule type and not the *underlying* rule type.
     let target_rule_type_name = configured_node.rule_type().name().to_owned();
+    let action_owner_rule_type_name: Arc<str> = Arc::from(configured_node.underlying_rule_type().name());
 
     let configured_node = configured_node.as_ref();
 
@@ -324,6 +325,7 @@ async fn get_analysis_result_inner(
                                     configured_node.execution_platform_resolution(),
                                     &rule_spec,
                                     configured_node,
+                                    action_owner_rule_type_name.dupe(),
                                     cancellation,
                                 ),
                                 buck2_data::AnalysisStageEnd {},

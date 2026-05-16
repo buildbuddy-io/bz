@@ -8,6 +8,7 @@
  * above-listed licenses.
  */
 
+use std::borrow::Cow;
 use std::convert::Infallible;
 use std::fmt::Display;
 use std::hash::Hash;
@@ -153,18 +154,18 @@ fn bazel_normalize_root_artifact_exec_path(path: &str) -> Option<String> {
         return None;
     }
 
-    let mut components = output_path
-        .split('/')
-        .filter(|component| !(component.starts_with("__") && component.ends_with("__")))
-        .collect::<Vec<_>>();
-    if components.is_empty() {
-        return None;
-    }
-
     let mut exec_path = format!("buck-out/bin/{configuration}");
-    for component in components.drain(..) {
+    let mut has_components = false;
+    for component in output_path
+        .split('/')
+        .filter(|component| !bazel_hidden_path_component(component))
+    {
+        has_components = true;
         exec_path.push('/');
         exec_path.push_str(component);
+    }
+    if !has_components {
+        return None;
     }
     Some(exec_path)
 }
@@ -215,22 +216,19 @@ fn bazel_normalize_output_artifact_exec_path(
     }
 
     let mut changed = false;
-    let components = output_path
-        .split('/')
-        .filter(|component| {
-            let hidden = component.starts_with("__") && component.ends_with("__");
-            changed |= hidden;
-            !hidden
-        })
-        .collect::<Vec<_>>();
-    if !changed || components.is_empty() {
-        return None;
-    }
-
+    let mut has_components = false;
     let mut exec_path = format!("{}/{configuration}", output_root.exec_root());
-    for component in components {
+    for component in output_path.split('/') {
+        if bazel_hidden_path_component(component) {
+            changed = true;
+            continue;
+        }
+        has_components = true;
         exec_path.push('/');
         exec_path.push_str(component);
+    }
+    if !changed || !has_components {
+        return None;
     }
     Some(exec_path)
 }
@@ -287,10 +285,20 @@ pub fn bazel_normalize_genfiles_artifact_exec_paths(value: &str) -> String {
 }
 
 pub fn bazel_normalize_buck_owned_exec_paths(value: &str) -> String {
-    let value = bazel_normalize_external_cells_exec_paths(value);
-    let value = bazel_normalize_root_artifact_exec_paths(&value);
-    let value = bazel_normalize_bin_artifact_exec_paths(&value);
-    bazel_normalize_genfiles_artifact_exec_paths(&value)
+    let mut value = Cow::Borrowed(value);
+    if value.contains("/external_cells/") {
+        value = Cow::Owned(bazel_normalize_external_cells_exec_paths(&value));
+    }
+    if value.contains("/art/root/") {
+        value = Cow::Owned(bazel_normalize_root_artifact_exec_paths(&value));
+    }
+    if value.contains("buck-out/bin/") {
+        value = Cow::Owned(bazel_normalize_bin_artifact_exec_paths(&value));
+    }
+    if value.contains("buck-out/genfiles/") {
+        value = Cow::Owned(bazel_normalize_genfiles_artifact_exec_paths(&value));
+    }
+    value.into_owned()
 }
 
 fn bazel_configuration_exec_path(label: &ConfiguredTargetLabel) -> String {
@@ -375,14 +383,35 @@ fn bazel_output_dir_relative_runfiles_path(path: String) -> String {
     }
 }
 
-fn bazel_build_artifact_path(path: ArtifactPath<'_>) -> String {
+fn bazel_hidden_path_component(component: &str) -> bool {
+    component.starts_with("__") && component.ends_with("__")
+}
+
+fn bazel_visible_build_artifact_short_path(path: &ArtifactPath<'_>) -> String {
     let Either::Left(build) = path.base_path.as_ref() else {
         unreachable!("called with a source artifact path")
     };
     let base_short_path = build.path().join_cow(path.projected_path);
-    let short_path = base_short_path
-        .strip_prefix_components(path.hidden_components_count)
-        .map_or_else(String::new, |path| path.as_str().to_owned());
+    let Some(short_path) = base_short_path.strip_prefix_components(path.hidden_components_count)
+    else {
+        return String::new();
+    };
+
+    let mut result = String::new();
+    for component in short_path
+        .iter()
+        .filter(|component| !bazel_hidden_path_component(component.as_str()))
+    {
+        push_bazel_path_component(&mut result, component.as_str());
+    }
+    result
+}
+
+fn bazel_build_artifact_path(path: ArtifactPath<'_>) -> String {
+    let Either::Left(build) = path.base_path.as_ref() else {
+        unreachable!("called with a source artifact path")
+    };
+    let short_path = bazel_visible_build_artifact_short_path(&path);
     let mut exec_path = build.bazel_output_root().exec_root().to_owned();
     if let Some(label) = bazel_build_artifact_owner_label(&path) {
         push_bazel_path_component(&mut exec_path, &bazel_configuration_exec_path(&label));
@@ -403,10 +432,7 @@ fn bazel_build_artifact_short_path(path: ArtifactPath<'_>) -> String {
     let Either::Left(build) = path.base_path.as_ref() else {
         unreachable!("called with a source artifact path")
     };
-    let base_short_path = build.path().join_cow(path.projected_path);
-    let short_path = base_short_path
-        .strip_prefix_components(path.hidden_components_count)
-        .map_or_else(String::new, |path| path.as_str().to_owned());
+    let short_path = bazel_visible_build_artifact_short_path(&path);
     if build.bazel_output_path_kind() == BazelOutputPathKind::OutputDirRelative {
         return bazel_output_dir_relative_runfiles_path(short_path);
     }

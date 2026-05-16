@@ -33,6 +33,7 @@ use sorted_vector_map::SortedVectorMap;
 
 use super::cache_uploader::CacheUploadResults;
 use crate::artifact::fs::ExecutorFs;
+use crate::artifact_value::ArtifactValue;
 use crate::digest::CasDigestToReExt;
 use crate::digest_config::DigestConfig;
 use crate::execute::action_digest_and_blobs::ActionDigestAndBlobs;
@@ -55,6 +56,7 @@ use crate::execute::request::OutputType;
 use crate::execute::request::RemoteWorkerSpec;
 use crate::execute::result::CommandExecutionMetadata;
 use crate::execute::result::CommandExecutionResult;
+use buck2_hash::BuckIndexMap;
 use buck2_hash::BuckIndexSet;
 
 #[derive(Copy, Dupe, Clone, Debug, PartialEq, Eq)]
@@ -159,6 +161,16 @@ impl CommandExecutor {
                 cancellations,
             )
             .await
+    }
+
+    pub fn insert_unprepared_action_cache_metadata(
+        &self,
+        local_action_cache_key: &LocalActionCacheKey,
+        outputs: &BuckIndexMap<CommandExecutionOutput, ArtifactValue>,
+    ) -> buck2_error::Result<()> {
+        self.0
+            .action_cache_checker
+            .insert_unprepared_action_cache_metadata(local_action_cache_key, outputs)
     }
 
     pub async fn remote_dep_file_cache(

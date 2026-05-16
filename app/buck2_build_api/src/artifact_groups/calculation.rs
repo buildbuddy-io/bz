@@ -31,6 +31,7 @@ use buck2_common::legacy_configs::key::BuckconfigKeyRef;
 use buck2_common::package_listing::dice::DicePackageListingResolver;
 use buck2_core::build_file_path::BuildFilePath;
 use buck2_core::cells::cell_path::CellPath;
+use buck2_core::fs::artifact_path_resolver::ArtifactFs;
 use buck2_core::package::PackageLabel;
 use buck2_directory::directory::directory_data::DirectoryData;
 use buck2_error::BuckErrorContext;
@@ -87,11 +88,19 @@ impl ArtifactGroupCalculation for DiceComputations<'_> {
         &mut self,
         input: &ArtifactGroup,
     ) -> buck2_error::Result<ArtifactGroupValues> {
-        // TODO consider if we need to cache this
         let resolved_artifacts = input.resolved_artifact(self).await?;
-        ensure_artifact_group_staged(self, resolved_artifacts.clone())
-            .await?
-            .into_group_values(&resolved_artifacts)
+        match &resolved_artifacts {
+            ResolvedArtifactGroup::Artifact(artifact) => {
+                self.compute(&EnsureArtifactGroupValuesKey(artifact.dupe()))
+                    .await?
+            }
+            ResolvedArtifactGroup::TransitiveSetProjection(..) => {
+                let artifact_fs = self.get_artifact_fs().await?;
+                ensure_artifact_group_staged(self, resolved_artifacts.clone())
+                    .await?
+                    .into_group_values(&resolved_artifacts, &artifact_fs)
+            }
+        }
     }
 }
 
@@ -228,12 +237,13 @@ impl EnsureArtifactGroupReady {
     pub(crate) fn into_group_values<'v>(
         self,
         resolved_artifact_group: &ResolvedArtifactGroup<'v>,
+        artifact_fs: &ArtifactFs,
     ) -> buck2_error::Result<ArtifactGroupValues> {
         match self {
             EnsureArtifactGroupReady::TransitiveSet(values) => Ok(values),
             EnsureArtifactGroupReady::Single(value) => match resolved_artifact_group {
                 ResolvedArtifactGroup::Artifact(artifact) => {
-                    Ok(ArtifactGroupValues::from_artifact(artifact.clone(), value))
+                    ArtifactGroupValues::from_artifact_with_fs(artifact.clone(), value, artifact_fs)
                 }
                 ResolvedArtifactGroup::TransitiveSetProjection(_) => {
                     Err(EnsureArtifactStagedError::ExpectedTransitiveSet.into())
@@ -249,6 +259,42 @@ impl EnsureArtifactGroupReady {
                 Err(EnsureArtifactStagedError::UnpackSingleTransitiveSet.into())
             }
         }
+    }
+}
+
+#[derive(
+    Clone, Dupe, Eq, PartialEq, Hash, Display, Debug, Allocative, RefCast, Pagable
+)]
+#[display("ensure_artifact_group_values({})", _0)]
+#[repr(transparent)]
+#[pagable_typetag(dice::DiceKeyDyn)]
+struct EnsureArtifactGroupValuesKey(Artifact);
+
+#[async_trait]
+impl Key for EnsureArtifactGroupValuesKey {
+    type Value = buck2_error::Result<ArtifactGroupValues>;
+
+    async fn compute(
+        &self,
+        ctx: &mut DiceComputations,
+        _cancellation: &CancellationContext,
+    ) -> Self::Value {
+        let artifact_fs = ctx.get_artifact_fs().await?;
+        let value = ensure_artifact_staged(ctx, self.0.dupe())
+            .await?
+            .unpack_single()?;
+        ArtifactGroupValues::from_artifact_with_fs(self.0.dupe(), value, &artifact_fs)
+    }
+
+    fn equality(x: &Self::Value, y: &Self::Value) -> bool {
+        match (x, y) {
+            (Ok(x), Ok(y)) => x.shallow_equals(y),
+            _ => false,
+        }
+    }
+
+    fn value_serialize() -> impl ValueSerialize<Value = Self::Value> {
+        OkPagableValueSerialize::<Self::Value>::new()
     }
 }
 
@@ -434,11 +480,9 @@ async fn path_artifact_value(
         RawPathMetadataForNoWatchFs::File(FileChangeMetadata::Digest(metadata)) => {
             Ok(ArtifactValue::file(metadata))
         }
-        RawPathMetadataForNoWatchFs::File(FileChangeMetadata::ContentsProxy(contents_proxy)) => {
-            Ok(ArtifactValue::source_file(SourceFileMetadata::new(
-                contents_proxy,
-            )))
-        }
+        RawPathMetadataForNoWatchFs::File(FileChangeMetadata::ContentsProxy(contents_proxy)) => Ok(
+            ArtifactValue::source_file(SourceFileMetadata::new(contents_proxy)),
+        ),
         RawPathMetadataForNoWatchFs::Directory | RawPathMetadataForNoWatchFs::Symlink { .. } => {
             path_artifact_value_digest(ctx, cell_path, label).await
         }
@@ -674,7 +718,7 @@ impl Key for EnsureTransitiveSetProjectionKey {
                         values.push((artifact.dupe(), ready.unpack_single()?))
                     }
                     ResolvedArtifactGroup::TransitiveSetProjection(..) => {
-                        children.push(ready.into_group_values(group)?)
+                        children.push(ready.into_group_values(group, &artifact_fs)?)
                     }
                 }
             }

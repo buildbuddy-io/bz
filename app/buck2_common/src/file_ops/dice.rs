@@ -1007,7 +1007,13 @@ impl Key for PathMetadataForNoWatchFsKey {
         ctx: &mut DiceComputations,
         _cancellations: &CancellationContext,
     ) -> Self::Value {
-        fresh_path_metadata_for_no_watchfs(ctx, self.0.as_ref(), None).await
+        let no_watchfs_metadata_cache = ctx
+            .per_transaction_data()
+            .data
+            .get::<Arc<NoWatchFsMetadataCache>>()
+            .ok()
+            .map(|cache| cache.dupe());
+        fresh_path_metadata_for_no_watchfs(ctx, self.0.as_ref(), no_watchfs_metadata_cache).await
     }
 
     fn equality(x: &Self::Value, y: &Self::Value) -> bool {
@@ -1045,11 +1051,17 @@ impl Key for ReadDirForNoWatchFsKey {
         _cancellations: &CancellationContext,
     ) -> Self::Value {
         let file_ops = get_delegated_file_ops(ctx, self.0.cell(), CheckIgnores::No).await?;
+        let no_watchfs_metadata_cache = ctx
+            .per_transaction_data()
+            .data
+            .get::<Arc<NoWatchFsMetadataCache>>()
+            .ok()
+            .map(|cache| cache.dupe());
         file_ops
             .read_raw_dir_for_no_watchfs_without_dice(
                 ctx.global_data().get_io_provider(),
                 self.0.as_ref().path(),
-                None,
+                no_watchfs_metadata_cache,
             )
             .await
     }

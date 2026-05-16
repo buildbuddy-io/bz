@@ -9,6 +9,7 @@
  */
 
 use std::borrow::Cow;
+use std::ops::ControlFlow;
 
 use allocative::Allocative;
 use async_trait::async_trait;
@@ -23,6 +24,7 @@ use buck2_build_api::actions::execute::action_executor::ActionOutputs;
 use buck2_build_api::actions::execute::error::ExecuteError;
 use buck2_build_api::artifact_groups::ArtifactGroup;
 use buck2_build_signals::env::WaitingData;
+use buck2_common::cas_digest::CasDigestData;
 use buck2_core::category::CategoryRef;
 use buck2_core::content_hash::ContentBasedPathHash;
 use buck2_error::internal_error;
@@ -32,13 +34,24 @@ use buck2_execute::artifact_value::ArtifactValue;
 use buck2_execute::directory::ActionDirectoryEntry;
 use buck2_execute::directory::new_symlink;
 use buck2_execute::execute::command_executor::ActionExecutionTimingData;
+use buck2_execute::execute::request::CommandExecutionOutput;
+use buck2_execute::execute::request::ExecutorPreference;
+use buck2_execute::execute::request::LocalActionCacheKey;
 use buck2_execute::materialize::materializer::CopiedArtifact;
 use buck2_hash::BuckIndexSet;
+use buck2_hash::buck_indexmap;
 use buck2_hash::buck_indexset;
 use dupe::Dupe;
 use gazebo::prelude::*;
 use pagable::Pagable;
 use starlark::values::OwnedFrozenValue;
+
+use crate::actions::impls::run::action_cache_add_bool;
+use crate::actions::impls::run::action_cache_add_str;
+use crate::actions::impls::run::compose_local_action_cache_fingerprint;
+use crate::actions::impls::run::finalize_action_cache_digest;
+use crate::actions::impls::run::fingerprint_artifact_group_values;
+use crate::actions::impls::run::fingerprint_command_execution_output;
 
 #[derive(Debug, buck2_error::Error)]
 #[buck2(tag = Input)]
@@ -148,6 +161,79 @@ impl CopyAction {
             .next()
             .expect("a single artifact by construction")
     }
+
+    fn local_action_cache_output(&self) -> CommandExecutionOutput {
+        CommandExecutionOutput::BuildArtifact {
+            path: self.output().get_path().dupe(),
+            output_type: self.output().output_type(),
+            produced_path: None,
+        }
+    }
+
+    fn local_action_cache_key(
+        &self,
+        ctx: &dyn ActionExecutionCtx,
+        input_values: &buck2_build_api::artifact_groups::ArtifactGroupValues,
+        output: &CommandExecutionOutput,
+    ) -> buck2_error::Result<LocalActionCacheKey> {
+        let key = output
+            .as_ref()
+            .resolve(
+                ctx.fs(),
+                Some(&ContentBasedPathHash::for_output_artifact()),
+            )?
+            .into_path()
+            .to_string();
+
+        let cas_digest_config = ctx.digest_config().cas_digest_config();
+        let mut action_key = CasDigestData::digester(cas_digest_config);
+        action_cache_add_str(
+            &mut action_key,
+            "buck2-local-action-cache-simple-action-key-v1",
+        );
+        action_cache_add_str(&mut action_key, &ctx.fs().fs().root().to_string());
+        action_cache_add_str(&mut action_key, "copy");
+        match self.copy {
+            CopyMode::Copy {
+                executable_bit_override,
+            } => {
+                action_cache_add_str(&mut action_key, "copy");
+                match executable_bit_override {
+                    Some(value) => {
+                        action_cache_add_bool(&mut action_key, true);
+                        action_cache_add_bool(&mut action_key, value);
+                    }
+                    None => action_cache_add_bool(&mut action_key, false),
+                }
+            }
+            CopyMode::Symlink => {
+                action_cache_add_str(&mut action_key, "symlink");
+            }
+        }
+        fingerprint_command_execution_output(&mut action_key, ctx.fs(), output)?;
+
+        let mut input_metadata = CasDigestData::digester(cas_digest_config);
+        action_cache_add_str(
+            &mut input_metadata,
+            "buck2-local-action-cache-simple-input-metadata-v1",
+        );
+        fingerprint_artifact_group_values(&mut input_metadata, ctx.fs(), input_values)?;
+
+        let action_key_digest = finalize_action_cache_digest(action_key);
+        let input_metadata_digest = finalize_action_cache_digest(input_metadata);
+        let fingerprint = compose_local_action_cache_fingerprint(
+            cas_digest_config,
+            &action_key_digest,
+            &input_metadata_digest,
+        );
+
+        Ok(LocalActionCacheKey {
+            key,
+            action_key_digest,
+            input_metadata_digest,
+            fingerprint,
+        })
+    }
 }
 
 #[derive(Debug, Allocative, Pagable)]
@@ -173,6 +259,61 @@ impl SymlinkAction {
             .iter()
             .next()
             .expect("a single artifact by construction")
+    }
+
+    fn local_action_cache_output(&self) -> CommandExecutionOutput {
+        CommandExecutionOutput::BuildArtifact {
+            path: self.output().get_path().dupe(),
+            output_type: self.output().output_type(),
+            produced_path: None,
+        }
+    }
+
+    fn local_action_cache_key(
+        &self,
+        ctx: &dyn ActionExecutionCtx,
+        output: &CommandExecutionOutput,
+    ) -> buck2_error::Result<LocalActionCacheKey> {
+        let key = output
+            .as_ref()
+            .resolve(
+                ctx.fs(),
+                Some(&ContentBasedPathHash::for_output_artifact()),
+            )?
+            .into_path()
+            .to_string();
+
+        let cas_digest_config = ctx.digest_config().cas_digest_config();
+        let mut action_key = CasDigestData::digester(cas_digest_config);
+        action_cache_add_str(
+            &mut action_key,
+            "buck2-local-action-cache-simple-action-key-v1",
+        );
+        action_cache_add_str(&mut action_key, &ctx.fs().fs().root().to_string());
+        action_cache_add_str(&mut action_key, "symlink");
+        action_cache_add_str(&mut action_key, &self.target_path);
+        fingerprint_command_execution_output(&mut action_key, ctx.fs(), output)?;
+
+        let mut input_metadata = CasDigestData::digester(cas_digest_config);
+        action_cache_add_str(
+            &mut input_metadata,
+            "buck2-local-action-cache-simple-input-metadata-v1",
+        );
+
+        let action_key_digest = finalize_action_cache_digest(action_key);
+        let input_metadata_digest = finalize_action_cache_digest(input_metadata);
+        let fingerprint = compose_local_action_cache_fingerprint(
+            cas_digest_config,
+            &action_key_digest,
+            &input_metadata_digest,
+        );
+
+        Ok(LocalActionCacheKey {
+            key,
+            action_key_digest,
+            input_metadata_digest,
+            fingerprint,
+        })
     }
 }
 
@@ -207,11 +348,39 @@ impl Action for CopyAction {
         ctx: &mut dyn ActionExecutionCtx,
         waiting_data: WaitingData,
     ) -> Result<(ActionOutputs, ActionExecutionMetadata), ExecuteError> {
-        let (input, src_value) = ctx
-            .artifact_values(self.input())
-            .iter()
-            .into_singleton()
-            .ok_or_else(|| internal_error!("Input did not dereference to exactly one artifact"))?;
+        let local_action_cache_output = self.local_action_cache_output();
+        let local_action_cache_outputs = buck_indexset![local_action_cache_output.clone()];
+        let (local_action_cache_key, input, src_value) = {
+            let input_values = ctx.artifact_values(self.input());
+            let local_action_cache_key =
+                self.local_action_cache_key(ctx, input_values, &local_action_cache_output)?;
+            let (input, src_value) = input_values.iter().into_singleton().ok_or_else(|| {
+                internal_error!("Input did not dereference to exactly one artifact")
+            })?;
+            (local_action_cache_key, input.dupe(), src_value.dupe())
+        };
+
+        let manager = ctx.command_execution_manager(waiting_data.clone());
+        match ctx
+            .unprepared_action_cache(
+                manager,
+                &local_action_cache_key,
+                &local_action_cache_outputs,
+            )
+            .await
+        {
+            ControlFlow::Break(result) => {
+                return ctx.unpack_command_execution_result(
+                    ExecutorPreference::LocalRequired,
+                    result,
+                    false,
+                    false,
+                    None,
+                    buck2_data::IncrementalKind::NonIncremental,
+                );
+            }
+            ControlFlow::Continue(_) => {}
+        }
 
         let artifact_fs = ctx.fs();
         let src = input.resolve_path(
@@ -236,14 +405,14 @@ impl Action for CopyAction {
                     executable_bit_override,
                 } => {
                     builder.add_copied(
-                        src_value,
+                        &src_value,
                         src.as_ref(),
                         tmp_dest.as_ref(),
                         executable_bit_override,
                     )?;
                 }
                 CopyMode::Symlink => {
-                    builder.add_symlinked(src_value, src.clone(), tmp_dest.as_ref())?;
+                    builder.add_symlinked(&src_value, src.clone(), tmp_dest.as_ref())?;
                 }
             }
 
@@ -284,6 +453,11 @@ impl Action for CopyAction {
                 configuration_path,
             )
             .await?;
+
+        ctx.insert_unprepared_action_cache_metadata(
+            &local_action_cache_key,
+            &buck_indexmap![local_action_cache_output => value.dupe()],
+        )?;
 
         Ok((
             ActionOutputs::from_single(self.output().get_path().dupe(), value),
@@ -328,6 +502,31 @@ impl Action for SymlinkAction {
         ctx: &mut dyn ActionExecutionCtx,
         waiting_data: WaitingData,
     ) -> Result<(ActionOutputs, ActionExecutionMetadata), ExecuteError> {
+        let local_action_cache_output = self.local_action_cache_output();
+        let local_action_cache_outputs = buck_indexset![local_action_cache_output.clone()];
+        let local_action_cache_key = self.local_action_cache_key(ctx, &local_action_cache_output)?;
+        let manager = ctx.command_execution_manager(waiting_data.clone());
+        match ctx
+            .unprepared_action_cache(
+                manager,
+                &local_action_cache_key,
+                &local_action_cache_outputs,
+            )
+            .await
+        {
+            ControlFlow::Break(result) => {
+                return ctx.unpack_command_execution_result(
+                    ExecutorPreference::LocalRequired,
+                    result,
+                    false,
+                    false,
+                    None,
+                    buck2_data::IncrementalKind::NonIncremental,
+                );
+            }
+            ControlFlow::Continue(_) => {}
+        }
+
         let artifact_fs = ctx.fs();
         let tmp_dest = artifact_fs.resolve_build(
             self.output().get_path(),
@@ -355,6 +554,11 @@ impl Action for SymlinkAction {
         ctx.materializer()
             .declare_copy(dest.clone(), value.dupe(), Vec::new(), configuration_path)
             .await?;
+
+        ctx.insert_unprepared_action_cache_metadata(
+            &local_action_cache_key,
+            &buck_indexmap![local_action_cache_output => value.dupe()],
+        )?;
 
         Ok((
             ActionOutputs::from_single(self.output().get_path().dupe(), value),

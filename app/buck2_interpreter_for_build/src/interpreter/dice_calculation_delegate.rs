@@ -58,12 +58,16 @@ use dupe::Dupe;
 use futures::FutureExt;
 use pagable::Pagable;
 use pagable::pagable_typetag;
+use sha2::Digest;
+use sha2::Sha256;
 use starlark::codemap::FileSpan;
 use starlark::environment::Module;
 use starlark::syntax::AstModule;
 use starlark::values::FrozenHeapName;
 
 use crate::bazel_repository::BazelRepositoryRuleEvaluation;
+use crate::bazel_skylib_paths::BazelRulesCcIsPathAbsolute;
+use crate::bazel_skylib_paths::BazelSkylibPaths;
 use crate::interpreter::buckconfig::ConfigsOnDiceViewForStarlark;
 use crate::interpreter::build_context::BazelRepositoryRuleInvocation;
 use crate::interpreter::cell_info::InterpreterCellInfo;
@@ -96,6 +100,464 @@ fn toml_value_to_json(value: toml::Value) -> serde_json::Value {
                 .collect(),
         ),
     }
+}
+
+const BAZEL_SKYLIB_PATHS_BZL_SHA256: &str =
+    "96cce43871d8228126a12ceff771351f9030b1e9d029f2185853aa6541766a83";
+const BAZEL_RULES_CC_PATHS_BZL_SHA256: &str =
+    "c982ac685f0bfbd32602d82d1c37f3bf50a2714ca6a13bfd3c08d4e5cc8b8872";
+const BAZEL_RULES_CC_CC_INFO_BZL_SHA256: &str =
+    "4424bb876c3f8234d7cfce20652e7ab1a7b2fc34cc2c637b1cb4313590d9f1bc";
+const BAZEL_RULES_CC_CC_HELPER_BZL_SHA256: &str =
+    "22b11a7833958f11fb32ddf6406195e02ccef9dc635369a556cbafa4e933fdbe";
+const BAZEL_RULES_JAVA_INFO_BZL_SHA256: &str =
+    "02438c92066a825629a47f6dd01d9ea2200dc90a666b68fb4ee1ebf09e6a3026";
+const BAZEL_RULES_JAVA_COMMON_INTERNAL_BZL_SHA256: &str =
+    "68776f7ef30ca86f97edb7359812e1c3ff12cf348c812cfa86292d1d41a825a3";
+
+fn is_bazel_skylib_paths_module(starlark_file: StarlarkModulePath<'_>) -> bool {
+    match starlark_file {
+        StarlarkModulePath::LoadFile(_) => {
+            let path = starlark_file.path();
+            path.cell().as_str().contains("bazel_skylib") && path.path().as_str() == "lib/paths.bzl"
+        }
+        StarlarkModulePath::BxlFile(_)
+        | StarlarkModulePath::JsonFile(_)
+        | StarlarkModulePath::TomlFile(_) => false,
+    }
+}
+
+fn is_bazel_rules_cc_paths_module(starlark_file: StarlarkModulePath<'_>) -> bool {
+    match starlark_file {
+        StarlarkModulePath::LoadFile(_) => {
+            let path = starlark_file.path();
+            path.cell().as_str().contains("rules_cc")
+                && path.path().as_str() == "cc/private/paths.bzl"
+        }
+        StarlarkModulePath::BxlFile(_)
+        | StarlarkModulePath::JsonFile(_)
+        | StarlarkModulePath::TomlFile(_) => false,
+    }
+}
+
+fn is_bazel_rules_cc_cc_info_path(starlark_file: StarlarkPath<'_>) -> bool {
+    match starlark_file {
+        StarlarkPath::LoadFile(path) => {
+            path.cell().as_str().contains("rules_cc")
+                && path.path().path().as_str() == "cc/private/cc_info.bzl"
+        }
+        StarlarkPath::BuildFile(_)
+        | StarlarkPath::PackageFile(_)
+        | StarlarkPath::BxlFile(_)
+        | StarlarkPath::JsonFile(_)
+        | StarlarkPath::TomlFile(_) => false,
+    }
+}
+
+fn is_bazel_rules_cc_cc_helper_path(starlark_file: StarlarkPath<'_>) -> bool {
+    match starlark_file {
+        StarlarkPath::LoadFile(path) => {
+            path.cell().as_str().contains("rules_cc")
+                && path.path().path().as_str() == "cc/common/cc_helper.bzl"
+        }
+        StarlarkPath::BuildFile(_)
+        | StarlarkPath::PackageFile(_)
+        | StarlarkPath::BxlFile(_)
+        | StarlarkPath::JsonFile(_)
+        | StarlarkPath::TomlFile(_) => false,
+    }
+}
+
+fn is_bazel_rules_java_common_internal_path(starlark_file: StarlarkPath<'_>) -> bool {
+    match starlark_file {
+        StarlarkPath::LoadFile(path) => {
+            path.cell().as_str().contains("rules_java")
+                && path.path().path().as_str() == "java/private/java_common_internal.bzl"
+        }
+        StarlarkPath::BuildFile(_)
+        | StarlarkPath::PackageFile(_)
+        | StarlarkPath::BxlFile(_)
+        | StarlarkPath::JsonFile(_)
+        | StarlarkPath::TomlFile(_) => false,
+    }
+}
+
+fn is_bazel_rules_java_info_path(starlark_file: StarlarkPath<'_>) -> bool {
+    match starlark_file {
+        StarlarkPath::LoadFile(path) => {
+            path.cell().as_str().contains("rules_java")
+                && path.path().path().as_str() == "java/private/java_info.bzl"
+        }
+        StarlarkPath::BuildFile(_)
+        | StarlarkPath::PackageFile(_)
+        | StarlarkPath::BxlFile(_)
+        | StarlarkPath::JsonFile(_)
+        | StarlarkPath::TomlFile(_) => false,
+    }
+}
+
+fn rewrite_bazel_rules_cc_cc_info(
+    starlark_file: StarlarkPath<'_>,
+    contents: String,
+) -> buck2_error::Result<String> {
+    if !is_bazel_rules_cc_cc_info_path(starlark_file) {
+        return Ok(contents);
+    }
+    if hex::encode(Sha256::digest(contents.as_bytes())) != BAZEL_RULES_CC_CC_INFO_BZL_SHA256 {
+        return Ok(contents);
+    }
+
+    const FLAT_DEPSET_STUB: &str = r#"def _flat_depset(*, transitive = []):
+    largest_depset = depset()
+    largest_depset_list = []
+    for t in transitive:
+        t_list = t.to_list()
+        if len(t_list) > len(largest_depset_list):
+            largest_depset_list = t_list
+            largest_depset = t
+
+    all = depset(transitive = transitive)
+    if all.to_list() == largest_depset_list:
+        return largest_depset
+    return all
+"#;
+    const NATIVE_FLAT_DEPSET_STUB: &str = r#"def _flat_depset(*, transitive = []):
+    return __buck2_bazel_flat_depset(transitive = transitive)
+"#;
+    const MERGE_COMPILATION_CONTEXTS_STUB: &str = r#"def _merge_compilation_contexts(*, compilation_context = EMPTY_COMPILATION_CONTEXT, exported_deps = [], deps = []):
+    exporting_module_maps = depset(
+        direct = [dep._module_map for dep in exported_deps if dep._module_map],
+        transitive = [dep._exporting_module_maps for dep in exported_deps],
+    )
+    exporting_module_map_files = depset(
+        direct = [dep._module_map.file for dep in exported_deps if dep._module_map],
+        transitive = [dep._exporting_module_map_files for dep in exported_deps],
+    )
+    all_deps = exported_deps + deps
+    direct_module_maps = depset(
+        direct = [dep._module_map.file for dep in all_deps if dep._module_map],
+        transitive = [dep._exporting_module_map_files for dep in all_deps],
+    )
+
+    dep_header_infos = [dep._header_info for dep in all_deps]
+    merged_header_infos = [dep._header_info for dep in exported_deps]
+
+    compilation_context_header_info = compilation_context._header_info
+    header_info = _cc_internal.create_header_info_with_deps(
+        header_info = compilation_context_header_info,
+        deps = dep_header_infos,
+        merged_deps = merged_header_infos,
+    )
+
+    transitive_modules_artifacts = []
+    transitive_pic_modules_artifacts = []
+    for dep in all_deps:
+        dep_header_info = dep._header_info
+        if dep_header_info.header_module:
+            transitive_modules_artifacts.append(dep_header_info.header_module)
+        if dep_header_info.separate_module:
+            transitive_modules_artifacts.append(dep_header_info.separate_module)
+        if dep_header_info.pic_header_module:
+            transitive_pic_modules_artifacts.append(dep_header_info.pic_header_module)
+        if dep_header_info.separate_pic_module:
+            transitive_pic_modules_artifacts.append(dep_header_info.separate_pic_module)
+
+    return CcCompilationContextInfo(
+        includes = _flat_depset(
+            transitive = [compilation_context.includes] + [dep.includes for dep in all_deps],
+        ),
+        quote_includes = _flat_depset(
+            transitive = [compilation_context.quote_includes] + [dep.quote_includes for dep in all_deps],
+        ),
+        system_includes = _flat_depset(
+            transitive = [compilation_context.system_includes] + [dep.system_includes for dep in all_deps],
+        ),
+        framework_includes = _flat_depset(
+            transitive = [compilation_context.framework_includes] + [dep.framework_includes for dep in all_deps],
+        ),
+        external_includes = _flat_depset(
+            transitive = [compilation_context.external_includes] + [dep.external_includes for dep in all_deps],
+        ),
+        defines = _flat_depset(
+            transitive = [dep.defines for dep in all_deps] + [compilation_context.defines],
+        ),
+        local_defines = compilation_context.local_defines,
+        headers = depset(
+            direct = compilation_context.headers.to_list(),
+            transitive = [dep.headers for dep in all_deps],
+        ),
+        # Duplication with HeaderInfo data:
+        direct_headers = _cc_internal.freeze(header_info.modular_public_headers + header_info.modular_private_headers + header_info.separate_module_headers),
+        direct_public_headers = header_info.modular_public_headers,
+        direct_private_headers = header_info.modular_private_headers,
+        direct_textual_headers = header_info.textual_headers,
+        _direct_module_maps = direct_module_maps,
+        _module_map = compilation_context._module_map,
+        _exporting_module_maps = exporting_module_maps,
+        _exporting_module_map_files = exporting_module_map_files,
+        _non_code_inputs = depset(
+            direct = compilation_context._non_code_inputs.to_list(),
+            transitive = [dep._non_code_inputs for dep in all_deps],
+        ),
+        _virtual_to_original_headers = depset(
+            transitive = [compilation_context._virtual_to_original_headers] + [dep._virtual_to_original_headers for dep in all_deps],
+        ),
+        validation_artifacts = depset(
+            transitive = [compilation_context.validation_artifacts] + [dep.validation_artifacts for dep in all_deps],
+        ),
+        _header_info = header_info,
+        _transitive_modules = depset(
+            transitive_modules_artifacts,
+            transitive = [dep._transitive_modules for dep in all_deps],
+        ),
+        _transitive_pic_modules = depset(
+            transitive_pic_modules_artifacts,
+            transitive = [dep._transitive_pic_modules for dep in all_deps],
+        ),
+        _modules_info_files = depset(
+            transitive = [compilation_context._modules_info_files] + [dep._modules_info_files for dep in all_deps],
+        ),
+        _pic_modules_info_files = depset(
+            transitive = [compilation_context._pic_modules_info_files] + [dep._pic_modules_info_files for dep in all_deps],
+        ),
+        _module_files = depset(
+            transitive = [compilation_context._module_files] + [dep._module_files for dep in all_deps],
+        ),
+        _pic_module_files = depset(
+            transitive = [compilation_context._pic_module_files] + [dep._pic_module_files for dep in all_deps],
+        ),
+    )
+"#;
+    const NATIVE_MERGE_COMPILATION_CONTEXTS_STUB: &str = r#"def _merge_compilation_contexts(*, compilation_context = EMPTY_COMPILATION_CONTEXT, exported_deps = [], deps = []):
+    return __buck2_bazel_merge_compilation_contexts(
+        CcCompilationContextInfo,
+        compilation_context,
+        exported_deps,
+        deps,
+    )
+"#;
+
+    let rewritten = contents.replacen(FLAT_DEPSET_STUB, NATIVE_FLAT_DEPSET_STUB, 1);
+    if rewritten == contents {
+        return Err(internal_error!(
+            "rules_cc cc_info.bzl hash matched, but _flat_depset stub did not"
+        ));
+    }
+    let rewritten_merge = rewritten.replacen(
+        MERGE_COMPILATION_CONTEXTS_STUB,
+        NATIVE_MERGE_COMPILATION_CONTEXTS_STUB,
+        1,
+    );
+    if rewritten_merge == rewritten {
+        return Err(internal_error!(
+            "rules_cc cc_info.bzl hash matched, but _merge_compilation_contexts stub did not"
+        ));
+    }
+    Ok(rewritten_merge)
+}
+
+fn rewrite_bazel_rules_cc_cc_helper(
+    starlark_file: StarlarkPath<'_>,
+    contents: String,
+) -> buck2_error::Result<String> {
+    if !is_bazel_rules_cc_cc_helper_path(starlark_file) {
+        return Ok(contents);
+    }
+    if hex::encode(Sha256::digest(contents.as_bytes())) != BAZEL_RULES_CC_CC_HELPER_BZL_SHA256 {
+        return Ok(contents);
+    }
+
+    const DYNAMIC_LIBRARIES_FOR_RUNTIME_STUB: &str = r#"def _get_dynamic_libraries_for_runtime(cc_linking_context, linking_statically):
+    libraries = []
+    for linker_input in cc_linking_context.linker_inputs.to_list():
+        libraries.extend(linker_input.libraries)
+
+    dynamic_libraries_for_runtime = []
+    for library in libraries:
+        artifact = _get_dynamic_library_for_runtime_or_none(library, linking_statically)
+        if artifact != None:
+            dynamic_libraries_for_runtime.append(artifact)
+
+    return dynamic_libraries_for_runtime
+"#;
+    const NATIVE_DYNAMIC_LIBRARIES_FOR_RUNTIME_STUB: &str = r#"def _get_dynamic_libraries_for_runtime(cc_linking_context, linking_statically):
+    return __buck2_bazel_get_dynamic_libraries_for_runtime(cc_linking_context, linking_statically)
+"#;
+    const COLLECT_LIBRARY_HIDDEN_TOP_LEVEL_ARTIFACTS_STUB: &str = r#"def _collect_library_hidden_top_level_artifacts(
+        ctx,
+        files_to_compile):
+    artifacts_to_force_builder = [files_to_compile]
+    if hasattr(ctx.attr, "deps"):
+        for dep in ctx.attr.deps:
+            if OutputGroupInfo in dep:
+                if "_hidden_top_level_INTERNAL_" in dep[OutputGroupInfo]:
+                    artifacts_to_force_builder.append(dep[OutputGroupInfo]["_hidden_top_level_INTERNAL_"])
+
+    return depset(transitive = artifacts_to_force_builder)
+"#;
+    const NATIVE_COLLECT_LIBRARY_HIDDEN_TOP_LEVEL_ARTIFACTS_STUB: &str = r#"def _collect_library_hidden_top_level_artifacts(
+        ctx,
+        files_to_compile):
+    return __buck2_bazel_collect_library_hidden_top_level_artifacts(
+        OutputGroupInfo,
+        files_to_compile,
+        ctx.attr.deps if hasattr(ctx.attr, "deps") else [],
+    )
+"#;
+    const CHECK_FILE_EXTENSION_STUB: &str = r#"def _check_file_extension(file, allowed_extensions, allow_versioned_shared_libraries):
+    extension = "." + file.extension
+    if _matches_extension(extension, allowed_extensions) or (allow_versioned_shared_libraries and is_versioned_shared_library_extension_valid(file.path)):
+        return True
+    return False
+"#;
+    const NATIVE_CHECK_FILE_EXTENSION_STUB: &str = r#"def _check_file_extension(file, allowed_extensions, allow_versioned_shared_libraries):
+    return __buck2_bazel_check_file_extension(file, allowed_extensions, allow_versioned_shared_libraries)
+"#;
+
+    let rewritten = contents.replacen(
+        DYNAMIC_LIBRARIES_FOR_RUNTIME_STUB,
+        NATIVE_DYNAMIC_LIBRARIES_FOR_RUNTIME_STUB,
+        1,
+    );
+    if rewritten == contents {
+        return Err(internal_error!(
+            "rules_cc cc_helper.bzl hash matched, but _get_dynamic_libraries_for_runtime stub did not"
+        ));
+    }
+    let rewritten_hidden = rewritten.replacen(
+        COLLECT_LIBRARY_HIDDEN_TOP_LEVEL_ARTIFACTS_STUB,
+        NATIVE_COLLECT_LIBRARY_HIDDEN_TOP_LEVEL_ARTIFACTS_STUB,
+        1,
+    );
+    if rewritten_hidden == rewritten {
+        return Err(internal_error!(
+            "rules_cc cc_helper.bzl hash matched, but _collect_library_hidden_top_level_artifacts stub did not"
+        ));
+    }
+    let rewritten_check_extension = rewritten_hidden.replacen(
+        CHECK_FILE_EXTENSION_STUB,
+        NATIVE_CHECK_FILE_EXTENSION_STUB,
+        1,
+    );
+    if rewritten_check_extension == rewritten_hidden {
+        return Err(internal_error!(
+            "rules_cc cc_helper.bzl hash matched, but _check_file_extension stub did not"
+        ));
+    }
+    Ok(rewritten_check_extension)
+}
+
+fn rewrite_bazel_rules_java_info(
+    starlark_file: StarlarkPath<'_>,
+    contents: String,
+) -> buck2_error::Result<String> {
+    if !is_bazel_rules_java_info_path(starlark_file) {
+        return Ok(contents);
+    }
+    if hex::encode(Sha256::digest(contents.as_bytes())) != BAZEL_RULES_JAVA_INFO_BZL_SHA256 {
+        return Ok(contents);
+    }
+
+    const HAS_PLUGIN_DATA_STUB: &str = r#"def _has_plugin_data(plugin_data):
+    return plugin_data and (
+        plugin_data.processor_classes or
+        plugin_data.processor_jars or
+        plugin_data.processor_data
+    )
+"#;
+    const NATIVE_HAS_PLUGIN_DATA_STUB: &str = r#"def _has_plugin_data(plugin_data):
+    return get_internal_java_common().has_plugin_data(plugin_data)
+"#;
+    const MERGE_PLUGIN_DATA_STUB: &str = r#"def _merge_plugin_data(datas):
+    return _create_plugin_data_info(
+        processor_classes = depset(transitive = [p.processor_classes for p in datas]),
+        processor_jars = depset(transitive = [p.processor_jars for p in datas]),
+        processor_data = depset(transitive = [p.processor_data for p in datas]),
+    )
+"#;
+    const NATIVE_MERGE_PLUGIN_DATA_STUB: &str = r#"def _merge_plugin_data(datas):
+    return get_internal_java_common().merge_plugin_data(
+        JavaPluginDataInfo,
+        _EMPTY_PLUGIN_DATA,
+        datas,
+    )
+"#;
+
+    let rewritten = contents.replacen(HAS_PLUGIN_DATA_STUB, NATIVE_HAS_PLUGIN_DATA_STUB, 1);
+    if rewritten == contents {
+        return Err(internal_error!(
+            "rules_java java_info.bzl hash matched, but _has_plugin_data stub did not"
+        ));
+    }
+    let rewritten_merge =
+        rewritten.replacen(MERGE_PLUGIN_DATA_STUB, NATIVE_MERGE_PLUGIN_DATA_STUB, 1);
+    if rewritten_merge == rewritten {
+        return Err(internal_error!(
+            "rules_java java_info.bzl hash matched, but _merge_plugin_data stub did not"
+        ));
+    }
+    Ok(rewritten_merge)
+}
+
+fn rewrite_bazel_rules_java_common_internal(
+    starlark_file: StarlarkPath<'_>,
+    contents: String,
+) -> buck2_error::Result<String> {
+    if !is_bazel_rules_java_common_internal_path(starlark_file) {
+        return Ok(contents);
+    }
+    if hex::encode(Sha256::digest(contents.as_bytes()))
+        != BAZEL_RULES_JAVA_COMMON_INTERNAL_BZL_SHA256
+    {
+        return Ok(contents);
+    }
+
+    const DERIVE_OUTPUT_FILE_STUB: &str = r#"def _derive_output_file(ctx, base_file, *, name_suffix = "", extension = None, extension_suffix = ""):
+    """Declares a new file whose name is derived from the given file
+
+    This method allows appending a suffix to the name (before extension), changing
+    the extension or appending a suffix after the extension. The new file is declared
+    as a sibling of the given base file. At least one of the three options must be
+    specified. It is an error to specify both `extension` and `extension_suffix`.
+
+    Args:
+        ctx: (RuleContext) the rule context.
+        base_file: (File) the file from which to derive the resultant file.
+        name_suffix: (str) Optional. The suffix to append to the name before the
+        extension.
+        extension: (str) Optional. The new extension to use (without '.'). By default,
+        the base_file's extension is used.
+        extension_suffix: (str) Optional. The suffix to append to the base_file's extension
+
+    Returns:
+        (File) the derived file
+    """
+    if not name_suffix and not extension_suffix and not extension:
+        fail("At least one of name_suffix, extension or extension_suffix is required")
+    if extension and extension_suffix:
+        fail("only one of extension or extension_suffix can be specified")
+    if extension == None:
+        extension = base_file.extension
+    new_basename = paths.replace_extension(base_file.basename, name_suffix + "." + extension + extension_suffix)
+    return ctx.actions.declare_file(new_basename, sibling = base_file)
+"#;
+    const NATIVE_DERIVE_OUTPUT_FILE_STUB: &str = r#"def _derive_output_file(ctx, base_file, *, name_suffix = "", extension = None, extension_suffix = ""):
+    return get_internal_java_common().derive_output_file(
+        ctx,
+        base_file,
+        name_suffix = name_suffix,
+        extension = extension,
+        extension_suffix = extension_suffix,
+    )
+"#;
+
+    let rewritten = contents.replacen(DERIVE_OUTPUT_FILE_STUB, NATIVE_DERIVE_OUTPUT_FILE_STUB, 1);
+    if rewritten == contents {
+        return Err(internal_error!(
+            "rules_java java_common_internal.bzl hash matched, but _derive_output_file stub did not"
+        ));
+    }
+    Ok(rewritten)
 }
 
 #[async_trait]
@@ -221,6 +683,10 @@ impl<'c, 'd: 'c> DiceCalculationDelegate<'c, 'd> {
             // Should potentially add support for other file types as well
             _ => result.without_package_context_information(),
         }?;
+        let content = rewrite_bazel_rules_cc_cc_info(starlark_path, content)?;
+        let content = rewrite_bazel_rules_cc_cc_helper(starlark_path, content)?;
+        let content = rewrite_bazel_rules_java_info(starlark_path, content)?;
+        let content = rewrite_bazel_rules_java_common_internal(starlark_path, content)?;
 
         self.configs.parse(starlark_path, content)
     }
@@ -251,6 +717,18 @@ impl<'c, 'd: 'c> DiceCalculationDelegate<'c, 'd> {
         ))
     }
 
+    async fn eval_deps_with_cycle_guard(
+        ctx: &mut DiceComputations<'_>,
+        modules: &[(Option<FileSpan>, OwnedStarlarkModulePath)],
+    ) -> buck2_error::Result<ModuleDeps> {
+        let deps = CycleGuard::<LoadCycleDescriptor>::new(ctx)?
+            .guard_this(Self::eval_deps(ctx, modules))
+            .await
+            .into_result(ctx)
+            .await?;
+        deps.map_err(buck2_error::Error::from)?
+    }
+
     pub async fn prepare_eval(
         &mut self,
         starlark_file: StarlarkPath<'_>,
@@ -264,11 +742,7 @@ impl<'c, 'd: 'c> DiceCalculationDelegate<'c, 'd> {
         starlark_file: StarlarkPath<'_>,
     ) -> buck2_error::Result<(ParseData, ModuleDeps)> {
         let parse_data = self.parse_file(starlark_file).await??;
-        let deps = CycleGuard::<LoadCycleDescriptor>::new(self.ctx)?
-            .guard_this(Self::eval_deps(self.ctx, &parse_data.imports))
-            .await
-            .into_result(self.ctx)
-            .await???;
+        let deps = Self::eval_deps_with_cycle_guard(self.ctx, &parse_data.imports).await?;
         Ok((parse_data, deps))
     }
 
@@ -297,10 +771,89 @@ impl<'c, 'd: 'c> DiceCalculationDelegate<'c, 'd> {
             StarlarkModulePath::JsonFile(_) => self.eval_json_module_uncached(starlark_file).await,
             StarlarkModulePath::TomlFile(_) => self.eval_toml_file_uncached(starlark_file).await,
             _ => {
+                if let Some(module) = self
+                    .eval_bazel_skylib_paths_module_uncached(starlark_file)
+                    .await?
+                {
+                    return Ok(module);
+                }
+                if let Some(module) = self
+                    .eval_bazel_rules_cc_paths_module_uncached(starlark_file)
+                    .await?
+                {
+                    return Ok(module);
+                }
                 self.eval_starlark_module_uncached(starlark_file, cancellation)
                     .await
             }
         }
+    }
+
+    async fn eval_bazel_skylib_paths_module_uncached(
+        &mut self,
+        starlark_file: StarlarkModulePath<'_>,
+    ) -> buck2_error::Result<Option<LoadedModule>> {
+        if !is_bazel_skylib_paths_module(starlark_file) {
+            return Ok(None);
+        }
+
+        let path = starlark_file.path();
+        let contents = DiceFileComputations::read_file(self.ctx, path.as_ref())
+            .await
+            .without_package_context_information()?;
+        if hex::encode(Sha256::digest(contents.as_bytes())) != BAZEL_SKYLIB_PATHS_BZL_SHA256 {
+            return Ok(None);
+        }
+
+        let frozen = Module::with_temp_heap(|module| {
+            module.set("paths", module.heap().alloc(BazelSkylibPaths));
+            module
+                .freeze_named(FrozenHeapName::User(Box::new(StarlarkEvalKind::Load(
+                    Arc::new(OwnedStarlarkModulePath::new(starlark_file)),
+                ))))
+                .map_err(from_freeze_error)
+        })?;
+
+        Ok(Some(LoadedModule::new(
+            OwnedStarlarkModulePath::new(starlark_file),
+            Default::default(),
+            frozen,
+        )))
+    }
+
+    async fn eval_bazel_rules_cc_paths_module_uncached(
+        &mut self,
+        starlark_file: StarlarkModulePath<'_>,
+    ) -> buck2_error::Result<Option<LoadedModule>> {
+        if !is_bazel_rules_cc_paths_module(starlark_file) {
+            return Ok(None);
+        }
+
+        let path = starlark_file.path();
+        let contents = DiceFileComputations::read_file(self.ctx, path.as_ref())
+            .await
+            .without_package_context_information()?;
+        if hex::encode(Sha256::digest(contents.as_bytes())) != BAZEL_RULES_CC_PATHS_BZL_SHA256 {
+            return Ok(None);
+        }
+
+        let frozen = Module::with_temp_heap(|module| {
+            module.set(
+                "is_path_absolute",
+                module.heap().alloc(BazelRulesCcIsPathAbsolute),
+            );
+            module
+                .freeze_named(FrozenHeapName::User(Box::new(StarlarkEvalKind::Load(
+                    Arc::new(OwnedStarlarkModulePath::new(starlark_file)),
+                ))))
+                .map_err(from_freeze_error)
+        })?;
+
+        Ok(Some(LoadedModule::new(
+            OwnedStarlarkModulePath::new(starlark_file),
+            Default::default(),
+            frozen,
+        )))
     }
 
     async fn eval_json_module_uncached(
@@ -723,22 +1276,44 @@ impl<'c, 'd: 'c> DiceCalculationDelegate<'c, 'd> {
                     .await?;
                     let build_file_path =
                         BuildFilePath::new(package.dupe(), shallow_listing.buildfile().to_owned());
-                    let (parse_data, deps) = self
-                        .prepare_eval_with_parse_data(StarlarkPath::BuildFile(&build_file_path))
-                        .await?;
+                    let parse_data = self
+                        .parse_file(StarlarkPath::BuildFile(&build_file_path))
+                        .await??;
                     let strategy = parse_data
                         .bazel_package_listing_strategy
                         .clone()
                         .unwrap_or(PackageListingStrategy::Recursive);
-                    let listing = if strategy == PackageListingStrategy::Shallow {
-                        shallow_listing
+                    let (listing, deps) = if strategy == PackageListingStrategy::Shallow {
+                        let deps =
+                            Self::eval_deps_with_cycle_guard(self.ctx, &parse_data.imports).await?;
+                        (shallow_listing, deps)
                     } else {
-                        Self::resolve_package_listing_with_strategy(
-                            self.ctx,
-                            package.dupe(),
-                            strategy.clone(),
-                        )
-                        .await?
+                        let imports = parse_data.imports.clone();
+                        self.ctx
+                            .try_compute2(
+                                {
+                                    let package = package.dupe();
+                                    let strategy = strategy.clone();
+                                    move |ctx| {
+                                        async move {
+                                            Self::resolve_package_listing_with_strategy(
+                                                ctx,
+                                                package.dupe(),
+                                                strategy.clone(),
+                                            )
+                                            .await
+                                        }
+                                        .boxed()
+                                    }
+                                },
+                                move |ctx| {
+                                    async move {
+                                        Self::eval_deps_with_cycle_guard(ctx, &imports).await
+                                    }
+                                    .boxed()
+                                },
+                            )
+                            .await?
                     };
                     (listing, build_file_path, parse_data.ast, deps, strategy)
                 } else {

@@ -23,8 +23,8 @@ use buck2_common::file_ops::metadata::SourceFileMetadata;
 use buck2_common::file_ops::metadata::Symlink;
 use buck2_core::content_hash::ContentBasedPathHash;
 use buck2_directory::directory::entry::DirectoryEntry;
-use buck2_fs::paths::abs_path::AbsPath;
 use buck2_fs::paths::RelativePathBuf;
+use buck2_fs::paths::abs_path::AbsPath;
 use buck2_fs::paths::file_name::FileNameBuf;
 use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
 use buck2_util::strong_hasher::Blake3StrongHasher;
@@ -269,6 +269,24 @@ impl ArtifactValue {
             action_cache_add_str(fingerprint, "deps");
             action_cache_add_tracked_file_digest(fingerprint, deps.fingerprint());
             action_cache_add_u64(fingerprint, deps.size());
+        }
+    }
+
+    pub fn write_action_cache_fingerprint_bytes(&self, bytes: &mut Vec<u8>) {
+        action_cache_write_entry(bytes, self.entry());
+        match &self.content_based_path_hash {
+            UnderlyingContentBasedPathHash::Inferred => {
+                action_cache_write_str(bytes, "content_hash_inferred");
+            }
+            UnderlyingContentBasedPathHash::Explicit(hash) => {
+                action_cache_write_str(bytes, "content_hash_explicit");
+                action_cache_write_str(bytes, hash.as_str());
+            }
+        }
+        if let Some(deps) = self.deps() {
+            action_cache_write_str(bytes, "deps");
+            action_cache_write_tracked_file_digest(bytes, deps.fingerprint());
+            action_cache_write_u64(bytes, deps.size());
         }
     }
 
@@ -719,6 +737,77 @@ fn action_cache_hash_entry(
         DirectoryEntry::Leaf(ActionDirectoryMember::ExternalSymlink(symlink)) => {
             action_cache_add_str(fingerprint, "external_symlink");
             action_cache_add_str(fingerprint, symlink.target_str());
+        }
+    }
+}
+
+fn action_cache_write_bytes(bytes: &mut Vec<u8>, value: &[u8]) {
+    bytes.extend((value.len() as u64).to_le_bytes());
+    bytes.extend(value);
+}
+
+fn action_cache_write_str(bytes: &mut Vec<u8>, value: &str) {
+    action_cache_write_bytes(bytes, value.as_bytes());
+}
+
+fn action_cache_write_u64(bytes: &mut Vec<u8>, value: u64) {
+    bytes.extend(value.to_le_bytes());
+}
+
+fn action_cache_write_bool(bytes: &mut Vec<u8>, value: bool) {
+    bytes.push(value as u8);
+}
+
+fn action_cache_write_file_digest(bytes: &mut Vec<u8>, digest: &FileDigest) {
+    let raw_digest = digest.raw_digest();
+    bytes.push(raw_digest.algorithm() as u8);
+    action_cache_write_bytes(bytes, raw_digest.as_bytes());
+    action_cache_write_u64(bytes, digest.size());
+}
+
+fn action_cache_write_tracked_file_digest(
+    bytes: &mut Vec<u8>,
+    digest: &buck2_common::file_ops::metadata::TrackedFileDigest,
+) {
+    let raw_digest = digest.raw_digest();
+    bytes.push(raw_digest.algorithm() as u8);
+    action_cache_write_bytes(bytes, raw_digest.as_bytes());
+    action_cache_write_u64(bytes, digest.size());
+}
+
+fn action_cache_write_entry(
+    bytes: &mut Vec<u8>,
+    entry: &DirectoryEntry<ActionSharedDirectory, ActionDirectoryMember>,
+) {
+    match entry {
+        DirectoryEntry::Dir(dir) => {
+            action_cache_write_str(bytes, "dir");
+            action_cache_write_tracked_file_digest(bytes, dir.fingerprint());
+            action_cache_write_u64(bytes, dir.size());
+        }
+        DirectoryEntry::Leaf(ActionDirectoryMember::File(file)) => {
+            action_cache_write_str(bytes, "file");
+            action_cache_write_file_digest(bytes, file.digest.data());
+            action_cache_write_bool(bytes, file.is_executable);
+        }
+        DirectoryEntry::Leaf(ActionDirectoryMember::SourceFile(file)) => {
+            let proxy = &file.contents_proxy;
+            action_cache_write_str(bytes, "source_file");
+            action_cache_write_u64(bytes, proxy.size);
+            bytes.extend(proxy.modified_secs.to_le_bytes());
+            bytes.extend(proxy.modified_nanos.to_le_bytes());
+            bytes.extend(proxy.changed_secs.to_le_bytes());
+            bytes.extend(proxy.changed_nanos.to_le_bytes());
+            action_cache_write_u64(bytes, proxy.node_id);
+            action_cache_write_bool(bytes, proxy.is_executable);
+        }
+        DirectoryEntry::Leaf(ActionDirectoryMember::Symlink(symlink)) => {
+            action_cache_write_str(bytes, "symlink");
+            action_cache_write_str(bytes, symlink.target().as_str());
+        }
+        DirectoryEntry::Leaf(ActionDirectoryMember::ExternalSymlink(symlink)) => {
+            action_cache_write_str(bytes, "external_symlink");
+            action_cache_write_str(bytes, symlink.target_str());
         }
     }
 }

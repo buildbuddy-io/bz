@@ -1249,17 +1249,31 @@ impl LocalExecutor {
         outputs: &BuckIndexMap<CommandExecutionOutput, ArtifactValue>,
     ) -> buck2_error::Result<()> {
         if let Some(local_action_cache_key) = request.local_action_cache_key() {
-            let output_values: Arc<[ArtifactValue]> =
-                outputs.values().cloned().collect::<Vec<_>>().into();
-            self.local_action_cache.insert_action_metadata(
-                local_action_cache_key.key.clone(),
-                local_action_cache_key.action_key_digest.clone(),
-                local_action_cache_key.input_metadata_digest.clone(),
-                local_action_cache_key.fingerprint.clone(),
-                outputs_fingerprint.to_vec(),
-                output_values,
+            self.insert_local_action_cache_key_metadata(
+                local_action_cache_key,
+                outputs_fingerprint,
+                outputs,
             )?;
         }
+        Ok(())
+    }
+
+    fn insert_local_action_cache_key_metadata(
+        &self,
+        local_action_cache_key: &buck2_execute::execute::request::LocalActionCacheKey,
+        outputs_fingerprint: &[u8],
+        outputs: &BuckIndexMap<CommandExecutionOutput, ArtifactValue>,
+    ) -> buck2_error::Result<()> {
+        let output_values: Arc<[ArtifactValue]> =
+            outputs.values().cloned().collect::<Vec<_>>().into();
+        self.local_action_cache.insert_action_metadata(
+            local_action_cache_key.key.clone(),
+            local_action_cache_key.action_key_digest.clone(),
+            local_action_cache_key.input_metadata_digest.clone(),
+            local_action_cache_key.fingerprint.clone(),
+            outputs_fingerprint.to_vec(),
+            output_values,
+        )?;
         Ok(())
     }
 
@@ -1568,6 +1582,20 @@ impl PreparedCommandExecutor for LocalExecutor {
 
 #[async_trait]
 impl PreparedCommandOptionalExecutor for LocalExecutor {
+    fn insert_unprepared_action_cache_metadata(
+        &self,
+        local_action_cache_key: &buck2_execute::execute::request::LocalActionCacheKey,
+        outputs: &BuckIndexMap<CommandExecutionOutput, ArtifactValue>,
+    ) -> buck2_error::Result<()> {
+        let outputs_fingerprint =
+            local_action_cache_outputs_fingerprint(&self.artifact_fs, outputs)?;
+        self.insert_local_action_cache_key_metadata(
+            local_action_cache_key,
+            &outputs_fingerprint,
+            outputs,
+        )
+    }
+
     async fn maybe_execute_unprepared(
         &self,
         command: &UnpreparedCommand<'_, '_>,
@@ -1626,10 +1654,7 @@ impl PreparedCommandOptionalExecutor for LocalExecutor {
                 ControlFlow::Break(manager.success_without_claim(
                     CommandExecutionKind::LocalActionCache { digest },
                     outputs,
-                    CommandStdStreams::Local {
-                        stdout: Vec::new(),
-                        stderr: Vec::new(),
-                    },
+                    CommandStdStreams::Empty,
                     timing,
                 ))
             }
@@ -1704,10 +1729,7 @@ impl PreparedCommandOptionalExecutor for LocalExecutor {
                         digest: action_digest,
                     },
                     outputs,
-                    CommandStdStreams::Local {
-                        stdout: Vec::new(),
-                        stderr: Vec::new(),
-                    },
+                    CommandStdStreams::Empty,
                     timing,
                 ));
             }
@@ -1815,10 +1837,7 @@ impl PreparedCommandOptionalExecutor for LocalExecutor {
                     digest: action_digest,
                 },
                 outputs,
-                CommandStdStreams::Local {
-                    stdout: Vec::new(),
-                    stderr: Vec::new(),
-                },
+                CommandStdStreams::Empty,
                 timing,
             ));
         }
@@ -1888,10 +1907,7 @@ impl PreparedCommandOptionalExecutor for LocalExecutor {
                 digest: action_digest,
             },
             outputs,
-            CommandStdStreams::Local {
-                stdout: Vec::new(),
-                stderr: Vec::new(),
-            },
+            CommandStdStreams::Empty,
             timing,
         ))
     }

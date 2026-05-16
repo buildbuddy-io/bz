@@ -9,6 +9,7 @@
  */
 
 use std::borrow::Cow;
+use std::ops::ControlFlow;
 use std::slice;
 use std::time::Instant;
 
@@ -32,6 +33,7 @@ use buck2_build_api::interpreter::rule_defs::cmd_args::CommandLineArtifactVisito
 use buck2_build_api::interpreter::rule_defs::cmd_args::DefaultCommandLineContext;
 use buck2_build_api::interpreter::rule_defs::cmd_args::value_as::ValueAsCommandLineLike;
 use buck2_build_signals::env::WaitingData;
+use buck2_common::cas_digest::CasDigestData;
 use buck2_common::file_ops::metadata::TrackedFileDigest;
 use buck2_core::category::CategoryRef;
 use buck2_core::content_hash::ContentBasedPathHash;
@@ -39,17 +41,27 @@ use buck2_error::internal_error;
 use buck2_execute::artifact::artifact_dyn::ArtifactDyn;
 use buck2_execute::artifact::fs::ExecutorFs;
 use buck2_execute::execute::command_executor::ActionExecutionTimingData;
+use buck2_execute::execute::request::CommandExecutionOutput;
+use buck2_execute::execute::request::ExecutorPreference;
+use buck2_execute::execute::request::LocalActionCacheKey;
 use buck2_execute::materialize::materializer::WriteRequest;
 use buck2_fs::fs_util::uncategorized as fs_util;
 use buck2_hash::BuckIndexMap;
 use buck2_hash::BuckIndexSet;
 use buck2_hash::buck_indexmap;
+use buck2_hash::buck_indexset;
 use dupe::Dupe;
 use pagable::Pagable;
 use starlark::values::OwnedFrozenValue;
 use starlark::values::UnpackValue;
 
 use crate::actions::impls::run::DepFilesPlaceholderArtifactPathMapper;
+use crate::actions::impls::run::action_cache_add_bool;
+use crate::actions::impls::run::action_cache_add_str;
+use crate::actions::impls::run::compose_local_action_cache_fingerprint;
+use crate::actions::impls::run::finalize_action_cache_digest;
+use crate::actions::impls::run::fingerprint_artifact_group_values;
+use crate::actions::impls::run::fingerprint_command_execution_output;
 
 #[derive(Debug, buck2_error::Error)]
 #[buck2(tag = Tier0)]
@@ -129,6 +141,70 @@ impl UnregisteredTemplateExpansionAction {
             substitutions,
             is_executable,
         }
+    }
+}
+
+impl TemplateExpansionAction {
+    fn local_action_cache_output(&self) -> CommandExecutionOutput {
+        CommandExecutionOutput::BuildArtifact {
+            path: self.output.get_path().dupe(),
+            output_type: self.output.output_type(),
+            produced_path: None,
+        }
+    }
+
+    fn local_action_cache_key(
+        &self,
+        ctx: &dyn ActionExecutionCtx,
+        input_values: &buck2_build_api::artifact_groups::ArtifactGroupValues,
+        output: &CommandExecutionOutput,
+    ) -> buck2_error::Result<LocalActionCacheKey> {
+        let key = output
+            .as_ref()
+            .resolve(
+                ctx.fs(),
+                Some(&ContentBasedPathHash::for_output_artifact()),
+            )?
+            .into_path()
+            .to_string();
+
+        let cas_digest_config = ctx.digest_config().cas_digest_config();
+        let mut action_key = CasDigestData::digester(cas_digest_config);
+        action_cache_add_str(
+            &mut action_key,
+            "buck2-local-action-cache-simple-action-key-v1",
+        );
+        action_cache_add_str(&mut action_key, &ctx.fs().fs().root().to_string());
+        action_cache_add_str(&mut action_key, "expand_template");
+        action_cache_add_bool(&mut action_key, self.is_executable);
+        action_cache_add_str(&mut action_key, "substitutions");
+        for (key, value) in &self.substitutions {
+            action_cache_add_str(&mut action_key, key);
+            action_cache_add_str(&mut action_key, value);
+        }
+        fingerprint_command_execution_output(&mut action_key, ctx.fs(), output)?;
+
+        let mut input_metadata = CasDigestData::digester(cas_digest_config);
+        action_cache_add_str(
+            &mut input_metadata,
+            "buck2-local-action-cache-simple-input-metadata-v1",
+        );
+        fingerprint_artifact_group_values(&mut input_metadata, ctx.fs(), input_values)?;
+
+        let action_key_digest = finalize_action_cache_digest(action_key);
+        let input_metadata_digest = finalize_action_cache_digest(input_metadata);
+        let fingerprint = compose_local_action_cache_fingerprint(
+            cas_digest_config,
+            &action_key_digest,
+            &input_metadata_digest,
+        );
+
+        Ok(LocalActionCacheKey {
+            key,
+            action_key_digest,
+            input_metadata_digest,
+            fingerprint,
+        })
     }
 }
 
@@ -418,8 +494,12 @@ impl Action for TemplateExpansionAction {
         ctx: &mut dyn ActionExecutionCtx,
         waiting_data: WaitingData,
     ) -> Result<(ActionOutputs, ActionExecutionMetadata), ExecuteError> {
-        let (input, input_value) = {
+        let local_action_cache_output = self.local_action_cache_output();
+        let local_action_cache_outputs = buck_indexset![local_action_cache_output.clone()];
+        let (local_action_cache_key, input, input_value) = {
             let values = ctx.artifact_values(&self.template);
+            let local_action_cache_key =
+                self.local_action_cache_key(ctx, values, &local_action_cache_output)?;
             let mut iter = values.iter();
             let Some((input, input_value)) = iter.next() else {
                 return Err(internal_error!("Template did not dereference to an artifact").into());
@@ -429,8 +509,30 @@ impl Action for TemplateExpansionAction {
                     internal_error!("Template dereferenced to more than one artifact").into(),
                 );
             }
-            (input.dupe(), input_value.dupe())
+            (local_action_cache_key, input.dupe(), input_value.dupe())
         };
+
+        let manager = ctx.command_execution_manager(waiting_data.clone());
+        match ctx
+            .unprepared_action_cache(
+                manager,
+                &local_action_cache_key,
+                &local_action_cache_outputs,
+            )
+            .await
+        {
+            ControlFlow::Break(result) => {
+                return ctx.unpack_command_execution_result(
+                    ExecutorPreference::LocalRequired,
+                    result,
+                    false,
+                    false,
+                    None,
+                    buck2_data::IncrementalKind::NonIncremental,
+                );
+            }
+            ControlFlow::Continue(_) => {}
+        }
 
         let template_path = {
             let artifact_fs = ctx.fs();
@@ -487,6 +589,11 @@ impl Action for TemplateExpansionAction {
             .into_iter()
             .next()
             .ok_or_else(|| internal_error!("Template expansion did not execute"))?;
+
+        ctx.insert_unprepared_action_cache_metadata(
+            &local_action_cache_key,
+            &buck_indexmap![local_action_cache_output => value.dupe()],
+        )?;
 
         let wall_time = Instant::now()
             - execution_start

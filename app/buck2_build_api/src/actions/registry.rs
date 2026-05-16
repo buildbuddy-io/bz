@@ -68,10 +68,15 @@ pub struct ActionsRegistry<'v> {
     pending: Vec<ActionToBeRegistered>,
     pub execution_platform: ExecutionPlatformResolution,
     claimed_output_paths: DirectoryBuilder<Option<FileSpan>, NoDigest>,
+    target_rule_type_name: Option<Arc<str>>,
 }
 
 impl<'v> ActionsRegistry<'v> {
-    pub fn new(owner: DeferredHolderKey, execution_platform: ExecutionPlatformResolution) -> Self {
+    pub fn new(
+        owner: DeferredHolderKey,
+        execution_platform: ExecutionPlatformResolution,
+        target_rule_type_name: Option<Arc<str>>,
+    ) -> Self {
         Self {
             owner,
             artifacts: Default::default(),
@@ -79,6 +84,7 @@ impl<'v> ActionsRegistry<'v> {
             pending: Default::default(),
             execution_platform,
             claimed_output_paths: DirectoryBuilder::empty(),
+            target_rule_type_name,
         }
     }
 
@@ -469,6 +475,7 @@ impl<'v> ActionsRegistry<'v> {
                         key,
                         action,
                         (*self.execution_platform.executor_config()?).dupe(),
+                        self.target_rule_type_name.dupe(),
                     )),
                 );
             }

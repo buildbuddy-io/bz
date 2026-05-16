@@ -8,13 +8,18 @@
  */
 
 use std::fmt;
+use std::collections::BTreeSet;
 
 use allocative::Allocative;
 use buck2_build_api::interpreter::rule_defs::context::bazel_analysis_context_declare_file;
 use buck2_build_api::interpreter::rule_defs::depset::bazel_depset_is_singleton;
+use buck2_build_api::interpreter::rule_defs::depset::bazel_depset_to_list;
+use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::ValueAsInputArtifactLike;
 use buck2_build_api::interpreter::rule_defs::provider::builtin::default_info::BazelRunfiles;
 use buck2_build_api::interpreter::rule_defs::provider::builtin::default_info::bazel_runfiles_with_generated_inits_empty_files_supplier;
-use buck2_core::cells::external::bzlmod_all_cell_aliases;
+use buck2_core::deferred::base_deferred_key::BaseDeferredKey;
+use buck2_core::cells::external::bzlmod_cell_aliases_for_cell;
+use buck2_core::cells::external::bzlmod_cell_name;
 use buck2_core::cells::external::bzlmod_canonical_repo_name_for_cell;
 use buck2_core::package::PackageLabel;
 use buck2_interpreter::types::configured_providers_label::StarlarkConfiguredProvidersLabel;
@@ -32,6 +37,7 @@ use starlark::starlark_module;
 use starlark::values::Heap;
 use starlark::values::NoSerialize;
 use starlark::values::StarlarkValue;
+use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark::values::none::NoneOr;
 use starlark::values::none::NoneType;
@@ -138,24 +144,140 @@ fn repo_mapping_target_repo_directory_for_cell(cell: &str) -> String {
     }
 }
 
-fn repo_mapping_manifest_content() -> String {
-    let mut content = String::new();
-    for (source_cell, aliases) in bzlmod_all_cell_aliases() {
+fn repo_mapping_cell_from_owner(owner: &BaseDeferredKey) -> Option<String> {
+    owner
+        .configured_label()
+        .map(|label| label.pkg().cell_name().as_str().to_owned())
+}
+
+fn repo_mapping_cell_from_bazel_path(path: &str) -> String {
+    let Some(path) = path.strip_prefix("external/") else {
+        return "root".to_owned();
+    };
+    let repo = path.split('/').next().unwrap_or(path);
+    if repo.contains('+') {
+        bzlmod_cell_name(repo)
+    } else {
+        repo.to_owned()
+    }
+}
+
+fn repo_mapping_cell_from_artifact<'v>(
+    value: Value<'v>,
+    heap: Heap<'v>,
+) -> buck2_error::Result<Option<String>> {
+    let Some(artifact) = ValueAsInputArtifactLike::unpack_value(value)? else {
+        return Ok(None);
+    };
+    if let Some(owner) = artifact.0.owner()? {
+        return Ok(repo_mapping_cell_from_owner(&owner));
+    }
+    let path = artifact.0.with_bazel_path(&|path| heap.alloc_str(path))?;
+    Ok(Some(repo_mapping_cell_from_bazel_path(path.as_str())))
+}
+
+fn repo_mapping_ctx_cell<'v>(ctx: Value<'v>, heap: Heap<'v>) -> buck2_error::Result<Option<String>> {
+    let label = ctx.get_attr_error("label", heap)?;
+    if label.is_none() {
+        return Ok(None);
+    }
+    let label = StarlarkConfiguredProvidersLabel::from_value(label).ok_or_else(|| {
+        buck2_error::Error::from(BazelPythonError::ExpectedLabel(
+            label.to_string_for_type_error(),
+        ))
+    })?;
+    Ok(Some(
+        label
+            .label()
+            .target()
+            .pkg()
+            .cell_name()
+            .as_str()
+            .to_owned(),
+    ))
+}
+
+fn repo_mapping_symlink_path<'v>(heap: Heap<'v>, symlink: Value<'v>) -> starlark::Result<String> {
+    symlink
+        .get_attr_error("path", heap)?
+        .unpack_str()
+        .map(str::to_owned)
+        .ok_or_else(|| {
+            buck2_error::buck2_error!(
+                buck2_error::ErrorTag::Input,
+                "runfiles symlink path should be a string"
+            )
+            .into()
+        })
+}
+
+fn repo_mapping_symlink_target<'v>(heap: Heap<'v>, symlink: Value<'v>) -> starlark::Result<Value<'v>> {
+    symlink.get_attr_error("target_file", heap)
+}
+
+fn repo_mapping_manifest_content<'v>(
+    ctx: Value<'v>,
+    runfiles: &BazelRunfiles<'v>,
+    heap: Heap<'v>,
+) -> starlark::Result<String> {
+    let mut source_cells = BTreeSet::new();
+    let mut target_repos = BTreeSet::new();
+
+    if let Some(cell) = repo_mapping_ctx_cell(ctx, heap)? {
+        source_cells.insert(cell);
+    }
+
+    for file in bazel_depset_to_list(runfiles.files_value())? {
+        if let Some(cell) = repo_mapping_cell_from_artifact(file, heap)? {
+            target_repos.insert(repo_mapping_source_repo_name_for_cell(&cell));
+            source_cells.insert(cell);
+        }
+    }
+
+    let symlinks = bazel_depset_to_list(runfiles.symlinks_value())?;
+    if !symlinks.is_empty() {
+        target_repos.insert(String::new());
+    }
+    for symlink in symlinks {
+        let target = repo_mapping_symlink_target(heap, symlink)?;
+        if let Some(cell) = repo_mapping_cell_from_artifact(target, heap)? {
+            target_repos.insert(repo_mapping_source_repo_name_for_cell(&cell));
+            source_cells.insert(cell);
+        }
+    }
+
+    for symlink in bazel_depset_to_list(runfiles.root_symlinks_value())? {
+        if let Some(first_segment) = repo_mapping_symlink_path(heap, symlink)?.split('/').next()
+            && !first_segment.is_empty()
+        {
+            target_repos.insert(first_segment.to_owned());
+        }
+        let target = repo_mapping_symlink_target(heap, symlink)?;
+        if let Some(cell) = repo_mapping_cell_from_artifact(target, heap)? {
+            target_repos.insert(repo_mapping_source_repo_name_for_cell(&cell));
+            source_cells.insert(cell);
+        }
+    }
+
+    let mut lines = BTreeSet::new();
+    for source_cell in source_cells {
         let source = repo_mapping_source_repo_name_for_cell(&source_cell);
+        let mut aliases = bzlmod_cell_aliases_for_cell(&source_cell);
+        aliases.sort_by(|(a, _), (b, _)| a.cmp(b));
         for (apparent_name, target_cell) in aliases {
             if apparent_name.is_empty() {
                 continue;
             }
+            let target_repo = repo_mapping_source_repo_name_for_cell(&target_cell);
+            if !target_repos.contains(&target_repo) {
+                continue;
+            }
             let target = repo_mapping_target_repo_directory_for_cell(&target_cell);
-            content.push_str(&source);
-            content.push(',');
-            content.push_str(&apparent_name);
-            content.push(',');
-            content.push_str(&target);
-            content.push('\n');
+            lines.insert(format!("{source},{apparent_name},{target}\n"));
         }
     }
-    content
+
+    Ok(lines.into_iter().collect())
 }
 
 fn ctx_is_tool_configuration<'v>(ctx: Value<'v>, heap: Heap<'v>) -> starlark::Result<bool> {
@@ -270,11 +392,12 @@ fn bazel_py_internal_methods(builder: &mut MethodsBuilder) {
         #[starlark(require = named)] output: Value<'v>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<NoneType> {
-        let _ = runfiles;
         let heap = eval.heap();
         let actions = ctx.get_attr_error("actions", heap)?;
         let write = actions.get_attr_error("write", heap)?;
-        let content = heap.alloc_str(&repo_mapping_manifest_content()).to_value();
+        let content = heap
+            .alloc_str(&repo_mapping_manifest_content(ctx, runfiles, heap)?)
+            .to_value();
         eval.eval_function(write, &[output, content], &[])?;
         Ok(NoneType)
     }

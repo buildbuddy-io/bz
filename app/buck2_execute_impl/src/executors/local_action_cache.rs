@@ -9,6 +9,7 @@
 
 use std::ops::ControlFlow;
 use std::sync::Arc;
+use std::sync::OnceLock;
 
 use async_trait::async_trait;
 use buck2_common::sqlite::sqlite_db::SqliteTable;
@@ -59,8 +60,9 @@ enum LocalActionCacheState {
 
 struct LoadedLocalActionCache {
     entries: BuckDashMap<String, Arc<[u8]>>,
-    action_metadata_entries: BuckDashMap<String, LocalActionCacheEntry>,
+    action_metadata_entries: BuckDashMap<String, LocalActionCacheStoredEntry>,
     connection: Arc<Mutex<Connection>>,
+    digest_config: DigestConfig,
 }
 
 #[derive(Clone)]
@@ -70,6 +72,61 @@ pub struct LocalActionCacheEntry {
     pub action_fingerprint: Arc<[u8]>,
     pub outputs_fingerprint: Arc<[u8]>,
     pub output_values: Arc<[ArtifactValue]>,
+}
+
+#[derive(Clone)]
+struct LocalActionCacheStoredEntry {
+    action_key_digest: Arc<[u8]>,
+    input_metadata_digest: Arc<[u8]>,
+    action_fingerprint: Arc<[u8]>,
+    outputs_fingerprint: Arc<[u8]>,
+    output_values: Arc<LocalActionCacheStoredOutputValues>,
+}
+
+struct LocalActionCacheStoredOutputValues {
+    serialized: Arc<[u8]>,
+    decoded: OnceLock<Arc<[ArtifactValue]>>,
+}
+
+impl LocalActionCacheStoredOutputValues {
+    fn serialized(serialized: Vec<u8>) -> Self {
+        Self {
+            serialized: Arc::from(serialized.as_slice()),
+            decoded: OnceLock::new(),
+        }
+    }
+
+    fn decoded(serialized: Vec<u8>, decoded: Arc<[ArtifactValue]>) -> Self {
+        let cell = OnceLock::new();
+        let _ignored = cell.set(decoded);
+        Self {
+            serialized: Arc::from(serialized.as_slice()),
+            decoded: cell,
+        }
+    }
+
+    fn get(&self, digest_config: DigestConfig) -> buck2_error::Result<Arc<[ArtifactValue]>> {
+        if let Some(decoded) = self.decoded.get() {
+            return Ok(decoded.clone());
+        }
+
+        let decoded: Arc<[ArtifactValue]> =
+            deserialize_output_values(&self.serialized, digest_config)?.into();
+        let _ignored = self.decoded.set(decoded.clone());
+        Ok(self.decoded.get().cloned().unwrap_or(decoded))
+    }
+}
+
+impl LocalActionCacheStoredEntry {
+    fn get(&self, digest_config: DigestConfig) -> buck2_error::Result<LocalActionCacheEntry> {
+        Ok(LocalActionCacheEntry {
+            action_key_digest: self.action_key_digest.clone(),
+            input_metadata_digest: self.input_metadata_digest.clone(),
+            action_fingerprint: self.action_fingerprint.clone(),
+            outputs_fingerprint: self.outputs_fingerprint.clone(),
+            output_values: self.output_values.get(digest_config)?,
+        })
+    }
 }
 
 fn serialize_output_values(output_values: &[ArtifactValue]) -> buck2_error::Result<Vec<u8>> {
@@ -182,6 +239,7 @@ impl LocalActionCache {
                 entries: BuckDashMap::default(),
                 action_metadata_entries: BuckDashMap::default(),
                 connection,
+                digest_config: DigestConfig::testing_default(),
             }),
         })
     }
@@ -336,11 +394,12 @@ impl LoadedLocalActionCache {
         let table = LocalActionCacheSqliteTable::new(connection.dupe());
         table.create_table()?;
         let entries = table.read_all_action_digest_entries()?;
-        let action_metadata_entries = table.read_all_action_metadata_entries(digest_config)?;
+        let action_metadata_entries = table.read_all_action_metadata_entries()?;
         Ok(Self {
             entries,
             action_metadata_entries,
             connection,
+            digest_config,
         })
     }
 
@@ -363,9 +422,19 @@ impl LoadedLocalActionCache {
     }
 
     fn get_action_metadata(&self, key: &str) -> Option<LocalActionCacheEntry> {
-        self.action_metadata_entries
-            .get(key)
-            .map(|entry| entry.value().clone())
+        self.action_metadata_entries.get(key).and_then(|entry| {
+            match entry.value().get(self.digest_config) {
+                Ok(entry) => Some(entry),
+                Err(e) => {
+                    tracing::warn!(
+                        "Ignoring corrupted local action cache metadata entry `{}`: {}",
+                        key,
+                        e
+                    );
+                    None
+                }
+            }
+        })
     }
 
     fn insert_action_metadata(
@@ -380,12 +449,15 @@ impl LoadedLocalActionCache {
         let serialized_output_values = serialize_output_values(output_values.as_ref())?;
         self.action_metadata_entries.insert(
             key.clone(),
-            LocalActionCacheEntry {
+            LocalActionCacheStoredEntry {
                 action_key_digest: Arc::from(action_key_digest.as_slice()),
                 input_metadata_digest: Arc::from(input_metadata_digest.as_slice()),
                 action_fingerprint: Arc::from(action_fingerprint.as_slice()),
                 outputs_fingerprint: Arc::from(outputs_fingerprint.as_slice()),
-                output_values,
+                output_values: Arc::new(LocalActionCacheStoredOutputValues::decoded(
+                    serialized_output_values.clone(),
+                    output_values,
+                )),
             },
         );
         LocalActionCacheSqliteTable::new(self.connection.dupe()).insert_or_replace_action_metadata(
@@ -477,8 +549,7 @@ impl LocalActionCacheSqliteTable {
 
     fn read_all_action_metadata_entries(
         &self,
-        digest_config: DigestConfig,
-    ) -> buck2_error::Result<BuckDashMap<String, LocalActionCacheEntry>> {
+    ) -> buck2_error::Result<BuckDashMap<String, LocalActionCacheStoredEntry>> {
         let sql = format!(
             "SELECT cache_key, action_key_digest, input_metadata_digest, action_fingerprint, outputs_fingerprint, output_values FROM {ACTION_METADATA_TABLE_NAME}"
         );
@@ -506,13 +577,14 @@ impl LocalActionCacheSqliteTable {
             ) = row?;
             entries.insert(
                 key,
-                LocalActionCacheEntry {
+                LocalActionCacheStoredEntry {
                     action_key_digest: Arc::from(action_key_digest.as_slice()),
                     input_metadata_digest: Arc::from(input_metadata_digest.as_slice()),
                     action_fingerprint: Arc::from(action_fingerprint.as_slice()),
                     outputs_fingerprint: Arc::from(outputs_fingerprint.as_slice()),
-                    output_values: deserialize_output_values(&output_values, digest_config)?
-                        .into(),
+                    output_values: Arc::new(LocalActionCacheStoredOutputValues::serialized(
+                        output_values,
+                    )),
                 },
             );
         }
@@ -597,6 +669,17 @@ pub struct ChainedCommandOptionalExecutor {
 
 #[async_trait]
 impl PreparedCommandOptionalExecutor for ChainedCommandOptionalExecutor {
+    fn insert_unprepared_action_cache_metadata(
+        &self,
+        local_action_cache_key: &buck2_execute::execute::request::LocalActionCacheKey,
+        outputs: &BuckIndexMap<CommandExecutionOutput, ArtifactValue>,
+    ) -> buck2_error::Result<()> {
+        self.first
+            .insert_unprepared_action_cache_metadata(local_action_cache_key, outputs)?;
+        self.second
+            .insert_unprepared_action_cache_metadata(local_action_cache_key, outputs)
+    }
+
     async fn maybe_execute(
         &self,
         command: &PreparedCommand<'_, '_>,

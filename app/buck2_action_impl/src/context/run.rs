@@ -15,6 +15,7 @@ use buck2_artifact::artifact::artifact_type::Artifact;
 use buck2_artifact::artifact::artifact_type::ArtifactErrors;
 use buck2_artifact::artifact::artifact_type::DeclaredArtifact;
 use buck2_artifact::artifact::artifact_type::OutputArtifact;
+use buck2_build_api::actions::impls::expanded_command_line::ExpandedCommandLineDigest;
 use buck2_build_api::artifact_groups::ArtifactGroup;
 use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::ValueAsInputArtifactLike;
 use buck2_build_api::interpreter::rule_defs::artifact::starlark_declared_artifact::StarlarkDeclaredArtifact;
@@ -33,6 +34,7 @@ use buck2_build_api::interpreter::rule_defs::depset::BazelDepset;
 use buck2_build_api::interpreter::rule_defs::depset::bazel_depset_to_list;
 use buck2_build_api::interpreter::rule_defs::provider::builtin::cc_info::BazelCcCompileAction;
 use buck2_build_api::interpreter::rule_defs::provider::builtin::default_info::bazel_runfiles_artifact_entries;
+use buck2_build_api::interpreter::rule_defs::provider::builtin::java_info::BazelJavaRunAction;
 use buck2_build_api::interpreter::rule_defs::provider::builtin::run_info::RunInfo;
 use buck2_build_api::interpreter::rule_defs::provider::builtin::worker_info::WorkerInfo;
 use buck2_build_api::interpreter::rule_defs::provider::builtin::worker_run_info::WorkerRunInfo;
@@ -86,6 +88,8 @@ use crate::actions::impls::run::StarlarkRunActionValues;
 use crate::actions::impls::run::UnregisteredRunAction;
 use crate::actions::impls::run::dep_files::RunActionDepFiles;
 use crate::actions::impls::run::new_executor_preference;
+use crate::actions::impls::run::precompute_bazel_local_action_cache_command_line_digest_for_cmd_args;
+use crate::actions::impls::run::precompute_bazel_local_action_cache_command_line_digest_for_strings;
 
 #[derive(Debug, buck2_error::Error)]
 #[buck2(tag = Input)]
@@ -397,6 +401,13 @@ fn bazel_resolve_env<'v>(
     )))
 }
 
+fn bazel_static_env_entries<'v>(env: Value<'v>) -> Option<Vec<(&'v str, &'v str)>> {
+    let dict = DictRef::from_value(env)?;
+    dict.iter()
+        .map(|(key, value)| Some((key.unpack_str()?, value.unpack_str()?)))
+        .collect()
+}
+
 fn bazel_resource_set_os_name() -> &'static str {
     if cfg!(target_os = "macos") {
         "osx"
@@ -539,6 +550,8 @@ fn register_bazel_run_action<'v>(
     mnemonic: Option<StringValue<'v>>,
     use_default_shell_env: bool,
     resource_set: NoneOr<StarlarkCallable<'v>>,
+    bazel_string_args: Option<Box<[String]>>,
+    precomputed_local_action_cache_command_line_digest: Option<ExpandedCommandLineDigest>,
     eval: &mut Evaluator<'v, '_, '_>,
 ) -> starlark::Result<NoneType> {
     let mut bazel_inputs = StarlarkCmdArgs::default();
@@ -549,6 +562,27 @@ fn register_bazel_run_action<'v>(
     if outputs.is_empty() {
         return Err(buck2_error::Error::from(RunActionError::NoOutputsSpecified).into());
     }
+    let should_precompute_bazel_run_command_line = mnemonic.as_ref().is_some_and(|mnemonic| {
+        matches!(mnemonic.as_str(), "CppCompile" | "Javac" | "JavacTurbine")
+    });
+    let static_env_entries = match env {
+        Some(env) => bazel_static_env_entries(env.get()),
+        None => Some(Vec::new()),
+    };
+    let precomputed_local_action_cache_command_line_digest =
+        precomputed_local_action_cache_command_line_digest.or_else(|| {
+            if !should_precompute_bazel_run_command_line {
+                return None;
+            }
+            let static_env_entries = static_env_entries.as_deref()?;
+            precompute_bazel_local_action_cache_command_line_digest_for_cmd_args(
+                &exe,
+                &args,
+                static_env_entries,
+                &outputs,
+                this.digest_config,
+            )
+        });
     let identifier = bazel_run_identifier(&outputs, eval);
     let resource_set = resource_set.into_option();
     let weight = if resource_set.is_some() {
@@ -595,6 +629,8 @@ fn register_bazel_run_action<'v>(
         expected_eligible_for_dedupe: None,
         timeout: None,
         bazel_use_default_shell_env: Some(use_default_shell_env),
+        bazel_string_args,
+        precomputed_local_action_cache_command_line_digest,
     };
 
     this.state()?
@@ -606,17 +642,30 @@ pub(crate) fn register_bazel_cc_compile_action<'v>(
     action: BazelCcCompileAction<'v>,
     eval: &mut Evaluator<'v, '_, '_>,
 ) -> starlark::Result<NoneType> {
+    let heap = eval.heap();
     let inputs = eval.heap().alloc(AllocList(action.inputs));
+    let executable = bazel_files_to_run_executable(action.executable).unwrap_or(action.executable);
+    let arguments = action.arguments;
+    let precomputed_local_action_cache_command_line_digest =
+        executable.unpack_str().map(|executable| {
+            precompute_bazel_local_action_cache_command_line_digest_for_strings(
+                executable,
+                &arguments,
+                &action.env,
+            )
+        });
     let env = if action.env.is_empty() {
         None
     } else {
-        Some(ValueOfUnchecked::new(
-            eval.heap().alloc(AllocDict(action.env)),
-        ))
+        let env = action
+            .env
+            .into_iter()
+            .map(|(key, value)| (key, heap.alloc_str(&value).to_value()))
+            .collect::<Vec<_>>();
+        Some(ValueOfUnchecked::new(eval.heap().alloc(AllocDict(env))))
     };
-    let executable = bazel_files_to_run_executable(action.executable).unwrap_or(action.executable);
     let exe = StarlarkCmdArgs::from_values([executable])?;
-    let args = StarlarkCmdArgs::from_values(action.arguments)?;
+    let args = StarlarkCmdArgs::default();
     register_bazel_run_action(
         action.actions.as_ref(),
         exe,
@@ -631,6 +680,59 @@ pub(crate) fn register_bazel_cc_compile_action<'v>(
         Some(action.mnemonic),
         true,
         NoneOr::None,
+        Some(arguments.into_boxed_slice()),
+        precomputed_local_action_cache_command_line_digest,
+        eval,
+    )
+}
+
+pub(crate) fn register_bazel_java_run_action<'v>(
+    action: BazelJavaRunAction<'v>,
+    eval: &mut Evaluator<'v, '_, '_>,
+) -> starlark::Result<NoneType> {
+    let heap = eval.heap();
+    let inputs = heap.alloc(AllocList(action.inputs));
+    let outputs = action
+        .outputs
+        .into_iter()
+        .map(ValueTyped::<StarlarkDeclaredArtifact>::new_err)
+        .collect::<starlark::Result<Vec<_>>>()?;
+
+    let (exe, args, worker, remote_worker, bazel_executable_runfiles) =
+        if let Some(worker_executable) = action.worker_executable {
+            let worker_run = ValueOf::<&WorkerRunInfo>::unpack_value_err(worker_executable)?;
+            let worker = worker_run.typed.worker();
+            let remote_worker = worker_run.typed.remote_worker();
+            let worker_exe = worker_run.typed.exe();
+            let exe = StarlarkCmdArgs::try_from_value(worker_exe.to_value())?;
+            let args = StarlarkCmdArgs::from_values(action.arguments)?;
+            (exe, args, worker, remote_worker, None)
+        } else {
+            let executable =
+                bazel_files_to_run_executable(action.executable).unwrap_or(action.executable);
+            let bazel_executable_runfiles =
+                bazel_executable_runfiles_entries(action.actions.as_ref(), executable, eval)?;
+            let exe = StarlarkCmdArgs::from_values([executable])?;
+            let args = StarlarkCmdArgs::from_values(action.arguments)?;
+            (exe, args, None, None, bazel_executable_runfiles)
+        };
+
+    register_bazel_run_action(
+        action.actions.as_ref(),
+        exe,
+        args,
+        inputs,
+        Value::new_none(),
+        bazel_executable_runfiles,
+        outputs,
+        None,
+        worker,
+        remote_worker,
+        Some(action.mnemonic),
+        true,
+        NoneOr::None,
+        None,
+        None,
         eval,
     )
 }
@@ -690,6 +792,8 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
             mnemonic,
             use_default_shell_env,
             resource_set,
+            None,
+            None,
             eval,
         )
     }
@@ -916,6 +1020,8 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
                     mnemonic,
                     use_default_shell_env,
                     resource_set,
+                    None,
+                    None,
                     eval,
                 );
             }
@@ -942,6 +1048,8 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
                 mnemonic,
                 use_default_shell_env,
                 resource_set,
+                None,
+                None,
                 eval,
             );
         }
@@ -1282,6 +1390,8 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
             expected_eligible_for_dedupe: expect_eligible_for_dedupe.into_option(),
             timeout,
             bazel_use_default_shell_env: None,
+            bazel_string_args: None,
+            precomputed_local_action_cache_command_line_digest: None,
         };
 
         let expect_eligible_for_dedupe = expect_eligible_for_dedupe.into_option().unwrap_or(false);

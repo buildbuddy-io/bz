@@ -122,15 +122,20 @@ impl<'v> AnalysisRegistry<'v> {
         owner: BaseDeferredKey,
         execution_platform: ExecutionPlatformResolution,
     ) -> buck2_error::Result<AnalysisRegistry<'v>> {
-        Self::new_from_owner_and_deferred(execution_platform, DeferredHolderKey::Base(owner))
+        Self::new_from_owner_and_deferred(execution_platform, DeferredHolderKey::Base(owner), None)
     }
 
     pub fn new_from_owner_and_deferred(
         execution_platform: ExecutionPlatformResolution,
         self_key: DeferredHolderKey,
+        target_rule_type_name: Option<Arc<str>>,
     ) -> buck2_error::Result<Self> {
         Ok(AnalysisRegistry {
-            actions: ActionsRegistry::new(self_key.dupe(), execution_platform.dupe()),
+            actions: ActionsRegistry::new(
+                self_key.dupe(),
+                execution_platform.dupe(),
+                target_rule_type_name,
+            ),
             anon_targets: (ANON_TARGET_REGISTRY_NEW.get()?)(PhantomData, execution_platform),
             analysis_value_storage: AnalysisValueStorage::new(self_key),
             bazel_predeclared_outputs: SmallMap::new(),

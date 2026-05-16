@@ -68,12 +68,16 @@ use starlark_map::StarlarkHasher;
 
 use crate as buck2_build_api;
 use crate::interpreter::rule_defs::artifact::associated::AssociatedArtifacts;
+use crate::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkArtifactLike;
 use crate::interpreter::rule_defs::artifact::starlark_declared_artifact::StarlarkDeclaredArtifact;
 use crate::interpreter::rule_defs::cmd_args::StarlarkCmdArgs;
 use crate::interpreter::rule_defs::context::AnalysisActions;
 use crate::interpreter::rule_defs::context::analysis_actions_to_bazel_ctx;
 use crate::interpreter::rule_defs::depset::BazelDepset;
+use crate::interpreter::rule_defs::depset::bazel_depset_from_direct_and_transitive;
+use crate::interpreter::rule_defs::depset::bazel_depset_from_transitive;
 use crate::interpreter::rule_defs::depset::bazel_depset_to_list;
+use crate::interpreter::rule_defs::depset::bazel_flat_depset_impl;
 use crate::interpreter::rule_defs::provider::ProviderLike;
 use crate::interpreter::rule_defs::provider::callable::provider_callable_equals;
 use crate::interpreter::rule_defs::provider::callable::provider_callable_write_hash;
@@ -160,6 +164,68 @@ where
 impl<V: ValueLifetimeless> fmt::Display for CcNativeProviderGen<V> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}(<{} field(s)>)", self.name, self.values.len())
+    }
+}
+
+#[derive(
+    Clone,
+    Debug,
+    Freeze,
+    ProvidesStaticType,
+    Trace,
+    NoSerialize,
+    Allocative
+)]
+#[repr(C)]
+pub struct BazelCcToolchainVariablesGen<V: ValueLifetimeless> {
+    parent: Option<V>,
+    values: Box<[(String, V)]>,
+}
+
+starlark::starlark_complex_value!(pub BazelCcToolchainVariables);
+
+unsafe impl<FromV, ToV> Coerce<BazelCcToolchainVariablesGen<ToV>>
+    for BazelCcToolchainVariablesGen<FromV>
+where
+    FromV: ValueLifetimeless + Coerce<ToV>,
+    ToV: ValueLifetimeless,
+{
+}
+
+impl<V: ValueLifetimeless> fmt::Display for BazelCcToolchainVariablesGen<V> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "<CcToolchainVariables>")
+    }
+}
+
+#[starlark_value(type = "CcToolchainVariables")]
+impl<'v, V: ValueLike<'v>> StarlarkValue<'v> for BazelCcToolchainVariablesGen<V> where
+    Self: ProvidesStaticType<'v>
+{
+}
+
+impl<'v, V: ValueLike<'v>> BazelCcToolchainVariablesGen<V> {
+    fn local_value(&self, name: &str) -> Option<Value<'v>> {
+        self.values
+            .binary_search_by(|(key, _)| key.as_str().cmp(name))
+            .ok()
+            .map(|index| self.values[index].1.to_value())
+    }
+
+    fn value(&self, name: &str) -> Option<Value<'v>> {
+        if let Some(value) = self.local_value(name) {
+            return Some(value);
+        }
+        let parent = self.parent?.to_value();
+        BazelCcToolchainVariables::from_value(parent)
+            .and_then(|parent| parent.value(name))
+            .or_else(|| bazel_cc_build_variable_from_dict(parent, name))
+    }
+
+    fn local_values(&self) -> impl Iterator<Item = (&str, Value<'v>)> {
+        self.values
+            .iter()
+            .map(|(name, value)| (name.as_str(), value.to_value()))
     }
 }
 
@@ -315,9 +381,9 @@ starlark::starlark_simple_value!(BazelCcInternal);
 pub struct BazelCcCompileAction<'v> {
     pub actions: ValueTyped<'v, AnalysisActions<'v>>,
     pub executable: Value<'v>,
-    pub arguments: Vec<Value<'v>>,
+    pub arguments: Vec<String>,
     pub inputs: Vec<Value<'v>>,
-    pub env: Vec<(String, Value<'v>)>,
+    pub env: Vec<(String, String)>,
     pub outputs: Vec<ValueTyped<'v, StarlarkDeclaredArtifact<'v>>>,
     pub mnemonic: StringValue<'v>,
 }
@@ -371,6 +437,10 @@ struct BazelFeatureConfigurationData {
     action_config_flag_sets: Vec<BazelFlagSet>,
     feature_flag_sets: Vec<BazelFlagSet>,
     env_sets: Vec<BazelEnvSet>,
+    selected_action_tools: HashMap<String, BazelActionTool>,
+    action_config_flag_sets_by_action: HashMap<String, Vec<usize>>,
+    feature_flag_sets_by_action: HashMap<String, Vec<usize>>,
+    env_sets_by_action: HashMap<String, Vec<usize>>,
     tools_directory: String,
 }
 
@@ -1801,23 +1871,57 @@ impl BazelCcToolchainFeatures {
 
         let mut action_config_flag_sets = Vec::new();
         let mut feature_flag_sets = Vec::new();
+        let mut action_config_flag_sets_by_action = HashMap::<String, Vec<usize>>::new();
+        let mut feature_flag_sets_by_action = HashMap::<String, Vec<usize>>::new();
         for flag_set in self.flag_sets.iter() {
             if !bazel_cc_flag_set_enabled(&enabled_selectable_set, flag_set) {
                 continue;
             }
             if flag_set.owner_is_action_config {
+                let index = action_config_flag_sets.len();
+                for action in &flag_set.actions {
+                    action_config_flag_sets_by_action
+                        .entry(action.clone())
+                        .or_default()
+                        .push(index);
+                }
                 action_config_flag_sets.push(flag_set.clone());
             } else {
+                let index = feature_flag_sets.len();
+                for action in &flag_set.actions {
+                    feature_flag_sets_by_action
+                        .entry(action.clone())
+                        .or_default()
+                        .push(index);
+                }
                 feature_flag_sets.push(flag_set.clone());
             }
         }
 
-        let env_sets = self
-            .env_sets
-            .iter()
-            .filter(|env_set| bazel_cc_env_set_enabled(&enabled_selectable_set, env_set))
-            .cloned()
-            .collect();
+        let mut env_sets = Vec::new();
+        let mut env_sets_by_action = HashMap::<String, Vec<usize>>::new();
+        for env_set in self.env_sets.iter() {
+            if !bazel_cc_env_set_enabled(&enabled_selectable_set, env_set) {
+                continue;
+            }
+            let index = env_sets.len();
+            for action in &env_set.actions {
+                env_sets_by_action
+                    .entry(action.clone())
+                    .or_default()
+                    .push(index);
+            }
+            env_sets.push(env_set.clone());
+        }
+
+        let mut selected_action_tools = HashMap::new();
+        for tool in self.action_tools.iter() {
+            if tool.matches(&enabled_selectable_set) {
+                selected_action_tools
+                    .entry(tool.action_name.clone())
+                    .or_insert_with(|| tool.clone());
+            }
+        }
 
         Ok(BazelFeatureConfigurationData {
             enabled_selectable_set,
@@ -1825,6 +1929,10 @@ impl BazelCcToolchainFeatures {
             action_config_flag_sets,
             feature_flag_sets,
             env_sets,
+            selected_action_tools,
+            action_config_flag_sets_by_action,
+            feature_flag_sets_by_action,
+            env_sets_by_action,
             tools_directory: self.tools_directory.clone(),
         })
     }
@@ -1925,13 +2033,7 @@ impl BazelFeatureConfiguration {
     }
 
     fn selected_tool(&self, action_name: &str) -> starlark::Result<&BazelActionTool> {
-        if let Some(tool) = self
-            .data
-            .action_tools
-            .iter()
-            .filter(|tool| tool.action_name == action_name)
-            .find(|tool| tool.matches(&self.data.enabled_selectable_set))
-        {
+        if let Some(tool) = self.data.selected_action_tools.get(action_name) {
             return Ok(tool);
         }
 
@@ -1953,10 +2055,42 @@ impl BazelFeatureConfiguration {
             "Matching tool for action {action_name} not found for given feature configuration; candidate tools: {candidate_count}; known action tools: [{known_actions}]"
         )))
     }
-}
 
-fn bazel_cc_flag_set_matches(flag_set: &BazelFlagSet, action_name: &str) -> bool {
-    flag_set.actions.iter().any(|action| action == action_name)
+    fn action_config_flag_sets_for<'a>(
+        &'a self,
+        action_name: &'a str,
+    ) -> impl Iterator<Item = &'a BazelFlagSet> + 'a {
+        self.data
+            .action_config_flag_sets_by_action
+            .get(action_name)
+            .into_iter()
+            .flatten()
+            .map(|index| &self.data.action_config_flag_sets[*index])
+    }
+
+    fn feature_flag_sets_for<'a>(
+        &'a self,
+        action_name: &'a str,
+    ) -> impl Iterator<Item = &'a BazelFlagSet> + 'a {
+        self.data
+            .feature_flag_sets_by_action
+            .get(action_name)
+            .into_iter()
+            .flatten()
+            .map(|index| &self.data.feature_flag_sets[*index])
+    }
+
+    fn env_sets_for<'a>(
+        &'a self,
+        action_name: &'a str,
+    ) -> impl Iterator<Item = &'a BazelEnvSet> + 'a {
+        self.data
+            .env_sets_by_action
+            .get(action_name)
+            .into_iter()
+            .flatten()
+            .map(|index| &self.data.env_sets[*index])
+    }
 }
 
 fn bazel_cc_flag_set_enabled(
@@ -1969,10 +2103,6 @@ fn bazel_cc_flag_set_enabled(
                 .with_features
                 .iter()
                 .any(|with_features| with_features.matches(enabled_selectable_set)))
-}
-
-fn bazel_cc_env_set_matches(env_set: &BazelEnvSet, action_name: &str) -> bool {
-    env_set.actions.iter().any(|action| action == action_name)
 }
 
 fn bazel_cc_env_set_enabled(
@@ -2139,8 +2269,8 @@ fn bazel_cc_flag_group_conditions_match<'v>(
     Ok(true)
 }
 
-fn bazel_cc_expand_feature_flag_group<'v>(
-    args: &mut Vec<Value<'v>>,
+fn bazel_cc_expand_feature_flag_group_strings<'v>(
+    args: &mut Vec<String>,
     flag_group: &BazelFlagGroup,
     variables: Value<'v>,
     locals: &mut Vec<(String, Value<'v>)>,
@@ -2160,24 +2290,51 @@ fn bazel_cc_expand_feature_flag_group<'v>(
         for item in bazel_cc_link_sequence_values(value, iterate_over)? {
             locals.push((iterate_over.clone(), item));
             for nested in &flag_group.flag_groups {
-                bazel_cc_expand_feature_flag_group(args, nested, variables, locals, heap)?;
+                bazel_cc_expand_feature_flag_group_strings(args, nested, variables, locals, heap)?;
             }
             for flag in &flag_group.flags {
                 let flag = bazel_cc_expand_feature_flag(flag, variables, locals, heap)?;
-                bazel_cc_push_link_arg(args, heap, flag);
+                args.push(flag);
             }
             locals.pop();
         }
     } else {
         for nested in &flag_group.flag_groups {
-            bazel_cc_expand_feature_flag_group(args, nested, variables, locals, heap)?;
+            bazel_cc_expand_feature_flag_group_strings(args, nested, variables, locals, heap)?;
         }
         for flag in &flag_group.flags {
             let flag = bazel_cc_expand_feature_flag(flag, variables, locals, heap)?;
-            bazel_cc_push_link_arg(args, heap, flag);
+            args.push(flag);
         }
     }
     Ok(())
+}
+
+fn bazel_cc_feature_command_line_strings<'v>(
+    feature_configuration: &BazelFeatureConfiguration,
+    action_name: &str,
+    variables: Value<'v>,
+    heap: Heap<'v>,
+) -> starlark::Result<Vec<String>> {
+    let mut args = Vec::new();
+    let mut locals = Vec::new();
+
+    for flag_set in feature_configuration
+        .action_config_flag_sets_for(action_name)
+        .chain(feature_configuration.feature_flag_sets_for(action_name))
+    {
+        for flag_group in &flag_set.flag_groups {
+            bazel_cc_expand_feature_flag_group_strings(
+                &mut args,
+                flag_group,
+                variables,
+                &mut locals,
+                heap,
+            )?;
+        }
+    }
+
+    Ok(args)
 }
 
 fn bazel_cc_feature_command_line<'v>(
@@ -2186,30 +2343,12 @@ fn bazel_cc_feature_command_line<'v>(
     variables: Value<'v>,
     heap: Heap<'v>,
 ) -> starlark::Result<Vec<Value<'v>>> {
-    let mut args = Vec::new();
-    let mut locals = Vec::new();
-
-    for flag_sets in [
-        &feature_configuration.data.action_config_flag_sets,
-        &feature_configuration.data.feature_flag_sets,
-    ] {
-        for flag_set in flag_sets {
-            if !bazel_cc_flag_set_matches(flag_set, action_name) {
-                continue;
-            }
-            for flag_group in &flag_set.flag_groups {
-                bazel_cc_expand_feature_flag_group(
-                    &mut args,
-                    flag_group,
-                    variables,
-                    &mut locals,
-                    heap,
-                )?;
-            }
-        }
-    }
-
-    Ok(args)
+    Ok(
+        bazel_cc_feature_command_line_strings(feature_configuration, action_name, variables, heap)?
+            .into_iter()
+            .map(|arg| heap.alloc_str(&arg).to_value())
+            .collect(),
+    )
 }
 
 fn bazel_cc_link_param_file<'v>(
@@ -2257,19 +2396,16 @@ fn bazel_cc_link_param_file<'v>(
     )
 }
 
-fn bazel_cc_feature_environment<'v>(
+fn bazel_cc_feature_environment_strings<'v>(
     feature_configuration: &BazelFeatureConfiguration,
     action_name: &str,
     variables: Value<'v>,
     heap: Heap<'v>,
-) -> starlark::Result<Vec<(String, Value<'v>)>> {
+) -> starlark::Result<Vec<(String, String)>> {
     let locals = Vec::new();
     let mut env = SmallMap::new();
 
-    for env_set in &feature_configuration.data.env_sets {
-        if !bazel_cc_env_set_matches(env_set, action_name) {
-            continue;
-        }
+    for env_set in feature_configuration.env_sets_for(action_name) {
         for entry in &env_set.env_entries {
             if let Some(variable) = &entry.expand_if_available
                 && !bazel_cc_feature_variable_available(variables, &locals, variable, heap)?
@@ -2277,11 +2413,25 @@ fn bazel_cc_feature_environment<'v>(
                 continue;
             }
             let value = bazel_cc_expand_feature_flag(&entry.value, variables, &locals, heap)?;
-            env.insert(entry.key.clone(), heap.alloc_str(&value).to_value());
+            env.insert(entry.key.clone(), value);
         }
     }
 
     Ok(env.into_iter().collect())
+}
+
+fn bazel_cc_feature_environment<'v>(
+    feature_configuration: &BazelFeatureConfiguration,
+    action_name: &str,
+    variables: Value<'v>,
+    heap: Heap<'v>,
+) -> starlark::Result<Vec<(String, Value<'v>)>> {
+    Ok(
+        bazel_cc_feature_environment_strings(feature_configuration, action_name, variables, heap)?
+            .into_iter()
+            .map(|(key, value)| (key, heap.alloc_str(&value).to_value()))
+            .collect(),
+    )
 }
 
 #[starlark_value(type = "FeatureConfiguration")]
@@ -2354,10 +2504,82 @@ fn bazel_cc_dynamic_library_soname(path: &str, preserve_name: bool, mnemonic: &s
     format!("lib{}{}", mnemonic_mangling, bazel_cc_escape_path(path))
 }
 
-fn bazel_cc_build_variable<'v>(variables: Value<'v>, name: &str) -> Option<Value<'v>> {
+fn bazel_cc_build_variable_from_dict<'v>(variables: Value<'v>, name: &str) -> Option<Value<'v>> {
     let dict = DictRef::from_value(variables)?;
     dict.iter()
         .find_map(|(key, value)| (key.unpack_str() == Some(name)).then_some(value))
+}
+
+fn bazel_cc_build_variable<'v>(variables: Value<'v>, name: &str) -> Option<Value<'v>> {
+    BazelCcToolchainVariables::from_value(variables)
+        .and_then(|variables| variables.value(name))
+        .or_else(|| bazel_cc_build_variable_from_dict(variables, name))
+}
+
+fn bazel_cc_toolchain_variables_from_dict<'v>(
+    variables: Value<'v>,
+) -> starlark::Result<Box<[(String, Value<'v>)]>> {
+    let Some(dict) = DictRef::from_value(variables) else {
+        return Err(bazel_cc_error(format!(
+            "Expected CcToolchainVariables vars to be a dict, got `{}`",
+            variables.get_type()
+        )));
+    };
+    let mut values = Vec::with_capacity(dict.len());
+    for (key, value) in dict.iter() {
+        let Some(key) = key.unpack_str() else {
+            return Err(bazel_cc_error(format!(
+                "Expected CcToolchainVariables key to be a string, got `{}`",
+                key.get_type()
+            )));
+        };
+        values.push((key.to_owned(), value));
+    }
+    values.sort_by(|(left, _), (right, _)| left.cmp(right));
+    Ok(values.into_boxed_slice())
+}
+
+fn bazel_cc_extend_local_toolchain_variables<'v>(
+    variables: Value<'v>,
+    values: &mut Vec<(String, Value<'v>)>,
+) -> starlark::Result<()> {
+    if let Some(variables) = BazelCcToolchainVariables::from_value(variables) {
+        for (key, value) in variables.local_values() {
+            values.push((key.to_owned(), value));
+        }
+        return Ok(());
+    }
+
+    let Some(dict) = DictRef::from_value(variables) else {
+        return Err(bazel_cc_error(format!(
+            "Expected CcToolchainVariables, got `{}`",
+            variables.get_type()
+        )));
+    };
+    for (key, value) in dict.iter() {
+        let Some(key) = key.unpack_str() else {
+            return Err(bazel_cc_error(format!(
+                "Expected CcToolchainVariables key to be a string, got `{}`",
+                key.get_type()
+            )));
+        };
+        values.push((key.to_owned(), value));
+    }
+    Ok(())
+}
+
+fn bazel_cc_check_duplicate_toolchain_variables(
+    values: &[(String, Value<'_>)],
+) -> starlark::Result<()> {
+    for pair in values.windows(2) {
+        if pair[0].0 == pair[1].0 {
+            return Err(bazel_cc_error(format!(
+                "Cannot overwrite existing variables: {}",
+                pair[0].0
+            )));
+        }
+    }
+    Ok(())
 }
 
 fn bazel_cc_link_sequence_values<'v>(
@@ -2390,10 +2612,6 @@ fn bazel_cc_link_string<'v>(value: Value<'v>, heap: Heap<'v>) -> starlark::Resul
     )))
 }
 
-fn bazel_cc_push_link_arg<'v>(args: &mut Vec<Value<'v>>, heap: Heap<'v>, arg: String) {
-    args.push(heap.alloc_str(&arg).to_value());
-}
-
 fn bazel_cc_collect_values<'v>(
     value: Value<'v>,
     values: &mut Vec<Value<'v>>,
@@ -2423,6 +2641,33 @@ fn bazel_cc_collect_values<'v>(
     Ok(())
 }
 
+fn bazel_cc_collect_input_values<'v>(
+    value: Value<'v>,
+    values: &mut Vec<Value<'v>>,
+) -> starlark::Result<()> {
+    if value.is_none() {
+        return Ok(());
+    }
+    if BazelDepset::from_value(value).is_some() {
+        values.push(value);
+        return Ok(());
+    }
+    if let Some(list) = ListRef::from_value(value) {
+        for item in list.iter() {
+            bazel_cc_collect_input_values(item, values)?;
+        }
+        return Ok(());
+    }
+    if let Some(tuple) = TupleRef::from_value(value) {
+        for item in tuple.iter() {
+            bazel_cc_collect_input_values(item, values)?;
+        }
+        return Ok(());
+    }
+    values.push(value);
+    Ok(())
+}
+
 fn bazel_cc_collect_attr_values<'v>(
     owner: Value<'v>,
     attr: &str,
@@ -2436,6 +2681,21 @@ fn bazel_cc_collect_attr_values<'v>(
         return Ok(());
     };
     bazel_cc_collect_values(value, values)
+}
+
+fn bazel_cc_collect_attr_input_values<'v>(
+    owner: Value<'v>,
+    attr: &str,
+    values: &mut Vec<Value<'v>>,
+    heap: Heap<'v>,
+) -> starlark::Result<()> {
+    if owner.is_none() {
+        return Ok(());
+    }
+    let Some(value) = owner.get_attr(attr, heap)? else {
+        return Ok(());
+    };
+    bazel_cc_collect_input_values(value, values)
 }
 
 fn bazel_cc_collect_output<'v>(
@@ -2568,13 +2828,11 @@ fn bazel_cc_action_name_for_source_path(path: &str) -> &'static str {
 }
 
 fn bazel_cc_compile_action_name<'v>(
-    kwargs: &SmallMap<String, Value<'v>>,
+    action_name: Value<'v>,
     source: Value<'v>,
     heap: Heap<'v>,
 ) -> starlark::Result<String> {
-    if let Some(action_name) =
-        cc_internal_kw_value(kwargs, "action_name", Value::new_none()).unpack_str()
-    {
+    if let Some(action_name) = action_name.unpack_str() {
         return Ok(action_name.to_owned());
     }
     let source_path = bazel_cc_artifact_path(source, heap)?;
@@ -2593,99 +2851,609 @@ fn cc_internal_header_info_attr<'v>(
     Ok(header_info.get_attr(name, eval.heap())?.unwrap_or(default))
 }
 
-fn cc_internal_alloc_header_info<'v>(
-    kwargs: &SmallMap<String, Value<'v>>,
-    eval: &mut Evaluator<'v, '_, '_>,
+fn cc_internal_default_header_list<'v>(value: Value<'v>, empty_list: Value<'v>) -> Value<'v> {
+    if value.is_none() { empty_list } else { value }
+}
+
+fn cc_internal_alloc_header_info_values<'v>(
+    heap: Heap<'v>,
+    header_module: Value<'v>,
+    pic_header_module: Value<'v>,
+    modular_public_headers: Value<'v>,
+    modular_private_headers: Value<'v>,
+    textual_headers: Value<'v>,
+    separate_module_headers: Value<'v>,
+    separate_module: Value<'v>,
+    separate_pic_module: Value<'v>,
+    deps: Value<'v>,
+    merged_deps: Value<'v>,
 ) -> Value<'v> {
-    let none = Value::new_none();
-    let empty_list = eval.heap().alloc(AllocList::EMPTY);
-    eval.heap().alloc(AllocStruct([
-        (
-            "header_module",
-            cc_internal_kw_value(kwargs, "header_module", none),
-        ),
-        (
-            "pic_header_module",
-            cc_internal_kw_value(kwargs, "pic_header_module", none),
-        ),
+    let empty_list = heap.alloc(AllocList::EMPTY);
+    heap.alloc(AllocStruct([
+        ("header_module", header_module),
+        ("pic_header_module", pic_header_module),
         (
             "modular_public_headers",
-            cc_internal_kw_value(kwargs, "modular_public_headers", empty_list),
+            cc_internal_default_header_list(modular_public_headers, empty_list),
         ),
         (
             "modular_private_headers",
-            cc_internal_kw_value(kwargs, "modular_private_headers", empty_list),
+            cc_internal_default_header_list(modular_private_headers, empty_list),
         ),
         (
             "textual_headers",
-            cc_internal_kw_value(kwargs, "textual_headers", empty_list),
+            cc_internal_default_header_list(textual_headers, empty_list),
         ),
         (
             "separate_module_headers",
-            cc_internal_kw_value(kwargs, "separate_module_headers", empty_list),
+            cc_internal_default_header_list(separate_module_headers, empty_list),
         ),
-        (
-            "separate_module",
-            cc_internal_kw_value(kwargs, "separate_module", none),
-        ),
-        (
-            "separate_pic_module",
-            cc_internal_kw_value(kwargs, "separate_pic_module", none),
-        ),
-        ("deps", cc_internal_kw_value(kwargs, "deps", empty_list)),
+        ("separate_module", separate_module),
+        ("separate_pic_module", separate_pic_module),
+        ("deps", cc_internal_default_header_list(deps, empty_list)),
         (
             "merged_deps",
-            cc_internal_kw_value(kwargs, "merged_deps", empty_list),
+            cc_internal_default_header_list(merged_deps, empty_list),
         ),
     ]))
 }
 
-fn cc_internal_alloc_header_info_with_deps<'v>(
-    kwargs: &SmallMap<String, Value<'v>>,
+fn cc_internal_alloc_header_info_with_deps_values<'v>(
+    header_info: Value<'v>,
+    deps: Value<'v>,
+    merged_deps: Value<'v>,
     eval: &mut Evaluator<'v, '_, '_>,
 ) -> starlark::Result<Value<'v>> {
     let none = Value::new_none();
     let empty_list = eval.heap().alloc(AllocList::EMPTY);
-    let header_info = cc_internal_kw_value(kwargs, "header_info", none);
-    Ok(eval.heap().alloc(AllocStruct([
+    Ok(cc_internal_alloc_header_info_values(
+        eval.heap(),
+        cc_internal_header_info_attr(header_info, "header_module", none, eval)?,
+        cc_internal_header_info_attr(header_info, "pic_header_module", none, eval)?,
+        cc_internal_header_info_attr(header_info, "modular_public_headers", empty_list, eval)?,
+        cc_internal_header_info_attr(header_info, "modular_private_headers", empty_list, eval)?,
+        cc_internal_header_info_attr(header_info, "textual_headers", empty_list, eval)?,
+        cc_internal_header_info_attr(header_info, "separate_module_headers", empty_list, eval)?,
+        cc_internal_header_info_attr(header_info, "separate_module", none, eval)?,
+        cc_internal_header_info_attr(header_info, "separate_pic_module", none, eval)?,
+        deps,
+        merged_deps,
+    ))
+}
+
+fn bazel_cc_get_attr<'v>(
+    value: Value<'v>,
+    attr: &str,
+    heap: Heap<'v>,
+) -> starlark::Result<Value<'v>> {
+    value.get_attr(attr, heap)?.ok_or_else(|| {
+        bazel_cc_error(format!(
+            "Expected `{}` to have a `{attr}` attribute",
+            value.get_type()
+        ))
+    })
+}
+
+fn bazel_cc_get_attrs<'v>(
+    values: &[Value<'v>],
+    attr: &str,
+    heap: Heap<'v>,
+) -> starlark::Result<Vec<Value<'v>>> {
+    values
+        .iter()
+        .map(|value| bazel_cc_get_attr(*value, attr, heap))
+        .collect()
+}
+
+fn bazel_cc_get_module_maps<'v>(
+    deps: &[Value<'v>],
+    heap: Heap<'v>,
+) -> starlark::Result<Vec<Value<'v>>> {
+    let mut module_maps = Vec::new();
+    for dep in deps {
+        let module_map = bazel_cc_get_attr(*dep, "_module_map", heap)?;
+        if module_map.to_bool() {
+            module_maps.push(module_map);
+        }
+    }
+    Ok(module_maps)
+}
+
+fn bazel_cc_get_module_map_files<'v>(
+    deps: &[Value<'v>],
+    heap: Heap<'v>,
+) -> starlark::Result<Vec<Value<'v>>> {
+    let module_maps = bazel_cc_get_module_maps(deps, heap)?;
+    module_maps
+        .into_iter()
+        .map(|module_map| bazel_cc_get_attr(module_map, "file", heap))
+        .collect()
+}
+
+fn bazel_cc_transitive_attrs<'v>(
+    compilation_context: Value<'v>,
+    deps: &[Value<'v>],
+    attr: &str,
+    heap: Heap<'v>,
+) -> starlark::Result<Vec<Value<'v>>> {
+    let mut transitive = Vec::with_capacity(deps.len() + 1);
+    transitive.push(bazel_cc_get_attr(compilation_context, attr, heap)?);
+    transitive.extend(bazel_cc_get_attrs(deps, attr, heap)?);
+    Ok(transitive)
+}
+
+fn bazel_cc_flat_transitive_attrs<'v>(
+    compilation_context: Value<'v>,
+    deps: &[Value<'v>],
+    attr: &str,
+    heap: Heap<'v>,
+) -> starlark::Result<Value<'v>> {
+    if deps.is_empty() {
+        return bazel_cc_get_attr(compilation_context, attr, heap);
+    }
+
+    bazel_flat_depset_impl(
+        heap,
+        bazel_cc_transitive_attrs(compilation_context, deps, attr, heap)?,
+    )
+}
+
+fn bazel_cc_depset_from_context_direct_and_dep_transitive<'v>(
+    compilation_context: Value<'v>,
+    deps: &[Value<'v>],
+    attr: &str,
+    heap: Heap<'v>,
+) -> starlark::Result<Value<'v>> {
+    if deps.is_empty() {
+        return bazel_cc_get_attr(compilation_context, attr, heap);
+    }
+
+    let direct = bazel_depset_to_list(bazel_cc_get_attr(compilation_context, attr, heap)?)?;
+    let transitive = bazel_cc_get_attrs(deps, attr, heap)?;
+    bazel_depset_from_direct_and_transitive(heap, direct, transitive)
+}
+
+fn bazel_cc_concat_header_info_attrs<'v>(
+    header_info: Value<'v>,
+    attrs: &[&str],
+    heap: Heap<'v>,
+) -> starlark::Result<Value<'v>> {
+    let mut values = Vec::new();
+    for attr in attrs {
+        values.extend(bazel_cc_sequence_values(
+            bazel_cc_get_attr(header_info, attr, heap)?,
+            attr,
+        )?);
+    }
+    Ok(heap.alloc(AllocList(values)).to_value())
+}
+
+fn bazel_cc_create_header_info_with_deps<'v>(
+    header_info: Value<'v>,
+    dep_header_infos: Vec<Value<'v>>,
+    merged_header_infos: Vec<Value<'v>>,
+    eval: &mut Evaluator<'v, '_, '_>,
+) -> starlark::Result<Value<'v>> {
+    let heap = eval.heap();
+    cc_internal_alloc_header_info_with_deps_values(
+        header_info,
+        heap.alloc(AllocList(dep_header_infos)).to_value(),
+        heap.alloc(AllocList(merged_header_infos)).to_value(),
+        eval,
+    )
+}
+
+fn bazel_cc_module_artifacts_from_header_infos<'v>(
+    header_infos: &[Value<'v>],
+    attrs: &[&str],
+    heap: Heap<'v>,
+) -> starlark::Result<Vec<Value<'v>>> {
+    let mut artifacts = Vec::new();
+    for header_info in header_infos {
+        for attr in attrs {
+            let artifact = bazel_cc_get_attr(*header_info, attr, heap)?;
+            if artifact.to_bool() {
+                artifacts.push(artifact);
+            }
+        }
+    }
+    Ok(artifacts)
+}
+
+fn bazel_cc_native_merge_compilation_contexts_impl<'v>(
+    provider: Value<'v>,
+    compilation_context: Value<'v>,
+    exported_deps: Vec<Value<'v>>,
+    deps: Vec<Value<'v>>,
+    eval: &mut Evaluator<'v, '_, '_>,
+) -> starlark::Result<Value<'v>> {
+    let heap = eval.heap();
+    let mut all_deps = Vec::with_capacity(exported_deps.len() + deps.len());
+    all_deps.extend(exported_deps.iter().copied());
+    all_deps.extend(deps.iter().copied());
+
+    let exporting_module_maps = bazel_depset_from_direct_and_transitive(
+        heap,
+        bazel_cc_get_module_maps(&exported_deps, heap)?,
+        bazel_cc_get_attrs(&exported_deps, "_exporting_module_maps", heap)?,
+    )?;
+    let exporting_module_map_files = bazel_depset_from_direct_and_transitive(
+        heap,
+        bazel_cc_get_module_map_files(&exported_deps, heap)?,
+        bazel_cc_get_attrs(&exported_deps, "_exporting_module_map_files", heap)?,
+    )?;
+    let direct_module_maps = bazel_depset_from_direct_and_transitive(
+        heap,
+        bazel_cc_get_module_map_files(&all_deps, heap)?,
+        bazel_cc_get_attrs(&all_deps, "_exporting_module_map_files", heap)?,
+    )?;
+
+    let dep_header_infos = bazel_cc_get_attrs(&all_deps, "_header_info", heap)?;
+    let merged_header_infos = bazel_cc_get_attrs(&exported_deps, "_header_info", heap)?;
+    let header_info = bazel_cc_create_header_info_with_deps(
+        bazel_cc_get_attr(compilation_context, "_header_info", heap)?,
+        dep_header_infos.clone(),
+        merged_header_infos,
+        eval,
+    )?;
+
+    let transitive_modules_artifacts = bazel_cc_module_artifacts_from_header_infos(
+        &dep_header_infos,
+        &["header_module", "separate_module"],
+        heap,
+    )?;
+    let transitive_pic_modules_artifacts = bazel_cc_module_artifacts_from_header_infos(
+        &dep_header_infos,
+        &["pic_header_module", "separate_pic_module"],
+        heap,
+    )?;
+
+    let kwargs = vec![
         (
-            "header_module",
-            cc_internal_header_info_attr(header_info, "header_module", none, eval)?,
+            "includes",
+            bazel_cc_flat_transitive_attrs(compilation_context, &all_deps, "includes", heap)?,
         ),
         (
-            "pic_header_module",
-            cc_internal_header_info_attr(header_info, "pic_header_module", none, eval)?,
+            "quote_includes",
+            bazel_cc_flat_transitive_attrs(compilation_context, &all_deps, "quote_includes", heap)?,
         ),
         (
-            "modular_public_headers",
-            cc_internal_header_info_attr(header_info, "modular_public_headers", empty_list, eval)?,
+            "system_includes",
+            bazel_cc_flat_transitive_attrs(
+                compilation_context,
+                &all_deps,
+                "system_includes",
+                heap,
+            )?,
         ),
         (
-            "modular_private_headers",
-            cc_internal_header_info_attr(header_info, "modular_private_headers", empty_list, eval)?,
+            "framework_includes",
+            bazel_cc_flat_transitive_attrs(
+                compilation_context,
+                &all_deps,
+                "framework_includes",
+                heap,
+            )?,
         ),
         (
-            "textual_headers",
-            cc_internal_header_info_attr(header_info, "textual_headers", empty_list, eval)?,
+            "external_includes",
+            bazel_cc_flat_transitive_attrs(
+                compilation_context,
+                &all_deps,
+                "external_includes",
+                heap,
+            )?,
+        ),
+        {
+            let mut transitive = bazel_cc_get_attrs(&all_deps, "defines", heap)?;
+            transitive.push(bazel_cc_get_attr(compilation_context, "defines", heap)?);
+            ("defines", bazel_flat_depset_impl(heap, transitive)?)
+        },
+        (
+            "local_defines",
+            bazel_cc_get_attr(compilation_context, "local_defines", heap)?,
         ),
         (
-            "separate_module_headers",
-            cc_internal_header_info_attr(header_info, "separate_module_headers", empty_list, eval)?,
+            "headers",
+            bazel_cc_depset_from_context_direct_and_dep_transitive(
+                compilation_context,
+                &all_deps,
+                "headers",
+                heap,
+            )?,
         ),
         (
-            "separate_module",
-            cc_internal_header_info_attr(header_info, "separate_module", none, eval)?,
+            "direct_headers",
+            bazel_cc_concat_header_info_attrs(
+                header_info,
+                &[
+                    "modular_public_headers",
+                    "modular_private_headers",
+                    "separate_module_headers",
+                ],
+                heap,
+            )?,
         ),
         (
-            "separate_pic_module",
-            cc_internal_header_info_attr(header_info, "separate_pic_module", none, eval)?,
+            "direct_public_headers",
+            bazel_cc_get_attr(header_info, "modular_public_headers", heap)?,
         ),
-        ("deps", cc_internal_kw_value(kwargs, "deps", empty_list)),
         (
-            "merged_deps",
-            cc_internal_kw_value(kwargs, "merged_deps", empty_list),
+            "direct_private_headers",
+            bazel_cc_get_attr(header_info, "modular_private_headers", heap)?,
         ),
-    ])))
+        (
+            "direct_textual_headers",
+            bazel_cc_get_attr(header_info, "textual_headers", heap)?,
+        ),
+        ("_direct_module_maps", direct_module_maps),
+        (
+            "_module_map",
+            bazel_cc_get_attr(compilation_context, "_module_map", heap)?,
+        ),
+        ("_exporting_module_maps", exporting_module_maps),
+        ("_exporting_module_map_files", exporting_module_map_files),
+        (
+            "_non_code_inputs",
+            bazel_cc_depset_from_context_direct_and_dep_transitive(
+                compilation_context,
+                &all_deps,
+                "_non_code_inputs",
+                heap,
+            )?,
+        ),
+        (
+            "_virtual_to_original_headers",
+            bazel_depset_from_direct_and_transitive(
+                heap,
+                Vec::new(),
+                bazel_cc_transitive_attrs(
+                    compilation_context,
+                    &all_deps,
+                    "_virtual_to_original_headers",
+                    heap,
+                )?,
+            )?,
+        ),
+        (
+            "validation_artifacts",
+            bazel_depset_from_direct_and_transitive(
+                heap,
+                Vec::new(),
+                bazel_cc_transitive_attrs(
+                    compilation_context,
+                    &all_deps,
+                    "validation_artifacts",
+                    heap,
+                )?,
+            )?,
+        ),
+        ("_header_info", header_info),
+        (
+            "_transitive_modules",
+            bazel_depset_from_direct_and_transitive(
+                heap,
+                transitive_modules_artifacts,
+                bazel_cc_get_attrs(&all_deps, "_transitive_modules", heap)?,
+            )?,
+        ),
+        (
+            "_transitive_pic_modules",
+            bazel_depset_from_direct_and_transitive(
+                heap,
+                transitive_pic_modules_artifacts,
+                bazel_cc_get_attrs(&all_deps, "_transitive_pic_modules", heap)?,
+            )?,
+        ),
+        (
+            "_modules_info_files",
+            bazel_depset_from_direct_and_transitive(
+                heap,
+                Vec::new(),
+                bazel_cc_transitive_attrs(
+                    compilation_context,
+                    &all_deps,
+                    "_modules_info_files",
+                    heap,
+                )?,
+            )?,
+        ),
+        (
+            "_pic_modules_info_files",
+            bazel_depset_from_direct_and_transitive(
+                heap,
+                Vec::new(),
+                bazel_cc_transitive_attrs(
+                    compilation_context,
+                    &all_deps,
+                    "_pic_modules_info_files",
+                    heap,
+                )?,
+            )?,
+        ),
+        (
+            "_module_files",
+            bazel_depset_from_direct_and_transitive(
+                heap,
+                Vec::new(),
+                bazel_cc_transitive_attrs(compilation_context, &all_deps, "_module_files", heap)?,
+            )?,
+        ),
+        (
+            "_pic_module_files",
+            bazel_depset_from_direct_and_transitive(
+                heap,
+                Vec::new(),
+                bazel_cc_transitive_attrs(
+                    compilation_context,
+                    &all_deps,
+                    "_pic_module_files",
+                    heap,
+                )?,
+            )?,
+        ),
+    ];
+
+    eval.eval_function(provider, &[], &kwargs)
+}
+
+fn bazel_cc_get_dynamic_libraries_for_runtime_impl<'v>(
+    cc_linking_context: Value<'v>,
+    linking_statically: bool,
+    heap: Heap<'v>,
+) -> starlark::Result<Value<'v>> {
+    let linker_inputs = bazel_depset_to_list(bazel_cc_get_attr(
+        cc_linking_context,
+        "linker_inputs",
+        heap,
+    )?)?;
+    let mut dynamic_libraries = Vec::new();
+    for linker_input in linker_inputs {
+        for library in bazel_cc_sequence_values(
+            bazel_cc_get_attr(linker_input, "libraries", heap)?,
+            "libraries",
+        )? {
+            let dynamic_library = bazel_cc_get_attr(library, "dynamic_library", heap)?;
+            if dynamic_library.is_none() {
+                continue;
+            }
+            if linking_statically {
+                let static_library = bazel_cc_get_attr(library, "static_library", heap)?;
+                let pic_static_library = bazel_cc_get_attr(library, "pic_static_library", heap)?;
+                if !static_library.is_none() || !pic_static_library.is_none() {
+                    continue;
+                }
+            }
+            dynamic_libraries.push(dynamic_library);
+        }
+    }
+
+    Ok(heap.alloc(AllocList(dynamic_libraries)).to_value())
+}
+
+fn bazel_cc_collect_library_hidden_top_level_artifacts_impl<'v>(
+    output_group_info_provider: Value<'v>,
+    files_to_compile: Value<'v>,
+    deps: Value<'v>,
+    heap: Heap<'v>,
+) -> starlark::Result<Value<'v>> {
+    let mut artifacts_to_force = vec![files_to_compile];
+    let hidden_group = heap.alloc_str("_hidden_top_level_INTERNAL_").to_value();
+    for dep in bazel_cc_sequence_values(deps, "deps")? {
+        if dep.is_in(output_group_info_provider)? {
+            let output_group_info = dep.at(output_group_info_provider, heap)?;
+            if output_group_info.is_in(hidden_group)? {
+                artifacts_to_force.push(output_group_info.at(hidden_group, heap)?);
+            }
+        }
+    }
+    bazel_depset_from_transitive(heap, artifacts_to_force)
+}
+
+fn bazel_cc_extension_matches(extension: &str, pattern: &str) -> bool {
+    if let Some(pattern_without_dot) = pattern.strip_prefix('.') {
+        extension == pattern_without_dot
+    } else {
+        extension.ends_with(pattern)
+    }
+}
+
+fn bazel_cc_is_versioned_shared_library_extension_valid(path: &str) -> bool {
+    if !path.contains(".so.") && !path.contains(".dylib.") {
+        return false;
+    }
+
+    for shared_library_extension in [".so.", ".dylib."] {
+        let Some(index) = path.rfind(shared_library_extension) else {
+            continue;
+        };
+        if index == 0 {
+            continue;
+        }
+        let version = &path[index + shared_library_extension.len()..];
+        if version.is_empty() {
+            continue;
+        }
+        if version.split('.').all(|part| {
+            let mut chars = part.chars();
+            chars.next().is_some_and(|c| c.is_ascii_digit())
+                && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+        }) {
+            return true;
+        }
+    }
+
+    false
+}
+
+#[starlark_module]
+fn bazel_cc_private_globals(builder: &mut GlobalsBuilder) {
+    fn __buck2_bazel_merge_compilation_contexts<'v>(
+        provider: Value<'v>,
+        compilation_context: Value<'v>,
+        exported_deps: UnpackList<Value<'v>>,
+        deps: UnpackList<Value<'v>>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<Value<'v>> {
+        bazel_cc_native_merge_compilation_contexts_impl(
+            provider,
+            compilation_context,
+            exported_deps.into_iter().collect(),
+            deps.into_iter().collect(),
+            eval,
+        )
+    }
+
+    fn __buck2_bazel_get_dynamic_libraries_for_runtime<'v>(
+        cc_linking_context: Value<'v>,
+        linking_statically: bool,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<Value<'v>> {
+        bazel_cc_get_dynamic_libraries_for_runtime_impl(
+            cc_linking_context,
+            linking_statically,
+            eval.heap(),
+        )
+    }
+
+    fn __buck2_bazel_collect_library_hidden_top_level_artifacts<'v>(
+        output_group_info_provider: Value<'v>,
+        files_to_compile: Value<'v>,
+        deps: Value<'v>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<Value<'v>> {
+        bazel_cc_collect_library_hidden_top_level_artifacts_impl(
+            output_group_info_provider,
+            files_to_compile,
+            deps,
+            eval.heap(),
+        )
+    }
+
+    fn __buck2_bazel_check_file_extension<'v>(
+        file: &'v dyn StarlarkArtifactLike<'v>,
+        allowed_extensions: UnpackList<String>,
+        allow_versioned_shared_libraries: bool,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<bool> {
+        let extension = file
+            .with_filename(&|filename| eval.heap().alloc_str(filename.extension().unwrap_or("")))?;
+        if allowed_extensions
+            .into_iter()
+            .any(|pattern| bazel_cc_extension_matches(extension.as_str(), &pattern))
+        {
+            return Ok(true);
+        }
+
+        if !allow_versioned_shared_libraries {
+            return Ok(false);
+        }
+
+        let path = file.with_bazel_path(&|path| eval.heap().alloc_str(path))?;
+        Ok(bazel_cc_is_versioned_shared_library_extension_valid(
+            path.as_str(),
+        ))
+    }
 }
 
 #[starlark_module]
@@ -2754,8 +3522,16 @@ fn bazel_cc_internal_methods(builder: &mut MethodsBuilder) {
     fn cc_toolchain_variables<'v>(
         #[starlark(this)] _this: &BazelCcInternal,
         #[starlark(require = named)] vars: Value<'v>,
+        eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {
-        Ok(vars)
+        if BazelCcToolchainVariables::from_value(vars).is_some() {
+            return Ok(vars);
+        }
+        let values = bazel_cc_toolchain_variables_from_dict(vars)?;
+        Ok(eval.heap().alloc(BazelCcToolchainVariables {
+            parent: None,
+            values,
+        }))
     }
 
     fn combine_cc_toolchain_variables<'v>(
@@ -2764,28 +3540,30 @@ fn bazel_cc_internal_methods(builder: &mut MethodsBuilder) {
         #[starlark(args)] variables: UnpackTuple<Value<'v>>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {
-        let mut result = SmallMap::new();
-        for variables in std::iter::once(parent).chain(variables.items.into_iter()) {
-            if variables.is_none() {
-                continue;
-            }
-            let Some(dict) = DictRef::from_value(variables) else {
-                return Err(bazel_cc_error(format!(
-                    "Expected CcToolchainVariables to be a dict, got `{}`",
-                    variables.get_type()
-                )));
-            };
-            for (key, value) in dict.iter() {
-                let Some(key) = key.unpack_str() else {
-                    return Err(bazel_cc_error(format!(
-                        "Expected CcToolchainVariables key to be a string, got `{}`",
-                        key.get_type()
-                    )));
-                };
-                result.insert(key.to_owned(), value);
-            }
+        if parent.is_none() {
+            return Err(bazel_cc_error(
+                "Expected parent CcToolchainVariables, got `NoneType`",
+            ));
         }
-        Ok(eval.heap().alloc(AllocDict(result)))
+        if BazelCcToolchainVariables::from_value(parent).is_none()
+            && DictRef::from_value(parent).is_none()
+        {
+            return Err(bazel_cc_error(format!(
+                "Expected parent CcToolchainVariables, got `{}`",
+                parent.get_type()
+            )));
+        }
+
+        let mut values = Vec::new();
+        for variables in variables.items {
+            bazel_cc_extend_local_toolchain_variables(variables, &mut values)?;
+        }
+        values.sort_by(|(left, _), (right, _)| left.cmp(right));
+        bazel_cc_check_duplicate_toolchain_variables(&values)?;
+        Ok(eval.heap().alloc(BazelCcToolchainVariables {
+            parent: Some(parent),
+            values: values.into_boxed_slice(),
+        }))
     }
 
     fn intern_string_sequence_variable_value<'v>(
@@ -2941,18 +3719,39 @@ fn bazel_cc_internal_methods(builder: &mut MethodsBuilder) {
 
     fn create_header_info<'v>(
         #[starlark(this)] _this: &BazelCcInternal,
-        #[starlark(kwargs)] kwargs: SmallMap<String, Value<'v>>,
+        #[starlark(require = named, default = NoneType)] header_module: Value<'v>,
+        #[starlark(require = named, default = NoneType)] pic_header_module: Value<'v>,
+        #[starlark(require = named, default = NoneType)] modular_public_headers: Value<'v>,
+        #[starlark(require = named, default = NoneType)] modular_private_headers: Value<'v>,
+        #[starlark(require = named, default = NoneType)] textual_headers: Value<'v>,
+        #[starlark(require = named, default = NoneType)] separate_module_headers: Value<'v>,
+        #[starlark(require = named, default = NoneType)] separate_module: Value<'v>,
+        #[starlark(require = named, default = NoneType)] separate_pic_module: Value<'v>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {
-        Ok(cc_internal_alloc_header_info(&kwargs, eval))
+        Ok(cc_internal_alloc_header_info_values(
+            eval.heap(),
+            header_module,
+            pic_header_module,
+            modular_public_headers,
+            modular_private_headers,
+            textual_headers,
+            separate_module_headers,
+            separate_module,
+            separate_pic_module,
+            Value::new_none(),
+            Value::new_none(),
+        ))
     }
 
     fn create_header_info_with_deps<'v>(
         #[starlark(this)] _this: &BazelCcInternal,
-        #[starlark(kwargs)] kwargs: SmallMap<String, Value<'v>>,
+        #[starlark(require = named, default = NoneType)] header_info: Value<'v>,
+        #[starlark(require = named, default = NoneType)] deps: Value<'v>,
+        #[starlark(require = named, default = NoneType)] merged_deps: Value<'v>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {
-        cc_internal_alloc_header_info_with_deps(&kwargs, eval)
+        cc_internal_alloc_header_info_with_deps_values(header_info, deps, merged_deps, eval)
     }
 
     fn dynamic_library_soname<'v>(
@@ -2998,34 +3797,56 @@ fn bazel_cc_internal_methods(builder: &mut MethodsBuilder) {
 
     fn create_cc_compile_action<'v>(
         #[starlark(this)] _this: &BazelCcInternal,
-        #[starlark(kwargs)] kwargs: SmallMap<String, Value<'v>>,
+        #[starlark(require = named)] action_construction_context: Value<'v>,
+        #[starlark(require = named)] cc_compilation_context: Value<'v>,
+        #[starlark(require = named)] cc_toolchain: Value<'v>,
+        #[starlark(require = named)] feature_configuration: ValueTyped<
+            'v,
+            BazelFeatureConfiguration,
+        >,
+        #[starlark(require = named)] compile_build_variables: Value<'v>,
+        #[starlark(require = named)] source: Value<'v>,
+        #[starlark(require = named)] output_file: Value<'v>,
+        #[starlark(require = named, default = NoneType)] additional_compilation_inputs: Value<'v>,
+        #[starlark(require = named, default = NoneType)] additional_compilation_inputs_set: Value<
+            'v,
+        >,
+        #[starlark(require = named, default = NoneType)] additional_include_scanning_roots: Value<
+            'v,
+        >,
+        #[starlark(require = named, default = NoneType)] diagnostics_file: Value<'v>,
+        #[starlark(require = named, default = NoneType)] dotd_file: Value<'v>,
+        #[starlark(require = named, default = NoneType)] gcno_file: Value<'v>,
+        #[starlark(require = named, default = NoneType)] dwo_file: Value<'v>,
+        #[starlark(require = named, default = NoneType)] lto_indexing_file: Value<'v>,
+        #[starlark(require = named, default = NoneType)] action_name: Value<'v>,
+        #[starlark(require = named, default = NoneType)] additional_outputs: Value<'v>,
+        #[starlark(require = named, default = NoneType)] module_files: Value<'v>,
+        #[starlark(require = named, default = NoneType)] modmap_file: Value<'v>,
+        #[starlark(require = named, default = NoneType)] modmap_input_file: Value<'v>,
+        #[starlark(require = named, default = NoneType)] configuration: Value<'v>,
+        #[starlark(require = named, default = NoneType)] copts_filter: Value<'v>,
+        #[starlark(require = named, default = false)] use_pic: bool,
+        #[starlark(require = named, default = NoneType)] needs_include_validation: Value<'v>,
+        #[starlark(require = named, default = NoneType)] toolchain_type: Value<'v>,
+        #[starlark(kwargs)] _kwargs: SmallMap<String, Value<'v>>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<NoneType> {
-        let none = Value::new_none();
         let heap = eval.heap();
-        let action_construction_context =
-            cc_internal_kw_value(&kwargs, "action_construction_context", none);
         let actions = bazel_cc_action_context_actions(action_construction_context, heap)?;
-        let feature_configuration = cc_internal_kw_value(&kwargs, "feature_configuration", none)
-            .downcast_ref::<BazelFeatureConfiguration>()
-            .ok_or_else(|| {
-                bazel_cc_error("Expected feature_configuration to be a FeatureConfiguration")
-            })?;
-        let compile_build_variables =
-            cc_internal_kw_value(&kwargs, "compile_build_variables", none);
-        let source = cc_internal_kw_value(&kwargs, "source", none);
-        let action_name = bazel_cc_compile_action_name(&kwargs, source, heap)?;
+        let feature_configuration = feature_configuration.as_ref();
+        let action_name = bazel_cc_compile_action_name(action_name, source, heap)?;
         let tool_path = feature_configuration
             .selected_tool(&action_name)?
             .tool_path(&feature_configuration.data.tools_directory);
         let executable = heap.alloc_str(&tool_path).to_value();
-        let arguments = bazel_cc_feature_command_line(
+        let arguments = bazel_cc_feature_command_line_strings(
             feature_configuration,
             &action_name,
             compile_build_variables,
             heap,
         )?;
-        let env = bazel_cc_feature_environment(
+        let env = bazel_cc_feature_environment_strings(
             feature_configuration,
             &action_name,
             compile_build_variables,
@@ -3033,20 +3854,10 @@ fn bazel_cc_internal_methods(builder: &mut MethodsBuilder) {
         )?;
 
         let mut inputs = Vec::new();
-        bazel_cc_collect_values(source, &mut inputs)?;
-        bazel_cc_collect_values(
-            cc_internal_kw_value(&kwargs, "additional_compilation_inputs", none),
-            &mut inputs,
-        )?;
-        bazel_cc_collect_values(
-            cc_internal_kw_value(&kwargs, "additional_compilation_inputs_set", none),
-            &mut inputs,
-        )?;
-        bazel_cc_collect_values(
-            cc_internal_kw_value(&kwargs, "additional_include_scanning_roots", none),
-            &mut inputs,
-        )?;
-        let cc_compilation_context = cc_internal_kw_value(&kwargs, "cc_compilation_context", none);
+        bazel_cc_collect_input_values(source, &mut inputs)?;
+        bazel_cc_collect_input_values(additional_compilation_inputs, &mut inputs)?;
+        bazel_cc_collect_input_values(additional_compilation_inputs_set, &mut inputs)?;
+        bazel_cc_collect_input_values(additional_include_scanning_roots, &mut inputs)?;
         for attr in [
             "headers",
             "direct_headers",
@@ -3056,10 +3867,10 @@ fn bazel_cc_internal_methods(builder: &mut MethodsBuilder) {
             "_non_code_inputs",
             "_exporting_module_map_files",
         ] {
-            bazel_cc_collect_attr_values(cc_compilation_context, attr, &mut inputs, heap)?;
+            bazel_cc_collect_attr_input_values(cc_compilation_context, attr, &mut inputs, heap)?;
         }
         if let Some(module_map) = cc_compilation_context.get_attr("_module_map", heap)? {
-            bazel_cc_collect_attr_values(module_map, "file", &mut inputs, heap)?;
+            bazel_cc_collect_attr_input_values(module_map, "file", &mut inputs, heap)?;
         }
         if let Some(module_maps) = cc_compilation_context.get_attr("_direct_module_maps", heap)? {
             let mut module_maps_list = Vec::new();
@@ -3068,13 +3879,12 @@ fn bazel_cc_internal_methods(builder: &mut MethodsBuilder) {
                 bazel_cc_collect_attr_values(module_map, "file", &mut inputs, heap)?;
             }
         }
-        let cc_toolchain = cc_internal_kw_value(&kwargs, "cc_toolchain", none);
         for attr in [
             "_compiler_files",
             "_builtin_include_files",
             "_compiler_files_without_includes",
         ] {
-            bazel_cc_collect_attr_values(cc_toolchain, attr, &mut inputs, heap)?;
+            bazel_cc_collect_attr_input_values(cc_toolchain, attr, &mut inputs, heap)?;
         }
         for variable in [
             "module_map_file",
@@ -3084,25 +3894,33 @@ fn bazel_cc_internal_methods(builder: &mut MethodsBuilder) {
             "input_file",
         ] {
             if let Some(value) = bazel_cc_build_variable(compile_build_variables, variable) {
-                bazel_cc_collect_values(value, &mut inputs)?;
+                bazel_cc_collect_input_values(value, &mut inputs)?;
             }
         }
 
         let mut outputs = Vec::new();
-        for name in [
-            "output_file",
-            "dotd_file",
-            "diagnostics_file",
-            "gcno_file",
-            "dwo_file",
-            "lto_indexing_file",
-            "additional_outputs",
-            "module_files",
-            "modmap_file",
-            "modmap_input_file",
+        for value in [
+            output_file,
+            dotd_file,
+            diagnostics_file,
+            gcno_file,
+            dwo_file,
+            lto_indexing_file,
+            additional_outputs,
+            module_files,
+            modmap_file,
+            modmap_input_file,
         ] {
-            bazel_cc_collect_output(cc_internal_kw_value(&kwargs, name, none), &mut outputs)?;
+            bazel_cc_collect_output(value, &mut outputs)?;
         }
+
+        let _unused = (
+            configuration,
+            copts_filter,
+            use_pic,
+            needs_include_validation,
+            toolchain_type,
+        );
 
         let mnemonic = heap.alloc_str("CppCompile");
         (BAZEL_CC_CREATE_COMPILE_ACTION.get()?)(
@@ -3405,6 +4223,7 @@ fn bazel_cc_common_module(builder: &mut GlobalsBuilder) {
 }
 
 pub(crate) fn register_cc_common(globals: &mut GlobalsBuilder) {
+    bazel_cc_private_globals(globals);
     globals.set(
         DEBUG_PACKAGE_INFO,
         CcNativeProviderCallable::new(DEBUG_PACKAGE_INFO),

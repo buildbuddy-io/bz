@@ -14,6 +14,7 @@ use std::hash::Hasher;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::sync::RwLock;
 
 use allocative::Allocative;
 use buck2_error::buck2_error;
@@ -168,19 +169,19 @@ pub enum ExternalCellOrigin {
     BzlmodGenerated(BzlmodGeneratedCellSetup),
 }
 
-static EXTERNAL_CELL_ORIGINS: Lazy<Mutex<StdBuckHashMap<String, ExternalCellOrigin>>> =
-    Lazy::new(|| Mutex::new(StdBuckHashMap::default()));
+static EXTERNAL_CELL_ORIGINS: Lazy<RwLock<StdBuckHashMap<String, ExternalCellOrigin>>> =
+    Lazy::new(|| RwLock::new(StdBuckHashMap::default()));
 
 pub fn register_external_cell_origin(cell_name: CellName, origin: ExternalCellOrigin) {
     EXTERNAL_CELL_ORIGINS
-        .lock()
+        .write()
         .expect("external cell origin map poisoned")
         .insert(cell_name.as_str().to_owned(), origin);
 }
 
 pub fn external_cell_origin_for_cell(cell_name: &str) -> Option<ExternalCellOrigin> {
     EXTERNAL_CELL_ORIGINS
-        .lock()
+        .read()
         .expect("external cell origin map poisoned")
         .get(cell_name)
         .cloned()

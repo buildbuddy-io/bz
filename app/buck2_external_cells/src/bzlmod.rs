@@ -407,6 +407,13 @@ fn write_repository_rule_repo(
             fs_util::set_executable(&path, true).categorize_internal()?;
         }
     }
+    let build_bazel = dest.join(ForwardRelativePath::new("BUILD.bazel")?);
+    if fs_util::symlink_metadata_if_exists(&build_bazel)?.is_none() {
+        let build = dest.join(ForwardRelativePath::new("BUILD")?);
+        if let Some(build_content) = fs_util::read_to_string_if_exists(&build)? {
+            fs_util::write(build_bazel, build_content).categorize_internal()?;
+        }
+    }
     Ok(())
 }
 
@@ -1879,6 +1886,7 @@ fn bzlmod_generated_materialization_stamp_content(setup: &BzlmodGeneratedCellSet
         }
         BzlmodGeneratedCellGenerator::RepositoryRule(setup) => {
             update_bzlmod_repo_contents_cache_key(&mut hasher, "repository_rule");
+            update_bzlmod_repo_contents_cache_key(&mut hasher, "build_bazel_mirror_v1");
             let files_json = serde_json::to_string(&setup.files)
                 .expect("serializing repository_rule file manifest cannot fail");
             update_bzlmod_repo_contents_cache_key(&mut hasher, &files_json);
@@ -1886,6 +1894,7 @@ fn bzlmod_generated_materialization_stamp_content(setup: &BzlmodGeneratedCellSet
         }
         BzlmodGeneratedCellGenerator::RepositoryRuleInvocation(setup) => {
             update_bzlmod_repo_contents_cache_key(&mut hasher, "repository_rule_invocation");
+            update_bzlmod_repo_contents_cache_key(&mut hasher, "build_bazel_mirror_v1");
             update_bzlmod_repo_contents_cache_key(&mut hasher, &setup.repo_name);
             update_bzlmod_repo_contents_cache_key(&mut hasher, &setup.rule_bzl_cell);
             update_bzlmod_repo_contents_cache_key(&mut hasher, &setup.rule_bzl_path);
@@ -1899,6 +1908,7 @@ fn bzlmod_generated_materialization_stamp_content(setup: &BzlmodGeneratedCellSet
         }
         BzlmodGeneratedCellGenerator::ModuleExtensionRepo(setup) => {
             update_bzlmod_repo_contents_cache_key(&mut hasher, "module_extension_repo");
+            update_bzlmod_repo_contents_cache_key(&mut hasher, "build_bazel_mirror_v1");
             update_bzlmod_repo_contents_cache_key(&mut hasher, &setup.parent_canonical_repo_name);
             update_bzlmod_repo_contents_cache_key(&mut hasher, &setup.parent_is_root.to_string());
             update_bzlmod_repo_contents_cache_key(&mut hasher, &setup.extension_bzl_file);

@@ -45,7 +45,9 @@ use starlark::values::type_repr::StarlarkTypeRepr;
 use crate::artifact_groups::ArtifactGroup;
 use crate::artifact_groups::ArtifactGroupValues;
 use crate::interpreter::rule_defs::artifact_tagging::ArtifactTag;
+use crate::interpreter::rule_defs::cmd_args::ParamFileFormat;
 use crate::interpreter::rule_defs::cmd_args::command_line_arg_like_type::command_line_arg_like_impl;
+use crate::interpreter::rule_defs::cmd_args::param_file::bazel_param_file_content;
 use crate::interpreter::rule_defs::resolved_macro::ResolvedMacro;
 
 #[derive(Debug, buck2_error::Error)]
@@ -558,6 +560,14 @@ pub trait CommandLineContext {
         _content: Vec<u8>,
     ) -> buck2_error::Result<CommandLineLocation<'_>> {
         Err(CommandLineContextError::ParamFileNotSupported.into())
+    }
+
+    fn add_param_file_args(
+        &mut self,
+        args: Vec<String>,
+        format: ParamFileFormat,
+    ) -> buck2_error::Result<CommandLineLocation<'_>> {
+        self.add_param_file(bazel_param_file_content(args, format))
     }
 
     fn normalize_param_file_arg(&self, arg: String) -> String {

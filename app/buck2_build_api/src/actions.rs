@@ -49,6 +49,7 @@ use buck2_core::fs::buck_out_path::BuildArtifactPath;
 use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
 use buck2_events::dispatch::EventDispatcher;
 use buck2_execute::artifact::fs::ExecutorFs;
+use buck2_execute::artifact_value::ArtifactValue;
 use buck2_execute::digest_config::DigestConfig;
 use buck2_execute::execute::action_digest_and_blobs::ActionDigestAndBlobs;
 use buck2_execute::execute::blocking::BlockingExecutor;
@@ -144,6 +145,26 @@ pub trait Action: Allocative + Debug + Send + Sync + 'static {
         ctx: &mut dyn ActionExecutionCtx,
         waiting_data: WaitingData,
     ) -> Result<(ActionOutputs, ActionExecutionMetadata), ExecuteError>;
+
+    /// Inputs needed to prove a persistent local action-cache hit before preparing the full action.
+    ///
+    /// Bazel checks the persistent action cache once metadata for the action-cache inputs is ready,
+    /// and only prepares/executes the full action on a miss. Returning `None` preserves the existing
+    /// behavior of ensuring every execution input before calling `execute`.
+    fn local_action_cache_inputs(&self) -> buck2_error::Result<Option<Cow<'_, [ArtifactGroup]>>> {
+        Ok(None)
+    }
+
+    /// Try the persistent local action-cache path using `local_action_cache_inputs`.
+    ///
+    /// Implementations must return `Ok(None)` on a cache miss or when the fast path is unavailable.
+    async fn try_execute_local_action_cache(
+        &self,
+        _ctx: &mut dyn ActionExecutionCtx,
+        _waiting_data: WaitingData,
+    ) -> Result<Option<(ActionOutputs, ActionExecutionMetadata)>, ExecuteError> {
+        Ok(None)
+    }
 
     /// A machine-readable category for this action, intended to be used when analyzing actions outside of buck2 itself.
     ///
@@ -291,6 +312,14 @@ pub trait ActionExecutionCtx: Send + Sync {
         ControlFlow::Continue(manager)
     }
 
+    fn insert_unprepared_action_cache_metadata(
+        &mut self,
+        _local_action_cache_key: &LocalActionCacheKey,
+        _outputs: &BuckIndexMap<CommandExecutionOutput, ArtifactValue>,
+    ) -> buck2_error::Result<()> {
+        Ok(())
+    }
+
     async fn remote_dep_file_cache(
         &mut self,
         manager: CommandExecutionManager,
@@ -396,6 +425,8 @@ pub struct RegisteredAction {
     action: Box<dyn Action>,
     #[derivative(Hash = "ignore", PartialEq = "ignore")]
     executor_config: Arc<CommandExecutorConfig>,
+    #[derivative(Hash = "ignore", PartialEq = "ignore")]
+    target_rule_type_name: Option<Arc<str>>,
 }
 
 fn bazel_external_repo_name<'a>(cell: &'a str, origin: &'a ExternalCellOrigin) -> &'a str {
@@ -483,11 +514,13 @@ impl RegisteredAction {
         key: ActionKey,
         action: Box<dyn Action>,
         executor_config: Arc<CommandExecutorConfig>,
+        target_rule_type_name: Option<Arc<str>>,
     ) -> Self {
         Self {
             key,
             action,
             executor_config,
+            target_rule_type_name,
         }
     }
 
@@ -534,6 +567,10 @@ impl RegisteredAction {
 
     pub fn is_expected_eligible_for_dedupe(&self) -> Option<bool> {
         self.action.is_expected_eligible_for_dedupe()
+    }
+
+    pub fn target_rule_type_name(&self) -> Option<&str> {
+        self.target_rule_type_name.as_deref()
     }
 }
 

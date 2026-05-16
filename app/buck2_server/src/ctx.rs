@@ -609,11 +609,9 @@ impl ServerCommandContext<'_> {
         Ok(())
     }
 
-    async fn store_cached_configs(
-        &self,
-        cells: &BuckConfigBasedCells,
-    ) -> buck2_error::Result<()> {
-        let snapshots = snapshot_config_paths(&self.base_context.project_root, &cells.config_paths)?;
+    async fn store_cached_configs(&self, cells: &BuckConfigBasedCells) -> buck2_error::Result<()> {
+        let snapshots =
+            snapshot_config_paths(&self.base_context.project_root, &cells.config_paths)?;
         *self
             .base_context
             .daemon
@@ -952,7 +950,24 @@ impl DiceUpdater for DiceCommandUpdater<'_, '_> {
                 .await?;
             self.cmd_ctx
                 .report_traced_config_paths(&cells_and_configs.config_paths)?;
-            self.cmd_ctx.store_cached_configs(&cells_and_configs).await?;
+            self.cmd_ctx
+                .store_cached_configs(&cells_and_configs)
+                .await?;
+        }
+        if !bzlmod_module_extension_evaluation_requests.is_empty()
+            && previous_bzlmod_module_extension_graph_results.is_none()
+            && let Some(cached_cells_and_configs) = self
+                .parse_bzlmod_cell_graph_from_cached_module_extensions(
+                    &bzlmod_module_extension_evaluation_requests,
+                )
+                .await?
+        {
+            cells_and_configs = cached_cells_and_configs;
+            self.cmd_ctx
+                .report_traced_config_paths(&cells_and_configs.config_paths)?;
+            self.cmd_ctx
+                .store_cached_configs(&cells_and_configs)
+                .await?;
         }
 
         // Validate agent context against buckconfig schema if entries were provided.
@@ -1024,6 +1039,20 @@ impl DiceUpdater for DiceCommandUpdater<'_, '_> {
 
         let mut user_data = self.make_user_computation_data(&cells_and_configs.root_config)?;
         user_data.set_mergebase(mergebase.dupe());
+
+        if !bzlmod_module_extension_evaluation_requests.is_empty()
+            && current_external_data
+                .matching_complete_bzlmod_module_extension_results(
+                    &bzlmod_module_extension_evaluation_requests,
+                )
+                .is_some()
+        {
+            // Bazel discovers and evaluates module-extension repositories on demand through
+            // Skyframe. When the persistent extension result cache is already complete for this
+            // graph, Buck can install the same repo mapping up front and defer repository
+            // materialization until the generated repo is actually read.
+            return Ok((ctx, user_data));
+        }
 
         if !bzlmod_module_extension_evaluation_requests.is_empty() {
             if let Some(previous_complete_results) =
@@ -1135,10 +1164,6 @@ impl DiceUpdater for DiceCommandUpdater<'_, '_> {
             return Ok((final_ctx, final_user_data));
         }
 
-        // Bazel discovers module-extension repositories through the demand-driven repository
-        // definition path. Buck's cell graph is still finalized up front, so it only contains
-        // repositories visible from static MODULE.bazel data or the lockfile. The generated repo
-        // itself evaluates the extension on first materialization.
         Ok((ctx, user_data))
     }
 }
@@ -1399,6 +1424,91 @@ impl DiceCommandUpdater<'_, '_> {
                 )
                 .await?;
             return Ok((dice, final_cells_and_configs));
+        }
+    }
+
+    async fn parse_bzlmod_cell_graph_from_cached_module_extensions(
+        &self,
+        initial_requests: &[BzlmodModuleExtensionEvaluationRequest],
+    ) -> buck2_error::Result<Option<BuckConfigBasedCells>> {
+        let mut results_by_key = BTreeMap::new();
+        let mut current_requests = initial_requests.to_vec();
+        let mut seen_request_sets = BTreeSet::new();
+
+        loop {
+            let request_set = unique_bzlmod_module_extension_requests(&current_requests)
+                .into_iter()
+                .map(bzlmod_module_extension_request_key)
+                .collect::<Vec<_>>();
+            if !seen_request_sets.insert(request_set) {
+                return Ok(None);
+            }
+
+            for request in unique_bzlmod_module_extension_requests(&current_requests) {
+                if bzlmod_module_extension_result_for_request(request, &results_by_key).is_some() {
+                    continue;
+                }
+                let Some(result) =
+                    self.read_bzlmod_cell_graph_module_extension_cache_from_disk(request)?
+                else {
+                    return Ok(None);
+                };
+                results_by_key.insert(bzlmod_module_extension_request_key(request), result);
+            }
+
+            let candidate_results = bzlmod_module_extension_results_for_cell_graph(&results_by_key);
+            let candidate_cells_and_configs =
+                BuckConfigBasedCells::parse_with_config_args_and_bzlmod_module_extension_results(
+                    &self.cmd_ctx.base_context.project_root,
+                    &self.cmd_ctx.config_overrides,
+                    false,
+                    candidate_results,
+                )
+                .await?;
+            let next_requests = candidate_cells_and_configs
+                .bzlmod_module_extension_evaluation_requests
+                .clone();
+            if unique_bzlmod_module_extension_requests(&next_requests)
+                .iter()
+                .all(|request| {
+                    bzlmod_module_extension_result_for_request(request, &results_by_key).is_some()
+                })
+            {
+                let final_results = bzlmod_module_extension_results_for_cell_graph(&results_by_key);
+                let final_cells_and_configs =
+                    BuckConfigBasedCells::parse_with_config_args_and_bzlmod_module_extension_results(
+                        &self.cmd_ctx.base_context.project_root,
+                        &self.cmd_ctx.config_overrides,
+                        true,
+                        final_results,
+                    )
+                    .await?;
+                return Ok(Some(final_cells_and_configs));
+            }
+            current_requests = next_requests;
+        }
+    }
+
+    fn read_bzlmod_cell_graph_module_extension_cache_from_disk(
+        &self,
+        request: &BzlmodModuleExtensionEvaluationRequest,
+    ) -> buck2_error::Result<Option<BzlmodEvaluatedModuleExtension>> {
+        let cache_key = bzlmod_cell_graph_module_extension_cache_key(std::slice::from_ref(request));
+        let cache_path = bzlmod_cell_graph_module_extension_cache_path(&cache_key);
+        let Some(content) = fs_util::read_to_string_if_exists(
+            self.cmd_ctx.base_context.project_root.resolve(&cache_path),
+        )?
+        else {
+            return Ok(None);
+        };
+        let Some(result) = serde_json::from_str::<BzlmodEvaluatedModuleExtension>(&content).ok()
+        else {
+            return Ok(None);
+        };
+        if result.matches_request(request) {
+            Ok(Some(result))
+        } else {
+            Ok(None)
         }
     }
 

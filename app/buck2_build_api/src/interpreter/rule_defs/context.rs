@@ -19,6 +19,7 @@ use allocative::Allocative;
 use buck2_core::cells::external::bzlmod_canonical_repo_name_for_cell;
 use buck2_core::cells::external::bzlmod_cell_aliases_for_cell;
 use buck2_core::configuration::data::BazelBuildSettingValue;
+use buck2_core::fs::buck_out_path::BazelOutputPathKind;
 use buck2_core::fs::buck_out_path::BazelOutputRoot;
 use buck2_core::fs::buck_out_path::BuckOutPathKind;
 use buck2_core::provider::label::ConfiguredProvidersLabel;
@@ -1104,6 +1105,15 @@ fn bazel_string_list<'v>(heap: Heap<'v>, values: &[String]) -> Value<'v> {
 }
 
 pub(crate) fn bazel_shell_tokenize(option_string: &str) -> buck2_error::Result<Vec<String>> {
+    if !option_string.is_empty()
+        && !option_string
+            .as_bytes()
+            .iter()
+            .any(|byte| matches!(*byte, b' ' | b'\t' | b'\'' | b'"' | b'\\'))
+    {
+        return Ok(vec![option_string.to_owned()]);
+    }
+
     let mut options = Vec::new();
     let mut token = String::new();
     let mut force_token = false;
@@ -2948,22 +2958,50 @@ pub fn bazel_analysis_context_declare_file<'v>(
     name: &str,
     heap: Heap<'v>,
 ) -> starlark::Result<Value<'v>> {
-    let ctx = ctx.downcast_ref::<AnalysisContext>().ok_or_else(|| {
-        buck2_error::buck2_error!(
-            buck2_error::ErrorTag::Input,
-            "expected AnalysisContext, got `{}`",
-            ctx.to_string_for_type_error()
-        )
-    })?;
-    let mut state = ctx.actions.state()?;
-    let declared = state.declare_output_with_bazel_owner_and_output_root(
+    bazel_analysis_context_declare_file_with_path_kind(
+        ctx,
+        name,
+        BazelOutputPathKind::PackageRelative,
+        heap,
+    )
+}
+
+pub fn bazel_analysis_context_declare_file_with_path_kind<'v>(
+    ctx: Value<'v>,
+    name: &str,
+    bazel_output_path_kind: BazelOutputPathKind,
+    heap: Heap<'v>,
+) -> starlark::Result<Value<'v>> {
+    let actions = if let Some(actions) = ctx.downcast_ref::<AnalysisActions>() {
+        actions
+    } else if let Some(ctx) = ctx.downcast_ref::<AnalysisContext>() {
+        ctx.actions.as_ref()
+    } else {
+        let actions = ctx.get_attr("actions", heap)?.ok_or_else(|| {
+            buck2_error::buck2_error!(
+                buck2_error::ErrorTag::Input,
+                "expected AnalysisContext or Bazel context with actions, got `{}`",
+                ctx.to_string_for_type_error()
+            )
+        })?;
+        actions.downcast_ref::<AnalysisActions>().ok_or_else(|| {
+            buck2_error::buck2_error!(
+                buck2_error::ErrorTag::Input,
+                "expected ctx.actions to be AnalysisActions, got `{}`",
+                actions.to_string_for_type_error()
+            )
+        })?
+    };
+    let mut state = actions.state()?;
+    let declared = state.declare_output_with_bazel_owner_output_root_and_path_kind(
         None,
         name,
         OutputType::File,
         None,
         BuckOutPathKind::Configuration,
-        ctx.actions.bazel_owner(),
-        ctx.actions.bazel_output_root,
+        actions.bazel_owner(),
+        actions.bazel_output_root,
+        bazel_output_path_kind,
         heap,
     )?;
     Ok(heap

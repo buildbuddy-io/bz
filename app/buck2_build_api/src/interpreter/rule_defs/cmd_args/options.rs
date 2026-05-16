@@ -99,7 +99,7 @@ impl QuoteStyle {
 #[derive(
     Debug, Clone, Copy, Dupe, Trace, Freeze, Serialize, Allocative, PartialEq, Eq
 )]
-pub(crate) enum ParamFileFormat {
+pub enum ParamFileFormat {
     Shell,
     Multiline,
     FlagPerLine,

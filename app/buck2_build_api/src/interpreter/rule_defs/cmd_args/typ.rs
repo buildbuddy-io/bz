@@ -336,8 +336,9 @@ impl<'v, F: Fields<'v>> CommandLineArgLike<'v> for FieldsRef<'v, F> {
                         .into_iter()
                         .map(|arg| context.normalize_param_file_arg(arg))
                         .collect();
-                    let content = bazel_param_file_content(param_file_args, param_file.format);
-                    let param_file_path = context.add_param_file(content)?.into_string();
+                    let param_file_path = context
+                        .add_param_file_args(param_file_args, param_file.format)?
+                        .into_string();
                     cli.push_arg(arg_format.as_str().replace("{}", &param_file_path));
                     for arg in retained_args {
                         cli.push_arg(arg);
@@ -1067,94 +1068,6 @@ fn bazel_args_format_literal<'v>(
 fn bazel_param_file_threshold_exceeded(args: &[String]) -> bool {
     const BAZEL_DEFAULT_MIN_PARAM_FILE_SIZE: usize = 32 * 1024;
     args.iter().map(|arg| arg.len() + 1).sum::<usize>() > BAZEL_DEFAULT_MIN_PARAM_FILE_SIZE
-}
-
-fn bazel_param_file_content(args: Vec<String>, format: ParamFileFormat) -> Vec<u8> {
-    let mut content = Vec::new();
-    for arg in args {
-        match format {
-            ParamFileFormat::Shell => {
-                content.extend_from_slice(bazel_shell_escape(&arg).as_bytes());
-            }
-            ParamFileFormat::GccQuoted => {
-                content.extend_from_slice(bazel_gcc_param_file_escape(&arg).as_bytes());
-            }
-            ParamFileFormat::Windows => {
-                content.extend_from_slice(bazel_windows_param_file_escape(&arg).as_bytes());
-            }
-            ParamFileFormat::Multiline | ParamFileFormat::FlagPerLine => {
-                content.extend_from_slice(arg.as_bytes());
-            }
-        }
-        content.push(b'\n');
-    }
-    content
-}
-
-fn bazel_shell_escape(arg: &str) -> String {
-    if arg.is_empty() {
-        return "''".to_owned();
-    }
-
-    if arg.bytes().all(bazel_shell_safe_char) {
-        return arg.to_owned();
-    }
-
-    if !arg.starts_with('~')
-        && arg
-            .bytes()
-            .all(|byte| bazel_shell_safe_char(byte) || byte == b'~')
-    {
-        return arg.to_owned();
-    }
-
-    let mut escaped = String::with_capacity(arg.len() + 2);
-    escaped.push('\'');
-    for ch in arg.chars() {
-        if ch == '\'' {
-            escaped.push_str("'\\''");
-        } else {
-            escaped.push(ch);
-        }
-    }
-    escaped.push('\'');
-    escaped
-}
-
-fn bazel_shell_safe_char(byte: u8) -> bool {
-    byte.is_ascii_alphanumeric()
-        || matches!(
-            byte,
-            b'@' | b'%' | b'-' | b'_' | b'+' | b':' | b',' | b'.' | b'/'
-        )
-}
-
-fn bazel_gcc_param_file_escape(arg: &str) -> String {
-    if arg.is_empty() {
-        return "''".to_owned();
-    }
-
-    let mut escaped = String::with_capacity(arg.len());
-    for ch in arg.chars() {
-        if matches!(
-            ch,
-            '\'' | '"' | '\\' | ' ' | '\t' | '\r' | '\n' | '\x0c' | '\x0b'
-        ) {
-            escaped.push('\\');
-        }
-        escaped.push(ch);
-    }
-    escaped
-}
-
-fn bazel_windows_param_file_escape(arg: &str) -> String {
-    let needs_quotes = arg.chars().any(|ch| matches!(ch, ' ' | '\t' | '\n' | '\r'));
-    let escaped = arg.replace('"', "\\\"");
-    if needs_quotes {
-        format!("\"{escaped}\"")
-    } else {
-        escaped
-    }
 }
 
 fn bazel_args_values<'v>(value: Value<'v>, heap: Heap<'v>) -> starlark::Result<Vec<Value<'v>>> {

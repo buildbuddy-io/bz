@@ -18,6 +18,7 @@ use dice_futures::cancellation::CancellationContext;
 use dupe::Dupe;
 use remote_execution as RE;
 
+use crate::artifact_value::ArtifactValue;
 use crate::digest_config::DigestConfig;
 use crate::execute::action_digest::ActionDigest;
 use crate::execute::action_digest_and_blobs::ActionDigestAndBlobs;
@@ -28,6 +29,7 @@ use crate::execute::request::ExecutorPreference;
 use crate::execute::request::LocalActionCacheKey;
 use crate::execute::result::CommandExecutionResult;
 use crate::execute::target::CommandExecutionTarget;
+use buck2_hash::BuckIndexMap;
 use buck2_hash::BuckIndexSet;
 
 pub struct PreparedAction {
@@ -103,6 +105,14 @@ pub trait PreparedCommandOptionalExecutor: Send + Sync {
     ) -> ControlFlow<CommandExecutionResult, CommandExecutionManager> {
         ControlFlow::Continue(manager)
     }
+
+    fn insert_unprepared_action_cache_metadata(
+        &self,
+        _local_action_cache_key: &LocalActionCacheKey,
+        _outputs: &BuckIndexMap<CommandExecutionOutput, ArtifactValue>,
+    ) -> buck2_error::Result<()> {
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -127,6 +137,14 @@ impl PreparedCommandOptionalExecutor for Arc<dyn PreparedCommandOptionalExecutor
         (**self)
             .maybe_execute_unprepared(command, manager, cancellations)
             .await
+    }
+
+    fn insert_unprepared_action_cache_metadata(
+        &self,
+        local_action_cache_key: &LocalActionCacheKey,
+        outputs: &BuckIndexMap<CommandExecutionOutput, ArtifactValue>,
+    ) -> buck2_error::Result<()> {
+        (**self).insert_unprepared_action_cache_metadata(local_action_cache_key, outputs)
     }
 }
 

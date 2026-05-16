@@ -779,6 +779,7 @@ pub fn dynamic_lambda_ctx_data<'v>(
     let mut registry = AnalysisRegistry::new_from_owner_and_deferred(
         dynamic_lambda.static_fields.execution_platform.dupe(),
         DeferredHolderKey::DynamicLambda(self_key),
+        None,
     )?;
 
     let spec = match &dynamic_lambda.attr_values {

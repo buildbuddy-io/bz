@@ -11,8 +11,10 @@ use std::fmt;
 use std::sync::Arc;
 
 use allocative::Allocative;
+use buck2_core::fs::buck_out_path::BazelOutputPathKind;
 use buck2_core::provider::id::ProviderId;
 use buck2_interpreter::types::provider::callable::ProviderCallableLike;
+use buck2_util::late_binding::LateBinding;
 use dupe::Dupe;
 use serde::Serializer;
 use starlark::any::ProvidesStaticType;
@@ -32,23 +34,31 @@ use starlark::values::NoSerialize;
 use starlark::values::StarlarkValue;
 use starlark::values::StringValue;
 use starlark::values::Trace;
+use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark::values::ValueLifetimeless;
 use starlark::values::ValueLike;
+use starlark::values::ValueTyped;
 use starlark::values::ValueTypedComplex;
 use starlark::values::dict::AllocDict;
 use starlark::values::list::AllocList;
 use starlark::values::list::ListRef;
+use starlark::values::none::NoneOr;
 use starlark::values::none::NoneType;
 use starlark::values::starlark_value;
 use starlark::values::structs::StructRef;
 use starlark::values::tuple::TupleRef;
 use starlark_map::StarlarkHasher;
 
+use crate::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkArtifactLike;
 use crate::interpreter::rule_defs::cmd_args::StarlarkCmdArgs;
+use crate::interpreter::rule_defs::context::AnalysisActions;
+use crate::interpreter::rule_defs::context::bazel_analysis_context_declare_file_with_path_kind;
 use crate::interpreter::rule_defs::context::bazel_shell_tokenize;
 use crate::interpreter::rule_defs::depset::BazelDepset;
+use crate::interpreter::rule_defs::depset::bazel_depset_from_transitive;
 use crate::interpreter::rule_defs::depset::bazel_depset_from_values;
+use crate::interpreter::rule_defs::depset::bazel_depset_is_empty;
 use crate::interpreter::rule_defs::depset::bazel_depset_to_list;
 use crate::interpreter::rule_defs::provider::ProviderLike;
 use crate::interpreter::rule_defs::provider::builtin::worker_info::WorkerInfo;
@@ -65,6 +75,23 @@ const BOOT_CLASS_PATH_INFO: &str = "BootClassPathInfo";
 const JAVA_RUNTIME_CLASSPATH_INFO: &str = "JavaRuntimeClasspathInfo";
 const JAVA_PLUGIN_DATA_INFO: &str = "JavaPluginDataInfo";
 const JAVA_COMPILATION_INFO: &str = "JavaCompilationInfo";
+
+pub struct BazelJavaRunAction<'v> {
+    pub actions: ValueTyped<'v, AnalysisActions<'v>>,
+    pub executable: Value<'v>,
+    pub arguments: Vec<Value<'v>>,
+    pub inputs: Vec<Value<'v>>,
+    pub outputs: Vec<Value<'v>>,
+    pub mnemonic: StringValue<'v>,
+    pub worker_executable: Option<Value<'v>>,
+}
+
+pub static BAZEL_JAVA_RUN_ACTION: LateBinding<
+    for<'v, 'a, 'b, 'c> fn(
+        BazelJavaRunAction<'v>,
+        &'a mut Evaluator<'v, 'b, 'c>,
+    ) -> starlark::Result<NoneType>,
+> = LateBinding::new("BAZEL_JAVA_RUN_ACTION");
 
 #[derive(Clone, Debug, Freeze, ProvidesStaticType, Trace, Allocative)]
 #[repr(C)]
@@ -322,6 +349,83 @@ fn java_common_error(message: impl std::fmt::Display) -> buck2_error::Error {
     buck2_error::buck2_error!(buck2_error::ErrorTag::Input, "{}", message)
 }
 
+fn java_replace_extension(basename: &str, replacement: &str) -> String {
+    let extension_start = basename
+        .as_bytes()
+        .iter()
+        .enumerate()
+        .rev()
+        .find_map(|(index, byte)| {
+            if *byte == b'.' && index != 0 {
+                Some(index)
+            } else {
+                None
+            }
+        });
+    match extension_start {
+        Some(index) => format!("{}{}", &basename[..index], replacement),
+        None => format!("{basename}{replacement}"),
+    }
+}
+
+fn java_bazel_output_dir_relative_path(exec_path: &str) -> &str {
+    let Some(path) = exec_path
+        .strip_prefix("buck-out/bin/")
+        .or_else(|| exec_path.strip_prefix("buck-out/genfiles/"))
+    else {
+        return exec_path;
+    };
+
+    path.split_once('/').map_or(exec_path, |(_, path)| path)
+}
+
+fn java_derive_output_file<'v>(
+    ctx: Value<'v>,
+    base_file: Value<'v>,
+    name_suffix: &str,
+    extension: NoneOr<StringValue<'v>>,
+    extension_suffix: &str,
+    eval: &mut Evaluator<'v, '_, '_>,
+) -> starlark::Result<Value<'v>> {
+    let extension = extension.into_option();
+    if name_suffix.is_empty() && extension_suffix.is_empty() && extension.is_none() {
+        return Err(java_common_error(
+            "At least one of name_suffix, extension or extension_suffix is required",
+        )
+        .into());
+    }
+    if extension.is_some() && !extension_suffix.is_empty() {
+        return Err(java_common_error(
+            "only one of extension or extension_suffix can be specified",
+        )
+        .into());
+    }
+
+    let base_file = <&dyn StarlarkArtifactLike<'v>>::unpack_value(base_file)?
+        .ok_or_else(|| java_common_error("derive_output_file expected base_file to be a File"))?;
+    let basename = base_file.with_filename(&|filename| eval.heap().alloc_str(filename.as_str()))?;
+    let default_extension = base_file
+        .with_filename(&|filename| eval.heap().alloc_str(filename.extension().unwrap_or("")))?;
+    let extension = extension
+        .map(|extension| extension.as_str())
+        .unwrap_or_else(|| default_extension.as_str());
+    let replacement = format!("{name_suffix}.{extension}{extension_suffix}");
+    let new_basename = java_replace_extension(basename.as_str(), &replacement);
+    let sibling_path = base_file.with_bazel_path(&|path| eval.heap().alloc_str(path))?;
+    let sibling_path = java_bazel_output_dir_relative_path(sibling_path.as_str());
+    let output_path = match sibling_path.rsplit_once('/') {
+        Some((parent, _)) if !parent.is_empty() => format!("{parent}/{new_basename}"),
+        _ => new_basename,
+    };
+
+    bazel_analysis_context_declare_file_with_path_kind(
+        ctx,
+        &output_path,
+        BazelOutputPathKind::OutputDirRelative,
+        eval.heap(),
+    )
+}
+
 fn java_attr<'v>(value: Value<'v>, attr: &str, heap: Heap<'v>) -> starlark::Result<Value<'v>> {
     value.get_attr(attr, heap)?.ok_or_else(|| {
         java_common_error(format!(
@@ -456,8 +560,13 @@ fn java_tokenized_option_values<'v>(
             ))
             .into());
         };
-        for token in bazel_shell_tokenize(value)? {
-            tokens.push(heap.alloc_str(&token).to_value());
+        match bazel_shell_tokenize(value) {
+            Ok(parts) => {
+                for token in parts {
+                    tokens.push(heap.alloc_str(&token).to_value());
+                }
+            }
+            Err(_) => tokens.push(heap.alloc_str(value).to_value()),
         }
     }
     Ok(tokens)
@@ -489,6 +598,26 @@ fn java_add_flag_values<'v>(
         java_add_flag(argv, heap, flag);
         argv.extend(values);
     }
+}
+
+fn java_add_flag_collection<'v>(
+    argv: &mut Vec<Value<'v>>,
+    heap: Heap<'v>,
+    flag: &str,
+    value: Value<'v>,
+) -> starlark::Result<()> {
+    if value.is_none() {
+        return Ok(());
+    }
+    if BazelDepset::from_value(value).is_some() {
+        if !bazel_depset_is_empty(value)? {
+            java_add_flag(argv, heap, flag);
+            argv.push(value);
+        }
+        return Ok(());
+    }
+    java_add_flag_values(argv, heap, flag, java_collection_values(value, heap)?);
+    Ok(())
 }
 
 fn java_bootclasspath<'v>(
@@ -561,41 +690,24 @@ fn java_call_run_action<'v>(
 ) -> starlark::Result<NoneType> {
     let heap = eval.heap();
     let actions = java_attr(ctx, "actions", heap)?;
-    let run = actions
-        .get_attr("run", heap)?
-        .ok_or_else(|| java_common_error("ctx.actions has no `run` method"))?;
-    let (executable, arguments) = if let Some(worker_executable) = worker_executable {
-        let param_file_values = argv[param_file_start..].to_vec();
-        (
-            worker_executable,
-            heap.alloc(AllocList(java_param_file_arguments(
-                param_file_values,
-                0,
-                heap,
-            )?)),
-        )
+    let _unused = execution_requirements;
+    let arguments = if worker_executable.is_some() {
+        java_param_file_arguments(argv[param_file_start..].to_vec(), 0, heap)?
     } else {
-        (
-            executable,
-            heap.alloc(AllocList(java_param_file_arguments(
-                argv,
-                param_file_start,
-                heap,
-            )?)),
-        )
+        java_param_file_arguments(argv, param_file_start, heap)?
     };
-    let mut kwargs = vec![
-        ("executable", executable),
-        ("arguments", arguments),
-        ("inputs", heap.alloc(AllocList(inputs))),
-        ("outputs", heap.alloc(AllocList(outputs))),
-        ("mnemonic", heap.alloc_str(mnemonic).to_value()),
-        ("use_default_shell_env", Value::new_bool(true)),
-    ];
-    if let Some(execution_requirements) = execution_requirements {
-        kwargs.push(("execution_requirements", execution_requirements));
-    }
-    eval.eval_function(run, &[], &kwargs)?;
+    (BAZEL_JAVA_RUN_ACTION.get()?)(
+        BazelJavaRunAction {
+            actions: ValueTyped::new_err(actions)?,
+            executable,
+            arguments,
+            inputs,
+            outputs,
+            mnemonic: heap.alloc_str(mnemonic),
+            worker_executable,
+        },
+        eval,
+    )?;
     Ok(NoneType)
 }
 
@@ -800,24 +912,9 @@ fn java_register_header_compilation_action<'v>(
     );
     java_add_flag_value(&mut argv, heap, "--output_deps", compile_deps_proto);
     let bootclasspath = java_bootclasspath(java_toolchain, bootclasspath, heap)?;
-    java_add_flag_values(
-        &mut argv,
-        heap,
-        "--bootclasspath",
-        java_collection_values(bootclasspath, heap)?,
-    );
-    java_add_flag_values(
-        &mut argv,
-        heap,
-        "--sources",
-        java_collection_values(source_files, heap)?,
-    );
-    java_add_flag_values(
-        &mut argv,
-        heap,
-        "--source_jars",
-        java_collection_values(source_jars, heap)?,
-    );
+    java_add_flag_collection(&mut argv, heap, "--bootclasspath", bootclasspath)?;
+    java_add_flag_collection(&mut argv, heap, "--sources", source_files)?;
+    java_add_flag_collection(&mut argv, heap, "--source_jars", source_jars)?;
     java_add_flag(&mut argv, heap, "--javacopts");
     argv.extend(java_tokenized_option_values(javac_opts, heap)?);
     java_add_flag(&mut argv, heap, "-Aexperimental_turbine_hjar");
@@ -850,36 +947,16 @@ fn java_register_header_compilation_action<'v>(
         })
         .collect();
     java_add_flag_values(&mut argv, heap, "--builtin_processors", builtin_processors);
-    java_add_flag_values(
-        &mut argv,
-        heap,
-        "--processors",
-        java_collection_values(processor_classes, heap)?,
-    );
+    java_add_flag_collection(&mut argv, heap, "--processors", processor_classes)?;
     if !use_header_compiler_direct {
-        java_add_flag_values(
-            &mut argv,
-            heap,
-            "--processorpath",
-            java_collection_values(processor_jars, heap)?,
-        );
+        java_add_flag_collection(&mut argv, heap, "--processorpath", processor_jars)?;
     }
-    java_add_flag_values(
-        &mut argv,
-        heap,
-        "--classpath",
-        java_collection_values(compilation_classpath, heap)?,
-    );
+    java_add_flag_collection(&mut argv, heap, "--classpath", compilation_classpath)?;
     if strict_deps_mode
         .unpack_str()
         .is_some_and(|mode| mode != "OFF")
     {
-        java_add_flag_values(
-            &mut argv,
-            heap,
-            "--direct_dependencies",
-            java_collection_values(direct_jars, heap)?,
-        );
+        java_add_flag_collection(&mut argv, heap, "--direct_dependencies", direct_jars)?;
     }
 
     inputs.extend([
@@ -915,38 +992,37 @@ fn java_register_header_compilation_action<'v>(
 }
 
 fn java_register_compilation_action<'v>(
-    args: &starlark::values::tuple::UnpackTuple<Value<'v>>,
-    kwargs: &SmallMap<String, Value<'v>>,
+    ctx: Value<'v>,
+    java_toolchain: Value<'v>,
+    output: Value<'v>,
+    manifest_proto: Value<'v>,
+    plugin_info: Value<'v>,
+    compilation_classpath: Value<'v>,
+    direct_jars: Value<'v>,
+    bootclasspath: Value<'v>,
+    javabuilder_jvm_flags: Value<'v>,
+    compile_time_java_deps: Value<'v>,
+    javac_opts: Value<'v>,
+    strict_deps_mode: Value<'v>,
+    target_label: Value<'v>,
+    deps_proto: Value<'v>,
+    gen_class: Value<'v>,
+    gen_source: Value<'v>,
+    native_header_jar: Value<'v>,
+    sources: Value<'v>,
+    source_jars: Value<'v>,
+    resources: Value<'v>,
+    resource_jars: Value<'v>,
+    classpath_resources: Value<'v>,
+    sourcepath: Value<'v>,
+    injecting_rule_kind: Value<'v>,
+    _enable_jspecify: Value<'v>,
+    _enable_direct_classpath: Value<'v>,
+    additional_inputs: Value<'v>,
+    additional_outputs: Value<'v>,
     eval: &mut Evaluator<'v, '_, '_>,
 ) -> starlark::Result<NoneType> {
     let heap = eval.heap();
-    let ctx = java_arg(args, kwargs, 0, "ctx");
-    let java_toolchain = java_arg(args, kwargs, 1, "java_toolchain");
-    let output = java_arg(args, kwargs, 2, "output");
-    let manifest_proto = java_arg(args, kwargs, 3, "manifest_proto");
-    let plugin_info = java_arg(args, kwargs, 4, "plugin_info");
-    let compilation_classpath = java_arg(args, kwargs, 5, "compilation_classpath");
-    let direct_jars = java_arg(args, kwargs, 6, "direct_jars");
-    let bootclasspath = java_arg(args, kwargs, 7, "bootclasspath");
-    let javabuilder_jvm_flags = java_arg(args, kwargs, 8, "javabuilder_jvm_flags");
-    let compile_time_java_deps = java_arg(args, kwargs, 9, "compile_time_java_deps");
-    let javac_opts = java_arg(args, kwargs, 10, "javac_opts");
-    let strict_deps_mode = java_arg(args, kwargs, 11, "strict_deps_mode");
-    let target_label = java_arg(args, kwargs, 12, "target_label");
-    let deps_proto = java_arg(args, kwargs, 13, "deps_proto");
-    let gen_class = java_arg(args, kwargs, 14, "gen_class");
-    let gen_source = java_arg(args, kwargs, 15, "gen_source");
-    let native_header_jar = java_arg(args, kwargs, 16, "native_header_jar");
-    let sources = java_arg(args, kwargs, 17, "sources");
-    let source_jars = java_arg(args, kwargs, 18, "source_jars");
-    let resources = java_arg(args, kwargs, 19, "resources");
-    let resource_jars = java_arg(args, kwargs, 20, "resource_jars");
-    let classpath_resources = java_arg(args, kwargs, 21, "classpath_resources");
-    let sourcepath = java_arg(args, kwargs, 22, "sourcepath");
-    let injecting_rule_kind = java_arg(args, kwargs, 23, "injecting_rule_kind");
-    let additional_inputs = java_arg(args, kwargs, 26, "additional_inputs");
-    let additional_outputs = java_arg(args, kwargs, 27, "additional_outputs");
-
     let (executable, mut argv, mut inputs, param_file_start) =
         java_tool_command(java_toolchain, "_javabuilder", javabuilder_jvm_flags, heap)?;
 
@@ -957,46 +1033,16 @@ fn java_register_compilation_action<'v>(
     java_add_flag(&mut argv, heap, "--compress_jar");
     java_add_flag_value(&mut argv, heap, "--output_deps_proto", deps_proto);
     let bootclasspath = java_bootclasspath(java_toolchain, bootclasspath, heap)?;
-    java_add_flag_values(
-        &mut argv,
-        heap,
-        "--bootclasspath",
-        java_collection_values(bootclasspath, heap)?,
-    );
-    java_add_flag_values(
-        &mut argv,
-        heap,
-        "--sourcepath",
-        java_collection_values(sourcepath, heap)?,
-    );
+    java_add_flag_collection(&mut argv, heap, "--bootclasspath", bootclasspath)?;
+    java_add_flag_collection(&mut argv, heap, "--sourcepath", sourcepath)?;
     let processor_classes =
         java_plugin_data_field(plugin_info, "plugins", "processor_classes", heap)?;
     let processor_jars = java_plugin_data_field(plugin_info, "plugins", "processor_jars", heap)?;
     let processor_data = java_plugin_data_field(plugin_info, "plugins", "processor_data", heap)?;
-    java_add_flag_values(
-        &mut argv,
-        heap,
-        "--processorpath",
-        java_collection_values(processor_jars, heap)?,
-    );
-    java_add_flag_values(
-        &mut argv,
-        heap,
-        "--processors",
-        java_collection_values(processor_classes, heap)?,
-    );
-    java_add_flag_values(
-        &mut argv,
-        heap,
-        "--source_jars",
-        java_collection_values(source_jars, heap)?,
-    );
-    java_add_flag_values(
-        &mut argv,
-        heap,
-        "--sources",
-        java_collection_values(sources, heap)?,
-    );
+    java_add_flag_collection(&mut argv, heap, "--processorpath", processor_jars)?;
+    java_add_flag_collection(&mut argv, heap, "--processors", processor_classes)?;
+    java_add_flag_collection(&mut argv, heap, "--source_jars", source_jars)?;
+    java_add_flag_collection(&mut argv, heap, "--sources", sources)?;
     let javac_opts = java_tokenized_option_values(javac_opts, heap)?;
     if !javac_opts.is_empty() {
         java_add_flag(&mut argv, heap, "--javacopts");
@@ -1015,12 +1061,7 @@ fn java_register_compilation_action<'v>(
         .is_some_and(|mode| mode != "OFF")
     {
         java_add_flag_value(&mut argv, heap, "--strict_java_deps", strict_deps_mode);
-        java_add_flag_values(
-            &mut argv,
-            heap,
-            "--direct_dependencies",
-            java_collection_values(direct_jars, heap)?,
-        );
+        java_add_flag_collection(&mut argv, heap, "--direct_dependencies", direct_jars)?;
     }
     java_add_flag_value(
         &mut argv,
@@ -1028,12 +1069,7 @@ fn java_register_compilation_action<'v>(
         "--experimental_fix_deps_tool",
         heap.alloc_str("add_dep").to_value(),
     );
-    java_add_flag_values(
-        &mut argv,
-        heap,
-        "--classpath",
-        java_collection_values(compilation_classpath, heap)?,
-    );
+    java_add_flag_collection(&mut argv, heap, "--classpath", compilation_classpath)?;
     java_add_flag_value(
         &mut argv,
         heap,
@@ -1219,6 +1255,75 @@ fn java_common_internal_methods(builder: &mut MethodsBuilder) {
         Ok(heap.alloc(AllocList(expanded_opts)).to_value())
     }
 
+    fn derive_output_file<'v>(
+        #[starlark(this)] _this: &JavaCommonInternal,
+        #[starlark(require = pos)] ctx: Value<'v>,
+        #[starlark(require = pos)] base_file: Value<'v>,
+        #[starlark(require = named, default = "")] name_suffix: &str,
+        #[starlark(require = named, default = NoneOr::None)] extension: NoneOr<StringValue<'v>>,
+        #[starlark(require = named, default = "")] extension_suffix: &str,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<Value<'v>> {
+        java_derive_output_file(
+            ctx,
+            base_file,
+            name_suffix,
+            extension,
+            extension_suffix,
+            eval,
+        )
+    }
+
+    fn has_plugin_data<'v>(
+        #[starlark(this)] _this: &JavaCommonInternal,
+        #[starlark(require = pos)] plugin_data: Value<'v>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<bool> {
+        if !plugin_data.to_bool() {
+            return Ok(false);
+        }
+        let heap = eval.heap();
+        Ok(java_attr(plugin_data, "processor_classes", heap)?.to_bool()
+            || java_attr(plugin_data, "processor_jars", heap)?.to_bool()
+            || java_attr(plugin_data, "processor_data", heap)?.to_bool())
+    }
+
+    fn merge_plugin_data<'v>(
+        #[starlark(this)] _this: &JavaCommonInternal,
+        #[starlark(require = pos)] plugin_data_provider: Value<'v>,
+        #[starlark(require = pos)] empty_plugin_data: Value<'v>,
+        #[starlark(require = pos)] datas: Value<'v>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<Value<'v>> {
+        let heap = eval.heap();
+        let datas = java_collection_values(datas, heap)?;
+        let mut processor_classes = Vec::with_capacity(datas.len());
+        let mut processor_jars = Vec::with_capacity(datas.len());
+        let mut processor_data = Vec::with_capacity(datas.len());
+        for data in datas {
+            processor_classes.push(java_attr(data, "processor_classes", heap)?);
+            processor_jars.push(java_attr(data, "processor_jars", heap)?);
+            processor_data.push(java_attr(data, "processor_data", heap)?);
+        }
+
+        let processor_classes = bazel_depset_from_transitive(heap, processor_classes)?;
+        let processor_jars = bazel_depset_from_transitive(heap, processor_jars)?;
+        let processor_data = bazel_depset_from_transitive(heap, processor_data)?;
+        if !processor_classes.to_bool() && !processor_jars.to_bool() && !processor_data.to_bool() {
+            return Ok(empty_plugin_data);
+        }
+
+        eval.eval_function(
+            plugin_data_provider,
+            &[],
+            &[
+                ("processor_classes", processor_classes),
+                ("processor_jars", processor_jars),
+                ("processor_data", processor_data),
+            ],
+        )
+    }
+
     fn target_kind<'v>(
         #[starlark(this)] _this: &JavaCommonInternal,
         #[starlark(args)] _args: starlark::values::tuple::UnpackTuple<Value<'v>>,
@@ -1254,11 +1359,67 @@ fn java_common_internal_methods(builder: &mut MethodsBuilder) {
 
     fn create_compilation_action<'v>(
         #[starlark(this)] _this: &JavaCommonInternal,
-        #[starlark(args)] args: starlark::values::tuple::UnpackTuple<Value<'v>>,
-        #[starlark(kwargs)] kwargs: SmallMap<String, Value<'v>>,
+        #[starlark(require = pos)] ctx: Value<'v>,
+        #[starlark(require = pos)] java_toolchain: Value<'v>,
+        #[starlark(require = pos)] output: Value<'v>,
+        #[starlark(require = pos)] manifest_proto: Value<'v>,
+        #[starlark(require = pos)] plugin_info: Value<'v>,
+        #[starlark(require = pos)] compilation_classpath: Value<'v>,
+        #[starlark(require = pos)] direct_jars: Value<'v>,
+        #[starlark(require = pos)] bootclasspath: Value<'v>,
+        #[starlark(require = pos)] javabuilder_jvm_flags: Value<'v>,
+        #[starlark(require = pos)] compile_time_java_deps: Value<'v>,
+        #[starlark(require = pos)] javac_opts: Value<'v>,
+        #[starlark(require = pos)] strict_deps_mode: Value<'v>,
+        #[starlark(require = pos)] target_label: Value<'v>,
+        #[starlark(require = pos)] deps_proto: Value<'v>,
+        #[starlark(require = pos)] gen_class: Value<'v>,
+        #[starlark(require = pos)] gen_source: Value<'v>,
+        #[starlark(require = pos)] native_header_jar: Value<'v>,
+        #[starlark(require = pos)] sources: Value<'v>,
+        #[starlark(require = pos)] source_jars: Value<'v>,
+        #[starlark(require = pos)] resources: Value<'v>,
+        #[starlark(require = pos)] resource_jars: Value<'v>,
+        #[starlark(require = pos)] classpath_resources: Value<'v>,
+        #[starlark(require = pos)] sourcepath: Value<'v>,
+        #[starlark(require = pos)] injecting_rule_kind: Value<'v>,
+        #[starlark(require = pos)] enable_jspecify: Value<'v>,
+        #[starlark(require = pos)] enable_direct_classpath: Value<'v>,
+        #[starlark(require = pos)] additional_inputs: Value<'v>,
+        #[starlark(require = pos)] additional_outputs: Value<'v>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<NoneType> {
-        java_register_compilation_action(&args, &kwargs, eval)
+        java_register_compilation_action(
+            ctx,
+            java_toolchain,
+            output,
+            manifest_proto,
+            plugin_info,
+            compilation_classpath,
+            direct_jars,
+            bootclasspath,
+            javabuilder_jvm_flags,
+            compile_time_java_deps,
+            javac_opts,
+            strict_deps_mode,
+            target_label,
+            deps_proto,
+            gen_class,
+            gen_source,
+            native_header_jar,
+            sources,
+            source_jars,
+            resources,
+            resource_jars,
+            classpath_resources,
+            sourcepath,
+            injecting_rule_kind,
+            enable_jspecify,
+            enable_direct_classpath,
+            additional_inputs,
+            additional_outputs,
+            eval,
+        )
     }
 
     fn collect_native_deps_dirs<'v>(

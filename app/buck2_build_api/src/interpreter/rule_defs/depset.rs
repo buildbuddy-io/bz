@@ -10,6 +10,7 @@
 use std::fmt;
 use std::hash::Hash;
 use std::marker::PhantomData;
+use std::sync::OnceLock;
 
 use allocative::Allocative;
 use starlark::any::ProvidesStaticType;
@@ -24,12 +25,15 @@ use starlark::environment::MethodsBuilder;
 use starlark::environment::MethodsStatic;
 use starlark::values::Demand;
 use starlark::values::Freeze;
+use starlark::values::FreezeResult;
+use starlark::values::Freezer;
 use starlark::values::FrozenHeap;
 use starlark::values::FrozenValue;
 use starlark::values::Heap;
 use starlark::values::NoSerialize;
 use starlark::values::StarlarkValue;
 use starlark::values::Trace;
+use starlark::values::Tracer;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark::values::ValueLike;
@@ -42,15 +46,100 @@ use starlark::values::structs::StructRef;
 use starlark::values::tuple::TupleRef;
 use starlark::values::type_repr::StarlarkTypeRepr;
 
+use crate::artifact_groups::ArtifactGroup;
+use crate::interpreter::rule_defs::artifact::starlark_artifact_like::ValueAsInputArtifactLike;
 use crate::interpreter::rule_defs::cmd_args::ArtifactPathMapper;
 use crate::interpreter::rule_defs::cmd_args::CommandLineArgLike;
 use crate::interpreter::rule_defs::cmd_args::CommandLineArtifactVisitor;
 use crate::interpreter::rule_defs::cmd_args::CommandLineBuilder;
 use crate::interpreter::rule_defs::cmd_args::CommandLineContext;
+use crate::interpreter::rule_defs::cmd_args::SimpleCommandLineArtifactVisitor;
 use crate::interpreter::rule_defs::cmd_args::WriteToFileMacroVisitor;
 use crate::interpreter::rule_defs::cmd_args::command_line_arg_like_type::command_line_arg_like_impl;
 use crate::interpreter::rule_defs::cmd_args::value_as::ValueAsCommandLineLike;
 use crate::interpreter::rule_defs::provider::ValueAsProviderLike;
+
+#[derive(Debug, Clone, Copy)]
+struct BazelDepsetCachedValue {
+    hash: StarlarkHashValue,
+    value: FrozenValue,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct BazelDepsetCollectedValue<'v> {
+    hash: StarlarkHashValue,
+    value: Value<'v>,
+}
+
+#[derive(Debug, Allocative)]
+struct BazelDepsetToListCache {
+    #[allocative(skip)]
+    values: OnceLock<Box<[BazelDepsetCachedValue]>>,
+}
+
+impl Default for BazelDepsetToListCache {
+    fn default() -> Self {
+        Self {
+            values: OnceLock::new(),
+        }
+    }
+}
+
+impl Clone for BazelDepsetToListCache {
+    fn clone(&self) -> Self {
+        // The cached flattening is a performance hint, not part of depset identity.
+        Self::default()
+    }
+}
+
+unsafe impl<'v> Trace<'v> for BazelDepsetToListCache {
+    fn trace(&mut self, _tracer: &Tracer<'v>) {}
+}
+
+impl Freeze for BazelDepsetToListCache {
+    type Frozen = BazelDepsetToListCache;
+
+    fn freeze(self, _freezer: &Freezer) -> FreezeResult<Self::Frozen> {
+        // Values in the cache are redundant with `direct`/`transitive`. Dropping
+        // the cache avoids freezing a second copy of a potentially large list.
+        Ok(BazelDepsetToListCache::default())
+    }
+}
+
+#[derive(Debug, Allocative)]
+struct BazelDepsetArtifactInputsCache {
+    #[allocative(skip)]
+    values: OnceLock<Option<Box<[ArtifactGroup]>>>,
+}
+
+impl Default for BazelDepsetArtifactInputsCache {
+    fn default() -> Self {
+        Self {
+            values: OnceLock::new(),
+        }
+    }
+}
+
+impl Clone for BazelDepsetArtifactInputsCache {
+    fn clone(&self) -> Self {
+        // The cached action-input projection is a performance hint, not part of depset identity.
+        Self::default()
+    }
+}
+
+unsafe impl<'v> Trace<'v> for BazelDepsetArtifactInputsCache {
+    fn trace(&mut self, _tracer: &Tracer<'v>) {}
+}
+
+impl Freeze for BazelDepsetArtifactInputsCache {
+    type Frozen = BazelDepsetArtifactInputsCache;
+
+    fn freeze(self, _freezer: &Freezer) -> FreezeResult<Self::Frozen> {
+        // Inputs in the cache are redundant with `direct`/`transitive`. Dropping
+        // the cache avoids freezing a second copy of a potentially large list.
+        Ok(BazelDepsetArtifactInputsCache::default())
+    }
+}
 
 #[derive(Debug, buck2_error::Error)]
 #[buck2(tag = Input)]
@@ -123,6 +212,8 @@ pub struct BazelDepsetGen<'v, V: ValueLike<'v>> {
     order: BazelDepsetOrder,
     #[freeze(identity)]
     element_type: Option<String>,
+    to_list_cache: BazelDepsetToListCache,
+    artifact_inputs_cache: BazelDepsetArtifactInputsCache,
     _marker: PhantomData<&'v ()>,
 }
 
@@ -139,7 +230,7 @@ impl<'v, V: ValueLike<'v>> BazelDepsetGen<'v, V> {
 
     fn collect_to_list(
         &self,
-        values: &mut Vec<Value<'v>>,
+        values: &mut Vec<BazelDepsetCollectedValue<'v>>,
         seen_values: &mut SmallSet<Value<'v>>,
         seen_depsets: &mut SmallSet<Value<'v>>,
     ) -> starlark::Result<()> {
@@ -158,18 +249,26 @@ impl<'v, V: ValueLike<'v>> BazelDepsetGen<'v, V> {
 
     fn collect_transitive(
         &self,
-        values: &mut Vec<Value<'v>>,
+        values: &mut Vec<BazelDepsetCollectedValue<'v>>,
         seen_values: &mut SmallSet<Value<'v>>,
         seen_depsets: &mut SmallSet<Value<'v>>,
     ) -> starlark::Result<()> {
         for transitive in &self.transitive {
             let transitive = transitive.to_value();
             if seen_depsets.insert_hashed(bazel_depset_identity_hash(transitive)) {
-                depset_from_value(transitive)?.collect_to_list(
-                    values,
-                    seen_values,
-                    seen_depsets,
-                )?;
+                let transitive = depset_from_value(transitive)?;
+                if let Some(cached) = transitive.to_list_cache.values.get() {
+                    Self::collect_hashed_values(
+                        values,
+                        seen_values,
+                        cached.iter().map(|value| BazelDepsetCollectedValue {
+                            hash: value.hash,
+                            value: value.value.to_value(),
+                        }),
+                    )?;
+                } else {
+                    transitive.collect_to_list(values, seen_values, seen_depsets)?;
+                }
             }
         }
         Ok(())
@@ -177,16 +276,106 @@ impl<'v, V: ValueLike<'v>> BazelDepsetGen<'v, V> {
 
     fn collect_direct(
         &self,
-        values: &mut Vec<Value<'v>>,
+        values: &mut Vec<BazelDepsetCollectedValue<'v>>,
         seen: &mut SmallSet<Value<'v>>,
     ) -> starlark::Result<()> {
-        for value in &self.direct {
-            let value = value.to_value();
-            if seen.insert_hashed(Hashed::new_unchecked(bazel_depset_hash(value)?, value)) {
+        Self::collect_values(
+            values,
+            seen,
+            self.direct.iter().map(|value| value.to_value()),
+        )
+    }
+
+    fn collect_values(
+        values: &mut Vec<BazelDepsetCollectedValue<'v>>,
+        seen: &mut SmallSet<Value<'v>>,
+        iter: impl IntoIterator<Item = Value<'v>>,
+    ) -> starlark::Result<()> {
+        for value in iter {
+            let hash = bazel_depset_hash(value)?;
+            if seen.insert_hashed(Hashed::new_unchecked(hash, value)) {
+                values.push(BazelDepsetCollectedValue { hash, value });
+            }
+        }
+        Ok(())
+    }
+
+    fn collect_hashed_values(
+        values: &mut Vec<BazelDepsetCollectedValue<'v>>,
+        seen: &mut SmallSet<Value<'v>>,
+        iter: impl IntoIterator<Item = BazelDepsetCollectedValue<'v>>,
+    ) -> starlark::Result<()> {
+        for value in iter {
+            if seen.insert_hashed(Hashed::new_unchecked(value.hash, value.value)) {
                 values.push(value);
             }
         }
         Ok(())
+    }
+
+    fn to_list_cached(&self) -> starlark::Result<Vec<Value<'v>>> {
+        if let Some(values) = self.to_list_cache.values.get() {
+            return Ok(values.iter().map(|value| value.value.to_value()).collect());
+        }
+
+        let mut values = Vec::new();
+        let mut seen_values = SmallSet::new();
+        let mut seen_depsets = SmallSet::new();
+        self.collect_to_list(&mut values, &mut seen_values, &mut seen_depsets)?;
+        if let Some(frozen_values) = values
+            .iter()
+            .map(|value| {
+                Some(BazelDepsetCachedValue {
+                    hash: value.hash,
+                    value: value.value.unpack_frozen()?,
+                })
+            })
+            .collect::<Option<Vec<_>>>()
+        {
+            let _ignored = self
+                .to_list_cache
+                .values
+                .set(frozen_values.into_boxed_slice());
+        }
+        Ok(values.into_iter().map(|value| value.value).collect())
+    }
+
+    fn collect_artifact_inputs_for_cache(
+        &self,
+    ) -> buck2_error::Result<Option<Box<[ArtifactGroup]>>> {
+        let values = self.to_list_cached().map_err(command_line_depset_error)?;
+        let mut inputs = Vec::with_capacity(values.len());
+
+        for value in values {
+            let Some(input) = ValueAsInputArtifactLike::unpack_value(value)? else {
+                return Ok(None);
+            };
+
+            let mut visitor = SimpleCommandLineArtifactVisitor::new();
+            input
+                .0
+                .as_command_line_like()
+                .visit_artifacts(&mut visitor)?;
+            if !visitor.declared_outputs.is_empty() || !visitor.frozen_outputs.is_empty() {
+                return Ok(None);
+            }
+            inputs.extend(visitor.inputs.into_iter());
+        }
+
+        Ok(Some(inputs.into_boxed_slice()))
+    }
+
+    fn artifact_inputs_cached(&self) -> buck2_error::Result<Option<&[ArtifactGroup]>> {
+        if self.artifact_inputs_cache.values.get().is_none() {
+            let inputs = self.collect_artifact_inputs_for_cache()?;
+            let _ignored = self.artifact_inputs_cache.values.set(inputs);
+        }
+
+        Ok(self
+            .artifact_inputs_cache
+            .values
+            .get()
+            .and_then(|values| values.as_deref()))
     }
 
     fn is_empty(&self) -> bool {
@@ -230,57 +419,6 @@ impl<'v, V: ValueLike<'v>> BazelDepsetGen<'v, V> {
 
         Ok(())
     }
-
-    fn for_each_command_line_value(
-        &self,
-        values: &mut SmallSet<Value<'v>>,
-        depsets: &mut SmallSet<Value<'v>>,
-        visitor: &mut dyn FnMut(Value<'v>) -> buck2_error::Result<()>,
-    ) -> buck2_error::Result<()> {
-        match self.order {
-            BazelDepsetOrder::Default | BazelDepsetOrder::Postorder => {
-                self.for_each_transitive_command_line_value(values, depsets, visitor)?;
-                self.for_each_direct_command_line_value(values, visitor)?;
-            }
-            BazelDepsetOrder::Preorder | BazelDepsetOrder::Topological => {
-                self.for_each_direct_command_line_value(values, visitor)?;
-                self.for_each_transitive_command_line_value(values, depsets, visitor)?;
-            }
-        }
-        Ok(())
-    }
-
-    fn for_each_transitive_command_line_value(
-        &self,
-        values: &mut SmallSet<Value<'v>>,
-        depsets: &mut SmallSet<Value<'v>>,
-        visitor: &mut dyn FnMut(Value<'v>) -> buck2_error::Result<()>,
-    ) -> buck2_error::Result<()> {
-        for transitive in &self.transitive {
-            let transitive = transitive.to_value();
-            if depsets.insert_hashed(bazel_depset_identity_hash(transitive)) {
-                depset_from_value(transitive)
-                    .map_err(command_line_depset_error)?
-                    .for_each_command_line_value(values, depsets, visitor)?;
-            }
-        }
-        Ok(())
-    }
-
-    fn for_each_direct_command_line_value(
-        &self,
-        seen: &mut SmallSet<Value<'v>>,
-        visitor: &mut dyn FnMut(Value<'v>) -> buck2_error::Result<()>,
-    ) -> buck2_error::Result<()> {
-        for value in &self.direct {
-            let value = value.to_value();
-            let hash = bazel_depset_hash(value).map_err(command_line_depset_error)?;
-            if seen.insert_hashed(Hashed::new_unchecked(hash, value)) {
-                visitor(value)?;
-            }
-        }
-        Ok(())
-    }
 }
 
 impl<'v, V: ValueLike<'v>> fmt::Display for BazelDepsetGen<'v, V> {
@@ -309,13 +447,12 @@ impl<'v, V: ValueLike<'v>> CommandLineArgLike<'v> for BazelDepsetGen<'v, V> {
         context: &mut dyn CommandLineContext,
         artifact_path_mapping: &dyn ArtifactPathMapper,
     ) -> buck2_error::Result<()> {
-        let mut seen_values = SmallSet::new();
-        let mut seen_depsets = SmallSet::new();
-        self.for_each_command_line_value(&mut seen_values, &mut seen_depsets, &mut |value| {
+        for value in self.to_list_cached().map_err(command_line_depset_error)? {
             ValueAsCommandLineLike::unpack_value_err(value)?
                 .0
-                .add_to_command_line(cli, context, artifact_path_mapping)
-        })
+                .add_to_command_line(cli, context, artifact_path_mapping)?;
+        }
+        Ok(())
     }
 
     fn add_to_command_line_expanding_directories(
@@ -324,39 +461,46 @@ impl<'v, V: ValueLike<'v>> CommandLineArgLike<'v> for BazelDepsetGen<'v, V> {
         context: &mut dyn CommandLineContext,
         artifact_path_mapping: &dyn ArtifactPathMapper,
     ) -> buck2_error::Result<()> {
-        let mut seen_values = SmallSet::new();
-        let mut seen_depsets = SmallSet::new();
-        self.for_each_command_line_value(&mut seen_values, &mut seen_depsets, &mut |value| {
+        for value in self.to_list_cached().map_err(command_line_depset_error)? {
             ValueAsCommandLineLike::unpack_value_err(value)?
                 .0
-                .add_to_command_line_expanding_directories(cli, context, artifact_path_mapping)
-        })
+                .add_to_command_line_expanding_directories(cli, context, artifact_path_mapping)?;
+        }
+        Ok(())
     }
 
     fn visit_artifacts(
         &self,
         visitor: &mut dyn CommandLineArtifactVisitor<'v>,
     ) -> buck2_error::Result<()> {
-        let mut seen_values = SmallSet::new();
-        let mut seen_depsets = SmallSet::new();
-        self.for_each_command_line_value(&mut seen_values, &mut seen_depsets, &mut |value| {
+        if let Some(inputs) = self.artifact_inputs_cached()? {
+            for input in inputs {
+                visitor.visit_input(input.clone(), Vec::new());
+            }
+            return Ok(());
+        }
+
+        for value in self.to_list_cached().map_err(command_line_depset_error)? {
             ValueAsCommandLineLike::unpack_value_err(value)?
                 .0
-                .visit_artifacts(visitor)
-        })
+                .visit_artifacts(visitor)?;
+        }
+        Ok(())
     }
 
     fn contains_arg_attr(&self) -> bool {
-        let mut seen_values = SmallSet::new();
-        let mut seen_depsets = SmallSet::new();
         let mut contains = false;
-        let _ignored =
-            self.for_each_command_line_value(&mut seen_values, &mut seen_depsets, &mut |value| {
-                if ValueAsCommandLineLike::unpack_value_err(value)?
-                    .0
-                    .contains_arg_attr()
-                {
-                    contains = true;
+        let _ignored = self
+            .to_list_cached()
+            .map_err(command_line_depset_error)
+            .and_then(|values| {
+                for value in values {
+                    if ValueAsCommandLineLike::unpack_value_err(value)?
+                        .0
+                        .contains_arg_attr()
+                    {
+                        contains = true;
+                    }
                 }
                 Ok(())
             });
@@ -368,13 +512,12 @@ impl<'v, V: ValueLike<'v>> CommandLineArgLike<'v> for BazelDepsetGen<'v, V> {
         visitor: &mut dyn WriteToFileMacroVisitor,
         artifact_path_mapping: &dyn ArtifactPathMapper,
     ) -> buck2_error::Result<()> {
-        let mut seen_values = SmallSet::new();
-        let mut seen_depsets = SmallSet::new();
-        self.for_each_command_line_value(&mut seen_values, &mut seen_depsets, &mut |value| {
+        for value in self.to_list_cached().map_err(command_line_depset_error)? {
             ValueAsCommandLineLike::unpack_value_err(value)?
                 .0
-                .visit_write_to_file_macros(visitor, artifact_path_mapping)
-        })
+                .visit_write_to_file_macros(visitor, artifact_path_mapping)?;
+        }
+        Ok(())
     }
 }
 
@@ -491,12 +634,7 @@ fn bazel_depset_write_hash<'v>(
 }
 
 pub fn bazel_depset_to_list<'v>(value: Value<'v>) -> starlark::Result<Vec<Value<'v>>> {
-    let mut values = Vec::new();
-    let mut seen_values = SmallSet::new();
-    let mut seen_depsets = SmallSet::new();
-    seen_depsets.insert_hashed(bazel_depset_identity_hash(value));
-    depset_from_value(value)?.collect_to_list(&mut values, &mut seen_values, &mut seen_depsets)?;
-    Ok(values)
+    depset_from_value(value)?.to_list_cached()
 }
 
 pub fn bazel_depset_is_singleton<'v>(value: Value<'v>) -> starlark::Result<bool> {
@@ -511,6 +649,10 @@ pub fn bazel_depset_is_singleton<'v>(value: Value<'v>) -> starlark::Result<bool>
         1,
     )?;
     Ok(count == 1)
+}
+
+pub fn bazel_depset_is_empty<'v>(value: Value<'v>) -> starlark::Result<bool> {
+    Ok(depset_from_value(value)?.is_empty())
 }
 
 fn check_element_type(element_type: &mut Option<String>, value: Value) -> buck2_error::Result<()> {
@@ -543,6 +685,8 @@ pub(crate) fn bazel_depset_from_direct<'v>(
         transitive: Vec::new().into_boxed_slice(),
         order: BazelDepsetOrder::Default,
         element_type,
+        to_list_cache: BazelDepsetToListCache::default(),
+        artifact_inputs_cache: BazelDepsetArtifactInputsCache::default(),
         _marker: PhantomData,
     })
 }
@@ -623,6 +767,8 @@ pub(crate) fn bazel_depset_empty_frozen(heap: &FrozenHeap) -> FrozenValue {
         transitive: Vec::new().into_boxed_slice(),
         order: BazelDepsetOrder::Default,
         element_type: None,
+        to_list_cache: BazelDepsetToListCache::default(),
+        artifact_inputs_cache: BazelDepsetArtifactInputsCache::default(),
         _marker: PhantomData,
     })
 }
@@ -630,11 +776,54 @@ pub(crate) fn bazel_depset_empty_frozen(heap: &FrozenHeap) -> FrozenValue {
 #[starlark_module]
 fn bazel_depset_methods(builder: &mut MethodsBuilder) {
     fn to_list<'v>(this: &BazelDepset<'v>, heap: Heap<'v>) -> starlark::Result<Value<'v>> {
-        let mut values = Vec::new();
-        let mut seen_values = SmallSet::new();
-        let mut seen_depsets = SmallSet::new();
-        this.collect_to_list(&mut values, &mut seen_values, &mut seen_depsets)?;
-        Ok(heap.alloc(values))
+        Ok(heap.alloc(this.to_list_cached()?))
+    }
+}
+
+pub(crate) fn bazel_flat_depset_impl<'v>(
+    heap: Heap<'v>,
+    transitive: Vec<Value<'v>>,
+) -> starlark::Result<Value<'v>> {
+    let mut non_empty = Vec::with_capacity(transitive.len());
+    for depset in transitive {
+        let depset_ref = depset_from_value(depset)?;
+        if !depset_ref.is_empty() {
+            non_empty.push(depset);
+        }
+    }
+
+    match non_empty.as_slice() {
+        [] => return Ok(bazel_depset_empty(heap)),
+        [depset] => {
+            return Ok(*depset);
+        }
+        _ => {}
+    }
+
+    let first = non_empty[0];
+    if non_empty
+        .iter()
+        .all(|depset| depset.identity() == first.identity())
+    {
+        return Ok(first);
+    }
+
+    let mut largest_depset = None;
+    let mut largest_depset_list = Vec::new();
+
+    for depset in &non_empty {
+        let values = bazel_depset_to_list(*depset)?;
+        if values.len() > largest_depset_list.len() {
+            largest_depset_list = values;
+            largest_depset = Some(*depset);
+        }
+    }
+
+    let all = bazel_depset_from_transitive(heap, non_empty)?;
+    if bazel_depset_to_list(all)? == largest_depset_list {
+        Ok(largest_depset.unwrap_or_else(|| bazel_depset_empty(heap)))
+    } else {
+        Ok(all)
     }
 }
 
@@ -652,5 +841,14 @@ pub fn register_bazel_depset(builder: &mut GlobalsBuilder) {
         let direct = direct.into_option().unwrap_or_default().items;
         let transitive = transitive.into_option().unwrap_or_default().items;
         bazel_depset_from_direct_and_transitive_values(direct, transitive, order)
+    }
+
+    fn __buck2_bazel_flat_depset<'v>(
+        #[starlark(require = named, default = NoneOr::None)] transitive: NoneOr<
+            UnpackListOrTuple<Value<'v>>,
+        >,
+        heap: Heap<'v>,
+    ) -> starlark::Result<Value<'v>> {
+        bazel_flat_depset_impl(heap, transitive.into_option().unwrap_or_default().items)
     }
 }

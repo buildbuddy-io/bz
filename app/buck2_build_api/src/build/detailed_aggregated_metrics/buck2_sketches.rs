@@ -357,6 +357,7 @@ mod tests {
                 Some(format!("action-{index}")),
             )),
             CommandExecutorConfig::testing_local(),
+            None,
         ));
         (action_key, output, action)
     }

@@ -158,6 +158,20 @@ impl<'v, V: ValueLike<'v>> fmt::Display for BazelRunfilesGen<'v, V> {
     }
 }
 
+impl<'v, V: ValueLike<'v>> BazelRunfilesGen<'v, V> {
+    pub fn files_value(&self) -> Value<'v> {
+        self.files.get().to_value()
+    }
+
+    pub fn symlinks_value(&self) -> Value<'v> {
+        self.symlinks.get().to_value()
+    }
+
+    pub fn root_symlinks_value(&self) -> Value<'v> {
+        self.root_symlinks.get().to_value()
+    }
+}
+
 #[starlark_value(type = "runfiles")]
 impl<'v, V: ValueLike<'v>> StarlarkValue<'v> for BazelRunfilesGen<'v, V>
 where

@@ -8,17 +8,27 @@
  * above-listed licenses.
  */
 
+use std::io::ErrorKind;
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use buck2_core::cells::cell_path::CellPath;
 use buck2_core::cells::cell_path::CellPathRef;
 use buck2_core::cells::external::ExternalCellOrigin;
 use buck2_core::cells::name::CellName;
 use buck2_core::cells::paths::CellRelativePath;
+use buck2_core::fs::project::ProjectRoot;
+use buck2_core::fs::project_rel_path::ProjectRelativePath;
+use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
 use buck2_core::package::PackageLabel;
 use buck2_core::package::package_relative_path::PackageRelativePath;
 use buck2_core::package::package_relative_path::PackageRelativePathBuf;
+use buck2_error::BuckErrorContext;
+use buck2_fs::IoResultExt;
+use buck2_fs::fs_util;
 use buck2_fs::paths::file_name::FileNameBuf;
 use buck2_util::arc_str::ArcS;
+use compact_str::CompactString;
 use dice::DiceComputations;
 use dupe::Dupe;
 use futures::FutureExt;
@@ -27,7 +37,13 @@ use starlark_map::sorted_set::SortedSet;
 use starlark_map::sorted_vec::SortedVec;
 
 use crate::dice::cells::HasCellResolver;
+use crate::dice::data::HasIoProvider;
+use crate::file_ops::delegate::FileOpsDelegateWithIgnores;
+use crate::file_ops::delegate::get_delegated_file_ops;
+use crate::file_ops::dice::CheckIgnores;
 use crate::file_ops::dice::DiceFileComputations;
+use crate::file_ops::metadata::FileType;
+use crate::file_ops::metadata::RawDirEntry;
 use crate::find_buildfile::find_buildfile;
 use crate::ignores::file_ignores::FileIgnoreReason;
 use crate::io::DirectoryDoesNotExistSuggestion;
@@ -693,6 +709,12 @@ async fn gather_package_listing_with_buildfiles(
     strategy: PackageListingStrategy,
 ) -> Result<PackageListing, GatherPackageListingError> {
     let cell_path = root.as_cell_path();
+    if strategy == PackageListingStrategy::Recursive
+        && should_use_fast_bzlmod_recursive_listing(ctx, cell_path).await?
+    {
+        return gather_bzlmod_recursive_package_listing_fast(ctx, root, buildfile_candidates).await;
+    }
+
     Ok(Directory::gather(
         ctx,
         &buildfile_candidates,
@@ -704,6 +726,181 @@ async fn gather_package_listing_with_buildfiles(
     .await?
     .unwrap()
     .flatten())
+}
+
+async fn should_use_fast_bzlmod_recursive_listing(
+    ctx: &mut DiceComputations<'_>,
+    root: CellPathRef<'_>,
+) -> Result<bool, GatherPackageListingError> {
+    let cells = ctx
+        .get_cell_resolver()
+        .await
+        .map_err(|e| GatherPackageListingError::error(root, e))?;
+    let cell = cells
+        .get(root.cell())
+        .map_err(|e| GatherPackageListingError::error(root, e))?;
+    Ok(matches!(
+        cell.external(),
+        Some(ExternalCellOrigin::Bzlmod(_)) | Some(ExternalCellOrigin::BzlmodGenerated(_))
+    ))
+}
+
+async fn gather_bzlmod_recursive_package_listing_fast(
+    ctx: &mut DiceComputations<'_>,
+    root: PackageLabel,
+    buildfile_candidates: &[FileNameBuf],
+) -> Result<PackageListing, GatherPackageListingError> {
+    let root_cell_path = root.as_cell_path();
+    let file_ops = get_delegated_file_ops(ctx, root_cell_path.cell(), CheckIgnores::Yes)
+        .await
+        .map_err(|e| GatherPackageListingError::error(root_cell_path, e))?;
+    let project_root = ctx.global_data().get_io_provider().project_root().dupe();
+    let cells = ctx
+        .get_cell_resolver()
+        .await
+        .map_err(|e| GatherPackageListingError::error(root_cell_path, e))?;
+    let root_project_path = cells
+        .get(root_cell_path.cell())
+        .map_err(|e| GatherPackageListingError::error(root_cell_path, e))?
+        .path()
+        .join(root_cell_path.path());
+    if matches!(
+        cells
+            .get(root_cell_path.cell())
+            .map_err(|e| GatherPackageListingError::error(root_cell_path, e))?
+            .external(),
+        Some(ExternalCellOrigin::BzlmodGenerated(_))
+    ) {
+        file_ops
+            .read_path_metadata_if_exists(ctx, CellRelativePath::empty())
+            .await
+            .map_err(|e| GatherPackageListingError::error(root_cell_path, e))?;
+    }
+    let root_cell_path = root_cell_path.to_owned();
+    let buildfile_candidates = buildfile_candidates.to_vec();
+
+    tokio::task::spawn_blocking(move || {
+        gather_bzlmod_recursive_package_listing_fast_blocking(
+            project_root,
+            root_project_path,
+            root_cell_path,
+            file_ops,
+            buildfile_candidates,
+        )
+    })
+    .await
+    .map_err(|e| GatherPackageListingError::error(root.as_cell_path(), e))?
+}
+
+fn gather_bzlmod_recursive_package_listing_fast_blocking(
+    project_root: ProjectRoot,
+    root_project_path: ProjectRelativePathBuf,
+    root_cell_path: CellPath,
+    file_ops: FileOpsDelegateWithIgnores,
+    buildfile_candidates: Vec<FileNameBuf>,
+) -> Result<PackageListing, GatherPackageListingError> {
+    let mut stack = vec![PackageRelativePathBuf::unchecked_new(String::new())];
+    let mut files = Vec::new();
+    let mut dirs = Vec::new();
+    let mut subpackages = Vec::new();
+    let mut buildfile = None;
+
+    while let Some(path) = stack.pop() {
+        let package_path = path.as_path();
+        let cell_path = root_cell_path.join(package_path.as_forward_rel_path());
+        let project_path = root_project_path.join(package_path.as_forward_rel_path());
+        let entries = read_raw_dir_entries_direct(&project_root, project_path.as_ref())
+            .map_err(|e| GatherPackageListingError::error(cell_path.as_ref(), e))?;
+        let entries = file_ops
+            .make_read_dir_output(cell_path.path(), entries)
+            .map_err(|e| GatherPackageListingError::error(cell_path.as_ref(), e))?
+            .included;
+        let buildfile_in_dir = find_buildfile(&buildfile_candidates, &entries);
+
+        match (package_path.is_empty(), buildfile_in_dir) {
+            (true, None) => {
+                return Err(GatherPackageListingError::no_build_file(
+                    cell_path.as_ref(),
+                    buildfile_candidates.to_vec(),
+                ));
+            }
+            (true, Some(buildfile_in_dir)) => {
+                buildfile = Some(buildfile_in_dir.to_owned());
+            }
+            (false, Some(_)) => {
+                subpackages.push(package_path.to_arc());
+                continue;
+            }
+            (false, None) => {
+                dirs.push(package_path.to_arc());
+            }
+        }
+
+        for entry in entries.iter().rev() {
+            let child_path = package_path.join(&entry.file_name);
+            if entry.file_type.is_dir() {
+                stack.push(child_path);
+            } else {
+                files.push(child_path.as_path().to_arc());
+            }
+        }
+    }
+
+    Ok(PackageListing::new(
+        SortedSet::from(SortedVec::from(files)),
+        SortedSet::from(SortedVec::from(dirs)),
+        SortedVec::from(subpackages),
+        buildfile.expect("root buildfile was checked above"),
+    ))
+}
+
+fn read_raw_dir_entries_direct(
+    project_root: &ProjectRoot,
+    project_path: &ProjectRelativePath,
+) -> buck2_error::Result<Arc<[RawDirEntry]>> {
+    let abs_path = project_root.resolve(project_path);
+    let dir_entries = fs_util::read_dir(&abs_path).categorize_input()?;
+    let mut entries = Vec::new();
+
+    for entry in dir_entries {
+        let entry = entry.buck_error_context("Error accessing directory entry")?;
+        let file_name = entry.file_name();
+        let file_name = file_name.to_str().ok_or_else(|| {
+            buck2_error::buck2_error!(
+                buck2_error::ErrorTag::Input,
+                "File name in `{}` is not valid UTF-8: {:?}",
+                abs_path,
+                file_name
+            )
+        })?;
+        let mut file_type: FileType = entry
+            .file_type()
+            .buck_error_context("Error reading directory entry type")?
+            .into();
+
+        if file_type.is_symlink() {
+            match fs_util::metadata(entry.path()) {
+                Ok(metadata) if metadata.is_dir() => {
+                    file_type = FileType::Directory;
+                }
+                Ok(_) => {}
+                Err(error)
+                    if matches!(
+                        error.io_error_kind(),
+                        Some(ErrorKind::NotFound | ErrorKind::NotADirectory)
+                    ) => {}
+                Err(error) => return Err(error.categorize_internal()),
+            }
+        }
+
+        entries.push(RawDirEntry {
+            file_name: CompactString::from(file_name),
+            file_type,
+        });
+    }
+
+    entries.sort_by(|a, b| a.file_name.cmp(&b.file_name));
+    Ok(Arc::from(entries))
 }
 
 async fn package_listing_strategy(

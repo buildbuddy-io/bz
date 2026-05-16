@@ -9,8 +9,12 @@
  */
 
 use std::fmt::Display;
+use std::io;
+use std::io::Write;
 
+use buck2_common::cas_digest::CasDigestConfig;
 use buck2_common::file_ops::metadata::FileDigest;
+use buck2_common::file_ops::metadata::TrackedFileDigest;
 use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
 use serde::Serialize;
 use serde::Serializer;
@@ -61,5 +65,33 @@ impl<'a> PathsWithDigestBuilder<'a> {
         Ok(PathsWithDigestBlobData(ActionMetadataBlobData::from_json(
             json_string,
         )))
+    }
+
+    pub fn build_digest(self, digest_config: CasDigestConfig) -> buck2_error::Result<TrackedFileDigest> {
+        let json = MetadataJson {
+            digests: self.paths,
+            // Increment this version if format changes
+            version: 1,
+        };
+        let mut writer = DigestWriter {
+            digester: FileDigest::digester(digest_config),
+        };
+        serde_json::to_writer(&mut writer, &json)?;
+        Ok(TrackedFileDigest::new(writer.digester.finalize(), digest_config))
+    }
+}
+
+struct DigestWriter {
+    digester: buck2_common::cas_digest::Digester<buck2_common::file_ops::metadata::FileDigestKind>,
+}
+
+impl Write for DigestWriter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.digester.update(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
     }
 }

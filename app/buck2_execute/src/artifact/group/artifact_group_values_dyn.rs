@@ -8,6 +8,7 @@
  * above-listed licenses.
  */
 
+use buck2_common::file_ops::metadata::TrackedFileDigest;
 use buck2_core::fs::artifact_path_resolver::ArtifactFs;
 
 use crate::artifact::artifact_dyn::ArtifactDyn;
@@ -18,6 +19,14 @@ use crate::directory::LazyActionDirectoryBuilder;
 /// This is like `ArtifactGroupValues`, but without dependency on `Artifact`.
 pub trait ArtifactGroupValuesDyn: Send + Sync + 'static {
     fn iter(&self) -> Box<dyn Iterator<Item = (&dyn ArtifactDyn, &ArtifactValue)> + '_>;
+
+    fn action_cache_fingerprint(&self) -> Option<&[u8]> {
+        None
+    }
+
+    fn directory_fingerprint_for_action_cache(&self) -> Option<(&TrackedFileDigest, u64)> {
+        None
+    }
 
     fn add_to_directory(
         &self,

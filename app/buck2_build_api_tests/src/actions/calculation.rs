@@ -133,6 +133,7 @@ fn registered_action(
         build_artifact.key().dupe(),
         action,
         CommandExecutorConfig::testing_local(),
+        None,
     );
     Arc::new(registered_action)
 }

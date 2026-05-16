@@ -379,6 +379,12 @@ pub struct RemoteWorkerSpec {
     pub concurrency: Option<usize>,
 }
 
+impl RemoteWorkerSpec {
+    pub fn inputs(&self) -> &[CommandExecutionInput] {
+        &self.input_paths.inputs
+    }
+}
+
 /// The data contains the information about the command to be executed.
 pub struct CommandExecutionRequest {
     /// Optional arguments including executable prepended to `args` to get full command line.

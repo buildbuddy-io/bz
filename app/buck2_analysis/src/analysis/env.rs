@@ -246,6 +246,7 @@ struct AnalysisEnv<'a> {
     query_results: StdBuckHashMap<String, Arc<AnalysisQueryResult>>,
     execution_platform: &'a ExecutionPlatformResolution,
     label: ConfiguredTargetLabel,
+    action_owner_rule_type_name: Arc<str>,
     cancellation: &'a CancellationContext,
 }
 
@@ -257,6 +258,7 @@ pub(crate) async fn run_analysis<'a>(
     execution_platform: &'a ExecutionPlatformResolution,
     rule_spec: &'a dyn RuleSpec,
     node: ConfiguredTargetNodeRef<'a>,
+    action_owner_rule_type_name: Arc<str>,
     cancellation: &'a CancellationContext,
 ) -> buck2_error::Result<(AnalysisResult, Option<AnalysisSplitInstants>)> {
     let analysis_env = AnalysisEnv {
@@ -265,6 +267,7 @@ pub(crate) async fn run_analysis<'a>(
         query_results,
         execution_platform,
         label: label.dupe(),
+        action_owner_rule_type_name,
         cancellation,
     };
     run_analysis_with_env(dice, analysis_env, node).await
@@ -1749,9 +1752,12 @@ async fn run_analysis_with_env_underlying(
             }
         }
 
-        let registry = AnalysisRegistry::new_from_owner(
-            BaseDeferredKey::TargetLabel(node.label().dupe()),
+        let registry = AnalysisRegistry::new_from_owner_and_deferred(
             analysis_env.execution_platform.dupe(),
+            buck2_core::deferred::key::DeferredHolderKey::Base(BaseDeferredKey::TargetLabel(
+                node.label().dupe(),
+            )),
+            Some(analysis_env.action_owner_rule_type_name.dupe()),
         )?;
 
         let eval_kind = StarlarkEvalKind::Analysis(node.label().dupe());
