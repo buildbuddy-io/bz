@@ -281,6 +281,10 @@ impl RunActionDepFiles {
             labels: OrderedMap::new(),
         }
     }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.labels.is_empty()
+    }
 }
 
 fn get_output_path_digest(

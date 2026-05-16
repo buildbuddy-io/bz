@@ -465,7 +465,7 @@ enum ExecuteResult {
     },
     ExecutedOrReHit {
         result: CommandExecutionResult,
-        dep_file_bundle: DepFileBundle,
+        dep_file_bundle: Option<DepFileBundle>,
         executor_preference: ExecutorPreference,
         action_and_blobs: ActionDigestAndBlobs,
         input_files_bytes: u64,
@@ -741,9 +741,9 @@ impl RunActionParamFilesRef {
         }
     }
 
-    fn files(&self) -> buck2_error::Result<Vec<RunActionParamFile>> {
+    fn files(&self, require_replay: bool) -> buck2_error::Result<Vec<RunActionParamFile>> {
         let state = self.0.borrow();
-        if state.replay_cursor != state.files.len() {
+        if require_replay && state.replay_cursor != state.files.len() {
             return Err(internal_error!(
                 "param-file replay consumed {} entries, but {} were recorded",
                 state.replay_cursor,
@@ -1504,7 +1504,7 @@ impl RunAction {
         artifact_visitor: &mut RunActionVisitor<'v>,
     ) -> buck2_error::Result<(
         ExpandedCommandLine,
-        ExpandedCommandLineDigestForDepFiles,
+        Option<ExpandedCommandLineDigestForDepFiles>,
         Option<WorkerSpec>,
         Option<RemoteWorkerSpec>,
         Vec<RunActionParamFile>,
@@ -1547,12 +1547,15 @@ impl RunAction {
             param_files.clone(),
             RunActionParamFileMode::Record,
         );
-        let mut cli_digest_ctx = RunActionCommandLineContext::new(
-            fs,
-            bazel_paths,
-            param_files.clone(),
-            RunActionParamFileMode::Replay,
-        );
+        let collect_dep_file_digest = !self.inner.dep_files.is_empty();
+        let mut cli_digest_ctx = collect_dep_file_digest.then(|| {
+            RunActionCommandLineContext::new(
+                fs,
+                bazel_paths,
+                param_files.clone(),
+                RunActionParamFileMode::Replay,
+            )
+        });
         let values = Self::unpack(&self.starlark_values)?;
         if bazel_paths {
             let mut output_visitor = BazelOutputExecPathVisitor::new(
@@ -1581,7 +1584,8 @@ impl RunAction {
             }
         }
 
-        let mut command_line_digest_for_dep_files = ExpandedCommandLineFingerprinter::new();
+        let mut command_line_digest_for_dep_files =
+            collect_dep_file_digest.then(ExpandedCommandLineFingerprinter::new);
 
         let mut exe_rendered = Vec::<String>::new();
 
@@ -1607,13 +1611,19 @@ impl RunAction {
         values
             .exe
             .add_to_command_line(&mut exe_rendered, &mut cli_ctx, &artifact_path_mapping)?;
-        values.exe.add_to_command_line(
-            &mut command_line_digest_for_dep_files,
-            &mut cli_digest_ctx,
-            &artifact_path_mapping_for_dep_files,
-        )?;
+        if let Some(command_line_digest_for_dep_files) =
+            &mut command_line_digest_for_dep_files
+        {
+            values.exe.add_to_command_line(
+                command_line_digest_for_dep_files,
+                cli_digest_ctx
+                    .as_mut()
+                    .expect("dep-file digest context must exist when digest is collected"),
+                &artifact_path_mapping_for_dep_files,
+            )?;
+            command_line_digest_for_dep_files.push_count();
+        }
         visit_run_action_command_line_artifacts(&self.outputs, values.exe, artifact_visitor)?;
-        command_line_digest_for_dep_files.push_count();
 
         let worker = if let Some(worker) = values.worker {
             let mut worker_rendered = Vec::<String>::new();
@@ -1623,11 +1633,17 @@ impl RunAction {
                 &mut cli_ctx,
                 &artifact_path_mapping,
             )?;
-            worker.exe.add_to_command_line(
-                &mut command_line_digest_for_dep_files,
-                &mut cli_digest_ctx,
-                &artifact_path_mapping_for_dep_files,
-            )?;
+            if let Some(command_line_digest_for_dep_files) =
+                &mut command_line_digest_for_dep_files
+            {
+                worker.exe.add_to_command_line(
+                    command_line_digest_for_dep_files,
+                    cli_digest_ctx
+                        .as_mut()
+                        .expect("dep-file digest context must exist when digest is collected"),
+                    &artifact_path_mapping_for_dep_files,
+                )?;
+            }
             visit_run_action_command_line_artifacts(
                 &self.outputs,
                 worker.exe,
@@ -1644,12 +1660,6 @@ impl RunAction {
                         param_files.clone(),
                         RunActionParamFileMode::Record,
                     );
-                    let mut digest_ctx = RunActionCommandLineContext::new(
-                        fs,
-                        bazel_paths,
-                        param_files.clone(),
-                        RunActionParamFileMode::Replay,
-                    );
                     v.add_to_command_line(
                         &mut SpaceSeparatedCommandLineBuilder::wrap_string(&mut env),
                         &mut ctx,
@@ -1661,13 +1671,23 @@ impl RunAction {
                         &mut local_worker_visitor,
                     )?;
 
-                    command_line_digest_for_dep_files.push_arg(k.to_owned());
-                    v.add_to_command_line(
-                        &mut command_line_digest_for_dep_files,
-                        &mut digest_ctx,
-                        &artifact_path_mapping_for_dep_files,
-                    )?;
-                    command_line_digest_for_dep_files.push_count();
+                    if let Some(command_line_digest_for_dep_files) =
+                        &mut command_line_digest_for_dep_files
+                    {
+                        let mut digest_ctx = RunActionCommandLineContext::new(
+                            fs,
+                            bazel_paths,
+                            param_files.clone(),
+                            RunActionParamFileMode::Replay,
+                        );
+                        command_line_digest_for_dep_files.push_arg(k.to_owned());
+                        v.add_to_command_line(
+                            command_line_digest_for_dep_files,
+                            &mut digest_ctx,
+                            &artifact_path_mapping_for_dep_files,
+                        )?;
+                        command_line_digest_for_dep_files.push_count();
+                    }
                     Ok((k.to_owned(), env))
                 })
                 .collect();
@@ -1748,11 +1768,17 @@ impl RunAction {
                 &mut cli_ctx,
                 &artifact_path_mapping,
             )?;
-            remote_worker.exe.add_to_command_line(
-                &mut command_line_digest_for_dep_files,
-                &mut cli_digest_ctx,
-                &artifact_path_mapping_for_dep_files,
-            )?;
+            if let Some(command_line_digest_for_dep_files) =
+                &mut command_line_digest_for_dep_files
+            {
+                remote_worker.exe.add_to_command_line(
+                    command_line_digest_for_dep_files,
+                    cli_digest_ctx
+                        .as_mut()
+                        .expect("dep-file digest context must exist when digest is collected"),
+                    &artifact_path_mapping_for_dep_files,
+                )?;
+            }
             visit_run_action_command_line_artifacts(
                 &self.outputs,
                 remote_worker.exe,
@@ -1770,12 +1796,6 @@ impl RunAction {
                         param_files.clone(),
                         RunActionParamFileMode::Record,
                     );
-                    let mut digest_ctx = RunActionCommandLineContext::new(
-                        fs,
-                        bazel_paths,
-                        param_files.clone(),
-                        RunActionParamFileMode::Replay,
-                    );
                     v.add_to_command_line(
                         &mut SpaceSeparatedCommandLineBuilder::wrap_string(&mut env),
                         &mut ctx,
@@ -1787,13 +1807,23 @@ impl RunAction {
                         &mut remote_worker_init_visitor,
                     )?;
 
-                    command_line_digest_for_dep_files.push_arg(k.to_owned());
-                    v.add_to_command_line(
-                        &mut command_line_digest_for_dep_files,
-                        &mut digest_ctx,
-                        &artifact_path_mapping_for_dep_files,
-                    )?;
-                    command_line_digest_for_dep_files.push_count();
+                    if let Some(command_line_digest_for_dep_files) =
+                        &mut command_line_digest_for_dep_files
+                    {
+                        let mut digest_ctx = RunActionCommandLineContext::new(
+                            fs,
+                            bazel_paths,
+                            param_files.clone(),
+                            RunActionParamFileMode::Replay,
+                        );
+                        command_line_digest_for_dep_files.push_arg(k.to_owned());
+                        v.add_to_command_line(
+                            command_line_digest_for_dep_files,
+                            &mut digest_ctx,
+                            &artifact_path_mapping_for_dep_files,
+                        )?;
+                        command_line_digest_for_dep_files.push_count();
+                    }
                     Ok((k.to_owned(), env))
                 })
                 .collect();
@@ -1833,13 +1863,19 @@ impl RunAction {
             &mut cli_ctx,
             &artifact_path_mapping,
         )?;
-        values.args.add_to_command_line(
-            &mut command_line_digest_for_dep_files,
-            &mut cli_digest_ctx,
-            &artifact_path_mapping_for_dep_files,
-        )?;
+        if let Some(command_line_digest_for_dep_files) =
+            &mut command_line_digest_for_dep_files
+        {
+            values.args.add_to_command_line(
+                command_line_digest_for_dep_files,
+                cli_digest_ctx
+                    .as_mut()
+                    .expect("dep-file digest context must exist when digest is collected"),
+                &artifact_path_mapping_for_dep_files,
+            )?;
+            command_line_digest_for_dep_files.push_count();
+        }
         visit_run_action_command_line_artifacts(&self.outputs, values.args, artifact_visitor)?;
-        command_line_digest_for_dep_files.push_count();
 
         if let Some(bazel_inputs) = values.bazel_inputs {
             visit_run_action_command_line_artifacts(&self.outputs, bazel_inputs, artifact_visitor)?;
@@ -1863,12 +1899,6 @@ impl RunAction {
                     param_files.clone(),
                     RunActionParamFileMode::Record,
                 );
-                let mut digest_ctx = RunActionCommandLineContext::new(
-                    fs,
-                    bazel_paths,
-                    param_files.clone(),
-                    RunActionParamFileMode::Replay,
-                );
                 v.add_to_command_line(
                     &mut SpaceSeparatedCommandLineBuilder::wrap_string(&mut env),
                     &mut ctx,
@@ -1876,19 +1906,31 @@ impl RunAction {
                 )?;
                 visit_run_action_command_line_artifacts(&self.outputs, v, artifact_visitor)?;
 
-                command_line_digest_for_dep_files.push_arg(k.to_owned());
-                v.add_to_command_line(
-                    &mut command_line_digest_for_dep_files,
-                    &mut digest_ctx,
-                    &artifact_path_mapping_for_dep_files,
-                )?;
-                command_line_digest_for_dep_files.push_count();
+                if let Some(command_line_digest_for_dep_files) =
+                    &mut command_line_digest_for_dep_files
+                {
+                    let mut digest_ctx = RunActionCommandLineContext::new(
+                        fs,
+                        bazel_paths,
+                        param_files.clone(),
+                        RunActionParamFileMode::Replay,
+                    );
+                    command_line_digest_for_dep_files.push_arg(k.to_owned());
+                    v.add_to_command_line(
+                        command_line_digest_for_dep_files,
+                        &mut digest_ctx,
+                        &artifact_path_mapping_for_dep_files,
+                    )?;
+                    command_line_digest_for_dep_files.push_count();
+                }
                 Ok((k.to_owned(), env))
             })
             .collect();
 
-        command_line_digest_for_dep_files.push_arg(env_len.to_string());
-        command_line_digest_for_dep_files.push_count();
+        if let Some(command_line_digest_for_dep_files) = &mut command_line_digest_for_dep_files {
+            command_line_digest_for_dep_files.push_arg(env_len.to_string());
+            command_line_digest_for_dep_files.push_count();
+        }
 
         let mut cli_env = cli_env?;
         let mut worker = worker;
@@ -1913,10 +1955,10 @@ impl RunAction {
                 args: args_rendered,
                 env: cli_env,
             },
-            command_line_digest_for_dep_files.finalize(),
+            command_line_digest_for_dep_files.map(|digest| digest.finalize()),
             worker,
             remote_worker,
-            param_files.files()?,
+            param_files.files(collect_dep_file_digest)?,
         ))
     }
 
@@ -2123,7 +2165,7 @@ impl RunAction {
         ctx: &mut dyn ActionExecutionCtx,
     ) -> buck2_error::Result<(
         UnpreparedRunAction,
-        ExpandedCommandLineDigestForDepFiles,
+        Option<ExpandedCommandLineDigestForDepFiles>,
         HostSharingRequirements,
     )> {
         let (
@@ -2649,20 +2691,29 @@ impl RunAction {
             ctx.run_action_knobs().action_paths_interner.as_ref(),
         )?;
 
-        let dep_file_bundle = make_dep_file_bundle(
-            ctx,
-            run_action_visitor.dep_files_visitor,
-            cmdline_digest_for_dep_files,
-            &prepared_run_action.paths,
-            prepared_run_action.worker.as_ref().map(|w| &w.input_paths),
-        )?;
+        let dep_file_bundle = cmdline_digest_for_dep_files
+            .map(|cmdline_digest_for_dep_files| {
+                make_dep_file_bundle(
+                    ctx,
+                    run_action_visitor.dep_files_visitor,
+                    cmdline_digest_for_dep_files,
+                    &prepared_run_action.paths,
+                    prepared_run_action.worker.as_ref().map(|w| &w.input_paths),
+                )
+            })
+            .transpose()?;
 
         // First, check in the local dep file cache if an identical action can be found there.
         // Do this before checking the action cache as we can avoid a potentially large download.
         // Once the action cache lookup misses, we will do the full dep file cache look up.
-        let (outputs, should_fully_check_dep_file_cache) = dep_file_bundle
-            .check_local_dep_file_cache_for_identical_action(ctx, self.outputs.as_slice())
-            .await?;
+        let (outputs, should_fully_check_dep_file_cache) =
+            if let Some(dep_file_bundle) = dep_file_bundle.as_ref() {
+                dep_file_bundle
+                    .check_local_dep_file_cache_for_identical_action(ctx, self.outputs.as_slice())
+                    .await?
+            } else {
+                (None, false)
+            };
         if let Some((outputs, metadata)) = outputs {
             return Ok(ExecuteResult::LocalDepFileHit(outputs, metadata));
         }
@@ -2681,19 +2732,26 @@ impl RunAction {
                 // If we didn't find anything in the action cache, first do a local dep file cache lookup, and if that fails,
                 // try to find a remote dep file cache hit.
                 if should_fully_check_dep_file_cache {
-                    let lookup = dep_file_bundle
-                        .check_local_dep_file_cache(ctx, self.outputs.as_slice())
-                        .await?;
-                    if let Some((outputs, metadata)) = lookup {
-                        return Ok(ExecuteResult::LocalDepFileHit(outputs, metadata));
+                    if let Some(dep_file_bundle) = dep_file_bundle.as_ref() {
+                        let lookup = dep_file_bundle
+                            .check_local_dep_file_cache(ctx, self.outputs.as_slice())
+                            .await?;
+                        if let Some((outputs, metadata)) = lookup {
+                            return Ok(ExecuteResult::LocalDepFileHit(outputs, metadata));
+                        }
                     }
                 }
 
-                let supports_remote_dep_files =
-                    self.inner.allow_dep_file_cache_upload && dep_file_bundle.has_dep_files();
+                let supports_remote_dep_files = self.inner.allow_dep_file_cache_upload
+                    && dep_file_bundle
+                        .as_ref()
+                        .is_some_and(DepFileBundle::has_dep_files);
 
                 // Enable remote dep file cache lookup for actions that have remote depfile uploads enabled.
                 if supports_remote_dep_files {
+                    let dep_file_bundle = dep_file_bundle
+                        .as_ref()
+                        .expect("remote dep-file cache requires a dep-file bundle");
                     let remote_dep_file_key = dep_file_bundle
                         .remote_dep_file_action(
                             ctx.digest_config(),
@@ -2715,7 +2773,7 @@ impl RunAction {
                                 &req,
                                 &prepared_action.action_and_blobs.action,
                                 res,
-                                &dep_file_bundle,
+                                dep_file_bundle,
                                 &remote_dep_file_key,
                             )
                             .await?;
@@ -3329,8 +3387,10 @@ impl Action for RunAction {
             ),
         };
 
-        let supports_remote_dep_files =
-            self.inner.allow_dep_file_cache_upload && dep_file_bundle.has_dep_files();
+        let supports_remote_dep_files = self.inner.allow_dep_file_cache_upload
+            && dep_file_bundle
+                .as_ref()
+                .is_some_and(DepFileBundle::has_dep_files);
 
         // If there is a dep file entry AND if dep file cache upload is enabled, upload it
         if result.was_success()
@@ -3345,7 +3405,9 @@ impl Action for RunAction {
                     re_result,
                     // match needed for coercion, https://github.com/rust-lang/rust/issues/108999
                     if supports_remote_dep_files {
-                        Some(&mut dep_file_bundle)
+                        dep_file_bundle
+                            .as_mut()
+                            .map(|dep_file_bundle| dep_file_bundle as &mut dyn IntoRemoteDepFile)
                     } else {
                         None
                     },
@@ -3385,7 +3447,9 @@ impl Action for RunAction {
             }
         }
 
-        populate_dep_files(ctx, dep_file_bundle, &outputs, was_locally_executed).await?;
+        if let Some(dep_file_bundle) = dep_file_bundle {
+            populate_dep_files(ctx, dep_file_bundle, &outputs, was_locally_executed).await?;
+        }
 
         Ok((outputs, metadata))
     }
