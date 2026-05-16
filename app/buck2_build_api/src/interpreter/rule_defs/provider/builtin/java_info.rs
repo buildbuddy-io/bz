@@ -143,8 +143,9 @@ where
 
     fn get_attr(&self, attribute: &str, _heap: Heap<'v>) -> Option<Value<'v>> {
         self.values
-            .iter()
-            .find_map(|(name, value)| (name == attribute).then(|| value.to_value()))
+            .binary_search_by(|(name, _)| name.as_str().cmp(attribute))
+            .ok()
+            .map(|index| self.values[index].1.to_value())
     }
 
     fn provide(&'v self, demand: &mut Demand<'_, 'v>) {
