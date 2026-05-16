@@ -625,6 +625,12 @@ struct RunActionParamFile {
     bazel_exec_path: Option<String>,
 }
 
+struct PendingActionMetadataWrite {
+    path: BuildArtifactPath,
+    content_hash: ContentBasedPathHash,
+    content: Vec<u8>,
+}
+
 struct RunActionParamFiles {
     owner: DeferredHolderKey,
     base_path: ForwardRelativePathBuf,
@@ -2185,17 +2191,25 @@ impl RunAction {
         )?;
 
         let mut extra_env = Vec::new();
+        let mut pending_action_metadata_writes = Vec::new();
         let cli_ctx = DefaultCommandLineContext::new(&executor_fs);
         self.prepare_param_files(
-            ctx,
             fs,
             &param_files,
             &mut inputs,
             bazel_execroot.as_deref(),
+            &mut pending_action_metadata_writes,
+        )?;
+        self.prepare_action_metadata(
+            ctx,
+            &cli_ctx,
+            fs,
+            visitor,
+            &mut inputs,
+            &mut extra_env,
+            &mut pending_action_metadata_writes,
         )
         .await?;
-        self.prepare_action_metadata(ctx, &cli_ctx, fs, visitor, &mut inputs, &mut extra_env)
-            .await?;
 
         let mut shared_content_based_paths = Vec::new();
         self.prepare_scratch_path(
@@ -2276,40 +2290,30 @@ impl RunAction {
                 worker,
                 remote_worker,
                 local_action_cache_key,
+                pending_action_metadata_writes,
             },
             expanded_command_line_digest_for_dep_files,
             host_sharing_requirements,
         ))
     }
 
-    async fn prepare_param_files(
+    fn prepare_param_files(
         &self,
-        ctx: &dyn ActionExecutionCtx,
         fs: &ArtifactFs,
         param_files: &[RunActionParamFile],
         inputs: &mut Vec<CommandExecutionInput>,
         bazel_execroot: Option<&ProjectRelativePath>,
+        pending_action_metadata_writes: &mut Vec<PendingActionMetadataWrite>,
     ) -> buck2_error::Result<()> {
         for param_file in param_files {
             let project_rel_path = fs
                 .buck_out_path_resolver()
                 .resolve_gen(&param_file.path, Some(&param_file.content_hash))?;
-            let configuration_path = ctx
-                .materializer()
-                .maybe_eager_configuration_path(fs, &param_file.path)?;
-            let content = param_file.content.clone();
-            let write_path = project_rel_path.clone();
-            ctx.materializer()
-                .declare_write(Box::new(move || {
-                    Ok(vec![WriteRequest {
-                        path: write_path,
-                        content,
-                        is_executable: false,
-                        configuration_path,
-                    }])
-                }))
-                .await
-                .buck_error_context("Failed to write action param file!")?;
+            pending_action_metadata_writes.push(PendingActionMetadataWrite {
+                path: param_file.path.dupe(),
+                content_hash: param_file.content_hash.clone(),
+                content: param_file.content.clone(),
+            });
 
             inputs.push(CommandExecutionInput::ActionMetadata(ActionMetadataBlob {
                 digest: param_file.digest.dupe(),
@@ -2346,6 +2350,7 @@ impl RunAction {
         visitor: &mut RunActionVisitor<'_>,
         inputs: &mut Vec<CommandExecutionInput>,
         extra_env: &mut Vec<(String, String)>,
+        pending_action_metadata_writes: &mut Vec<PendingActionMetadataWrite>,
     ) -> buck2_error::Result<()> {
         if let Some(metadata_param) = &self.inner.metadata_param {
             let path = BuildArtifactPath::new(
@@ -2368,22 +2373,11 @@ impl RunAction {
             let project_rel_path = fs
                 .buck_out_path_resolver()
                 .resolve_gen(&path, Some(&content_hash))?;
-
-            let configuration_path = ctx
-                .materializer()
-                .maybe_eager_configuration_path(fs, &path)?;
-
-            ctx.materializer()
-                .declare_write(Box::new(|| {
-                    Ok(vec![WriteRequest {
-                        path: project_rel_path.clone(),
-                        content: data.0.0,
-                        is_executable: false,
-                        configuration_path,
-                    }])
-                }))
-                .await
-                .buck_error_context("Failed to write action metadata!")?;
+            pending_action_metadata_writes.push(PendingActionMetadataWrite {
+                path: path.dupe(),
+                content_hash: content_hash.clone(),
+                content: data.0.0,
+            });
 
             inputs.push(CommandExecutionInput::ActionMetadata(ActionMetadataBlob {
                 digest,
@@ -2645,6 +2639,10 @@ impl RunAction {
             manager
         };
 
+        unprepared_run_action
+            .declare_action_metadata_writes(ctx)
+            .await?;
+
         let prepared_run_action = unprepared_run_action.into_prepared(
             ctx.fs(),
             ctx.digest_config(),
@@ -2896,9 +2894,38 @@ pub(crate) struct UnpreparedRunAction {
     worker: Option<WorkerSpec>,
     remote_worker: Option<RemoteWorkerSpec>,
     local_action_cache_key: Option<LocalActionCacheKey>,
+    pending_action_metadata_writes: Vec<PendingActionMetadataWrite>,
 }
 
 impl UnpreparedRunAction {
+    async fn declare_action_metadata_writes(
+        &self,
+        ctx: &dyn ActionExecutionCtx,
+    ) -> buck2_error::Result<()> {
+        let fs = ctx.fs();
+        for write in &self.pending_action_metadata_writes {
+            let path = fs
+                .buck_out_path_resolver()
+                .resolve_gen(&write.path, Some(&write.content_hash))?;
+            let content = write.content.clone();
+            let configuration_path = ctx
+                .materializer()
+                .maybe_eager_configuration_path(fs, &write.path)?;
+            ctx.materializer()
+                .declare_write(Box::new(move || {
+                    Ok(vec![WriteRequest {
+                        path,
+                        content,
+                        is_executable: false,
+                        configuration_path,
+                    }])
+                }))
+                .await
+                .buck_error_context("Failed to write action metadata!")?;
+        }
+        Ok(())
+    }
+
     fn into_prepared(
         self,
         fs: &ArtifactFs,
@@ -2913,6 +2940,7 @@ impl UnpreparedRunAction {
             worker,
             remote_worker,
             local_action_cache_key,
+            pending_action_metadata_writes: _,
         } = self;
         let paths = CommandExecutionPaths::new(inputs, outputs, fs, digest_config, interner)?;
         Ok(PreparedRunAction {
