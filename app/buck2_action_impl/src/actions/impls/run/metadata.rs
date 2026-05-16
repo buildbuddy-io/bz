@@ -29,7 +29,7 @@ pub(crate) fn metadata_content(
 
     let mut builder = LazyActionDirectoryBuilder::empty();
     for &group in inputs {
-        group.add_to_directory(&mut builder, fs)?;
+        group.add_to_directory_for_execution(&mut builder, fs, digest_config)?;
     }
     let builder = builder.finalize()?;
 
@@ -38,6 +38,11 @@ pub(crate) fn metadata_content(
         match item {
             ActionDirectoryMember::File(metadata) => {
                 blob_builder.add(path.get(), metadata.digest.data());
+            }
+            ActionDirectoryMember::SourceFile(_) => {
+                return Err(buck2_error::internal_error!(
+                    "source file proxy must be resolved before action metadata"
+                ));
             }
             // Omit symlinks and let user script detect and handle symlinks in inputs.
             // Metadata will contain artifacts which are symlinked, meaning the user

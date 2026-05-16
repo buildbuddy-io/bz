@@ -43,6 +43,16 @@ impl ArtifactGroupValues {
         artifact_fs: &ArtifactFs,
         digest_config: DigestConfig,
     ) -> buck2_error::Result<Self> {
+        if values.iter().any(|(_, value)| value.has_source_file_proxy())
+            || children.iter().any(|child| child.0.directory.is_none())
+        {
+            return Ok(Self(Arc::new(ArtifactGroupValuesData {
+                values,
+                children,
+                directory: None,
+            })));
+        }
+
         let mut builder = LazyActionDirectoryBuilder::empty();
 
         for (artifact, value) in values.iter() {
@@ -114,6 +124,35 @@ impl ArtifactGroupValues {
                 .as_ref(),
             )?;
             insert_artifact_lazy(builder, projrel_path, value)?;
+        }
+
+        Ok(())
+    }
+
+    pub fn add_to_directory_for_execution(
+        &self,
+        builder: &mut LazyActionDirectoryBuilder,
+        artifact_fs: &ArtifactFs,
+        digest_config: DigestConfig,
+    ) -> buck2_error::Result<()> {
+        if let Some(d) = self.0.directory.as_ref() {
+            builder.merge(d.dupe())?;
+            return Ok(());
+        }
+
+        for (artifact, value) in self.iter() {
+            let projrel_path = artifact.resolve_path(
+                artifact_fs,
+                if artifact.path_resolution_requires_artifact_value() {
+                    Some(value.content_based_path_hash())
+                } else {
+                    None
+                }
+                .as_ref(),
+            )?;
+            let abs_path = artifact_fs.fs().resolve(&projrel_path);
+            let value = value.resolve_source_file_proxy(abs_path.as_abs_path(), digest_config)?;
+            insert_artifact_lazy(builder, projrel_path, &value)?;
         }
 
         Ok(())
@@ -277,6 +316,15 @@ impl ArtifactGroupValuesDyn for ArtifactGroupValues {
         artifact_fs: &ArtifactFs,
     ) -> buck2_error::Result<()> {
         self.add_to_directory(builder, artifact_fs)
+    }
+
+    fn add_to_directory_for_execution(
+        &self,
+        builder: &mut LazyActionDirectoryBuilder,
+        artifact_fs: &ArtifactFs,
+        digest_config: DigestConfig,
+    ) -> buck2_error::Result<()> {
+        self.add_to_directory_for_execution(builder, artifact_fs, digest_config)
     }
 }
 

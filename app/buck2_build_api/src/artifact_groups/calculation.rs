@@ -21,8 +21,11 @@ use buck2_artifact::artifact::build_artifact::BuildArtifact;
 use buck2_artifact::artifact::source_artifact::SourceArtifact;
 use buck2_common::dice::cells::HasCellResolver;
 use buck2_common::file_ops::dice::DiceFileComputations;
+use buck2_common::file_ops::metadata::FileChangeMetadata;
 use buck2_common::file_ops::metadata::RawPathMetadata;
+use buck2_common::file_ops::metadata::RawPathMetadataForNoWatchFs;
 use buck2_common::file_ops::metadata::RawSymlink;
+use buck2_common::file_ops::metadata::SourceFileMetadata;
 use buck2_common::legacy_configs::dice::HasLegacyConfigs;
 use buck2_common::legacy_configs::key::BuckconfigKeyRef;
 use buck2_common::package_listing::dice::DicePackageListingResolver;
@@ -323,7 +326,7 @@ async fn dir_artifact_value(
                         // TODO(scottcao): This current creates a `DirArtifactValueKey` for each subdir of a source directory.
                         // Instead, this should be 1 key for the entire top-level directory since there's almost
                         // no chance of getting cache hit with a sub-directory.
-                        let value = path_artifact_value(
+                        let value = path_artifact_value_digest(
                             ctx,
                             Arc::new(self.0.as_ref().join(&x.file_name)),
                             None,
@@ -401,6 +404,53 @@ async fn path_artifact_value(
     cell_path: Arc<CellPath>,
     label: Option<PackageLabel>,
 ) -> buck2_error::Result<ArtifactValue> {
+    let raw = match DiceFileComputations::read_path_metadata_for_no_watchfs(
+        ctx,
+        cell_path.as_ref().as_ref(),
+    )
+    .await
+    {
+        Ok(raw) => Ok(raw),
+        Err(e) => {
+            if let Some(label) = label.dupe() {
+                if let Ok(listing) = DicePackageListingResolver(ctx)
+                    .resolve_package_listing(label.dupe())
+                    .await
+                {
+                    return Err(e.with_package_context_information(
+                        BuildFilePath::new(label, listing.buildfile().to_owned())
+                            .path()
+                            .path()
+                            .to_string(),
+                    ));
+                }
+            }
+
+            Err(e.without_package_context_information())
+        }
+    }?;
+
+    match raw {
+        RawPathMetadataForNoWatchFs::File(FileChangeMetadata::Digest(metadata)) => {
+            Ok(ArtifactValue::file(metadata))
+        }
+        RawPathMetadataForNoWatchFs::File(FileChangeMetadata::ContentsProxy(contents_proxy)) => {
+            Ok(ArtifactValue::source_file(SourceFileMetadata::new(
+                contents_proxy,
+            )))
+        }
+        RawPathMetadataForNoWatchFs::Directory | RawPathMetadataForNoWatchFs::Symlink { .. } => {
+            path_artifact_value_digest(ctx, cell_path, label).await
+        }
+    }
+}
+
+#[async_recursion]
+async fn path_artifact_value_digest(
+    ctx: &mut DiceComputations<'_>,
+    cell_path: Arc<CellPath>,
+    label: Option<PackageLabel>,
+) -> buck2_error::Result<ArtifactValue> {
     let raw = match DiceFileComputations::read_path_metadata(ctx, cell_path.as_ref().as_ref()).await
     {
         Ok(raw) => Ok(raw),
@@ -442,7 +492,8 @@ async fn path_artifact_value(
             to: RawSymlink::Relative(target, target_rel),
         } => {
             // TODO (T126181780): This should have a limit on recursion.
-            let target_artifact_value = path_artifact_value(ctx, target.dupe(), label).await?;
+            let target_artifact_value =
+                path_artifact_value_digest(ctx, target.dupe(), label).await?;
             let root_cell = ctx.get_cell_resolver().await?.root_cell();
             let use_correct_source_symlink_reading = ctx
                 .parse_legacy_config_property(

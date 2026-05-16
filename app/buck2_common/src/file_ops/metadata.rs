@@ -384,6 +384,25 @@ impl FileContentsProxy {
 }
 
 #[derive(Debug, Dupe, Hash, PartialEq, Eq, Clone, Allocative, Pagable)]
+pub struct SourceFileMetadata {
+    pub contents_proxy: Arc<FileContentsProxy>,
+}
+
+impl SourceFileMetadata {
+    pub fn new(contents_proxy: FileContentsProxy) -> Self {
+        Self {
+            contents_proxy: Arc::new(contents_proxy),
+        }
+    }
+}
+
+impl std::fmt::Display for SourceFileMetadata {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "SourceFile({:?})", self.contents_proxy)
+    }
+}
+
+#[derive(Debug, Dupe, Hash, PartialEq, Eq, Clone, Allocative, Pagable)]
 pub enum FileChangeMetadata {
     Digest(FileMetadata),
     ContentsProxy(FileContentsProxy),

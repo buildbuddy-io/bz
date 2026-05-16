@@ -144,6 +144,29 @@ impl DiceFileComputations {
         ctx.compute(&PathMetadataKey(path.to_owned())).await?
     }
 
+    /// Does not check if the path is ignored.
+    ///
+    /// This returns Bazel-style file-change metadata for files when fast
+    /// digests are unavailable, so callers can check for changes without
+    /// hashing file contents.
+    pub async fn read_path_metadata_for_no_watchfs_if_exists(
+        ctx: &mut DiceComputations<'_>,
+        path: CellPathRef<'_>,
+    ) -> buck2_error::Result<Option<RawPathMetadataForNoWatchFs>> {
+        ctx.compute(&PathMetadataForNoWatchFsKey(path.to_owned()))
+            .await?
+    }
+
+    pub async fn read_path_metadata_for_no_watchfs(
+        ctx: &mut DiceComputations<'_>,
+        path: CellPathRef<'_>,
+    ) -> Result<RawPathMetadataForNoWatchFs, FileReadError> {
+        match Self::read_path_metadata_for_no_watchfs_if_exists(ctx, path).await {
+            Ok(result) => result.ok_or_else(|| FileReadError::NotFound(path.to_string())),
+            Err(e) => Err(FileReadError::Buck(e)),
+        }
+    }
+
     /// Does not check if the path is ignored
     pub async fn read_path_metadata(
         ctx: &mut DiceComputations<'_>,

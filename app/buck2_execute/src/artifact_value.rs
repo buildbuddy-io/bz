@@ -17,10 +17,13 @@ use buck2_common::cas_digest::DataDigester;
 use buck2_common::cas_digest::DigestAlgorithmFamily;
 use buck2_common::external_symlink::ExternalSymlink;
 use buck2_common::file_ops::metadata::FileDigest;
+use buck2_common::file_ops::metadata::FileDigestConfig;
 use buck2_common::file_ops::metadata::FileMetadata;
+use buck2_common::file_ops::metadata::SourceFileMetadata;
 use buck2_common::file_ops::metadata::Symlink;
 use buck2_core::content_hash::ContentBasedPathHash;
 use buck2_directory::directory::entry::DirectoryEntry;
+use buck2_fs::paths::abs_path::AbsPath;
 use buck2_fs::paths::RelativePathBuf;
 use buck2_fs::paths::file_name::FileNameBuf;
 use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
@@ -95,6 +98,14 @@ impl ArtifactValue {
         }
     }
 
+    pub fn source_file(meta: SourceFileMetadata) -> Self {
+        Self {
+            entry: ActionDirectoryEntry::Leaf(ActionDirectoryMember::SourceFile(meta)),
+            deps: None,
+            content_based_path_hash: UnderlyingContentBasedPathHash::Inferred,
+        }
+    }
+
     pub fn dir(dir: ActionSharedDirectory) -> Self {
         Self {
             entry: ActionDirectoryEntry::Dir(dir),
@@ -114,6 +125,35 @@ impl ArtifactValue {
                 ActionDirectoryMember::Symlink(_) | ActionDirectoryMember::ExternalSymlink(_)
             )
         )
+    }
+
+    pub fn has_source_file_proxy(&self) -> bool {
+        matches!(
+            self.entry,
+            ActionDirectoryEntry::Leaf(ActionDirectoryMember::SourceFile(_))
+        )
+    }
+
+    pub fn resolve_source_file_proxy(
+        &self,
+        path: &AbsPath,
+        digest_config: DigestConfig,
+    ) -> buck2_error::Result<Self> {
+        let ActionDirectoryEntry::Leaf(ActionDirectoryMember::SourceFile(source)) = &self.entry
+        else {
+            return Ok(self.dupe());
+        };
+
+        let file_digest_config = FileDigestConfig::source(digest_config.cas_digest_config());
+        let digest = FileDigest::from_file(path, file_digest_config)?;
+        let digest = buck2_common::file_ops::metadata::TrackedFileDigest::new(
+            digest,
+            file_digest_config.as_cas_digest_config(),
+        );
+        Ok(Self::file(FileMetadata {
+            digest,
+            is_executable: source.contents_proxy.is_executable,
+        }))
     }
 
     pub fn external_symlink(symlink: Arc<ExternalSymlink>) -> Self {
@@ -136,6 +176,7 @@ impl ArtifactValue {
         match &self.entry {
             ActionDirectoryEntry::Dir(d) => Some(d.fingerprint().data()),
             ActionDirectoryEntry::Leaf(ActionDirectoryMember::File(f)) => Some(f.digest.data()),
+            ActionDirectoryEntry::Leaf(ActionDirectoryMember::SourceFile(..)) => None,
             ActionDirectoryEntry::Leaf(ActionDirectoryMember::Symlink(..)) => None,
             ActionDirectoryEntry::Leaf(ActionDirectoryMember::ExternalSymlink(..)) => None,
         }
@@ -172,6 +213,11 @@ impl ArtifactValue {
             }
             ActionDirectoryEntry::Leaf(ActionDirectoryMember::File(f)) => {
                 ContentBasedPathHash::new(f.digest.data().raw_digest().as_bytes())
+            }
+            ActionDirectoryEntry::Leaf(ActionDirectoryMember::SourceFile(f)) => {
+                let mut hasher = Blake3StrongHasher::new();
+                f.hash(&mut hasher);
+                ContentBasedPathHash::new(hasher.finalize().as_bytes())
             }
             ActionDirectoryEntry::Leaf(ActionDirectoryMember::Symlink(s)) => {
                 let mut hasher = Blake3StrongHasher::new();
@@ -315,6 +361,12 @@ fn write_action_cache_directory_member(
             bytes.push(LOCAL_ACTION_CACHE_ENTRY_FILE);
             write_action_cache_digest(bytes, &file.digest)?;
             write_action_cache_bool(bytes, file.is_executable);
+        }
+        ActionDirectoryMember::SourceFile(_) => {
+            return Err(buck2_error::buck2_error!(
+                buck2_error::ErrorTag::Tier0,
+                "source file proxy cannot be stored as a local action cache output value"
+            ));
         }
         ActionDirectoryMember::Symlink(symlink) => {
             bytes.push(LOCAL_ACTION_CACHE_ENTRY_SYMLINK);
@@ -569,6 +621,21 @@ fn entry_action_cache_fingerprint(
             )
             .expect("writing to a string cannot fail");
         }
+        DirectoryEntry::Leaf(ActionDirectoryMember::SourceFile(file)) => {
+            let proxy = &file.contents_proxy;
+            write!(
+                &mut fingerprint,
+                "source_file:{}:{}:{}:{}:{}:{}:{}",
+                proxy.size,
+                proxy.modified_secs,
+                proxy.modified_nanos,
+                proxy.changed_secs,
+                proxy.changed_nanos,
+                proxy.node_id,
+                proxy.is_executable
+            )
+            .expect("writing to a string cannot fail");
+        }
         DirectoryEntry::Leaf(ActionDirectoryMember::Symlink(symlink)) => {
             write!(&mut fingerprint, "symlink:{}", symlink.target())
                 .expect("writing to a string cannot fail");
@@ -633,6 +700,17 @@ fn action_cache_hash_entry(
             action_cache_add_str(fingerprint, "file");
             action_cache_add_file_digest(fingerprint, file.digest.data());
             action_cache_add_bool(fingerprint, file.is_executable);
+        }
+        DirectoryEntry::Leaf(ActionDirectoryMember::SourceFile(file)) => {
+            let proxy = &file.contents_proxy;
+            action_cache_add_str(fingerprint, "source_file");
+            action_cache_add_u64(fingerprint, proxy.size);
+            fingerprint.update(&proxy.modified_secs.to_le_bytes());
+            fingerprint.update(&proxy.modified_nanos.to_le_bytes());
+            fingerprint.update(&proxy.changed_secs.to_le_bytes());
+            fingerprint.update(&proxy.changed_nanos.to_le_bytes());
+            action_cache_add_u64(fingerprint, proxy.node_id);
+            action_cache_add_bool(fingerprint, proxy.is_executable);
         }
         DirectoryEntry::Leaf(ActionDirectoryMember::Symlink(symlink)) => {
             action_cache_add_str(fingerprint, "symlink");

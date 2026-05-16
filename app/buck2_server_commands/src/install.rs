@@ -582,6 +582,11 @@ impl<'a> ConnectedInstaller<'a> {
             DirectoryEntry::Leaf(ActionDirectoryMember::File(file)) => {
                 Data::Digest(file.digest.data())
             }
+            DirectoryEntry::Leaf(ActionDirectoryMember::SourceFile(_)) => {
+                return Err(buck2_error::internal_error!(
+                    "source file proxy must be resolved before install"
+                ));
+            }
             DirectoryEntry::Leaf(ActionDirectoryMember::Symlink(symlink)) => {
                 // todo(@lebentle) Use for now to unblock exopackage,
                 // but should follow symlink and validate the target exists and send that

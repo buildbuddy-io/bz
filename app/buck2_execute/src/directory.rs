@@ -20,6 +20,7 @@ use buck2_common::cas_digest::DigestAlgorithm;
 use buck2_common::external_symlink::ExternalSymlink;
 use buck2_common::file_ops::metadata::FileDigest;
 use buck2_common::file_ops::metadata::FileMetadata;
+use buck2_common::file_ops::metadata::SourceFileMetadata;
 use buck2_common::file_ops::metadata::Symlink;
 use buck2_common::file_ops::metadata::TrackedFileDigest;
 use buck2_core::fs::project_rel_path::ProjectRelativePath;
@@ -73,6 +74,7 @@ pub static INTERNER: Lazy<DashMapDirectoryInterner<ActionDirectoryMember, Tracke
 #[derive(Clone, Debug, Dupe, PartialEq, Eq, Display, Allocative, Pagable)]
 pub enum ActionDirectoryMember {
     File(FileMetadata),
+    SourceFile(SourceFileMetadata),
     Symlink(Arc<Symlink>),
     ExternalSymlink(Arc<ExternalSymlink>),
 }
@@ -81,6 +83,7 @@ impl ActionDirectoryMember {
     pub fn size(&self) -> u64 {
         match self {
             ActionDirectoryMember::File(f) => f.digest.size(),
+            ActionDirectoryMember::SourceFile(f) => f.contents_proxy.size,
             ActionDirectoryMember::Symlink(_) => 0,
             ActionDirectoryMember::ExternalSymlink(_) => 0,
         }
@@ -148,6 +151,9 @@ impl ReDirectorySerializer {
                         is_executable: f.is_executable,
                         ..Default::default()
                     });
+                }
+                DirectoryEntry::Leaf(ActionDirectoryMember::SourceFile(_)) => {
+                    panic!("source file proxy must be resolved before directory serialization")
                 }
                 // OSS vs internal divergence.
                 #[allow(clippy::needless_update)]

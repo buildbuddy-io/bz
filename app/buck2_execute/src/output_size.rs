@@ -45,6 +45,10 @@ where
                     bytes += f.digest.size();
                     count += 1;
                 }
+                DirectoryEntry::Leaf(ActionDirectoryMember::SourceFile(f)) => {
+                    bytes += f.contents_proxy.size;
+                    count += 1;
+                }
                 DirectoryEntry::Leaf(ActionDirectoryMember::Symlink(s)) if include_symlinks => {
                     bytes += s.target().as_str().len() as u64;
                     count += 1;

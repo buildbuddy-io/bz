@@ -111,7 +111,9 @@ fn convert_directory_entry(
 ) -> Option<RemoteObject> {
     match entry {
         ActionDirectoryEntry::Leaf(
-            ActionDirectoryMember::Symlink(..) | ActionDirectoryMember::ExternalSymlink(..),
+            ActionDirectoryMember::SourceFile(_)
+            | ActionDirectoryMember::Symlink(..)
+            | ActionDirectoryMember::ExternalSymlink(..),
         ) => None,
         ActionDirectoryEntry::Leaf(ActionDirectoryMember::File(f)) => {
             Some(RemoteObject::file(name, convert_digest(f.digest.data())))

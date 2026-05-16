@@ -234,6 +234,9 @@ fn convert_action_directory_member_to_sqlite_entry<'a>(
                 parent_path,
             }
         }
+        ActionDirectoryMember::SourceFile(_) => {
+            panic!("source file proxy must be resolved before materializer state serialization")
+        }
         ActionDirectoryMember::Symlink(symlink) => SqliteEntry {
             path,
             artifact_type: ArtifactType::Symlink,

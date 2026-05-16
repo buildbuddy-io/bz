@@ -12,6 +12,7 @@ use buck2_core::fs::artifact_path_resolver::ArtifactFs;
 
 use crate::artifact::artifact_dyn::ArtifactDyn;
 use crate::artifact_value::ArtifactValue;
+use crate::digest_config::DigestConfig;
 use crate::directory::LazyActionDirectoryBuilder;
 
 /// This is like `ArtifactGroupValues`, but without dependency on `Artifact`.
@@ -23,4 +24,14 @@ pub trait ArtifactGroupValuesDyn: Send + Sync + 'static {
         builder: &mut LazyActionDirectoryBuilder,
         artifact_fs: &ArtifactFs,
     ) -> buck2_error::Result<()>;
+
+    fn add_to_directory_for_execution(
+        &self,
+        builder: &mut LazyActionDirectoryBuilder,
+        artifact_fs: &ArtifactFs,
+        digest_config: DigestConfig,
+    ) -> buck2_error::Result<()> {
+        let _ = digest_config;
+        self.add_to_directory(builder, artifact_fs)
+    }
 }
