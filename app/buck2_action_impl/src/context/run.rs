@@ -33,6 +33,7 @@ use buck2_build_api::interpreter::rule_defs::context::AnalysisActions;
 use buck2_build_api::interpreter::rule_defs::depset::BazelDepset;
 use buck2_build_api::interpreter::rule_defs::depset::bazel_depset_to_list;
 use buck2_build_api::interpreter::rule_defs::provider::builtin::cc_info::BazelCcCompileAction;
+use buck2_build_api::interpreter::rule_defs::provider::builtin::cc_info::BazelCcCompileCommandLine;
 use buck2_build_api::interpreter::rule_defs::provider::builtin::default_info::bazel_runfiles_artifact_entries;
 use buck2_build_api::interpreter::rule_defs::provider::builtin::java_info::BazelJavaRunAction;
 use buck2_build_api::interpreter::rule_defs::provider::builtin::run_info::RunInfo;
@@ -88,8 +89,8 @@ use crate::actions::impls::run::StarlarkRunActionValues;
 use crate::actions::impls::run::UnregisteredRunAction;
 use crate::actions::impls::run::dep_files::RunActionDepFiles;
 use crate::actions::impls::run::new_executor_preference;
+use crate::actions::impls::run::precompute_bazel_local_action_cache_command_line_digest_for_cc_compile_command_line;
 use crate::actions::impls::run::precompute_bazel_local_action_cache_command_line_digest_for_cmd_args;
-use crate::actions::impls::run::precompute_bazel_local_action_cache_command_line_digest_for_strings;
 
 #[derive(Debug, buck2_error::Error)]
 #[buck2(tag = Input)]
@@ -551,6 +552,7 @@ fn register_bazel_run_action<'v>(
     use_default_shell_env: bool,
     resource_set: NoneOr<StarlarkCallable<'v>>,
     bazel_string_args: Option<Box<[String]>>,
+    bazel_cc_command_line: Option<ValueTyped<'v, BazelCcCompileCommandLine<'v>>>,
     precomputed_local_action_cache_command_line_digest: Option<ExpandedCommandLineDigest>,
     eval: &mut Evaluator<'v, '_, '_>,
 ) -> starlark::Result<NoneType> {
@@ -599,6 +601,7 @@ fn register_bazel_run_action<'v>(
         bazel_inputs: Some(eval.heap().alloc_typed(bazel_inputs)),
         bazel_executable_runfiles,
         bazel_tool_runfiles: bazel_tool_runfiles(this, tools, eval)?,
+        bazel_cc_command_line,
         env,
         worker,
         remote_worker,
@@ -643,27 +646,18 @@ pub(crate) fn register_bazel_cc_compile_action<'v>(
     eval: &mut Evaluator<'v, '_, '_>,
 ) -> starlark::Result<NoneType> {
     let heap = eval.heap();
-    let inputs = eval.heap().alloc(AllocList(action.inputs));
+    let inputs = heap.alloc(AllocList(action.inputs));
     let executable = bazel_files_to_run_executable(action.executable).unwrap_or(action.executable);
-    let arguments = action.arguments;
-    let precomputed_local_action_cache_command_line_digest =
-        executable.unpack_str().map(|executable| {
-            precompute_bazel_local_action_cache_command_line_digest_for_strings(
+    let precomputed_local_action_cache_command_line_digest = executable
+        .unpack_str()
+        .map(|executable| {
+            precompute_bazel_local_action_cache_command_line_digest_for_cc_compile_command_line(
                 executable,
-                &arguments,
-                &action.env,
+                action.command_line.as_ref(),
+                heap,
             )
-        });
-    let env = if action.env.is_empty() {
-        None
-    } else {
-        let env = action
-            .env
-            .into_iter()
-            .map(|(key, value)| (key, heap.alloc_str(&value).to_value()))
-            .collect::<Vec<_>>();
-        Some(ValueOfUnchecked::new(eval.heap().alloc(AllocDict(env))))
-    };
+        })
+        .transpose()?;
     let exe = StarlarkCmdArgs::from_values([executable])?;
     let args = StarlarkCmdArgs::default();
     register_bazel_run_action(
@@ -674,13 +668,14 @@ pub(crate) fn register_bazel_cc_compile_action<'v>(
         Value::new_none(),
         None,
         action.outputs,
-        env,
+        None,
         None,
         None,
         Some(action.mnemonic),
         true,
         NoneOr::None,
-        Some(arguments.into_boxed_slice()),
+        None,
+        Some(action.command_line),
         precomputed_local_action_cache_command_line_digest,
         eval,
     )
@@ -731,6 +726,7 @@ pub(crate) fn register_bazel_java_run_action<'v>(
         Some(action.mnemonic),
         true,
         NoneOr::None,
+        None,
         None,
         None,
         eval,
@@ -792,6 +788,7 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
             mnemonic,
             use_default_shell_env,
             resource_set,
+            None,
             None,
             None,
             eval,
@@ -1022,6 +1019,7 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
                     resource_set,
                     None,
                     None,
+                    None,
                     eval,
                 );
             }
@@ -1048,6 +1046,7 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
                 mnemonic,
                 use_default_shell_env,
                 resource_set,
+                None,
                 None,
                 None,
                 eval,
@@ -1316,6 +1315,7 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
             bazel_inputs: None,
             bazel_executable_runfiles: None,
             bazel_tool_runfiles: None,
+            bazel_cc_command_line: None,
             env: starlark_env,
             worker: starlark_worker,
             remote_worker: starlark_remote_worker,

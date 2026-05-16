@@ -204,6 +204,97 @@ impl<'v, V: ValueLike<'v>> StarlarkValue<'v> for BazelCcToolchainVariablesGen<V>
 {
 }
 
+#[derive(
+    Clone,
+    Debug,
+    Freeze,
+    ProvidesStaticType,
+    Trace,
+    NoSerialize,
+    Allocative
+)]
+#[repr(C)]
+pub struct BazelCcCompileCommandLineGen<V: ValueLifetimeless> {
+    #[freeze(identity)]
+    #[trace(unsafe_ignore)]
+    feature_configuration: Arc<BazelFeatureConfigurationData>,
+    action_name: String,
+    variables: ValueOfUncheckedGeneric<V, FrozenValue>,
+}
+
+starlark::starlark_complex_value!(pub BazelCcCompileCommandLine);
+
+unsafe impl<FromV, ToV> Coerce<BazelCcCompileCommandLineGen<ToV>>
+    for BazelCcCompileCommandLineGen<FromV>
+where
+    FromV: ValueLifetimeless + Coerce<ToV>,
+    ToV: ValueLifetimeless,
+{
+}
+
+impl<V: ValueLifetimeless> fmt::Display for BazelCcCompileCommandLineGen<V> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "<CcCompileCommandLine({})>", self.action_name)
+    }
+}
+
+#[starlark_value(type = "CcCompileCommandLine")]
+impl<'v, V: ValueLike<'v>> StarlarkValue<'v> for BazelCcCompileCommandLineGen<V> where
+    Self: ProvidesStaticType<'v>
+{
+}
+
+impl<V: ValueLifetimeless> BazelCcCompileCommandLineGen<V> {
+    pub fn visit_argument_strings<'v>(
+        &self,
+        heap: Heap<'v>,
+        visit: &mut impl FnMut(String) -> starlark::Result<()>,
+    ) -> starlark::Result<()>
+    where
+        V: ValueLike<'v>,
+    {
+        let feature_configuration = BazelFeatureConfiguration {
+            requested_features: Vec::new(),
+            data: Arc::clone(&self.feature_configuration),
+        };
+        bazel_cc_feature_command_line_visit(
+            &feature_configuration,
+            &self.action_name,
+            self.variables.get().to_value(),
+            heap,
+            visit,
+        )
+    }
+
+    pub fn argument_strings<'v>(&self, heap: Heap<'v>) -> starlark::Result<Vec<String>>
+    where
+        V: ValueLike<'v>,
+    {
+        let mut args = Vec::new();
+        self.visit_argument_strings(heap, &mut |arg| {
+            args.push(arg);
+            Ok(())
+        })?;
+        Ok(args)
+    }
+
+    pub fn environment_strings<'v>(&self, heap: Heap<'v>) -> starlark::Result<Vec<(String, String)>>
+    where
+        V: ValueLike<'v>,
+    {
+        let feature_configuration = BazelFeatureConfiguration {
+            requested_features: Vec::new(),
+            data: Arc::clone(&self.feature_configuration),
+        };
+        bazel_cc_feature_environment_strings(
+            &feature_configuration,
+            &self.action_name,
+            self.variables.get().to_value(),
+            heap,
+        )
+    }
+}
+
 impl<'v, V: ValueLike<'v>> BazelCcToolchainVariablesGen<V> {
     fn local_value(&self, name: &str) -> Option<Value<'v>> {
         self.values
@@ -381,9 +472,8 @@ starlark::starlark_simple_value!(BazelCcInternal);
 pub struct BazelCcCompileAction<'v> {
     pub actions: ValueTyped<'v, AnalysisActions<'v>>,
     pub executable: Value<'v>,
-    pub arguments: Vec<String>,
+    pub command_line: ValueTyped<'v, BazelCcCompileCommandLine<'v>>,
     pub inputs: Vec<Value<'v>>,
-    pub env: Vec<(String, String)>,
     pub outputs: Vec<ValueTyped<'v, StarlarkDeclaredArtifact<'v>>>,
     pub mnemonic: StringValue<'v>,
 }
@@ -2269,12 +2359,12 @@ fn bazel_cc_flag_group_conditions_match<'v>(
     Ok(true)
 }
 
-fn bazel_cc_expand_feature_flag_group_strings<'v>(
-    args: &mut Vec<String>,
+fn bazel_cc_expand_feature_flag_group_visit<'v>(
     flag_group: &BazelFlagGroup,
     variables: Value<'v>,
     locals: &mut Vec<(String, Value<'v>)>,
     heap: Heap<'v>,
+    visit: &mut impl FnMut(String) -> starlark::Result<()>,
 ) -> starlark::Result<()> {
     if !bazel_cc_flag_group_conditions_match(flag_group, variables, locals, heap)? {
         return Ok(());
@@ -2290,23 +2380,50 @@ fn bazel_cc_expand_feature_flag_group_strings<'v>(
         for item in bazel_cc_link_sequence_values(value, iterate_over)? {
             locals.push((iterate_over.clone(), item));
             for nested in &flag_group.flag_groups {
-                bazel_cc_expand_feature_flag_group_strings(args, nested, variables, locals, heap)?;
+                bazel_cc_expand_feature_flag_group_visit(nested, variables, locals, heap, visit)?;
             }
             for flag in &flag_group.flags {
                 let flag = bazel_cc_expand_feature_flag(flag, variables, locals, heap)?;
-                args.push(flag);
+                visit(flag)?;
             }
             locals.pop();
         }
     } else {
         for nested in &flag_group.flag_groups {
-            bazel_cc_expand_feature_flag_group_strings(args, nested, variables, locals, heap)?;
+            bazel_cc_expand_feature_flag_group_visit(nested, variables, locals, heap, visit)?;
         }
         for flag in &flag_group.flags {
             let flag = bazel_cc_expand_feature_flag(flag, variables, locals, heap)?;
-            args.push(flag);
+            visit(flag)?;
         }
     }
+    Ok(())
+}
+
+fn bazel_cc_feature_command_line_visit<'v>(
+    feature_configuration: &BazelFeatureConfiguration,
+    action_name: &str,
+    variables: Value<'v>,
+    heap: Heap<'v>,
+    visit: &mut impl FnMut(String) -> starlark::Result<()>,
+) -> starlark::Result<()> {
+    let mut locals = Vec::new();
+
+    for flag_set in feature_configuration
+        .action_config_flag_sets_for(action_name)
+        .chain(feature_configuration.feature_flag_sets_for(action_name))
+    {
+        for flag_group in &flag_set.flag_groups {
+            bazel_cc_expand_feature_flag_group_visit(
+                flag_group,
+                variables,
+                &mut locals,
+                heap,
+                visit,
+            )?;
+        }
+    }
+
     Ok(())
 }
 
@@ -2317,23 +2434,16 @@ fn bazel_cc_feature_command_line_strings<'v>(
     heap: Heap<'v>,
 ) -> starlark::Result<Vec<String>> {
     let mut args = Vec::new();
-    let mut locals = Vec::new();
-
-    for flag_set in feature_configuration
-        .action_config_flag_sets_for(action_name)
-        .chain(feature_configuration.feature_flag_sets_for(action_name))
-    {
-        for flag_group in &flag_set.flag_groups {
-            bazel_cc_expand_feature_flag_group_strings(
-                &mut args,
-                flag_group,
-                variables,
-                &mut locals,
-                heap,
-            )?;
-        }
-    }
-
+    bazel_cc_feature_command_line_visit(
+        feature_configuration,
+        action_name,
+        variables,
+        heap,
+        &mut |arg| {
+            args.push(arg);
+            Ok(())
+        },
+    )?;
     Ok(args)
 }
 
@@ -3840,18 +3950,11 @@ fn bazel_cc_internal_methods(builder: &mut MethodsBuilder) {
             .selected_tool(&action_name)?
             .tool_path(&feature_configuration.data.tools_directory);
         let executable = heap.alloc_str(&tool_path).to_value();
-        let arguments = bazel_cc_feature_command_line_strings(
-            feature_configuration,
-            &action_name,
-            compile_build_variables,
-            heap,
-        )?;
-        let env = bazel_cc_feature_environment_strings(
-            feature_configuration,
-            &action_name,
-            compile_build_variables,
-            heap,
-        )?;
+        let command_line = heap.alloc_typed(BazelCcCompileCommandLine {
+            feature_configuration: Arc::clone(&feature_configuration.data),
+            action_name: action_name.clone(),
+            variables: ValueOfUnchecked::new(compile_build_variables),
+        });
 
         let mut inputs = Vec::new();
         bazel_cc_collect_input_values(source, &mut inputs)?;
@@ -3927,9 +4030,8 @@ fn bazel_cc_internal_methods(builder: &mut MethodsBuilder) {
             BazelCcCompileAction {
                 actions,
                 executable,
-                arguments,
+                command_line,
                 inputs,
-                env,
                 outputs,
                 mnemonic,
             },

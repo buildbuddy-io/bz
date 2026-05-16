@@ -61,6 +61,8 @@ use buck2_build_api::interpreter::rule_defs::cmd_args::param_file::bazel_param_f
 use buck2_build_api::interpreter::rule_defs::cmd_args::param_file::visit_bazel_param_file_content;
 use buck2_build_api::interpreter::rule_defs::cmd_args::space_separated::SpaceSeparatedCommandLineBuilder;
 use buck2_build_api::interpreter::rule_defs::cmd_args::value_as::ValueAsCommandLineLike;
+use buck2_build_api::interpreter::rule_defs::provider::builtin::cc_info::BazelCcCompileCommandLine;
+use buck2_build_api::interpreter::rule_defs::provider::builtin::cc_info::FrozenBazelCcCompileCommandLine;
 use buck2_build_api::interpreter::rule_defs::provider::builtin::worker_info::FrozenWorkerInfo;
 use buck2_build_api::interpreter::rule_defs::provider::builtin::worker_info::WorkerInfo;
 use buck2_build_signals::env::WaitingCategory;
@@ -332,6 +334,7 @@ pub(crate) struct StarlarkRunActionValues<'v> {
     pub(crate) bazel_inputs: Option<ValueTyped<'v, StarlarkCmdArgs<'v>>>,
     pub(crate) bazel_executable_runfiles: Option<Value<'v>>,
     pub(crate) bazel_tool_runfiles: Option<Value<'v>>,
+    pub(crate) bazel_cc_command_line: Option<ValueTyped<'v, BazelCcCompileCommandLine<'v>>>,
     pub(crate) env: Option<ValueOfUnchecked<'v, DictType<String, ValueAsCommandLineLike<'static>>>>,
     pub(crate) worker: Option<ValueTypedComplex<'v, WorkerInfo<'v>>>,
     pub(crate) remote_worker: Option<ValueTypedComplex<'v, WorkerInfo<'v>>>,
@@ -356,6 +359,8 @@ pub(crate) struct FrozenStarlarkRunActionValues {
     pub(crate) bazel_inputs: Option<FrozenValueTyped<'static, FrozenStarlarkCmdArgs>>,
     pub(crate) bazel_executable_runfiles: Option<FrozenValue>,
     pub(crate) bazel_tool_runfiles: Option<FrozenValue>,
+    pub(crate) bazel_cc_command_line:
+        Option<FrozenValueTyped<'static, FrozenBazelCcCompileCommandLine>>,
     pub(crate) env:
         Option<FrozenValueOfUnchecked<'static, DictType<String, ValueAsCommandLineLike<'static>>>>,
     pub(crate) worker: Option<FrozenValueTyped<'static, FrozenWorkerInfo>>,
@@ -383,6 +388,7 @@ impl<'v> Freeze for StarlarkRunActionValues<'v> {
             bazel_inputs,
             bazel_executable_runfiles,
             bazel_tool_runfiles,
+            bazel_cc_command_line,
             env,
             worker,
             remote_worker,
@@ -396,6 +402,7 @@ impl<'v> Freeze for StarlarkRunActionValues<'v> {
             bazel_inputs: bazel_inputs.freeze(freezer)?,
             bazel_executable_runfiles: bazel_executable_runfiles.freeze(freezer)?,
             bazel_tool_runfiles: bazel_tool_runfiles.freeze(freezer)?,
+            bazel_cc_command_line: bazel_cc_command_line.freeze(freezer)?,
             env: env.freeze(freezer)?,
             worker: worker.freeze(freezer)?,
             remote_worker: remote_worker.freeze(freezer)?,
@@ -455,6 +462,7 @@ struct UnpackedRunActionValues<'v> {
     bazel_inputs: Option<&'v dyn CommandLineArgLike<'v>>,
     bazel_executable_runfiles: Option<Value<'v>>,
     bazel_tool_runfiles: Option<Value<'v>>,
+    bazel_cc_command_line: Option<&'v FrozenBazelCcCompileCommandLine>,
     env: Vec<(&'v str, &'v dyn CommandLineArgLike<'v>)>,
     worker: Option<UnpackedWorkerValues<'v>>,
     remote_worker: Option<UnpackedWorkerValues<'v>>,
@@ -1284,6 +1292,48 @@ fn push_string_args_for_local_action_cache(
     }
 }
 
+pub(crate) fn precompute_bazel_local_action_cache_command_line_digest_for_cc_compile_command_line<
+    'v,
+>(
+    exe: &str,
+    command_line: &BazelCcCompileCommandLine<'v>,
+    heap: Heap<'v>,
+) -> starlark::Result<ExpandedCommandLineDigest> {
+    let mut command_line_digest = ExpandedCommandLineFingerprinter::new();
+
+    command_line_digest.push_arg(bazel_normalize_buck_owned_exec_paths(exe));
+    command_line_digest.push_count();
+
+    command_line.visit_argument_strings(heap, &mut |arg| {
+        command_line_digest.push_arg(bazel_normalize_buck_owned_exec_paths(&arg));
+        Ok(())
+    })?;
+    command_line_digest.push_count();
+
+    let env = command_line.environment_strings(heap)?;
+    let mut env = env.into_iter().collect::<SortedVectorMap<_, _>>();
+    bazel_normalize_command_env(&mut env);
+    for (key, value) in env {
+        command_line_digest.push_arg(key);
+        command_line_digest.push_arg(value);
+    }
+    command_line_digest.push_count();
+
+    command_line_digest.push_count();
+    Ok(command_line_digest.finalize())
+}
+
+fn expand_bazel_cc_compile_command_line(
+    command_line: &FrozenBazelCcCompileCommandLine,
+) -> buck2_error::Result<(Vec<String>, Vec<(String, String)>)> {
+    Heap::temp(|heap| {
+        let args = command_line.argument_strings(heap)?;
+        let env = command_line.environment_strings(heap)?;
+        starlark::Result::Ok((args, env))
+    })
+    .map_err(buck2_error::Error::from)
+}
+
 struct EmptyArtifactPathMapper;
 
 impl ArtifactPathMapper for EmptyArtifactPathMapper {
@@ -1446,33 +1496,6 @@ pub(crate) fn precompute_bazel_local_action_cache_command_line_digest_for_cmd_ar
     }
     command_line_digest.push_count();
     Some(command_line_digest.finalize())
-}
-
-pub(crate) fn precompute_bazel_local_action_cache_command_line_digest_for_strings(
-    exe: &str,
-    args: &[String],
-    env: &[(String, String)],
-) -> ExpandedCommandLineDigest {
-    let mut command_line_digest = ExpandedCommandLineFingerprinter::new();
-
-    command_line_digest.push_arg(bazel_normalize_buck_owned_exec_paths(exe));
-    command_line_digest.push_count();
-
-    for arg in args {
-        command_line_digest.push_arg(bazel_normalize_buck_owned_exec_paths(arg));
-    }
-    command_line_digest.push_count();
-
-    let mut env = env.iter().cloned().collect::<SortedVectorMap<_, _>>();
-    bazel_normalize_command_env(&mut env);
-    for (key, value) in env {
-        command_line_digest.push_arg(key);
-        command_line_digest.push_arg(value);
-    }
-    command_line_digest.push_count();
-
-    command_line_digest.push_count();
-    command_line_digest.finalize()
 }
 
 fn bazel_normalize_command_line(args: &mut [String]) {
@@ -2170,6 +2193,7 @@ impl RunAction {
             bazel_tool_runfiles: values
                 .bazel_tool_runfiles
                 .map(|runfiles: FrozenValue| runfiles.to_value()),
+            bazel_cc_command_line: values.bazel_cc_command_line.as_deref(),
             env,
             worker,
             remote_worker,
@@ -2184,6 +2208,10 @@ impl RunAction {
         collect_action_inputs: bool,
     ) -> buck2_error::Result<(ExpandedCommandLineDigest, Vec<RunActionParamFile>)> {
         let values = Self::unpack(&self.starlark_values)?;
+        let bazel_cc_command_line = values
+            .bazel_cc_command_line
+            .map(expand_bazel_cc_compile_command_line)
+            .transpose()?;
 
         let fs = &action_execution_ctx.executor_fs();
         let bazel_paths = self.inner.bazel_use_default_shell_env.is_some();
@@ -2224,7 +2252,9 @@ impl RunAction {
                 &mut artifact_visitor.bazel_output_exec_paths,
             );
             values.exe.visit_artifacts(&mut output_visitor)?;
-            values.args.visit_artifacts(&mut output_visitor)?;
+            if values.bazel_cc_command_line.is_none() {
+                values.args.visit_artifacts(&mut output_visitor)?;
+            }
             if let Some(bazel_inputs) = values.bazel_inputs {
                 bazel_inputs.visit_artifacts(&mut output_visitor)?;
             }
@@ -2292,7 +2322,9 @@ impl RunAction {
             visit_run_action_command_line_artifacts(&self.outputs, values.exe, artifact_visitor)?;
         }
 
-        {
+        if let Some((args, _)) = &bazel_cc_command_line {
+            push_string_args_for_local_action_cache(&mut command_line_digest, args, bazel_paths);
+        } else {
             let mut cli_ctx = RunActionCommandLineContext::new(
                 fs,
                 bazel_paths,
@@ -2310,7 +2342,10 @@ impl RunAction {
             )?;
         }
         command_line_digest.push_count();
-        if collect_action_inputs && self.inner.bazel_string_args.is_none() {
+        if collect_action_inputs
+            && self.inner.bazel_string_args.is_none()
+            && values.bazel_cc_command_line.is_none()
+        {
             visit_run_action_command_line_artifacts(&self.outputs, values.args, artifact_visitor)?;
         }
 
@@ -2347,6 +2382,11 @@ impl RunAction {
             })
             .collect();
         let mut cli_env = cli_env?;
+        if let Some((_, env)) = &bazel_cc_command_line {
+            for (key, value) in env {
+                cli_env.insert(key.to_owned(), value.to_owned());
+            }
+        }
         if bazel_paths {
             bazel_normalize_command_env(&mut cli_env);
         }
@@ -2422,13 +2462,19 @@ impl RunAction {
             )
         });
         let values = Self::unpack(&self.starlark_values)?;
+        let bazel_cc_command_line = values
+            .bazel_cc_command_line
+            .map(expand_bazel_cc_compile_command_line)
+            .transpose()?;
         if bazel_paths && collect_action_inputs {
             let mut output_visitor = BazelOutputExecPathVisitor::new(
                 &self.outputs,
                 &mut artifact_visitor.bazel_output_exec_paths,
             );
             values.exe.visit_artifacts(&mut output_visitor)?;
-            values.args.visit_artifacts(&mut output_visitor)?;
+            if values.bazel_cc_command_line.is_none() {
+                values.args.visit_artifacts(&mut output_visitor)?;
+            }
             if let Some(bazel_inputs) = values.bazel_inputs {
                 bazel_inputs.visit_artifacts(&mut output_visitor)?;
             }
@@ -2737,6 +2783,15 @@ impl RunAction {
                 }
                 command_line_digest_for_dep_files.push_count();
             }
+        } else if let Some((args, _)) = &bazel_cc_command_line {
+            args_rendered.extend(args.iter().cloned());
+            if let Some(command_line_digest_for_dep_files) = &mut command_line_digest_for_dep_files
+            {
+                for arg in args {
+                    command_line_digest_for_dep_files.push_arg(arg.to_owned());
+                }
+                command_line_digest_for_dep_files.push_count();
+            }
         } else {
             values.args.add_to_command_line(
                 &mut args_rendered,
@@ -2755,7 +2810,10 @@ impl RunAction {
                 command_line_digest_for_dep_files.push_count();
             }
         }
-        if collect_action_inputs && self.inner.bazel_string_args.is_none() {
+        if collect_action_inputs
+            && self.inner.bazel_string_args.is_none()
+            && values.bazel_cc_command_line.is_none()
+        {
             visit_run_action_command_line_artifacts(&self.outputs, values.args, artifact_visitor)?;
         }
 
@@ -2769,7 +2827,10 @@ impl RunAction {
             visit_bazel_tool_runfiles_artifacts(tool_runfiles, artifact_visitor)?;
         }
 
-        let env_len = values.env.len();
+        let bazel_cc_env_len = bazel_cc_command_line
+            .as_ref()
+            .map_or(0, |(_, env)| env.len());
+        let env_len = values.env.len() + bazel_cc_env_len;
         let cli_env: buck2_error::Result<SortedVectorMap<_, _>> = values
             .env
             .into_iter()
@@ -2810,13 +2871,25 @@ impl RunAction {
                 Ok((k.to_owned(), env))
             })
             .collect();
+        let mut cli_env = cli_env?;
+        if let Some((_, env)) = &bazel_cc_command_line {
+            for (key, value) in env {
+                cli_env.insert(key.to_owned(), value.to_owned());
+                if let Some(command_line_digest_for_dep_files) =
+                    &mut command_line_digest_for_dep_files
+                {
+                    command_line_digest_for_dep_files.push_arg(key.to_owned());
+                    command_line_digest_for_dep_files.push_arg(value.to_owned());
+                    command_line_digest_for_dep_files.push_count();
+                }
+            }
+        }
 
         if let Some(command_line_digest_for_dep_files) = &mut command_line_digest_for_dep_files {
             command_line_digest_for_dep_files.push_arg(env_len.to_string());
             command_line_digest_for_dep_files.push_count();
         }
 
-        let mut cli_env = cli_env?;
         let mut worker = worker;
         let mut remote_worker = remote_worker;
         if bazel_paths {
