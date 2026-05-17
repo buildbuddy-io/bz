@@ -106,6 +106,8 @@ const BAZEL_SKYLIB_PATHS_BZL_SHA256: &str =
     "96cce43871d8228126a12ceff771351f9030b1e9d029f2185853aa6541766a83";
 const BAZEL_RULES_CC_PATHS_BZL_SHA256: &str =
     "c982ac685f0bfbd32602d82d1c37f3bf50a2714ca6a13bfd3c08d4e5cc8b8872";
+const BAZEL_RULES_CC_CC_LIBRARY_BZL_SHA256: &str =
+    "f78cea09a88fff65a5409d7e2b725cf9fcbdbf6d409a2b4b94216565be79b2dc";
 const BAZEL_RULES_CC_CC_INFO_BZL_SHA256: &str =
     "4424bb876c3f8234d7cfce20652e7ab1a7b2fc34cc2c637b1cb4313590d9f1bc";
 const BAZEL_RULES_CC_CC_HELPER_BZL_SHA256: &str =
@@ -116,6 +118,8 @@ const BAZEL_RULES_CC_CONFIGURE_FEATURES_BZL_SHA256: &str =
     "d950aa9acda68b999c452178f8ccf49860eac910a8c28551c547c3725198b977";
 const BAZEL_RULES_JAVA_INFO_BZL_SHA256: &str =
     "02438c92066a825629a47f6dd01d9ea2200dc90a666b68fb4ee1ebf09e6a3026";
+const BAZEL_RULES_JAVA_LIBRARY_BZL_SHA256: &str =
+    "b84b50c1e2f610eee786b6df4e3dc4211072ac5b4d252d5ac670270656c609c4";
 const BAZEL_RULES_JAVA_COMMON_INTERNAL_BZL_SHA256: &str =
     "68776f7ef30ca86f97edb7359812e1c3ff12cf348c812cfa86292d1d41a825a3";
 const BAZEL_RULES_JAVA_HELPER_BZL_SHA256: &str =
@@ -151,6 +155,20 @@ fn is_bazel_rules_cc_cc_info_path(starlark_file: StarlarkPath<'_>) -> bool {
         StarlarkPath::LoadFile(path) => {
             path.cell().as_str().contains("rules_cc")
                 && path.path().path().as_str() == "cc/private/cc_info.bzl"
+        }
+        StarlarkPath::BuildFile(_)
+        | StarlarkPath::PackageFile(_)
+        | StarlarkPath::BxlFile(_)
+        | StarlarkPath::JsonFile(_)
+        | StarlarkPath::TomlFile(_) => false,
+    }
+}
+
+fn is_bazel_rules_cc_cc_library_path(starlark_file: StarlarkPath<'_>) -> bool {
+    match starlark_file {
+        StarlarkPath::LoadFile(path) => {
+            path.cell().as_str().contains("rules_cc")
+                && path.path().path().as_str() == "cc/cc_library.bzl"
         }
         StarlarkPath::BuildFile(_)
         | StarlarkPath::PackageFile(_)
@@ -231,6 +249,20 @@ fn is_bazel_rules_java_info_path(starlark_file: StarlarkPath<'_>) -> bool {
     }
 }
 
+fn is_bazel_rules_java_library_path(starlark_file: StarlarkPath<'_>) -> bool {
+    match starlark_file {
+        StarlarkPath::LoadFile(path) => {
+            path.cell().as_str().contains("rules_java")
+                && path.path().path().as_str() == "java/java_library.bzl"
+        }
+        StarlarkPath::BuildFile(_)
+        | StarlarkPath::PackageFile(_)
+        | StarlarkPath::BxlFile(_)
+        | StarlarkPath::JsonFile(_)
+        | StarlarkPath::TomlFile(_) => false,
+    }
+}
+
 fn is_bazel_rules_java_helper_path(starlark_file: StarlarkPath<'_>) -> bool {
     match starlark_file {
         StarlarkPath::LoadFile(path) => {
@@ -243,6 +275,66 @@ fn is_bazel_rules_java_helper_path(starlark_file: StarlarkPath<'_>) -> bool {
         | StarlarkPath::JsonFile(_)
         | StarlarkPath::TomlFile(_) => false,
     }
+}
+
+fn rewrite_bazel_rules_cc_cc_library(
+    starlark_file: StarlarkPath<'_>,
+    contents: String,
+) -> buck2_error::Result<String> {
+    if !is_bazel_rules_cc_cc_library_path(starlark_file) {
+        return Ok(contents);
+    }
+    if hex::encode(Sha256::digest(contents.as_bytes())) != BAZEL_RULES_CC_CC_LIBRARY_BZL_SHA256 {
+        return Ok(contents);
+    }
+
+    const CC_LIBRARY_STUB: &str = r#"def cc_library(**kwargs):
+    _cc_library(**kwargs)
+"#;
+    const NATIVE_CC_LIBRARY_STUB: &str = r#"cc_library = _cc_library
+"#;
+
+    let rewritten = contents.replacen(CC_LIBRARY_STUB, NATIVE_CC_LIBRARY_STUB, 1);
+    if rewritten == contents {
+        return Err(internal_error!(
+            "rules_cc cc_library.bzl hash matched, but cc_library proxy stub did not"
+        ));
+    }
+    Ok(rewritten)
+}
+
+fn rewrite_bazel_rules_java_library(
+    starlark_file: StarlarkPath<'_>,
+    contents: String,
+) -> buck2_error::Result<String> {
+    if !is_bazel_rules_java_library_path(starlark_file) {
+        return Ok(contents);
+    }
+    if hex::encode(Sha256::digest(contents.as_bytes())) != BAZEL_RULES_JAVA_LIBRARY_BZL_SHA256 {
+        return Ok(contents);
+    }
+
+    const JAVA_LIBRARY_STUB: &str = r#"def java_library(**attrs):
+    """Bazel java_library rule.
+
+    https://docs.bazel.build/versions/master/be/java.html#java_library
+
+    Args:
+      **attrs: Rule attributes
+    """
+
+    _java_library(**attrs)
+"#;
+    const NATIVE_JAVA_LIBRARY_STUB: &str = r#"java_library = _java_library
+"#;
+
+    let rewritten = contents.replacen(JAVA_LIBRARY_STUB, NATIVE_JAVA_LIBRARY_STUB, 1);
+    if rewritten == contents {
+        return Err(internal_error!(
+            "rules_java java_library.bzl hash matched, but java_library proxy stub did not"
+        ));
+    }
+    Ok(rewritten)
 }
 
 fn rewrite_bazel_rules_cc_cc_info(
@@ -906,10 +998,12 @@ impl<'c, 'd: 'c> DiceCalculationDelegate<'c, 'd> {
             // Should potentially add support for other file types as well
             _ => result.without_package_context_information(),
         }?;
+        let content = rewrite_bazel_rules_cc_cc_library(starlark_path, content)?;
         let content = rewrite_bazel_rules_cc_cc_info(starlark_path, content)?;
         let content = rewrite_bazel_rules_cc_cc_helper(starlark_path, content)?;
         let content = rewrite_bazel_rules_cc_cc_helper_internal(starlark_path, content)?;
         let content = rewrite_bazel_rules_cc_configure_features(starlark_path, content)?;
+        let content = rewrite_bazel_rules_java_library(starlark_path, content)?;
         let content = rewrite_bazel_rules_java_info(starlark_path, content)?;
         let content = rewrite_bazel_rules_java_common_internal(starlark_path, content)?;
         let content = rewrite_bazel_rules_java_helper(starlark_path, content)?;
