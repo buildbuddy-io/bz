@@ -4301,15 +4301,7 @@ fn bazel_cc_internal_methods(builder: &mut MethodsBuilder) {
         bazel_cc_collect_input_values(additional_compilation_inputs, &mut inputs)?;
         bazel_cc_collect_input_values(additional_compilation_inputs_set, &mut inputs)?;
         bazel_cc_collect_input_values(additional_include_scanning_roots, &mut inputs)?;
-        for attr in [
-            "headers",
-            "direct_headers",
-            "direct_public_headers",
-            "direct_private_headers",
-            "direct_textual_headers",
-            "_non_code_inputs",
-            "_exporting_module_map_files",
-        ] {
+        for attr in ["headers", "_non_code_inputs"] {
             bazel_cc_collect_attr_input_values(cc_compilation_context, attr, &mut inputs, heap)?;
         }
         if let Some(module_map) = cc_compilation_context.get_attr("_module_map", heap)? {
