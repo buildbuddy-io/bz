@@ -750,17 +750,6 @@ pub(crate) fn bazel_depset_from_direct_and_transitive<'v>(
     )?))
 }
 
-pub(crate) fn bazel_depset_from_direct_and_transitive_with_order<'v>(
-    heap: Heap<'v>,
-    direct: Vec<Value<'v>>,
-    transitive: Vec<Value<'v>>,
-    order: BazelDepsetOrder,
-) -> starlark::Result<Value<'v>> {
-    Ok(heap.alloc(bazel_depset_from_direct_and_transitive_values(
-        direct, transitive, order,
-    )?))
-}
-
 pub(crate) fn bazel_depset_from_transitive<'v>(
     heap: Heap<'v>,
     transitive: Vec<Value<'v>>,
@@ -791,53 +780,6 @@ fn bazel_depset_methods(builder: &mut MethodsBuilder) {
     }
 }
 
-pub(crate) fn bazel_flat_depset_impl<'v>(
-    heap: Heap<'v>,
-    transitive: Vec<Value<'v>>,
-) -> starlark::Result<Value<'v>> {
-    let mut non_empty = Vec::with_capacity(transitive.len());
-    for depset in transitive {
-        let depset_ref = depset_from_value(depset)?;
-        if !depset_ref.is_empty() {
-            non_empty.push(depset);
-        }
-    }
-
-    match non_empty.as_slice() {
-        [] => return Ok(bazel_depset_empty(heap)),
-        [depset] => {
-            return Ok(*depset);
-        }
-        _ => {}
-    }
-
-    let first = non_empty[0];
-    if non_empty
-        .iter()
-        .all(|depset| depset.identity() == first.identity())
-    {
-        return Ok(first);
-    }
-
-    let mut largest_depset = None;
-    let mut largest_depset_list = Vec::new();
-
-    for depset in &non_empty {
-        let values = bazel_depset_to_list(*depset)?;
-        if values.len() > largest_depset_list.len() {
-            largest_depset_list = values;
-            largest_depset = Some(*depset);
-        }
-    }
-
-    let all = bazel_depset_from_transitive(heap, non_empty)?;
-    if bazel_depset_to_list(all)? == largest_depset_list {
-        Ok(largest_depset.unwrap_or_else(|| bazel_depset_empty(heap)))
-    } else {
-        Ok(all)
-    }
-}
-
 #[starlark_module]
 pub fn register_bazel_depset(builder: &mut GlobalsBuilder) {
     #[starlark(as_type = FrozenBazelDepset)]
@@ -852,14 +794,5 @@ pub fn register_bazel_depset(builder: &mut GlobalsBuilder) {
         let direct = direct.into_option().unwrap_or_default().items;
         let transitive = transitive.into_option().unwrap_or_default().items;
         bazel_depset_from_direct_and_transitive_values(direct, transitive, order)
-    }
-
-    fn __buck2_bazel_flat_depset<'v>(
-        #[starlark(require = named, default = NoneOr::None)] transitive: NoneOr<
-            UnpackListOrTuple<Value<'v>>,
-        >,
-        heap: Heap<'v>,
-    ) -> starlark::Result<Value<'v>> {
-        bazel_flat_depset_impl(heap, transitive.into_option().unwrap_or_default().items)
     }
 }
