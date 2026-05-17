@@ -51,6 +51,7 @@ use buck2_core::cells::external::GitCellSetup;
 use buck2_core::cells::external::GitObjectFormat;
 use buck2_core::cells::external::bzlmod_cell_name;
 use buck2_core::cells::external::register_bzlmod_cell_aliases_from_refs;
+use buck2_core::cells::external::register_bzlmod_module_extension_usages_json;
 use buck2_core::cells::external::register_external_cell_origin;
 use buck2_core::cells::name::CellName;
 use buck2_core::fs::project::ProjectRoot;
@@ -3446,8 +3447,7 @@ fn bzlmod_module_extension_repo_config(
         ));
     }
 
-    let extension_usages_key =
-        BzlmodModuleExtensionRepoSetup::extension_usages_key_from_json(extension_usages_json);
+    let extension_usages_key = register_bzlmod_module_extension_usages_json(extension_usages_json);
     Ok(BzlmodGeneratedCellGenerator::ModuleExtensionRepo(
         BzlmodModuleExtensionRepoSetup {
             parent_canonical_repo_name: Arc::from(parent_canonical_repo_name),
@@ -3457,7 +3457,7 @@ fn bzlmod_module_extension_repo_config(
             extension_bzl_path: Arc::from(resolved_extension.id.bzl_path.clone()),
             extension_name: Arc::from(usage.extension_name.clone()),
             repo_name: Arc::from(repo_name),
-            extension_usages_key: Arc::from(extension_usages_key),
+            extension_usages_key,
             extension_usages_json: Arc::from(extension_usages_json),
         },
     ))

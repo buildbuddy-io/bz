@@ -64,6 +64,9 @@ static BZLMOD_CANONICAL_REPO_NAMES: Lazy<Mutex<StdBuckHashMap<String, String>>> 
 static BZLMOD_CELL_ALIASES: Lazy<Mutex<StdBuckHashMap<String, Vec<(String, String)>>>> =
     Lazy::new(|| Mutex::new(StdBuckHashMap::default()));
 
+static BZLMOD_MODULE_EXTENSION_USAGES: Lazy<Mutex<StdBuckHashMap<String, Arc<str>>>> =
+    Lazy::new(|| Mutex::new(StdBuckHashMap::default()));
+
 pub fn register_bzlmod_cell_canonical_repo_name(canonical_repo_name: &str) {
     let cell_name = bzlmod_cell_name(canonical_repo_name);
     register_bzlmod_cell_canonical_repo_name_for_cell(&cell_name, canonical_repo_name);
@@ -159,6 +162,23 @@ pub fn bzlmod_all_cell_aliases() -> Vec<(String, Vec<(String, String)>)> {
         .collect::<Vec<_>>();
     aliases.sort_by(|(a, _), (b, _)| a.cmp(b));
     aliases
+}
+
+pub fn register_bzlmod_module_extension_usages_json(extension_usages_json: &str) -> Arc<str> {
+    let key = BzlmodModuleExtensionRepoSetup::extension_usages_key_from_json(extension_usages_json);
+    BZLMOD_MODULE_EXTENSION_USAGES
+        .lock()
+        .expect("bzlmod module extension usage map poisoned")
+        .insert(key.clone(), Arc::from(extension_usages_json));
+    Arc::from(key)
+}
+
+pub fn bzlmod_module_extension_usages_json(extension_usages_key: &str) -> Option<Arc<str>> {
+    BZLMOD_MODULE_EXTENSION_USAGES
+        .lock()
+        .expect("bzlmod module extension usage map poisoned")
+        .get(extension_usages_key)
+        .cloned()
 }
 
 #[derive(Debug, Clone, Dupe, Allocative, PartialEq, Eq, Pagable)]
@@ -485,8 +505,8 @@ pub struct BzlmodModuleExtensionRepoSetup {
     pub extension_bzl_path: Arc<str>,
     pub extension_name: Arc<str>,
     pub repo_name: Arc<str>,
-    #[serde(skip_serializing)]
     pub extension_usages_key: Arc<str>,
+    #[serde(skip_serializing)]
     pub extension_usages_json: Arc<str>,
 }
 
@@ -513,12 +533,40 @@ impl<'de> Deserialize<'de> for BzlmodModuleExtensionRepoSetup {
             extension_bzl_path: Arc<str>,
             extension_name: Arc<str>,
             repo_name: Arc<str>,
-            extension_usages_json: Arc<str>,
+            #[serde(default)]
+            extension_usages_key: Option<Arc<str>>,
+            #[serde(default)]
+            extension_usages_json: Option<Arc<str>>,
         }
 
         let config = BzlmodModuleExtensionRepoSetupConfig::deserialize(deserializer)?;
-        let extension_usages_key =
-            Self::extension_usages_key_from_json(&config.extension_usages_json);
+        let (extension_usages_key, extension_usages_json) =
+            match (config.extension_usages_key, config.extension_usages_json) {
+                (Some(extension_usages_key), Some(extension_usages_json)) => {
+                    (extension_usages_key, extension_usages_json)
+                }
+                (Some(extension_usages_key), None) => {
+                    let extension_usages_json = bzlmod_module_extension_usages_json(
+                        &extension_usages_key,
+                    )
+                    .ok_or_else(|| {
+                        serde::de::Error::custom(format!(
+                            "Unknown bzlmod module extension usages key `{extension_usages_key}`"
+                        ))
+                    })?;
+                    (extension_usages_key, extension_usages_json)
+                }
+                (None, Some(extension_usages_json)) => {
+                    let extension_usages_key =
+                        register_bzlmod_module_extension_usages_json(&extension_usages_json);
+                    (extension_usages_key, extension_usages_json)
+                }
+                (None, None) => {
+                    return Err(serde::de::Error::custom(
+                        "Expected `extension_usages_key` or `extension_usages_json`",
+                    ));
+                }
+            };
         Ok(Self {
             parent_canonical_repo_name: config.parent_canonical_repo_name,
             parent_is_root: config.parent_is_root,
@@ -527,8 +575,8 @@ impl<'de> Deserialize<'de> for BzlmodModuleExtensionRepoSetup {
             extension_bzl_path: config.extension_bzl_path,
             extension_name: config.extension_name,
             repo_name: config.repo_name,
-            extension_usages_key: Arc::from(extension_usages_key),
-            extension_usages_json: config.extension_usages_json,
+            extension_usages_key,
+            extension_usages_json,
         })
     }
 }
