@@ -89,6 +89,39 @@ const CC_SHARED_LIBRARY_HINT_INFO: &str = "CcSharedLibraryHintInfo";
 const CC_TOOLCHAIN_INFO: &str = "CcToolchainInfo";
 const BAZEL_LINKER_PARAM_FILE_VARIABLE: &str = "linker_param_file";
 const BAZEL_LINKER_PARAM_FILE_PLACEHOLDER: &str = "LINKER_PARAM_FILE_PLACEHOLDER";
+const BAZEL_CC_ALL_COMPILE_ACTIONS: &[&str] = &[
+    "c-compile",
+    "c++-compile",
+    "c++-header-parsing",
+    "c++-module-compile",
+    "c++-module-codegen",
+    "c++-module-deps-scanning",
+    "c++20-module-compile",
+    "c++20-module-codegen",
+    "assemble",
+    "preprocess-assemble",
+    "clif-match",
+    "linkstamp-compile",
+    "cc-flags-make-variable",
+    "lto-backend",
+    "c++-header-analysis",
+];
+const BAZEL_CC_ALL_LINK_ACTIONS: &[&str] = &[
+    "lto-index-for-executable",
+    "lto-index-for-dynamic-library",
+    "lto-index-for-nodeps-dynamic-library",
+    "c++-link-executable",
+    "c++-link-dynamic-library",
+    "c++-link-nodeps-dynamic-library",
+];
+const BAZEL_CC_ALL_ARCHIVE_ACTIONS: &[&str] = &["c++-link-static-library"];
+const BAZEL_CC_ALL_OTHER_ACTIONS: &[&str] = &["strip"];
+const BAZEL_CC_OBJC_ACTIONS: &[&str] = &[
+    "objc-compile",
+    "objc++-compile",
+    "objc-fully-link",
+    "objc-executable",
+];
 
 fn rules_cc_provider_path(path: &str) -> CellPath {
     CellPath::new(
@@ -2184,6 +2217,291 @@ impl BazelFeatureConfiguration {
     }
 }
 
+fn bazel_cc_non_none_attr<'v>(
+    value: Value<'v>,
+    attr: &str,
+    heap: Heap<'v>,
+) -> starlark::Result<Option<Value<'v>>> {
+    Ok(bazel_cc_attr(value, attr, heap)?.filter(|value| !value.is_none()))
+}
+
+fn bazel_cc_nested_attr<'v>(
+    value: Value<'v>,
+    attrs: &[&str],
+    heap: Heap<'v>,
+) -> starlark::Result<Option<Value<'v>>> {
+    let mut value = value;
+    for attr in attrs {
+        let Some(next) = bazel_cc_attr(value, attr, heap)? else {
+            return Ok(None);
+        };
+        value = next;
+    }
+    Ok(Some(value))
+}
+
+fn bazel_cc_add_requested_feature(
+    requested: &mut HashSet<String>,
+    unsupported: &HashSet<String>,
+    feature: &str,
+) {
+    if !unsupported.contains(feature) {
+        requested.insert(feature.to_owned());
+    }
+}
+
+fn bazel_cc_add_requested_features<'a>(
+    requested: &mut HashSet<String>,
+    unsupported: &HashSet<String>,
+    features: impl IntoIterator<Item = &'a str>,
+) {
+    for feature in features {
+        bazel_cc_add_requested_feature(requested, unsupported, feature);
+    }
+}
+
+fn bazel_cc_language(
+    language: Value<'_>,
+    requested_features: &[String],
+) -> starlark::Result<String> {
+    let mut language = if language.is_none() {
+        "c++"
+    } else {
+        language.unpack_str().ok_or_else(|| {
+            bazel_cc_error(format!(
+                "Expected C++ language to be a string or None, got `{}`",
+                language.get_type()
+            ))
+        })?
+    }
+    .replace('+', "p");
+    if requested_features.iter().any(|feature| feature == "lang_objc") {
+        language = "objc".to_owned();
+    }
+    Ok(language)
+}
+
+fn bazel_cc_configure_features_from_ctx<'v>(
+    ctx: Value<'v>,
+    cc_toolchain: Value<'v>,
+    language: Value<'v>,
+    requested_features: Vec<String>,
+    unsupported_features: Vec<String>,
+    eval: &mut Evaluator<'v, '_, '_>,
+) -> starlark::Result<BazelFeatureConfiguration> {
+    let heap = eval.heap();
+    let language = bazel_cc_language(language, &requested_features)?;
+    let cpp_configuration = bazel_cc_nested_attr(ctx, &["fragments", "cpp"], heap)?.ok_or_else(|| {
+        bazel_cc_error("cpp configuration fragment is missing")
+    })?;
+
+    let mut all_requested_features = HashSet::<String>::new();
+    let mut all_unsupported_features = unsupported_features.into_iter().collect::<HashSet<_>>();
+
+    if !bazel_cc_bool_attr(cc_toolchain, "_supports_header_parsing", heap)? {
+        all_unsupported_features.insert("parse_headers".to_owned());
+    }
+
+    let module_map = bazel_cc_nested_attr(
+        cc_toolchain,
+        &["_cc_info", "compilation_context", "_module_map"],
+        heap,
+    )?;
+    if language != "objc" && language != "objcpp" && module_map.is_none_or(|value| value.is_none())
+    {
+        all_unsupported_features.insert("module_maps".to_owned());
+    }
+
+    all_requested_features.insert("no_generate_debug_symbols".to_owned());
+    if bazel_cc_bool_attr(cpp_configuration, "apple_generate_dsym", heap)? {
+        all_requested_features.remove("no_generate_debug_symbols");
+        all_requested_features.insert("generate_dsym_file".to_owned());
+    }
+
+    if language == "objc" || language == "objcpp" {
+        all_requested_features.insert("lang_objc".to_owned());
+        if bazel_cc_bool_attr(cpp_configuration, "objc_generate_linkmap", heap)? {
+            all_requested_features.insert("generate_linkmap".to_owned());
+        }
+        if bazel_cc_bool_attr(cpp_configuration, "objc_should_strip_binary", heap)? {
+            all_requested_features.insert("dead_strip".to_owned());
+        }
+    }
+
+    let features = bazel_cc_toolchain_features_from_toolchain(cc_toolchain, heap)?;
+    bazel_cc_add_requested_feature(
+        &mut all_requested_features,
+        &all_unsupported_features,
+        "fastbuild",
+    );
+    bazel_cc_add_requested_features(
+        &mut all_requested_features,
+        &all_unsupported_features,
+        BAZEL_CC_ALL_COMPILE_ACTIONS.iter().copied(),
+    );
+    bazel_cc_add_requested_features(
+        &mut all_requested_features,
+        &all_unsupported_features,
+        BAZEL_CC_ALL_LINK_ACTIONS.iter().copied(),
+    );
+    bazel_cc_add_requested_features(
+        &mut all_requested_features,
+        &all_unsupported_features,
+        BAZEL_CC_ALL_ARCHIVE_ACTIONS.iter().copied(),
+    );
+    bazel_cc_add_requested_features(
+        &mut all_requested_features,
+        &all_unsupported_features,
+        BAZEL_CC_ALL_OTHER_ACTIONS.iter().copied(),
+    );
+    bazel_cc_add_requested_features(
+        &mut all_requested_features,
+        &all_unsupported_features,
+        requested_features.iter().map(String::as_str),
+    );
+    bazel_cc_add_requested_features(
+        &mut all_requested_features,
+        &all_unsupported_features,
+        features.default_selectables.iter().map(String::as_str),
+    );
+
+    if language == "objc" || language == "objcpp" {
+        bazel_cc_add_requested_features(
+            &mut all_requested_features,
+            &all_unsupported_features,
+            BAZEL_CC_OBJC_ACTIONS.iter().copied(),
+        );
+    }
+
+    if !bazel_cc_bool_attr(cpp_configuration, "_dont_enable_host_nonhost", heap)? {
+        let host_or_nonhost =
+            if bazel_cc_bool_attr(cc_toolchain, "_is_tool_configuration", heap)? {
+                "host"
+            } else {
+                "nonhost"
+            };
+        bazel_cc_add_requested_feature(
+            &mut all_requested_features,
+            &all_unsupported_features,
+            host_or_nonhost,
+        );
+    }
+
+    let coverage_enabled = bazel_cc_nested_attr(ctx, &["configuration", "coverage_enabled"], heap)?
+        .and_then(|value| value.unpack_bool())
+        .unwrap_or(false);
+    if coverage_enabled {
+        all_requested_features.insert("coverage".to_owned());
+        all_requested_features.insert("gcc_coverage_map_format".to_owned());
+    }
+
+    let fdo_context = bazel_cc_non_none_attr(cc_toolchain, "_fdo_context", heap)?;
+    let branch_fdo_provider = match fdo_context {
+        Some(fdo_context) => bazel_cc_non_none_attr(fdo_context, "branch_fdo_profile", heap)?,
+        None => None,
+    };
+    let propeller_optimize_info = match fdo_context {
+        Some(fdo_context) => bazel_cc_non_none_attr(fdo_context, "propeller_optimize_info", heap)?,
+        None => None,
+    };
+    let enable_propeller_optimize = match propeller_optimize_info {
+        Some(propeller) => {
+            bazel_cc_non_none_attr(propeller, "cc_profile", heap)?.is_some()
+                || bazel_cc_non_none_attr(propeller, "ld_profile", heap)?.is_some()
+        }
+        None => false,
+    };
+
+    let compilation_mode = "fastbuild";
+    if let Some(branch_fdo_provider) = branch_fdo_provider
+        && compilation_mode == "opt"
+    {
+        let branch_fdo_mode =
+            bazel_cc_string_attr(branch_fdo_provider, "branch_fdo_mode", heap)?.unwrap_or_default();
+        if branch_fdo_mode == "llvm_fdo" || branch_fdo_mode == "llvm_cs_fdo" {
+            bazel_cc_add_requested_feature(
+                &mut all_requested_features,
+                &all_unsupported_features,
+                "fdo_optimize",
+            );
+            bazel_cc_add_requested_feature(
+                &mut all_requested_features,
+                &all_unsupported_features,
+                "enable_fdo_memprof_optimize",
+            );
+            bazel_cc_add_requested_feature(
+                &mut all_requested_features,
+                &all_unsupported_features,
+                "enable_fdo_thinlto",
+            );
+            if !enable_propeller_optimize {
+                bazel_cc_add_requested_feature(
+                    &mut all_requested_features,
+                    &all_unsupported_features,
+                    "enable_fdo_split_functions",
+                );
+            }
+        }
+        if branch_fdo_mode == "llvm_cs_fdo" {
+            all_requested_features.insert("cs_fdo_optimize".to_owned());
+        }
+        if branch_fdo_mode == "auto_fdo" {
+            all_requested_features.insert("autofdo".to_owned());
+            bazel_cc_add_requested_feature(
+                &mut all_requested_features,
+                &all_unsupported_features,
+                "enable_autofdo_memprof_optimize",
+            );
+            bazel_cc_add_requested_feature(
+                &mut all_requested_features,
+                &all_unsupported_features,
+                "enable_afdo_thinlto",
+            );
+            if !all_unsupported_features.contains("fsafdo") {
+                all_requested_features.insert("enable_fsafdo".to_owned());
+                bazel_cc_add_requested_feature(
+                    &mut all_requested_features,
+                    &all_unsupported_features,
+                    "enable_fdo_split_functions",
+                );
+            }
+        }
+        if branch_fdo_mode == "xbinary_fdo" {
+            all_requested_features.insert("xbinaryfdo".to_owned());
+            bazel_cc_add_requested_feature(
+                &mut all_requested_features,
+                &all_unsupported_features,
+                "enable_xbinaryfdo_thinlto",
+            );
+        }
+    }
+
+    if bazel_cc_non_none_attr(cpp_configuration, "_fdo_prefetch_hints_label", heap)?.is_some() {
+        all_requested_features.insert("fdo_prefetch_hints".to_owned());
+    }
+    if enable_propeller_optimize {
+        all_requested_features.insert("propeller_optimize".to_owned());
+    }
+
+    let mut requested_features = all_requested_features.into_iter().collect::<Vec<_>>();
+    requested_features.sort();
+    requested_features.dedup();
+    let feature_configuration = features.configure_features(requested_features)?;
+
+    for unsupported in all_unsupported_features {
+        if feature_configuration.is_enabled_selectable(&unsupported) {
+            let label = bazel_cc_attr(cc_toolchain, "_toolchain_label", heap)?
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "<unknown>".to_owned());
+            return Err(bazel_cc_error(format!(
+                "The C++ toolchain '{label}' unconditionally implies feature '{unsupported}', which is unsupported by this rule. This is most likely a misconfiguration in the C++ toolchain."
+            )));
+        }
+    }
+
+    Ok(feature_configuration)
+}
+
 fn bazel_cc_flag_set_enabled(
     enabled_selectable_set: &HashSet<String>,
     flag_set: &BazelFlagSet,
@@ -3628,6 +3946,27 @@ fn bazel_cc_internal_methods(builder: &mut MethodsBuilder) {
             .unwrap_or("")
             .to_owned();
         bazel_cc_parse_toolchain_features(toolchain_config_info, tools_directory, heap)
+    }
+
+    fn configure_features<'v>(
+        #[starlark(this)] _this: &BazelCcInternal,
+        #[starlark(require = named)] ctx: Value<'v>,
+        #[starlark(require = named)] cc_toolchain: Value<'v>,
+        #[starlark(require = named, default = NoneType)] language: Value<'v>,
+        #[starlark(require = named, default = UnpackList::default())]
+        requested_features: UnpackList<String>,
+        #[starlark(require = named, default = UnpackList::default())]
+        unsupported_features: UnpackList<String>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<BazelFeatureConfiguration> {
+        bazel_cc_configure_features_from_ctx(
+            ctx,
+            cc_toolchain,
+            language,
+            requested_features.into_iter().collect(),
+            unsupported_features.into_iter().collect(),
+            eval,
+        )
     }
 
     fn cc_toolchain_variables<'v>(

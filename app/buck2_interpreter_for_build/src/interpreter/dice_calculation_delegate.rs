@@ -110,6 +110,8 @@ const BAZEL_RULES_CC_CC_INFO_BZL_SHA256: &str =
     "4424bb876c3f8234d7cfce20652e7ab1a7b2fc34cc2c637b1cb4313590d9f1bc";
 const BAZEL_RULES_CC_CC_HELPER_BZL_SHA256: &str =
     "22b11a7833958f11fb32ddf6406195e02ccef9dc635369a556cbafa4e933fdbe";
+const BAZEL_RULES_CC_CONFIGURE_FEATURES_BZL_SHA256: &str =
+    "d950aa9acda68b999c452178f8ccf49860eac910a8c28551c547c3725198b977";
 const BAZEL_RULES_JAVA_INFO_BZL_SHA256: &str =
     "02438c92066a825629a47f6dd01d9ea2200dc90a666b68fb4ee1ebf09e6a3026";
 const BAZEL_RULES_JAVA_COMMON_INTERNAL_BZL_SHA256: &str =
@@ -161,6 +163,21 @@ fn is_bazel_rules_cc_cc_helper_path(starlark_file: StarlarkPath<'_>) -> bool {
         StarlarkPath::LoadFile(path) => {
             path.cell().as_str().contains("rules_cc")
                 && path.path().path().as_str() == "cc/common/cc_helper.bzl"
+        }
+        StarlarkPath::BuildFile(_)
+        | StarlarkPath::PackageFile(_)
+        | StarlarkPath::BxlFile(_)
+        | StarlarkPath::JsonFile(_)
+        | StarlarkPath::TomlFile(_) => false,
+    }
+}
+
+fn is_bazel_rules_cc_configure_features_path(starlark_file: StarlarkPath<'_>) -> bool {
+    match starlark_file {
+        StarlarkPath::LoadFile(path) => {
+            path.cell().as_str().contains("rules_cc")
+                && path.path().path().as_str()
+                    == "cc/private/toolchain_config/configure_features.bzl"
         }
         StarlarkPath::BuildFile(_)
         | StarlarkPath::PackageFile(_)
@@ -370,6 +387,47 @@ fn rewrite_bazel_rules_cc_cc_info(
         ));
     }
     Ok(rewritten_merge)
+}
+
+fn rewrite_bazel_rules_cc_configure_features(
+    starlark_file: StarlarkPath<'_>,
+    contents: String,
+) -> buck2_error::Result<String> {
+    if !is_bazel_rules_cc_configure_features_path(starlark_file) {
+        return Ok(contents);
+    }
+    if hex::encode(Sha256::digest(contents.as_bytes()))
+        != BAZEL_RULES_CC_CONFIGURE_FEATURES_BZL_SHA256
+    {
+        return Ok(contents);
+    }
+
+    const CONFIGURE_FEATURES_START: &str = "def configure_features(\n";
+    const NATIVE_CONFIGURE_FEATURES_STUB: &str = r#"def configure_features(
+        *,
+        ctx,
+        cc_toolchain,
+        language = "c++",
+        requested_features = [],
+        unsupported_features = []):
+    return cc_common.internal_DO_NOT_USE().configure_features(
+        ctx = ctx,
+        cc_toolchain = cc_toolchain,
+        language = language,
+        requested_features = requested_features,
+        unsupported_features = unsupported_features,
+    )
+"#;
+
+    let Some(start) = contents.find(CONFIGURE_FEATURES_START) else {
+        return Err(internal_error!(
+            "rules_cc configure_features.bzl hash matched, but configure_features stub did not"
+        ));
+    };
+
+    let mut rewritten = contents[..start].to_owned();
+    rewritten.push_str(NATIVE_CONFIGURE_FEATURES_STUB);
+    Ok(rewritten)
 }
 
 fn rewrite_bazel_rules_cc_cc_helper(
@@ -782,6 +840,7 @@ impl<'c, 'd: 'c> DiceCalculationDelegate<'c, 'd> {
         }?;
         let content = rewrite_bazel_rules_cc_cc_info(starlark_path, content)?;
         let content = rewrite_bazel_rules_cc_cc_helper(starlark_path, content)?;
+        let content = rewrite_bazel_rules_cc_configure_features(starlark_path, content)?;
         let content = rewrite_bazel_rules_java_info(starlark_path, content)?;
         let content = rewrite_bazel_rules_java_common_internal(starlark_path, content)?;
         let content = rewrite_bazel_rules_java_helper(starlark_path, content)?;
