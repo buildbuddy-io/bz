@@ -50,10 +50,20 @@ use starlark::values::structs::AllocStruct;
 use starlark::values::structs::StructRef;
 use starlark::values::tuple::AllocTuple;
 use starlark::values::tuple::TupleRef;
+use starlark::values::type_repr::StarlarkTypeRepr;
 use starlark_map::StarlarkHasher;
 
 use crate::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkArtifactLike;
+use crate::interpreter::rule_defs::cmd_args::ArtifactPathMapper;
+use crate::interpreter::rule_defs::cmd_args::CommandLineArgLike;
+use crate::interpreter::rule_defs::cmd_args::CommandLineArtifactVisitor;
+use crate::interpreter::rule_defs::cmd_args::CommandLineBuilder;
+use crate::interpreter::rule_defs::cmd_args::CommandLineContext;
+use crate::interpreter::rule_defs::cmd_args::ParamFileFormat;
 use crate::interpreter::rule_defs::cmd_args::StarlarkCmdArgs;
+use crate::interpreter::rule_defs::cmd_args::WriteToFileMacroVisitor;
+use crate::interpreter::rule_defs::cmd_args::command_line_arg_like_type::command_line_arg_like_impl;
+use crate::interpreter::rule_defs::cmd_args::value_as::ValueAsCommandLineLike;
 use crate::interpreter::rule_defs::context::AnalysisActions;
 use crate::interpreter::rule_defs::context::bazel_analysis_context_declare_file_with_path_kind;
 use crate::interpreter::rule_defs::context::bazel_shell_tokenize;
@@ -83,7 +93,7 @@ const JAVA_COMPILATION_INFO: &str = "JavaCompilationInfo";
 pub struct BazelJavaRunAction<'v> {
     pub actions: ValueTyped<'v, AnalysisActions<'v>>,
     pub executable: Value<'v>,
-    pub arguments: Vec<Value<'v>>,
+    pub arguments: ValueTyped<'v, BazelJavaCommandLine<'v>>,
     pub inputs: Vec<Value<'v>>,
     pub outputs: Vec<Value<'v>>,
     pub mnemonic: StringValue<'v>,
@@ -96,6 +106,135 @@ pub static BAZEL_JAVA_RUN_ACTION: LateBinding<
         &'a mut Evaluator<'v, 'b, 'c>,
     ) -> starlark::Result<NoneType>,
 > = LateBinding::new("BAZEL_JAVA_RUN_ACTION");
+
+#[derive(Clone, Debug, Freeze, ProvidesStaticType, Trace, NoSerialize, Allocative)]
+#[repr(C)]
+pub struct BazelJavaCommandLineGen<V: ValueLifetimeless> {
+    arguments: Box<[V]>,
+    param_file_start: usize,
+}
+
+starlark::starlark_complex_value!(pub BazelJavaCommandLine);
+
+unsafe impl<FromV, ToV> Coerce<BazelJavaCommandLineGen<ToV>>
+    for BazelJavaCommandLineGen<FromV>
+where
+    FromV: ValueLifetimeless + Coerce<ToV>,
+    ToV: ValueLifetimeless,
+{
+}
+
+impl<V: ValueLifetimeless> fmt::Display for BazelJavaCommandLineGen<V> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "<JavaCommandLine>")
+    }
+}
+
+#[starlark_value(type = "JavaCommandLine")]
+impl<'v, V: ValueLike<'v>> StarlarkValue<'v> for BazelJavaCommandLineGen<V>
+where
+    Self: ProvidesStaticType<'v>,
+{
+    fn provide(&'v self, demand: &mut Demand<'_, 'v>) {
+        demand.provide_value::<&dyn CommandLineArgLike>(self);
+    }
+}
+
+impl<'v, V: ValueLike<'v>> BazelJavaCommandLineGen<V> {
+    fn add_values_to_command_line(
+        values: &[V],
+        cli: &mut dyn CommandLineBuilder,
+        context: &mut dyn CommandLineContext,
+        artifact_path_mapping: &dyn ArtifactPathMapper,
+    ) -> buck2_error::Result<()> {
+        for value in values {
+            ValueAsCommandLineLike::unpack_value_err(value.to_value())?
+                .0
+                .add_to_command_line(cli, context, artifact_path_mapping)?;
+        }
+        Ok(())
+    }
+
+    fn visit_values(
+        values: &[V],
+        visitor: &mut dyn CommandLineArtifactVisitor<'v>,
+    ) -> buck2_error::Result<()> {
+        for value in values {
+            ValueAsCommandLineLike::unpack_value_err(value.to_value())?
+                .0
+                .visit_artifacts(visitor)?;
+        }
+        Ok(())
+    }
+}
+
+impl<'v, V: ValueLike<'v>> CommandLineArgLike<'v> for BazelJavaCommandLineGen<V> {
+    fn register_me(&self) {
+        command_line_arg_like_impl!(BazelJavaCommandLine::starlark_type_repr());
+    }
+
+    fn add_to_command_line(
+        &self,
+        cli: &mut dyn CommandLineBuilder,
+        context: &mut dyn CommandLineContext,
+        artifact_path_mapping: &dyn ArtifactPathMapper,
+    ) -> buck2_error::Result<()> {
+        let param_file_start = self.param_file_start.min(self.arguments.len());
+        Self::add_values_to_command_line(
+            &self.arguments[..param_file_start],
+            cli,
+            context,
+            artifact_path_mapping,
+        )?;
+        if param_file_start == self.arguments.len() {
+            return Ok(());
+        }
+
+        let mut param_file_args = Vec::new();
+        Self::add_values_to_command_line(
+            &self.arguments[param_file_start..],
+            &mut param_file_args,
+            context,
+            artifact_path_mapping,
+        )?;
+        let param_file_args = param_file_args
+            .into_iter()
+            .map(|arg| context.normalize_param_file_arg(arg))
+            .collect();
+        let param_file_path = context
+            .add_param_file_args(param_file_args, ParamFileFormat::Multiline)?
+            .into_string();
+        cli.push_arg(format!("@{param_file_path}"));
+        Ok(())
+    }
+
+    fn visit_artifacts(
+        &self,
+        visitor: &mut dyn CommandLineArtifactVisitor<'v>,
+    ) -> buck2_error::Result<()> {
+        Self::visit_values(&self.arguments, visitor)
+    }
+
+    fn contains_arg_attr(&self) -> bool {
+        self.arguments.iter().any(|value| {
+            ValueAsCommandLineLike::unpack(value.to_value())
+                .is_some_and(|value| value.0.contains_arg_attr())
+        })
+    }
+
+    fn visit_write_to_file_macros(
+        &self,
+        visitor: &mut dyn WriteToFileMacroVisitor,
+        artifact_path_mapping: &dyn ArtifactPathMapper,
+    ) -> buck2_error::Result<()> {
+        for value in &self.arguments {
+            ValueAsCommandLineLike::unpack_value_err(value.to_value())?
+                .0
+                .visit_write_to_file_macros(visitor, artifact_path_mapping)?;
+        }
+        Ok(())
+    }
+}
 
 #[derive(Clone, Debug, Freeze, ProvidesStaticType, Trace, Allocative)]
 #[repr(C)]
@@ -696,11 +835,15 @@ fn java_call_run_action<'v>(
     let heap = eval.heap();
     let actions = java_attr(ctx, "actions", heap)?;
     let _unused = execution_requirements;
-    let arguments = if worker_executable.is_some() {
-        java_param_file_arguments(argv[param_file_start..].to_vec(), 0, heap)?
+    let (arguments, param_file_start) = if worker_executable.is_some() {
+        (argv[param_file_start..].to_vec(), 0)
     } else {
-        java_param_file_arguments(argv, param_file_start, heap)?
+        (argv, param_file_start)
     };
+    let arguments = heap.alloc_typed(BazelJavaCommandLine {
+        arguments: arguments.into_boxed_slice(),
+        param_file_start,
+    });
     (BAZEL_JAVA_RUN_ACTION.get()?)(
         BazelJavaRunAction {
             actions: ValueTyped::new_err(actions)?,
@@ -714,26 +857,6 @@ fn java_call_run_action<'v>(
         eval,
     )?;
     Ok(NoneType)
-}
-
-fn java_param_file_arguments<'v>(
-    argv: Vec<Value<'v>>,
-    param_file_start: usize,
-    heap: Heap<'v>,
-) -> starlark::Result<Vec<Value<'v>>> {
-    if param_file_start >= argv.len() {
-        return Ok(argv);
-    }
-
-    let mut argv = argv;
-    let param_file_values = argv.split_off(param_file_start);
-    let param_file = StarlarkCmdArgs::from_values_with_bazel_param_file(
-        param_file_values,
-        heap.alloc_str("@{}"),
-        "UNQUOTED",
-    )?;
-    argv.push(heap.alloc(param_file));
-    Ok(argv)
 }
 
 fn java_bool_attr<'v>(value: Value<'v>, attr: &str, heap: Heap<'v>) -> starlark::Result<bool> {

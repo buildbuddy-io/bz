@@ -700,7 +700,7 @@ pub(crate) fn register_bazel_java_run_action<'v>(
             let remote_worker = worker_run.typed.remote_worker();
             let worker_exe = worker_run.typed.exe();
             let exe = StarlarkCmdArgs::try_from_value(worker_exe.to_value())?;
-            let args = StarlarkCmdArgs::from_values(action.arguments)?;
+            let args = StarlarkCmdArgs::from_values([action.arguments.to_value()])?;
             (exe, args, worker, remote_worker, None)
         } else {
             let executable =
@@ -708,7 +708,7 @@ pub(crate) fn register_bazel_java_run_action<'v>(
             let bazel_executable_runfiles =
                 bazel_executable_runfiles_entries(action.actions.as_ref(), executable, eval)?;
             let exe = StarlarkCmdArgs::from_values([executable])?;
-            let args = StarlarkCmdArgs::from_values(action.arguments)?;
+            let args = StarlarkCmdArgs::from_values([action.arguments.to_value()])?;
             (exe, args, None, None, bazel_executable_runfiles)
         };
 
