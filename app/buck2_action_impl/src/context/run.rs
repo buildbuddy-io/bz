@@ -543,6 +543,7 @@ fn register_bazel_run_action<'v>(
     args: StarlarkCmdArgs<'v>,
     inputs: Value<'v>,
     tools: Value<'v>,
+    bazel_inputs: Option<StarlarkCmdArgs<'v>>,
     bazel_executable_runfiles: Option<Value<'v>>,
     outputs: impl IntoIterator<Item = ValueTyped<'v, StarlarkDeclaredArtifact<'v>>>,
     env: Option<ValueOfUnchecked<'v, DictType<String, ValueAsCommandLineLike<'static>>>>,
@@ -556,9 +557,15 @@ fn register_bazel_run_action<'v>(
     precomputed_local_action_cache_command_line_digest: Option<ExpandedCommandLineDigest>,
     eval: &mut Evaluator<'v, '_, '_>,
 ) -> starlark::Result<NoneType> {
-    let mut bazel_inputs = StarlarkCmdArgs::default();
-    bazel_run_add_hidden(&mut bazel_inputs, inputs, eval)?;
-    bazel_run_add_hidden(&mut bazel_inputs, tools, eval)?;
+    let bazel_inputs = match bazel_inputs {
+        Some(bazel_inputs) => bazel_inputs,
+        None => {
+            let mut bazel_inputs = StarlarkCmdArgs::default();
+            bazel_run_add_hidden(&mut bazel_inputs, inputs, eval)?;
+            bazel_run_add_hidden(&mut bazel_inputs, tools, eval)?;
+            bazel_inputs
+        }
+    };
 
     let outputs = bazel_run_outputs(outputs);
     if outputs.is_empty() {
@@ -646,7 +653,6 @@ pub(crate) fn register_bazel_cc_compile_action<'v>(
     eval: &mut Evaluator<'v, '_, '_>,
 ) -> starlark::Result<NoneType> {
     let heap = eval.heap();
-    let inputs = heap.alloc(AllocList(action.inputs));
     let executable = bazel_files_to_run_executable(action.executable).unwrap_or(action.executable);
     let precomputed_local_action_cache_command_line_digest = executable
         .unpack_str()
@@ -664,8 +670,9 @@ pub(crate) fn register_bazel_cc_compile_action<'v>(
         action.actions.as_ref(),
         exe,
         args,
-        inputs,
         Value::new_none(),
+        Value::new_none(),
+        Some(action.inputs),
         None,
         action.outputs,
         None,
@@ -718,6 +725,7 @@ pub(crate) fn register_bazel_java_run_action<'v>(
         args,
         inputs,
         Value::new_none(),
+        None,
         bazel_executable_runfiles,
         outputs,
         None,
@@ -780,6 +788,7 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
             args,
             inputs,
             tools,
+            None,
             None,
             outputs,
             env,
@@ -1010,6 +1019,7 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
                     inputs,
                     tools,
                     None,
+                    None,
                     outputs,
                     env,
                     worker,
@@ -1038,6 +1048,7 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
                 args,
                 inputs,
                 tools,
+                None,
                 bazel_executable_runfiles,
                 outputs,
                 env,

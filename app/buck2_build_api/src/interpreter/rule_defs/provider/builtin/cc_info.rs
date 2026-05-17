@@ -507,7 +507,7 @@ pub struct BazelCcCompileAction<'v> {
     pub actions: ValueTyped<'v, AnalysisActions<'v>>,
     pub executable: Value<'v>,
     pub command_line: ValueTyped<'v, BazelCcCompileCommandLine<'v>>,
-    pub inputs: Vec<Value<'v>>,
+    pub inputs: StarlarkCmdArgs<'v>,
     pub outputs: Vec<ValueTyped<'v, StarlarkDeclaredArtifact<'v>>>,
     pub mnemonic: StringValue<'v>,
 }
@@ -3072,50 +3072,16 @@ fn bazel_cc_collect_values<'v>(
 
 fn bazel_cc_collect_input_values<'v>(
     value: Value<'v>,
-    values: &mut Vec<Value<'v>>,
-) -> starlark::Result<()> {
-    if value.is_none() {
-        return Ok(());
-    }
-    if BazelDepset::from_value(value).is_some() {
-        values.push(value);
-        return Ok(());
-    }
-    if let Some(list) = ListRef::from_value(value) {
-        for item in list.iter() {
-            bazel_cc_collect_input_values(item, values)?;
-        }
-        return Ok(());
-    }
-    if let Some(tuple) = TupleRef::from_value(value) {
-        for item in tuple.iter() {
-            bazel_cc_collect_input_values(item, values)?;
-        }
-        return Ok(());
-    }
-    values.push(value);
-    Ok(())
-}
-
-fn bazel_cc_collect_attr_values<'v>(
-    owner: Value<'v>,
-    attr: &str,
-    values: &mut Vec<Value<'v>>,
+    inputs: &mut StarlarkCmdArgs<'v>,
     heap: Heap<'v>,
 ) -> starlark::Result<()> {
-    if owner.is_none() {
-        return Ok(());
-    }
-    let Some(value) = owner.get_attr(attr, heap)? else {
-        return Ok(());
-    };
-    bazel_cc_collect_values(value, values)
+    inputs.add_bazel_hidden_value(value, heap)
 }
 
 fn bazel_cc_collect_attr_input_values<'v>(
     owner: Value<'v>,
     attr: &str,
-    values: &mut Vec<Value<'v>>,
+    inputs: &mut StarlarkCmdArgs<'v>,
     heap: Heap<'v>,
 ) -> starlark::Result<()> {
     if owner.is_none() {
@@ -3124,7 +3090,7 @@ fn bazel_cc_collect_attr_input_values<'v>(
     let Some(value) = owner.get_attr(attr, heap)? else {
         return Ok(());
     };
-    bazel_cc_collect_input_values(value, values)
+    bazel_cc_collect_input_values(value, inputs, heap)
 }
 
 fn bazel_cc_optional_bool_arg(value: Value<'_>, name: &str) -> starlark::Result<Option<bool>> {
@@ -4317,18 +4283,18 @@ fn bazel_cc_internal_methods(builder: &mut MethodsBuilder) {
             variables: ValueOfUnchecked::new(compile_build_variables),
         });
 
-        let mut inputs = Vec::new();
-        bazel_cc_collect_input_values(source, &mut inputs)?;
-        bazel_cc_collect_input_values(additional_compilation_inputs, &mut inputs)?;
-        bazel_cc_collect_input_values(additional_compilation_inputs_set, &mut inputs)?;
-        bazel_cc_collect_input_values(additional_include_scanning_roots, &mut inputs)?;
-        bazel_cc_collect_input_values(cache_key_inputs, &mut inputs)?;
-        bazel_cc_collect_input_values(build_info_header_files, &mut inputs)?;
+        let mut inputs = StarlarkCmdArgs::default();
+        bazel_cc_collect_input_values(source, &mut inputs, heap)?;
+        bazel_cc_collect_input_values(additional_compilation_inputs, &mut inputs, heap)?;
+        bazel_cc_collect_input_values(additional_compilation_inputs_set, &mut inputs, heap)?;
+        bazel_cc_collect_input_values(additional_include_scanning_roots, &mut inputs, heap)?;
+        bazel_cc_collect_input_values(cache_key_inputs, &mut inputs, heap)?;
+        bazel_cc_collect_input_values(build_info_header_files, &mut inputs, heap)?;
         for attr in ["headers", "_non_code_inputs"] {
             bazel_cc_collect_attr_input_values(cc_compilation_context, attr, &mut inputs, heap)?;
         }
         if !should_scan_includes && dotd_file.is_none() {
-            bazel_cc_collect_input_values(additional_prunable_headers, &mut inputs)?;
+            bazel_cc_collect_input_values(additional_prunable_headers, &mut inputs, heap)?;
         }
         if let Some(module_map) = cc_compilation_context.get_attr("_module_map", heap)? {
             bazel_cc_collect_attr_input_values(module_map, "file", &mut inputs, heap)?;
@@ -4337,7 +4303,7 @@ fn bazel_cc_internal_methods(builder: &mut MethodsBuilder) {
             let mut module_maps_list = Vec::new();
             bazel_cc_collect_values(module_maps, &mut module_maps_list)?;
             for module_map in module_maps_list {
-                bazel_cc_collect_attr_values(module_map, "file", &mut inputs, heap)?;
+                bazel_cc_collect_attr_input_values(module_map, "file", &mut inputs, heap)?;
             }
         }
         let toolchain_files = if should_scan_includes {
@@ -4367,7 +4333,7 @@ fn bazel_cc_internal_methods(builder: &mut MethodsBuilder) {
             "input_file",
         ] {
             if let Some(value) = bazel_cc_build_variable(compile_build_variables, variable) {
-                bazel_cc_collect_input_values(value, &mut inputs)?;
+                bazel_cc_collect_input_values(value, &mut inputs, heap)?;
             }
         }
 
