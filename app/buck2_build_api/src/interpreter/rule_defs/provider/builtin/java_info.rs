@@ -523,6 +523,180 @@ fn java_bazel_output_dir_relative_path(exec_path: &str) -> &str {
     path.split_once('/').map_or(exec_path, |(_, path)| path)
 }
 
+fn java_paths_is_absolute(path: &str) -> bool {
+    path.starts_with('/') || (path.len() > 2 && path.as_bytes()[1] == b':')
+}
+
+fn java_paths_join(path: &str, other: &str) -> String {
+    if java_paths_is_absolute(other) {
+        other.to_owned()
+    } else if path.is_empty() || path.ends_with('/') {
+        format!("{path}{other}")
+    } else {
+        format!("{path}/{other}")
+    }
+}
+
+fn java_paths_normalize(path: &str) -> String {
+    if path.is_empty() {
+        return ".".to_owned();
+    }
+
+    let initial_slashes = if path.starts_with("//") && !path.starts_with("///") {
+        2
+    } else if path.starts_with('/') {
+        1
+    } else {
+        0
+    };
+    let is_relative = initial_slashes == 0;
+
+    let mut components = Vec::new();
+    for component in path.split('/') {
+        if component.is_empty() || component == "." {
+            continue;
+        }
+        if component == ".." {
+            if components.last().is_some_and(|last| *last != "..") {
+                components.pop();
+            } else if is_relative {
+                components.push(component);
+            }
+        } else {
+            components.push(component);
+        }
+    }
+
+    let mut normalized = components.join("/");
+    if !is_relative {
+        normalized = format!("{}{}", "/".repeat(initial_slashes), normalized);
+    }
+    if normalized.is_empty() {
+        ".".to_owned()
+    } else {
+        normalized
+    }
+}
+
+fn java_paths_relativize(path: &str, start: &str) -> buck2_error::Result<String> {
+    let segments = java_paths_normalize(path)
+        .split('/')
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    let mut start_segments = java_paths_normalize(start)
+        .split('/')
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    if start_segments == ["."] {
+        start_segments.clear();
+    }
+    let start_length = start_segments.len();
+
+    if path.starts_with('/') != start.starts_with('/') || segments.len() < start_length {
+        return Err(java_common_error(format!(
+            "Path `{path}` is not beneath `{start}`"
+        )));
+    }
+
+    for (ancestor_segment, segment) in start_segments.iter().zip(segments.iter()) {
+        if ancestor_segment != segment {
+            return Err(java_common_error(format!(
+                "Path `{path}` is not beneath `{start}`"
+            )));
+        }
+    }
+
+    let length = segments.len() - start_length;
+    let result_segments = if length == 0 {
+        &segments[..]
+    } else {
+        &segments[segments.len() - length..]
+    };
+    Ok(result_segments.join("/"))
+}
+
+fn java_segments(path: &str) -> starlark::Result<Option<Vec<&str>>> {
+    if path.starts_with('/') {
+        return Err(java_common_error(format!("path must not be absolute: '{path}'")).into());
+    }
+    let segments = path.split('/').collect::<Vec<_>>();
+    let mut root_idx = None;
+    for (idx, segment) in segments.iter().enumerate() {
+        if matches!(*segment, "java" | "javatests" | "src" | "testsrc") {
+            root_idx = Some(idx);
+            break;
+        }
+    }
+    let Some(mut root_idx) = root_idx else {
+        return Ok(None);
+    };
+    let is_src = segments[root_idx] == "src";
+    let mut check_mvn_idx = if is_src { Some(root_idx) } else { None };
+    if root_idx == 0 || is_src {
+        for i in (root_idx + 1)..segments.len().saturating_sub(1) {
+            let segment = segments[i];
+            if segment == "src" || (is_src && matches!(segment, "java" | "javatests")) {
+                let next = segments[i + 1];
+                if matches!(next, "com" | "org" | "net") {
+                    root_idx = i;
+                } else if segment == "src" {
+                    check_mvn_idx = Some(i);
+                }
+                break;
+            }
+        }
+    }
+
+    if let Some(check_mvn_idx) = check_mvn_idx
+        && check_mvn_idx < segments.len().saturating_sub(2)
+    {
+        let next = segments[check_mvn_idx + 1];
+        if matches!(next, "main" | "test") {
+            let next = segments[check_mvn_idx + 2];
+            if matches!(next, "java" | "resources") {
+                root_idx = check_mvn_idx + 2;
+            }
+        }
+    }
+    Ok(Some(segments[(root_idx + 1)..].to_vec()))
+}
+
+fn java_default_resource_path(path: &str) -> starlark::Result<String> {
+    let segments = path.split('/').collect::<Vec<_>>();
+    for idx in 0..segments.len().saturating_sub(2) {
+        if segments[idx] == "src" && segments[idx + 2] == "resources" {
+            return Ok(segments[(idx + 3)..].join("/"));
+        }
+    }
+    Ok(java_segments(path)?.map_or_else(|| path.to_owned(), |segments| segments.join("/")))
+}
+
+fn java_string_attr<'v>(value: Value<'v>, attr: &str, heap: Heap<'v>) -> starlark::Result<String> {
+    let value = java_attr(value, attr, heap)?;
+    value.unpack_str().map(str::to_owned).ok_or_else(|| {
+        java_common_error(format!(
+            "Object attribute `{attr}` is `{}`, want string",
+            value.get_type()
+        ))
+        .into()
+    })
+}
+
+fn java_resource_mapper<'v>(file: Value<'v>, heap: Heap<'v>) -> starlark::Result<String> {
+    let file_path = java_string_attr(file, "path", heap)?;
+    let root = java_attr(file, "root", heap)?;
+    let root_path = java_string_attr(root, "path", heap)?;
+    let owner = java_attr(file, "owner", heap)?;
+    let workspace_root = java_string_attr(owner, "workspace_root", heap)?;
+    let root_relative_path =
+        java_paths_relativize(&file_path, &java_paths_join(&root_path, &workspace_root))?;
+    Ok(format!(
+        "{}:{}",
+        file_path,
+        java_default_resource_path(&root_relative_path)?
+    ))
+}
+
 fn java_derive_output_file<'v>(
     ctx: Value<'v>,
     base_file: Value<'v>,
@@ -1778,6 +1952,14 @@ fn java_common_internal_methods(builder: &mut MethodsBuilder) {
         java_merge_plugin_data(plugin_data_provider, empty_plugin_data, datas, eval)
     }
 
+    fn resource_mapper<'v>(
+        #[starlark(this)] _this: &JavaCommonInternal,
+        #[starlark(require = pos)] file: Value<'v>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<String> {
+        java_resource_mapper(file, eval.heap())
+    }
+
     fn javainfo_init_base<'v>(
         #[starlark(this)] _this: &JavaCommonInternal,
         #[starlark(require = pos)] java_output_info_provider: Value<'v>,
@@ -2005,4 +2187,35 @@ pub(crate) fn register_java_common(globals: &mut GlobalsBuilder) {
         JavaProviderCallable::new(JAVA_PLUGIN_INFO),
     );
     globals.set("java_common", JavaCommon);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn java_default_resource_path_matches_rules_java_heuristics() {
+        assert_eq!(
+            "a/b.txt",
+            java_default_resource_path("src/main/resources/a/b.txt").unwrap()
+        );
+        assert_eq!(
+            "y/java/z.txt",
+            java_default_resource_path("x/java/y/java/z.txt").unwrap()
+        );
+        assert_eq!(
+            "com/acme/R.txt",
+            java_default_resource_path("src/foo/java/com/acme/R.txt").unwrap()
+        );
+        assert_eq!(
+            "plain/resource.txt",
+            java_default_resource_path("plain/resource.txt").unwrap()
+        );
+    }
+
+    #[test]
+    fn java_default_resource_path_rejects_absolute_paths_like_bazel() {
+        let err = java_default_resource_path("/x/java/y.txt").unwrap_err();
+        assert!(err.to_string().contains("path must not be absolute"));
+    }
 }

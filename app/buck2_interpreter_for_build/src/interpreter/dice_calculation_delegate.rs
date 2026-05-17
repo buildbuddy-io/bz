@@ -114,6 +114,8 @@ const BAZEL_RULES_JAVA_INFO_BZL_SHA256: &str =
     "02438c92066a825629a47f6dd01d9ea2200dc90a666b68fb4ee1ebf09e6a3026";
 const BAZEL_RULES_JAVA_COMMON_INTERNAL_BZL_SHA256: &str =
     "68776f7ef30ca86f97edb7359812e1c3ff12cf348c812cfa86292d1d41a825a3";
+const BAZEL_RULES_JAVA_HELPER_BZL_SHA256: &str =
+    "f2cec4a3f582799329e1aca55b81dbd3591dac00f88d951b68730e861110faa8";
 
 fn is_bazel_skylib_paths_module(starlark_file: StarlarkModulePath<'_>) -> bool {
     match starlark_file {
@@ -187,6 +189,20 @@ fn is_bazel_rules_java_info_path(starlark_file: StarlarkPath<'_>) -> bool {
         StarlarkPath::LoadFile(path) => {
             path.cell().as_str().contains("rules_java")
                 && path.path().path().as_str() == "java/private/java_info.bzl"
+        }
+        StarlarkPath::BuildFile(_)
+        | StarlarkPath::PackageFile(_)
+        | StarlarkPath::BxlFile(_)
+        | StarlarkPath::JsonFile(_)
+        | StarlarkPath::TomlFile(_) => false,
+    }
+}
+
+fn is_bazel_rules_java_helper_path(starlark_file: StarlarkPath<'_>) -> bool {
+    match starlark_file {
+        StarlarkPath::LoadFile(path) => {
+            path.cell().as_str().contains("rules_java")
+                && path.path().path().as_str() == "java/common/rules/java_helper.bzl"
         }
         StarlarkPath::BuildFile(_)
         | StarlarkPath::PackageFile(_)
@@ -607,6 +623,40 @@ fn rewrite_bazel_rules_java_common_internal(
     Ok(rewritten)
 }
 
+fn rewrite_bazel_rules_java_helper(
+    starlark_file: StarlarkPath<'_>,
+    contents: String,
+) -> buck2_error::Result<String> {
+    if !is_bazel_rules_java_helper_path(starlark_file) {
+        return Ok(contents);
+    }
+    if hex::encode(Sha256::digest(contents.as_bytes())) != BAZEL_RULES_JAVA_HELPER_BZL_SHA256 {
+        return Ok(contents);
+    }
+
+    const RESOURCE_MAPPER_STUB: &str = r#"def _resource_mapper(file):
+    root_relative_path = paths.relativize(
+        path = file.path,
+        start = paths.join(file.root.path, file.owner.workspace_root),
+    )
+    return "%s:%s" % (
+        file.path,
+        semantics.get_default_resource_path(root_relative_path, segment_extractor = _java_segments),
+    )
+"#;
+    const NATIVE_RESOURCE_MAPPER_STUB: &str = r#"def _resource_mapper(file):
+    return java_common.internal_DO_NOT_USE().resource_mapper(file)
+"#;
+
+    let rewritten = contents.replacen(RESOURCE_MAPPER_STUB, NATIVE_RESOURCE_MAPPER_STUB, 1);
+    if rewritten == contents {
+        return Err(internal_error!(
+            "rules_java java_helper.bzl hash matched, but _resource_mapper stub did not"
+        ));
+    }
+    Ok(rewritten)
+}
+
 #[async_trait]
 pub trait HasCalculationDelegate<'c, 'd> {
     /// Get calculator for a file evaluation.
@@ -734,6 +784,7 @@ impl<'c, 'd: 'c> DiceCalculationDelegate<'c, 'd> {
         let content = rewrite_bazel_rules_cc_cc_helper(starlark_path, content)?;
         let content = rewrite_bazel_rules_java_info(starlark_path, content)?;
         let content = rewrite_bazel_rules_java_common_internal(starlark_path, content)?;
+        let content = rewrite_bazel_rules_java_helper(starlark_path, content)?;
 
         self.configs.parse(starlark_path, content)
     }
