@@ -567,7 +567,7 @@ fn rewrite_bazel_rules_java_info(
     _validate_provider_list(exports, "exports", JavaInfo)
     _validate_provider_list(native_libraries, "native_libraries", CcInfo)
 
-    if not native_libraries and not get_internal_java_common().google_legacy_api_enabled():
+    if not get_internal_java_common().google_legacy_api_enabled():
         return get_internal_java_common().javainfo_init_base(
             _JavaOutputInfo,
             _JavaRuleOutputJarsInfo,
