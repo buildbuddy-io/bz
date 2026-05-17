@@ -209,10 +209,93 @@ impl AllocFrozenValue for serde_json::Value {
 }
 
 pub(crate) fn json(globals: &mut GlobalsBuilder) {
+    fn write_json_indent(out: &mut String, prefix: &str, indent: &str, level: usize) {
+        out.push('\n');
+        out.push_str(prefix);
+        for _ in 0..level {
+            out.push_str(indent);
+        }
+    }
+
+    fn indent_json(input: &str, prefix: &str, indent: &str) -> String {
+        let chars = input.chars().collect::<Vec<_>>();
+        let mut out = String::with_capacity(input.len());
+        let mut level = 0usize;
+        let mut in_string = false;
+        let mut escaped = false;
+
+        for (index, ch) in chars.iter().copied().enumerate() {
+            if in_string {
+                out.push(ch);
+                if escaped {
+                    escaped = false;
+                } else if ch == '\\' {
+                    escaped = true;
+                } else if ch == '"' {
+                    in_string = false;
+                }
+                continue;
+            }
+
+            match ch {
+                '"' => {
+                    in_string = true;
+                    out.push(ch);
+                }
+                '{' | '[' => {
+                    out.push(ch);
+                    if chars
+                        .iter()
+                        .skip(index + 1)
+                        .find(|c| !c.is_whitespace())
+                        .is_some_and(|next| *next != '}' && *next != ']')
+                    {
+                        level += 1;
+                        write_json_indent(&mut out, prefix, indent, level);
+                    }
+                }
+                '}' | ']' => {
+                    if !out.ends_with('{') && !out.ends_with('[') {
+                        level = level.saturating_sub(1);
+                        write_json_indent(&mut out, prefix, indent, level);
+                    }
+                    out.push(ch);
+                }
+                ',' => {
+                    out.push(ch);
+                    write_json_indent(&mut out, prefix, indent, level);
+                }
+                ':' => {
+                    out.push_str(": ");
+                }
+                c if c.is_whitespace() => {}
+                _ => out.push(ch),
+            }
+        }
+
+        out
+    }
+
     #[starlark_module]
     fn json_members(globals: &mut GlobalsBuilder) {
         fn encode(#[starlark(require = pos)] x: Value) -> anyhow::Result<String> {
             x.to_json()
+        }
+
+        fn indent(
+            #[starlark(require = pos)] x: &str,
+            #[starlark(require = named, default = "")] prefix: &str,
+            #[starlark(require = named, default = "\t")] indent: &str,
+        ) -> anyhow::Result<String> {
+            Ok(indent_json(x, prefix, indent))
+        }
+
+        fn encode_indent(
+            #[starlark(require = pos)] x: Value,
+            #[starlark(require = named, default = "")] prefix: &str,
+            #[starlark(require = named, default = "\t")] indent: &str,
+        ) -> anyhow::Result<String> {
+            Ok(indent_json(&x.to_json()?, prefix, indent))
         }
 
         fn decode<'v>(

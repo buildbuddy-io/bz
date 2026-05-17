@@ -1,4 +1,10 @@
 load("@prelude//:none.bzl", "none_rule")
+load("@prelude//toolchains:cxx.bzl", "system_cxx_toolchain")
+load("@prelude//toolchains:genrule.bzl", "system_genrule_toolchain")
+load("@prelude//toolchains:no_toolchain.bzl", "no_toolchain")
+load("@prelude//toolchains/go:system_go_bootstrap_toolchain.bzl", "system_go_bootstrap_toolchain")
+load("@prelude//toolchains/go:system_go_toolchain.bzl", "system_go_toolchain")
+load("@prelude//toolchains:python.bzl", "system_python_bootstrap_toolchain")
 load("@prelude//utils:source_listing.bzl", "source_listing")
 load(":native.bzl", prelude = "native")
 
@@ -54,5 +60,35 @@ prelude.filegroup(
 
 none_rule(
     name = "none",
+    visibility = ["PUBLIC"],
+)
+
+system_cxx_toolchain(
+    name = "cxx",
+    visibility = ["PUBLIC"],
+)
+
+no_toolchain(
+    name = "cxx_no_default_deps",
+    visibility = ["PUBLIC"],
+)
+
+system_go_bootstrap_toolchain(
+    name = "go_bootstrap",
+    visibility = ["PUBLIC"],
+)
+
+system_genrule_toolchain(
+    name = "genrule",
+    visibility = ["PUBLIC"],
+)
+
+system_go_toolchain(
+    name = "go",
+    visibility = ["PUBLIC"],
+)
+
+system_python_bootstrap_toolchain(
+    name = "python_bootstrap",
     visibility = ["PUBLIC"],
 )

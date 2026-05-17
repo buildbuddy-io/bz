@@ -14,6 +14,7 @@ use allocative::Allocative;
 use async_trait::async_trait;
 use buck2_core::cells::CellAliasResolver;
 use buck2_core::cells::CellResolver;
+use buck2_core::cells::external::ExternalCellOrigin;
 use buck2_core::cells::name::CellName;
 use buck2_core::fs::project_rel_path::ProjectRelativePath;
 use derive_more::Display;
@@ -56,6 +57,27 @@ pub trait SetCellResolver {
     fn set_none_cell_resolver(&mut self) -> buck2_error::Result<()>;
 }
 
+pub trait SetExternalCellOrigins {
+    fn set_external_cell_origins_from_cell_resolver(
+        &mut self,
+        cell_resolver: &CellResolver,
+    ) -> buck2_error::Result<()>;
+
+    fn set_changed_external_cell_origins(
+        &mut self,
+        previous: &CellResolver,
+        current: &CellResolver,
+    ) -> buck2_error::Result<()>;
+}
+
+#[async_trait]
+pub trait HasExternalCellOrigins {
+    async fn get_external_cell_origin(
+        &mut self,
+        cell: CellName,
+    ) -> buck2_error::Result<Option<ExternalCellOrigin>>;
+}
+
 #[derive(Clone, Dupe, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable)]
 #[display("{:?}", self)]
 #[pagable_typetag(dice::DiceKeyDyn)]
@@ -66,9 +88,9 @@ impl InjectedKey for CellResolverKey {
 
     fn equality(x: &Self::Value, y: &Self::Value) -> bool {
         match (x, y) {
-            (Some(x), Some(y)) => x == y,
+            (Some(x), Some(y)) => cell_resolver_graph_shape_equal(x, y),
             (None, None) => true,
-            (_, _) => false,
+            _ => false,
         }
     }
 
@@ -78,6 +100,69 @@ impl InjectedKey for CellResolverKey {
 
     fn value_serialize() -> impl ValueSerialize<Value = Self::Value> {
         PagableValueSerialize::<Self::Value>::new()
+    }
+}
+
+#[derive(Clone, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable)]
+#[display("ExternalCellOriginKey({})", _0)]
+#[pagable_typetag(dice::DiceKeyDyn)]
+struct ExternalCellOriginKey(CellName);
+
+impl InjectedKey for ExternalCellOriginKey {
+    type Value = Option<ExternalCellOrigin>;
+
+    fn equality(x: &Self::Value, y: &Self::Value) -> bool {
+        x == y
+    }
+
+    fn invalidation_source_priority() -> InvalidationSourcePriority {
+        InvalidationSourcePriority::Ignored
+    }
+
+    fn value_serialize() -> impl ValueSerialize<Value = Self::Value> {
+        PagableValueSerialize::<Self::Value>::new()
+    }
+}
+
+pub fn cell_resolver_graph_shape_equal(x: &CellResolver, y: &CellResolver) -> bool {
+    if x.root_cell() != y.root_cell()
+        || x.root_cell_cell_alias_resolver() != y.root_cell_cell_alias_resolver()
+    {
+        return false;
+    }
+
+    let mut count = 0;
+    for (cell, x_instance) in x.cells() {
+        count += 1;
+        let Ok(y_instance) = y.get(cell) else {
+            return false;
+        };
+        if x_instance.path() != y_instance.path()
+            || x_instance.nested_cells() != y_instance.nested_cells()
+            || !external_cell_origin_shape_equal(x_instance.external(), y_instance.external())
+        {
+            return false;
+        }
+    }
+    count == y.cells().count()
+}
+
+fn external_cell_origin_shape_equal(
+    x: Option<&ExternalCellOrigin>,
+    y: Option<&ExternalCellOrigin>,
+) -> bool {
+    match (x, y) {
+        (None, None) => true,
+        (Some(ExternalCellOrigin::Bundled(x)), Some(ExternalCellOrigin::Bundled(y))) => x == y,
+        (Some(ExternalCellOrigin::Git(_)), Some(ExternalCellOrigin::Git(_))) => true,
+        (Some(ExternalCellOrigin::Bzlmod(x)), Some(ExternalCellOrigin::Bzlmod(y))) => {
+            x.canonical_repo_name == y.canonical_repo_name
+        }
+        (
+            Some(ExternalCellOrigin::BzlmodGenerated(x)),
+            Some(ExternalCellOrigin::BzlmodGenerated(y)),
+        ) => x.canonical_repo_name == y.canonical_repo_name,
+        _ => false,
     }
 }
 
@@ -109,6 +194,16 @@ impl HasCellResolver for DiceComputations<'_> {
     }
 }
 
+#[async_trait]
+impl HasExternalCellOrigins for DiceComputations<'_> {
+    async fn get_external_cell_origin(
+        &mut self,
+        cell: CellName,
+    ) -> buck2_error::Result<Option<ExternalCellOrigin>> {
+        Ok(self.compute(&ExternalCellOriginKey(cell)).await?)
+    }
+}
+
 /// Only used for cell alias resolvers parsed within dice, currently those for external cells
 #[derive(Clone, Dupe, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable)]
 #[pagable_typetag(dice::DiceKeyDyn)]
@@ -126,6 +221,17 @@ impl Key for CellAliasResolverKey {
         let resolver = ctx.get_cell_resolver().await?;
         let root_aliases = resolver.root_cell_cell_alias_resolver();
         let config = ctx.get_legacy_config_for_cell(self.0).await?;
+        let cell = resolver.get(self.0)?;
+        if self.0.as_str() == "bazel_tools"
+            || matches!(
+                cell.external(),
+                Some(ExternalCellOrigin::Bzlmod(_)) | Some(ExternalCellOrigin::BzlmodGenerated(_))
+            )
+        {
+            return BuckConfigBasedCells::get_bazel_cell_alias_resolver_from_config(
+                self.0, &resolver, &config,
+            );
+        }
         // Cell alias resolvers that are parsed within dice differ from those outside of dice in
         // that they cannot create new cells, and so respect only their `cell_aliases` section, not
         // their `cells` section. This is the expected behavior for external cells, moving other
@@ -151,10 +257,50 @@ impl Key for CellAliasResolverKey {
 
 impl SetCellResolver for DiceTransactionUpdater {
     fn set_cell_resolver(&mut self, cell_resolver: CellResolver) -> buck2_error::Result<()> {
+        self.set_external_cell_origins_from_cell_resolver(&cell_resolver)?;
         Ok(self.changed_to(vec![(CellResolverKey, Some(cell_resolver))])?)
     }
 
     fn set_none_cell_resolver(&mut self) -> buck2_error::Result<()> {
         Ok(self.changed_to(vec![(CellResolverKey, None)])?)
+    }
+}
+
+impl SetExternalCellOrigins for DiceTransactionUpdater {
+    fn set_external_cell_origins_from_cell_resolver(
+        &mut self,
+        cell_resolver: &CellResolver,
+    ) -> buck2_error::Result<()> {
+        let origins = cell_resolver
+            .cells()
+            .map(|(cell, instance)| {
+                (
+                    ExternalCellOriginKey(cell),
+                    instance.external().map(|origin| origin.dupe()),
+                )
+            })
+            .collect::<Vec<_>>();
+        Ok(self.changed_to(origins)?)
+    }
+
+    fn set_changed_external_cell_origins(
+        &mut self,
+        previous: &CellResolver,
+        current: &CellResolver,
+    ) -> buck2_error::Result<()> {
+        let mut changed = Vec::new();
+        for (cell, current_instance) in current.cells() {
+            let previous_origin = previous
+                .get(cell)
+                .ok()
+                .and_then(|instance| instance.external());
+            if previous_origin != current_instance.external() {
+                changed.push((
+                    ExternalCellOriginKey(cell),
+                    current_instance.external().map(|origin| origin.dupe()),
+                ));
+            }
+        }
+        Ok(self.changed_to(changed)?)
     }
 }

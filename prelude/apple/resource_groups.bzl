@@ -21,7 +21,7 @@ ResourceGroupInfo = provider(
     fields = {
         "groups": provider_field(list[Group]),
         "groups_hash": provider_field(int),
-        "mappings": provider_field(dict[Label, str]),
+        "mappings": provider_field(dict[ConfiguredProvidersLabel, str]),
         # Additional deps needed to cover labels referenced by the groups above.
         # This is useful in cases where the consumer of this provider won't already
         # have deps covering these.
@@ -35,13 +35,13 @@ ResourceGroupInfo = provider(
 RESOURCE_GROUP_MAP_ATTR = attrs.option(attrs.dep(providers = [ResourceGroupInfo]), default = None)
 
 ResourceGraphNode = record(
-    label = field(Label),
+    label = field(ConfiguredProvidersLabel),
     # Attribute labels on the target.
     labels = field(list[str], []),
     # Deps of this target which might have resources transitively.
-    deps = field(list[Label], []),
+    deps = field(list[ConfiguredProvidersLabel], []),
     # Exported deps of this target which might have resources transitively.
-    exported_deps = field(list[Label], []),
+    exported_deps = field(list[ConfiguredProvidersLabel], []),
     # Actual resource data, present when node corresponds to `apple_resource` target.
     resource_spec = field([AppleResourceSpec, None], None),
     # Actual asset catalog data, present when node corresponds to `apple_asset_catalog` target.
@@ -57,7 +57,7 @@ ResourceGraphNode = record(
 ResourceGraphTSet = transitive_set()
 
 ResourceGraphInfo = provider(fields = {
-    "label": provider_field(Label),
+    "label": provider_field(ConfiguredProvidersLabel),
     "nodes": provider_field(ResourceGraphTSet),
     "should_propagate": provider_field(bool),
 })
@@ -107,13 +107,13 @@ def create_resource_graph(
     )
 
 def get_resource_graph_node_map_func(graph: ResourceGraphInfo):
-    def get_resource_graph_node_map() -> dict[Label, ResourceGraphNode]:
+    def get_resource_graph_node_map() -> dict[ConfiguredProvidersLabel, ResourceGraphNode]:
         nodes = graph.nodes.traverse()
         return {node.label: node for node in filter(None, nodes)}
 
     return get_resource_graph_node_map
 
-def _filtered_labels_and_graphs(deps: list[Dependency]) -> (list[Label], list[ResourceGraphInfo]):
+def _filtered_labels_and_graphs(deps: list[Dependency]) -> (list[ConfiguredProvidersLabel], list[ResourceGraphInfo]):
     """
     Filters dependencies and returns only those which are relevant
     to working with resources i.e. those which contains resource graph provider
@@ -145,17 +145,17 @@ def get_resource_group_info(ctx: AnalysisContext) -> [ResourceGroupInfo, None]:
     fail("Resource group maps must be provided as a resource_group_map rule dependency.")
 
 def get_filtered_resources(
-        root: Label,
+        root: ConfiguredProvidersLabel,
         resource_graph_node_map_func,
         resource_group: [str, None],
-        resource_group_mappings: [dict[Label, str], None]) -> AppleResourceSelectionOutput:
+        resource_group_mappings: [dict[ConfiguredProvidersLabel, str], None]) -> AppleResourceSelectionOutput:
     """
     Walks the provided DAG and collects resources matching resource groups definition.
     """
 
     resource_graph_node_map = resource_graph_node_map_func()
 
-    def get_traversed_deps(target: Label) -> list[Label]:
+    def get_traversed_deps(target: ConfiguredProvidersLabel) -> list[ConfiguredProvidersLabel]:
         node = resource_graph_node_map[target]  # buildifier: disable=uninitialized
         return node.exported_deps + node.deps
 

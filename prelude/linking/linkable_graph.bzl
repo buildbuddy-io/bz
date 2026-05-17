@@ -41,7 +41,7 @@ load(
 LinkableRootInfo = provider(
     # @unsorted-dict-items
     fields = {
-        "label": provider_field(Label),
+        "label": provider_field(ConfiguredProvidersLabel),
         "link_infos": provider_field(typing.Any, default = None),  # LinkInfos
         "name": provider_field(typing.Any, default = None),  # [str, None]
         "deps": provider_field(typing.Any, default = None),  # ["label"]
@@ -64,18 +64,18 @@ LinkableNode = record(
     preferred_linkage = field(Linkage, Linkage("any")),
     default_link_strategy = field(LinkStrategy),
     # Linkable deps of this target.
-    deps = field(list[Label], []),
+    deps = field(list[ConfiguredProvidersLabel], []),
     # Exported linkable deps of this target.
     #
     # We distinguish between deps and exported deps so that when creating shared
     # libraries in a large graph we only need to link each library against its
     # deps and their (transitive) exported deps. This helps keep link lines smaller
     # and produces more efficient libs (for example, DT_NEEDED stays a manageable size).
-    exported_deps = field(list[Label], []),
+    exported_deps = field(list[ConfiguredProvidersLabel], []),
 
     # List of both deps and exported deps. We traverse linkable graph lots of times
     # and preallocating this list saves RAM during analysis
-    all_deps = field(list[Label], []),
+    all_deps = field(list[ConfiguredProvidersLabel], []),
     # Link infos for all supported lib output styles supported by this node. This should have a value
     # for every output_style supported by the preferred linkage.
     link_infos = field(dict[LibOutputStyle, LinkInfos], {}),
@@ -115,17 +115,17 @@ LinkableNode = record(
 
 LinkableGraphNode = record(
     # Target/label of this node
-    label = field(Label),
+    label = field(ConfiguredProvidersLabel),
 
     # If this node has linkable output, it's linkable data
     linkable = field([LinkableNode, None]),
 
     # All potential root notes for an omnibus link (e.g. C++ libraries,
     # C++ Python extensions).
-    roots = field(dict[Label, LinkableRootInfo]),
+    roots = field(dict[ConfiguredProvidersLabel, LinkableRootInfo]),
 
     # Exclusions this node adds to the Omnibus graph
-    excluded = field(dict[Label, None]),
+    excluded = field(dict[ConfiguredProvidersLabel, None]),
 
     # Only allow constructing within this file.
     _private = _DisallowConstruction,
@@ -140,7 +140,7 @@ LinkableGraphTSet = transitive_set()
 # graph structure.
 LinkableGraph = provider(fields = {
     # Target identifier of the graph.
-    "label": provider_field(typing.Any, default = None),  # Label
+    "label": provider_field(typing.Any, default = None),  # ConfiguredProvidersLabel
     "nodes": provider_field(typing.Any, default = None),  # "LinkableGraphTSet"
 })
 
@@ -205,9 +205,9 @@ def create_linkable_node(
 def create_linkable_graph_node(
         ctx: AnalysisContext,
         linkable_node: [LinkableNode, None] = None,
-        roots: dict[Label, LinkableRootInfo] = {},
-        excluded: dict[Label, None] = {},
-        label: Label | None = None) -> LinkableGraphNode:
+        roots: dict[ConfiguredProvidersLabel, LinkableRootInfo] = {},
+        excluded: dict[ConfiguredProvidersLabel, None] = {},
+        label: ConfiguredProvidersLabel | None = None) -> LinkableGraphNode:
     if not label:
         label = ctx.label
     return LinkableGraphNode(
@@ -255,13 +255,13 @@ def create_linkable_graph(
     )
 
 ReducedLinkableGraph = record(
-    # Label to information map for whole graph.
+    # ConfiguredProvidersLabel to information map for whole graph.
     # Does not have entry for executable
-    nodes = field(dict[Label, LinkableNode]),
+    nodes = field(dict[ConfiguredProvidersLabel, LinkableNode]),
 
     # Order of linkable in the graph as it would go into linker argsfile
     # when building executable in static link strategy
-    link_order = field(dict[Label, int]),
+    link_order = field(dict[ConfiguredProvidersLabel, int]),
 )
 
 def reduce_linkable_graph(graph: LinkableGraph) -> ReducedLinkableGraph:
@@ -290,7 +290,7 @@ def reduce_linkable_graph(graph: LinkableGraph) -> ReducedLinkableGraph:
     )
 
 def get_linkable_graph_node_map_func(graph: LinkableGraph):
-    def get_linkable_graph_node_map() -> dict[Label, LinkableNode]:
+    def get_linkable_graph_node_map() -> dict[ConfiguredProvidersLabel, LinkableNode]:
         nodes = graph.nodes.traverse()
         linkable_nodes = {}
         for node in filter(None, nodes):
@@ -300,7 +300,7 @@ def get_linkable_graph_node_map_func(graph: LinkableGraph):
 
     return get_linkable_graph_node_map
 
-def linkable_deps(deps: list[Dependency | LinkableGraph]) -> list[Label]:
+def linkable_deps(deps: list[Dependency | LinkableGraph]) -> list[ConfiguredProvidersLabel]:
     labels = []
 
     for dep in deps:
@@ -345,7 +345,7 @@ def get_deps_for_link(
         node: LinkableNode,
         strategy: LinkStrategy,
         pic_behavior: PicBehavior,
-        overridden_preferred_linkage: Linkage | None = None) -> list[Label]:
+        overridden_preferred_linkage: Linkage | None = None) -> list[ConfiguredProvidersLabel]:
     """
     Return deps to follow when linking against this node with the given link
     style.
@@ -359,13 +359,13 @@ def get_deps_for_link(
         return node.exported_deps
 
 def get_transitive_deps(
-        link_infos: dict[Label, LinkableNode],
-        roots: list[Label]) -> list[Label]:
+        link_infos: dict[ConfiguredProvidersLabel, LinkableNode],
+        roots: list[ConfiguredProvidersLabel]) -> list[ConfiguredProvidersLabel]:
     """
     Return all transitive deps from following the given nodes.
     """
 
-    def find_transitive_deps(node: Label):
+    def find_transitive_deps(node: ConfiguredProvidersLabel):
         return link_infos[node].all_deps
 
     return depth_first_traversal_by(link_infos, roots, find_transitive_deps)

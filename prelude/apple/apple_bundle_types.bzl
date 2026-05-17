@@ -32,7 +32,7 @@ AppleBundleManifestLogFiles = record(
 )
 
 AppleBundleManifest = record(
-    log_file_map = dict[Label, AppleBundleManifestLogFiles],
+    log_file_map = dict[ConfiguredProvidersLabel, AppleBundleManifestLogFiles],
 )
 
 AppleBundleCodesignManifestTree = record(

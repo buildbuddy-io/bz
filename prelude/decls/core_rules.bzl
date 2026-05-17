@@ -235,6 +235,7 @@ config_setting = prelude_rule(
         {
             "constraint_values": attrs.list(attrs.configuration_label(), default = []),
             "values": attrs.dict(key = attrs.string(), value = attrs.string(), sorted = False, default = {}),
+            "flag_values": attrs.dict(key = attrs.label(), value = attrs.string(), sorted = False, default = {}),
         }
     ),
 )
@@ -345,6 +346,7 @@ constraint_setting = prelude_rule(
     further = None,
     attrs = (
         {
+            "default_constraint_value": attrs.option(attrs.label(), default = None),
             "execution_modifier": attrs.bool(default = False),
         }
     ),
@@ -735,7 +737,10 @@ genrule = prelude_rule(
                  the `OUT` environment variable. Only one of `out`
                  or `outs` may be present.
             """),
-            "outs": attrs.option(attrs.dict(key = attrs.string(), value = attrs.set(attrs.string(), sorted = False), sorted = False), default = None, doc = """
+            "outs": attrs.option(attrs.one_of(
+                attrs.dict(key = attrs.string(), value = attrs.set(attrs.string(), sorted = False), sorted = False),
+                attrs.list(attrs.string()),
+            ), default = None, doc = """
                 Mapping defining `named outputs`
                   to output paths relative to the rule's output directory. Only one of
                   `out` or `outs` may be present.
@@ -809,6 +814,9 @@ genrule = prelude_rule(
                 Only valid if the `outs` arg is present. Dictates which of those named outputs are marked as
                 executable.
             """),
+            "output_to_bindir": attrs.option(attrs.one_of(attrs.bool(), attrs.int()), default = None),
+            "tools": attrs.list(attrs.string(), default = []),
+            "toolchains": attrs.list(attrs.dep(), default = []),
         } |
         _has_content_based_path_attr() |
         genrule_common.env_arg() |
@@ -1007,8 +1015,49 @@ platform = prelude_rule(
                 default = [],
                 doc = "List of other platform target dependencies. The constraints from these platforms will be part of this platform (unless overridden)",
             ),
+            "exec_properties": attrs.dict(
+                key = attrs.string(),
+                value = attrs.string(),
+                default = {},
+                doc = "Bazel execution properties for this platform.",
+            ),
+            "parents": attrs.list(
+                attrs.configuration_label(),
+                default = [],
+                doc = "Bazel parent platforms whose constraints are inherited.",
+            ),
+            "remote_execution_properties": attrs.string(
+                default = "",
+                doc = "Legacy Bazel remote execution properties string.",
+            ),
         }
     ),
+)
+
+toolchain_type = prelude_rule(
+    name = "toolchain_type",
+    docs = "Declares a Bazel toolchain type.",
+    examples = None,
+    further = None,
+    attrs = {
+        "no_match_error": attrs.string(default = ""),
+    },
+)
+
+toolchain = prelude_rule(
+    name = "toolchain",
+    docs = "Declares a Bazel toolchain implementation and its selection constraints.",
+    examples = None,
+    further = None,
+    attrs = {
+        "toolchain_type": attrs.label(),
+        "target_settings": attrs.list(attrs.label(), default = []),
+        # Bazel declares this as NODEP_LABEL: it is label-shaped, but package
+        # loading must not force the target repository to exist until the
+        # toolchain has been selected.
+        "toolchain": attrs.string(),
+        "use_target_platform_constraints": attrs.bool(default = False),
+    },
 )
 
 remote_file = prelude_rule(
@@ -1595,7 +1644,9 @@ core_rules = struct(
     platform = platform,
     remote_file = remote_file,
     test_suite = test_suite,
+    toolchain = toolchain,
     toolchain_alias = toolchain_alias,
+    toolchain_type = toolchain_type,
     versioned_alias = versioned_alias,
     worker_tool = worker_tool,
     zip_file = zip_file,

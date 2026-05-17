@@ -12,6 +12,7 @@ pub mod arg_builder;
 mod builder;
 pub mod command_line_arg_like_type;
 mod options;
+pub mod param_file;
 pub(crate) mod regex;
 pub(crate) mod shlex_quote;
 pub mod space_separated;
@@ -21,5 +22,6 @@ pub mod value;
 pub mod value_as;
 
 pub use builder::*;
+pub use options::ParamFileFormat;
 pub use traits::*;
 pub use typ::*;

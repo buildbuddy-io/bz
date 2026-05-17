@@ -104,3 +104,15 @@ impl<'v, V: ValueLike<'v>> WorkerRunInfoGen<V> {
         ValueTyped::new_err(self.exe.get().to_value()).expect("validated at construction")
     }
 }
+
+pub fn synthetic_worker_run_info<'v>(
+    worker: ValueTypedComplex<'v, WorkerInfo<'v>>,
+    exe: StarlarkCmdArgs<'v>,
+    heap: starlark::values::Heap<'v>,
+) -> WorkerRunInfo<'v> {
+    WorkerRunInfo {
+        worker: ValueOfUnchecked::new(worker.to_value()),
+        remote_worker: ValueOfUnchecked::new(Value::new_none()),
+        exe: ValueOfUnchecked::new(heap.alloc(exe)),
+    }
+}

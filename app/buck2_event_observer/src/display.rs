@@ -424,6 +424,7 @@ fn display_file_watcher(provider: i32) -> &'static str {
         Ok(buck2_data::FileWatcherProvider::RustNotify) => "notify",
         Ok(buck2_data::FileWatcherProvider::FsHashCrawler) => "fs_hash_crawler",
         Ok(buck2_data::FileWatcherProvider::EdenFs) => "EdenFS",
+        Ok(buck2_data::FileWatcherProvider::NoWatchFs) => "no_watchfs",
         Err(_) => "unknown mechanism",
     }
 }

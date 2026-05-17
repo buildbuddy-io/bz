@@ -202,8 +202,7 @@ impl<'c> UqueryEnvironment<'c> {
             .get_interpreter_results(target.pkg())
             .await
             .with_buck_error_context(|| format!("Error looking up `{target}`"))?;
-        let node = package.resolve_target(target.name())?;
-        Ok(node.to_owned())
+        package.resolve_target_node(target.name())
     }
 }
 

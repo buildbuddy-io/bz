@@ -19,6 +19,7 @@ use crate::DiceTransactionUpdater;
 use crate::DiceTransactionUpdaterImpl;
 use crate::api::cycles::DetectCycles;
 use crate::api::data::DiceData;
+use crate::api::key::Key;
 use crate::api::user_data::UserComputationData;
 use crate::impls::core::state::CoreStateHandle;
 use crate::impls::core::state::init_state;
@@ -42,6 +43,11 @@ impl Debug for Dice {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Dice").finish_non_exhaustive()
     }
+}
+
+enum ExistingKeyOfTwoTypes<K1, K2> {
+    First(K1),
+    Second(K2),
 }
 
 pub struct DiceDataBuilder {
@@ -104,6 +110,96 @@ impl Dice {
 
     pub fn metrics(&self) -> Metrics {
         self.state_handle.metrics()
+    }
+
+    pub(crate) fn existing_keys_of_type_for_introspection<K>(&self) -> Vec<K>
+    where
+        K: Key + Clone,
+    {
+        self.state_handle
+            .existing_graph_keys()
+            .into_iter()
+            .filter_map(|key| self.key_index.get_typed_key::<K>(key))
+            .collect()
+    }
+
+    pub(crate) fn existing_key_values_of_type_for_introspection<K>(
+        &self,
+    ) -> Vec<(K, Option<K::Value>)>
+    where
+        K: Key + Clone,
+        K::Value: Clone,
+    {
+        let keys: Vec<_> = self
+            .state_handle
+            .existing_graph_keys()
+            .into_iter()
+            .filter_map(|dice_key| {
+                self.key_index
+                    .get_typed_key::<K>(dice_key)
+                    .map(|key| (dice_key, key))
+            })
+            .collect();
+        let values = self
+            .state_handle
+            .current_graph_values(keys.iter().map(|(dice_key, _)| *dice_key).collect());
+
+        keys.into_iter()
+            .zip(values)
+            .map(|((_, key), value)| {
+                let value =
+                    value.and_then(|value| value.downcast_maybe_transient::<K::Value>().cloned());
+                (key, value)
+            })
+            .collect()
+    }
+
+    pub(crate) fn existing_key_values_of_two_types_for_introspection<K1, K2>(
+        &self,
+    ) -> (Vec<(K1, Option<K1::Value>)>, Vec<(K2, Option<K2::Value>)>)
+    where
+        K1: Key + Clone,
+        K1::Value: Clone,
+        K2: Key + Clone,
+        K2::Value: Clone,
+    {
+        let keys: Vec<_> = self
+            .state_handle
+            .existing_graph_keys()
+            .into_iter()
+            .filter_map(|dice_key| {
+                if let Some(key) = self.key_index.get_typed_key::<K1>(dice_key) {
+                    Some((dice_key, ExistingKeyOfTwoTypes::First(key)))
+                } else {
+                    self.key_index
+                        .get_typed_key::<K2>(dice_key)
+                        .map(|key| (dice_key, ExistingKeyOfTwoTypes::Second(key)))
+                }
+            })
+            .collect();
+        let values = self
+            .state_handle
+            .current_graph_values(keys.iter().map(|(dice_key, _)| *dice_key).collect());
+
+        let mut first = Vec::new();
+        let mut second = Vec::new();
+
+        for ((_, key), value) in keys.into_iter().zip(values) {
+            match key {
+                ExistingKeyOfTwoTypes::First(key) => {
+                    let value = value
+                        .and_then(|value| value.downcast_maybe_transient::<K1::Value>().cloned());
+                    first.push((key, value));
+                }
+                ExistingKeyOfTwoTypes::Second(key) => {
+                    let value = value
+                        .and_then(|value| value.downcast_maybe_transient::<K2::Value>().cloned());
+                    second.push((key, value));
+                }
+            }
+        }
+
+        (first, second)
     }
 
     pub fn to_introspectable(&self) -> GraphIntrospectable {

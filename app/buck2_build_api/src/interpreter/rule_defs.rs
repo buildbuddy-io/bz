@@ -17,6 +17,7 @@ pub mod artifact_tagging;
 pub mod cmd_args;
 pub mod command_executor_config;
 pub mod context;
+pub mod depset;
 pub mod digest_config;
 pub mod label_relative_path;
 pub mod plugins;

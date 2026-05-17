@@ -195,7 +195,7 @@ async fn retrieve_artifacts_for_spec(
             .collect(),
         PackageSpec::Targets(targets) => {
             for (target_name, _) in &targets {
-                res.resolve_target(target_name)?;
+                res.resolve_target_node(target_name)?;
             }
             targets.into_map(|(target_name, providers)| {
                 (

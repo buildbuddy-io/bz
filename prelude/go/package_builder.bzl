@@ -123,7 +123,7 @@ def declare_package_build(
 
 def _build_package_action_impl(
         actions: AnalysisActions,
-        target_label: Label,
+        target_label: ConfiguredProvidersLabel,
         pkg_import_path: str,
         main: bool,
         sources: GoSourceInputs,
@@ -186,7 +186,7 @@ _build_package_action = dynamic_actions(
     # @unsorted-dict-items
     attrs = {
         # Input Parameters
-        "target_label": dynattrs.value(Label),
+        "target_label": dynattrs.value(ConfiguredProvidersLabel),
         "pkg_import_path": dynattrs.value(str),
         "main": dynattrs.value(bool),
         "sources": dynattrs.value(GoSourceInputs),
@@ -284,7 +284,7 @@ _incomplete_pkgs_allow_list = set([
 
 def build_package(
         actions: AnalysisActions,
-        target_label: Label,
+        target_label: ConfiguredProvidersLabel,
         go_toolchain: GoToolchainInfo,
         cgo_build_context: CGoBuildContext | None,
         go_list: BuildPackageGoList,

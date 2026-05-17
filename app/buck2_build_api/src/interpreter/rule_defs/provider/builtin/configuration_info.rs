@@ -15,6 +15,7 @@ use allocative::Allocative;
 use buck2_build_api_derive::internal_provider;
 use buck2_common::legacy_configs::configs::parse_config_section_and_key;
 use buck2_core::configuration::config_setting::ConfigSettingData;
+use buck2_core::configuration::data::BazelBuildSettingValue;
 use buck2_core::configuration::data::ConfigurationDataData;
 use buck2_interpreter::types::configured_providers_label::StarlarkProvidersLabel;
 use buck2_interpreter::types::target_label::StarlarkTargetLabel;
@@ -59,6 +60,17 @@ pub struct ConfigurationInfoGen<V: ValueLifetimeless> {
     constraints:
         ValueOfUncheckedGeneric<V, DictType<StarlarkTargetLabel, FrozenConstraintValueInfo>>,
     values: ValueOfUncheckedGeneric<V, DictType<String, String>>,
+    build_settings: ValueOfUncheckedGeneric<V, DictType<String, String>>,
+}
+
+fn bazel_native_option_key(key: &str) -> Option<String> {
+    if key.starts_with("//command_line_option:") {
+        Some(key.to_owned())
+    } else if !key.contains('.') {
+        Some(format!("//command_line_option:{key}"))
+    } else {
+        None
+    }
 }
 
 impl<'v, V: ValueLike<'v>> ConfigurationInfoGen<V> {
@@ -83,15 +95,27 @@ impl<'v, V: ValueLike<'v>> ConfigurationInfoGen<V> {
         let values = DictRef::from_value(self.values.get().to_value())
             .expect("type checked on construction");
         let mut converted_values = BTreeMap::new();
+        let mut converted_build_settings = BTreeMap::new();
         for (k, v) in values.iter() {
             let key_config = k.to_value().to_str();
             let value_config = v.to_value().to_str();
-            converted_values.insert(key_config, value_config);
+            if let Some(key) = bazel_native_option_key(&key_config) {
+                converted_build_settings.insert(key, value_config);
+            } else {
+                converted_values.insert(key_config, value_config);
+            }
+        }
+
+        let build_settings = DictRef::from_value(self.build_settings.get().to_value())
+            .expect("type checked on construction");
+        for (k, v) in build_settings.iter() {
+            converted_build_settings.insert(k.to_value().to_str(), v.to_value().to_str());
         }
 
         ConfigSettingData {
             constraints: converted_constraints,
             buckconfigs: converted_values,
+            build_settings: converted_build_settings,
         }
     }
 
@@ -99,11 +123,18 @@ impl<'v, V: ValueLike<'v>> ConfigurationInfoGen<V> {
         let ConfigSettingData {
             constraints,
             buckconfigs,
+            build_settings,
         } = self.to_config_setting_data();
         if !buckconfigs.is_empty() {
             return Err(ConfigurationInfoError::BuckConfigsNotAllowed.into());
         }
-        Ok(ConfigurationDataData { constraints })
+        Ok(ConfigurationDataData {
+            constraints,
+            build_settings: build_settings
+                .into_iter()
+                .map(|(k, v)| (k, BazelBuildSettingValue::String(v)))
+                .collect(),
+        })
     }
 }
 
@@ -138,6 +169,7 @@ impl<'v> ConfigurationInfo<'v> {
         ConfigurationInfoGen {
             constraints: ValueOfUnchecked::new(heap.alloc(constraints)),
             values: heap.alloc_typed_unchecked(AllocDict([("", ""); 0])).cast(),
+            build_settings: heap.alloc_typed_unchecked(AllocDict([("", ""); 0])).cast(),
         }
     }
 }
@@ -195,17 +227,25 @@ fn configuration_info_creator(globals: &mut GlobalsBuilder) {
             'v,
             UnpackDictEntries<&'v str, UnpackAndDiscard<&'v str>>,
         >,
+        #[starlark(require = named)] build_settings: Option<
+            ValueOf<'v, UnpackDictEntries<&'v str, UnpackAndDiscard<&'v str>>>,
+        >,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<ConfigurationInfo<'v>> {
         let new_constraints = build_constraints_map_from_dict(constraints)?;
 
         for (k, _) in &values.typed.entries {
-            // Validate the config section and key can be parsed correctly
-            parse_config_section_and_key(k, None)?;
+            if bazel_native_option_key(k).is_none() {
+                // Validate the config section and key can be parsed correctly.
+                parse_config_section_and_key(k, None)?;
+            }
         }
         Ok(ConfigurationInfo {
             constraints: ValueOfUnchecked::new(eval.heap().alloc(new_constraints)),
             values: values.as_unchecked().cast(),
+            build_settings: build_settings
+                .map(|build_settings| build_settings.as_unchecked().cast())
+                .unwrap_or_else(|| ValueOfUnchecked::new(eval.heap().alloc(AllocDict::EMPTY))),
         })
     }
 }
@@ -229,6 +269,14 @@ fn configuration_info_methods(builder: &mut MethodsBuilder) {
         this: &ConfigurationInfo<'v>,
     ) -> starlark::Result<ValueOfUnchecked<'v, DictType<String, String>>> {
         Ok(this.values.to_value())
+    }
+
+    /// A dictionary of Bazel build setting labels and their values.
+    #[starlark(attribute)]
+    fn build_settings<'v>(
+        this: &ConfigurationInfo<'v>,
+    ) -> starlark::Result<ValueOfUnchecked<'v, DictType<String, String>>> {
+        Ok(this.build_settings.to_value())
     }
 
     /// Get a constraint value by its constraint setting.
@@ -416,9 +464,19 @@ fn configuration_info_methods(builder: &mut MethodsBuilder) {
             new_values.insert_hashed(key_hashed, v);
         }
 
+        // Copy build settings dict
+        let build_settings = DictRef::from_value(this.build_settings.get().to_value())
+            .expect("type checked on construction");
+        let mut new_build_settings = SmallMap::new();
+        for (k, v) in build_settings.iter() {
+            let key_hashed = k.get_hashed().expect("should be hashable");
+            new_build_settings.insert_hashed(key_hashed, v);
+        }
+
         Ok(ConfigurationInfo {
             constraints: ValueOfUnchecked::new(heap.alloc(new_constraints)),
             values: ValueOfUnchecked::new(heap.alloc(new_values)),
+            build_settings: ValueOfUnchecked::new(heap.alloc(new_build_settings)),
         })
     }
 }

@@ -8,12 +8,13 @@
  * above-listed licenses.
  */
 
+use buck2_interpreter::types::configured_providers_label::StarlarkProvidersLabel;
+use buck2_interpreter::types::target_label::StarlarkTargetLabel;
 use buck2_node::attrs::attr_type::AttrType;
 use buck2_node::attrs::attr_type::visibility::VisibilityAttrType;
 use buck2_node::attrs::coerced_attr::CoercedAttr;
 use buck2_node::attrs::coercion_context::AttrCoercionContext;
 use buck2_node::attrs::configurable::AttrIsConfigurable;
-use buck2_node::visibility::VisibilityPattern;
 use buck2_node::visibility::VisibilityWithinViewBuilder;
 use starlark::values::Value;
 
@@ -21,6 +22,7 @@ use crate::attrs::coerce::AttrTypeCoerce;
 use crate::attrs::coerce::attr_type::AttrTypeExt;
 use crate::attrs::coerce::attr_type::list::coerce_list;
 use crate::attrs::coerce::attr_type::ty_maybe_select::TyMaybeSelect;
+use crate::bazel_visibility::add_visibility_pattern;
 use crate::interpreter::selector::StarlarkSelector;
 
 #[derive(Debug, buck2_error::Error)]
@@ -72,19 +74,23 @@ pub(crate) fn parse_visibility_with_view(
 
     let mut builder = VisibilityWithinViewBuilder::with_capacity(list.len());
     for item in list {
-        let Some(item) = item.unpack_str() else {
+        let item_as_label;
+        let item = if let Some(item) = item.unpack_str() {
+            item
+        } else if let Some(label) = StarlarkProvidersLabel::from_value(*item) {
+            item_as_label = label.label().to_string();
+            &item_as_label
+        } else if let Some(label) = StarlarkTargetLabel::from_value(*item) {
+            item_as_label = label.label().to_string();
+            &item_as_label
+        } else {
             if StarlarkSelector::from_value(*item).is_some() {
                 return Err(VisibilityAttrTypeCoerceError::NotConfigurable(attr.to_repr()).into());
             }
             return Err(VisibilityAttrTypeCoerceError::WrongType(attr.to_repr()).into());
         };
 
-        if item == VisibilityPattern::PUBLIC {
-            // TODO(cjhopman): We should probably enforce that this is the only entry.
-            builder.add_public();
-        } else {
-            builder.add(VisibilityPattern(ctx.coerce_target_pattern(item)?));
-        }
+        add_visibility_pattern(&mut builder, ctx, item)?;
     }
     Ok(builder)
 }

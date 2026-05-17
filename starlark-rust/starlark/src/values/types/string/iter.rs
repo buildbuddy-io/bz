@@ -34,6 +34,8 @@ use crate::values::StringValueLike;
 use crate::values::Value;
 use crate::values::ValueLike;
 use crate::values::ValueOfUnchecked;
+use crate::values::index::apply_slice;
+use crate::values::index::convert_index;
 use crate::values::typing::iter::StarlarkIter;
 
 /// An opaque iterator over a string, produced by elems/codepoints
@@ -52,6 +54,33 @@ use crate::values::typing::iter::StarlarkIter;
 struct StringIterableGen<'v, V: ValueLike<'v>> {
     string: V::String,
     produce_char: bool, // if not char, then int
+}
+
+impl<'v, V: ValueLike<'v>> StringIterableGen<'v, V> {
+    fn collect_values(&self, heap: Heap<'v>) -> Vec<Value<'v>> {
+        if self.produce_char {
+            self.string
+                .as_str()
+                .chars()
+                .map(|c| heap.alloc(c))
+                .collect()
+        } else {
+            self.string
+                .as_str()
+                .chars()
+                .map(|c| heap.alloc(u32::from(c)))
+                .collect()
+        }
+    }
+
+    fn alloc_at(&self, index: usize, heap: Heap<'v>) -> Value<'v> {
+        let c = self.string.as_str().chars().nth(index).unwrap();
+        if self.produce_char {
+            heap.alloc(c)
+        } else {
+            heap.alloc(u32::from(c))
+        }
+    }
 }
 
 pub(crate) fn iterate_chars<'v>(
@@ -79,18 +108,28 @@ impl<'v, V: ValueLike<'v>> StarlarkValue<'v> for StringIterableGen<'v, V>
 where
     Self: ProvidesStaticType<'v>,
 {
+    fn at(&self, index: Value<'v>, heap: Heap<'v>) -> crate::Result<Value<'v>> {
+        let index = convert_index(index, self.length()?)?;
+        Ok(self.alloc_at(index as usize, heap))
+    }
+
+    fn length(&self) -> crate::Result<i32> {
+        Ok(self.string.as_str().chars().count() as i32)
+    }
+
+    fn slice(
+        &self,
+        start: Option<Value<'v>>,
+        stop: Option<Value<'v>>,
+        stride: Option<Value<'v>>,
+        heap: Heap<'v>,
+    ) -> crate::Result<Value<'v>> {
+        let values = self.collect_values(heap);
+        Ok(heap.alloc_list(&apply_slice(&values, start, stop, stride)?))
+    }
+
     unsafe fn iterate(&self, _me: Value<'v>, heap: Heap<'v>) -> crate::Result<Value<'v>> {
         // Lazy implementation: we allocate a tuple and then iterate over it.
-        let iter = if self.produce_char {
-            heap.alloc_tuple_iter(self.string.as_str().chars().map(|c| heap.alloc(c)))
-        } else {
-            heap.alloc_tuple_iter(
-                self.string
-                    .as_str()
-                    .chars()
-                    .map(|c| heap.alloc(u32::from(c))),
-            )
-        };
-        Ok(iter)
+        Ok(heap.alloc_tuple_iter(self.collect_values(heap)))
     }
 }

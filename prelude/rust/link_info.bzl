@@ -295,11 +295,11 @@ RustCxxLinkGroupInfo = record(
     # shared libraries created from link groups
     link_group_libs = field(dict[str, LinkGroupLib | None]),
     # mapping from target labels to the corresponding link group link_info
-    labels_to_links_map = field(dict[Label, LinkGroupLinkInfo]),
+    labels_to_links_map = field(dict[ConfiguredProvidersLabel, LinkGroupLinkInfo]),
     # Target to link group name where it was actually linked into
-    targets_consumed_by_link_groups = field(dict[Label, str]),
+    targets_consumed_by_link_groups = field(dict[ConfiguredProvidersLabel, str]),
     # preferred linkage mode for link group libraries
-    link_group_preferred_linkage = field(dict[Label, Linkage]),
+    link_group_preferred_linkage = field(dict[ConfiguredProvidersLabel, Linkage]),
 )
 
 # Returns all first-order dependencies.

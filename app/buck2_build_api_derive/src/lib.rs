@@ -25,6 +25,8 @@ mod provider;
 /// - `creator_func` (required): The name of the function to create the provider
 /// - `methods = <func>` (optional): Custom methods function name. If not provided,
 ///   attribute accessors for all fields are auto-generated.
+/// - `at = <func>` (optional): Custom implementation for Starlark `provider[key]`.
+/// - `is_in = <func>` (optional): Custom implementation for Starlark `key in provider`.
 ///
 /// # Field Types
 ///

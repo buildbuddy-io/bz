@@ -987,6 +987,9 @@ fn update_artifact_info(
                 }),
             );
         }
+        DirectoryEntry::Leaf(ActionDirectoryMember::SourceFile(_)) => {
+            panic!("source file proxy must be resolved before build reporting")
+        }
         DirectoryEntry::Leaf(ActionDirectoryMember::Symlink(symlink_target)) => {
             artifact_info.insert(
                 provider_name,

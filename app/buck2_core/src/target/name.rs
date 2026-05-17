@@ -53,6 +53,8 @@ enum TargetNameError {
         _0
     )]
     InvalidName(String),
+    #[error("Invalid Bazel target name `{0}`: {1}")]
+    InvalidBazelName(String, String),
     #[error(
         "found inner providers label when target names are expected. remove `[...]` portion of the target name from `{}`",
         _0
@@ -75,6 +77,12 @@ impl TargetName {
 
     pub fn testing_new(name: &str) -> Self {
         TargetName::new(name).unwrap()
+    }
+
+    #[inline]
+    pub fn new_bazel(name: &str) -> buck2_error::Result<Self> {
+        TargetNameRef::new_bazel(name)?;
+        Ok(Self(ThinArcStr::from(name)))
     }
 
     fn bad_name_error(name: &str) -> buck2_error::Error {
@@ -121,6 +129,115 @@ impl TargetName {
                 quiet: true,
                 error_on_oss: true
             )?;
+        }
+
+        Ok(())
+    }
+
+    fn bazel_bad_name_error(name: &str, msg: &str) -> buck2_error::Error {
+        TargetNameError::InvalidBazelName(name.to_owned(), msg.to_owned()).into()
+    }
+
+    fn verify_bazel(name: &str) -> buck2_error::Result<()> {
+        fn bazel_always_allowed_target_char(c: char) -> bool {
+            c.is_alphanumeric() || c >= '\u{80}' || " \"#$&'()*+,;<=>?[]{|}~!%-@^_`".contains(c)
+        }
+
+        if name.is_empty() {
+            return Err(Self::bazel_bad_name_error(name, "empty target name"));
+        }
+
+        if name.starts_with('/') {
+            return Err(Self::bazel_bad_name_error(
+                name,
+                "target names may not start with '/'",
+            ));
+        }
+
+        if name.starts_with('.') {
+            if name.starts_with("../") || name == ".." {
+                return Err(Self::bazel_bad_name_error(
+                    name,
+                    "target names may not contain up-level references '..'",
+                ));
+            }
+            if name == "." {
+                return Ok(());
+            }
+            if name.starts_with("./") {
+                return Err(Self::bazel_bad_name_error(
+                    name,
+                    "target names may not contain '.' as a path segment",
+                ));
+            }
+        }
+
+        if name.ends_with('\r') {
+            return Err(Self::bazel_bad_name_error(
+                name,
+                "target names may not end with carriage returns (perhaps the input source is CRLF-terminated)",
+            ));
+        }
+
+        for (index, c) in name.char_indices() {
+            if bazel_always_allowed_target_char(c) || c == '.' {
+                continue;
+            }
+            if c == '/' {
+                let suffix = &name[index..];
+                if suffix.starts_with("/../") {
+                    return Err(Self::bazel_bad_name_error(
+                        name,
+                        "target names may not contain up-level references '..'",
+                    ));
+                }
+                if suffix.starts_with("/./") {
+                    return Err(Self::bazel_bad_name_error(
+                        name,
+                        "target names may not contain '.' as a path segment",
+                    ));
+                }
+                if suffix.starts_with("//") {
+                    return Err(Self::bazel_bad_name_error(
+                        name,
+                        "target names may not contain '//' path separators",
+                    ));
+                }
+                continue;
+            }
+            if c <= '\u{1f}' || c == '\u{7f}' {
+                return Err(Self::bazel_bad_name_error(
+                    name,
+                    &format!(
+                        "target names may not contain non-printable characters: '\\x{:02X}'",
+                        c as u32
+                    ),
+                ));
+            }
+            return Err(Self::bazel_bad_name_error(
+                name,
+                &format!("target names may not contain '{c}'"),
+            ));
+        }
+
+        if let Some(c) = name.chars().last() {
+            if c == '.' {
+                if name.ends_with("/..") {
+                    return Err(Self::bazel_bad_name_error(
+                        name,
+                        "target names may not contain up-level references '..'",
+                    ));
+                }
+                if name.ends_with("/.") {
+                    return Ok(());
+                }
+            }
+            if c == '/' {
+                return Err(Self::bazel_bad_name_error(
+                    name,
+                    "target names may not end with '/'",
+                ));
+            }
         }
 
         Ok(())
@@ -187,6 +304,12 @@ impl TargetNameRef {
     #[inline]
     pub fn new(name: &str) -> buck2_error::Result<&TargetNameRef> {
         TargetName::verify(name)?;
+        Ok(TargetNameRef::unchecked_new(name))
+    }
+
+    #[inline]
+    pub fn new_bazel(name: &str) -> buck2_error::Result<&TargetNameRef> {
+        TargetName::verify_bazel(name)?;
         Ok(TargetNameRef::unchecked_new(name))
     }
 
@@ -261,6 +384,28 @@ mod tests {
         } else {
             panic!("should have gotten an error")
         }
+    }
+
+    #[test]
+    fn bazel_target_name_validation() {
+        assert_eq!(
+            TargetName::new_bazel(
+                "lib/python3.11/site-packages/setuptools/_vendor/jaraco/text/Lorem ipsum.txt"
+            )
+            .unwrap(),
+            TargetName(ThinArcStr::from(
+                "lib/python3.11/site-packages/setuptools/_vendor/jaraco/text/Lorem ipsum.txt"
+            ))
+        );
+        assert!(TargetName::new_bazel("b$() ar").is_ok());
+        assert!(TargetName::new_bazel("foo?bar").is_ok());
+        assert!(TargetName::new_bazel("foo[bar]").is_ok());
+        assert!(TargetName::new_bazel("foo/bar").is_ok());
+        assert!(TargetName::new_bazel("bar:baz").is_err());
+        assert!(TargetName::new_bazel("foo/").is_err());
+        assert!(TargetName::new_bazel("../foo").is_err());
+        assert!(TargetName::new_bazel("foo/./bar").is_err());
+        assert!(TargetName::new_bazel("foo//bar").is_err());
     }
 
     #[test]

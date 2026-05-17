@@ -148,6 +148,27 @@ impl CommandExecutionManager {
         self
     }
 
+    /// Return a successful command result without acquiring an output claim.
+    ///
+    /// This is only valid for executor paths that do not write, materialize, or declare outputs.
+    /// Normal command execution must use `CommandExecutionManagerWithClaim::success`.
+    pub fn success_without_claim(
+        self,
+        execution_kind: CommandExecutionKind,
+        outputs: BuckIndexMap<CommandExecutionOutput, ArtifactValue>,
+        std_streams: CommandStdStreams,
+        timing: CommandExecutionMetadata,
+    ) -> CommandExecutionResult {
+        self.result(
+            CommandExecutionStatus::Success { execution_kind },
+            outputs,
+            std_streams,
+            Some(0),
+            timing,
+            None,
+        )
+    }
+
     pub fn start_waiting_category(&mut self, waiting_category: WaitingCategory) {
         self.inner
             .waiting_data

@@ -20,8 +20,31 @@ pub struct ExpandedCommandLine {
     pub env: SortedVectorMap<String, String>,
 }
 
+impl ExpandedCommandLine {
+    pub fn fingerprint(&self) -> ExpandedCommandLineDigest {
+        let mut fingerprinter = ExpandedCommandLineFingerprinter::new();
+        for e in self.exe.iter() {
+            fingerprinter.push_arg(e.to_owned());
+        }
+        fingerprinter.push_count();
+
+        for e in self.args.iter() {
+            fingerprinter.push_arg(e.to_owned());
+        }
+        fingerprinter.push_count();
+
+        for (k, v) in self.env.iter() {
+            fingerprinter.push_arg(k.to_owned());
+            fingerprinter.push_arg(v.to_owned());
+        }
+
+        fingerprinter.push_count();
+        fingerprinter.finalize()
+    }
+}
+
 /// The digest of an ExpandedCommandLine.
-#[derive(Eq, PartialEq, Debug, Allocative)]
+#[derive(Clone, Eq, PartialEq, Debug, Allocative)]
 pub struct ExpandedCommandLineDigest(
     // This is OK to skip because hash is stored inline.
     #[allocative(skip)] blake3::Hash,
@@ -65,9 +88,13 @@ impl ExpandedCommandLineFingerprinter {
 
 impl CommandLineBuilder for ExpandedCommandLineFingerprinter {
     fn push_arg(&mut self, s: String) {
-        self.count += 1;
+        self.push_arg_bytes(s.as_bytes());
+    }
+}
 
-        let bytes = s.as_bytes();
+impl ExpandedCommandLineFingerprinter {
+    pub fn push_arg_bytes(&mut self, bytes: &[u8]) {
+        self.count += 1;
         self.digest.update(bytes);
         self.digest.update(bytes.len().to_le_bytes().as_slice());
     }
@@ -78,29 +105,6 @@ mod tests {
     use sorted_vector_map::sorted_vector_map;
 
     use super::*;
-
-    impl ExpandedCommandLine {
-        pub fn fingerprint(&self) -> ExpandedCommandLineDigest {
-            let mut fingerprinter = ExpandedCommandLineFingerprinter::new();
-            for e in self.exe.iter() {
-                fingerprinter.push_arg(e.to_owned());
-            }
-            fingerprinter.push_count();
-
-            for e in self.args.iter() {
-                fingerprinter.push_arg(e.to_owned());
-            }
-            fingerprinter.push_count();
-
-            for (k, v) in self.env.iter() {
-                fingerprinter.push_arg(k.to_owned());
-                fingerprinter.push_arg(v.to_owned());
-            }
-
-            fingerprinter.push_count();
-            fingerprinter.finalize()
-        }
-    }
 
     #[test]
     fn test_cli() {

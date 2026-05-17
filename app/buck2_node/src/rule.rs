@@ -15,6 +15,7 @@ use buck2_core::configuration::transition::id::TransitionId;
 use buck2_core::plugins::PluginKind;
 #[allow(unused_imports)]
 use buck2_hash::BuckHasher;
+use buck2_util::arc_str::ArcStr;
 use pagable::Pagable;
 use static_interner::interner;
 
@@ -22,12 +23,33 @@ use crate::attrs::spec::AttributeSpec;
 use crate::nodes::unconfigured::RuleKind;
 use crate::rule_type::RuleType;
 
+pub const BAZEL_OUTPUT_FILE_GENERATING_RULE_ATTR: &str = "generating_rule";
+pub const BAZEL_OUTPUT_FILE_OUTPUT_ATTR: &str = "output";
+
 #[derive(Debug, Eq, PartialEq, Hash, Pagable, Allocative, Clone, dupe::Dupe)]
 pub enum RuleIncomingTransition {
     None,
     Fixed(Arc<TransitionId>),
     /// This rule has an `incoming_transition` attribute
     FromAttribute,
+}
+
+#[derive(Debug, Eq, PartialEq, Hash, Clone, dupe::Dupe, Pagable, Allocative)]
+pub enum BazelOutputAttrKind {
+    Output,
+    OutputList,
+}
+
+#[derive(Debug, Eq, PartialEq, Hash, Clone, dupe::Dupe, Pagable, Allocative)]
+pub struct BazelOutputAttr {
+    pub name: ArcStr,
+    pub kind: BazelOutputAttrKind,
+}
+
+#[derive(Debug, Eq, PartialEq, Hash, Clone, dupe::Dupe, Pagable, Allocative)]
+pub struct BazelImplicitOutput {
+    pub name: ArcStr,
+    pub template: ArcStr,
 }
 
 /// Common rule data needed in `TargetNode`.
@@ -44,6 +66,18 @@ pub struct Rule {
     pub cfg: RuleIncomingTransition,
     /// The plugin kinds that are used by the target
     pub uses_plugins: Vec<PluginKind>,
+    /// Bazel toolchain types declared by `rule(toolchains = ...)`.
+    pub bazel_toolchains: Vec<String>,
+    /// Bazel explicit output attrs declared with `attr.output()` or `attr.output_list()`.
+    pub bazel_output_attrs: Vec<BazelOutputAttr>,
+    /// Bazel implicit outputs declared with `rule(outputs = {...})`.
+    pub bazel_implicit_outputs: Vec<BazelImplicitOutput>,
+    /// Whether Bazel output artifacts from this rule are declared under genfiles instead of bin.
+    pub bazel_output_to_genfiles: bool,
+    /// Whether the rule was declared through Bazel's `rule(implementation = ...)` API.
+    pub is_bazel_rule: bool,
+    /// Whether the rule was declared with Bazel's `build_setting = ...`.
+    pub is_bazel_build_setting: bool,
 }
 
 interner!(INTERNER, BuckHasher, Rule);

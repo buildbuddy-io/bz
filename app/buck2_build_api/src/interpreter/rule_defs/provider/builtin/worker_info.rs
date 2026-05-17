@@ -61,8 +61,12 @@ pub struct WorkerInfoGen<V: ValueLifetimeless> {
     pub concurrency: ValueOfUncheckedGeneric<V, NoneOr<usize>>,
     // Whether to always run actions using this worker via the streaming API
     pub streaming: ValueOfUncheckedGeneric<V, bool>,
+    // Bazel local persistent worker protocol capable worker
+    pub supports_bazel_local_persistent_worker_protocol: ValueOfUncheckedGeneric<V, bool>,
     // Bazel remote persistent worker protocol capable worker
     pub supports_bazel_remote_persistent_worker_protocol: ValueOfUncheckedGeneric<V, bool>,
+    // Whether Bazel protocol requests must be isolated with WorkRequest.sandbox_dir.
+    pub requires_bazel_worker_sandboxing: ValueOfUncheckedGeneric<V, bool>,
 
     pub id: u64,
 }
@@ -83,7 +87,10 @@ fn worker_info_creator(globals: &mut GlobalsBuilder) {
         >,
         #[starlark(require = named, default = NoneType)] streaming: Value<'v>,
         #[starlark(require = named, default = false)]
+        supports_bazel_local_persistent_worker_protocol: bool,
+        #[starlark(require = named, default = false)]
         supports_bazel_remote_persistent_worker_protocol: bool,
+        #[starlark(require = named, default = false)] requires_bazel_worker_sandboxing: bool,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<WorkerInfo<'v>> {
         let heap = eval.heap();
@@ -96,8 +103,14 @@ fn worker_info_creator(globals: &mut GlobalsBuilder) {
             id,
             concurrency: heap.alloc_typed_unchecked(concurrency).cast(),
             streaming: ValueOfUnchecked::new(streaming),
+            supports_bazel_local_persistent_worker_protocol: heap
+                .alloc_typed_unchecked(supports_bazel_local_persistent_worker_protocol)
+                .cast(),
             supports_bazel_remote_persistent_worker_protocol: heap
                 .alloc_typed_unchecked(supports_bazel_remote_persistent_worker_protocol)
+                .cast(),
+            requires_bazel_worker_sandboxing: heap
+                .alloc_typed_unchecked(requires_bazel_worker_sandboxing)
                 .cast(),
         })
     }
@@ -170,6 +183,42 @@ impl<'v, V: ValueLike<'v>> WorkerInfoGen<V> {
             .to_value()
             .unpack()
             .expect("validated at construction")
+    }
+
+    pub fn supports_bazel_local_persistent_worker_protocol(&self) -> bool {
+        self.supports_bazel_local_persistent_worker_protocol
+            .to_value()
+            .unpack()
+            .expect("validated at construction")
+    }
+
+    pub fn requires_bazel_worker_sandboxing(&self) -> bool {
+        self.requires_bazel_worker_sandboxing
+            .to_value()
+            .unpack()
+            .expect("validated at construction")
+    }
+}
+
+pub fn synthetic_bazel_local_worker_info<'v>(
+    exe: StarlarkCmdArgs<'v>,
+    concurrency: Option<usize>,
+    requires_bazel_worker_sandboxing: bool,
+    heap: starlark::values::Heap<'v>,
+) -> WorkerInfo<'v> {
+    WorkerInfo {
+        exe: ValueOfUnchecked::new(heap.alloc(exe)),
+        env: ValueOfUnchecked::new(Value::new_none()),
+        id: u64::MAX,
+        concurrency: heap
+            .alloc_typed_unchecked(NoneOr::from_option(concurrency))
+            .cast(),
+        streaming: ValueOfUnchecked::new(Value::new_bool(false)),
+        supports_bazel_local_persistent_worker_protocol: heap.alloc_typed_unchecked(true).cast(),
+        supports_bazel_remote_persistent_worker_protocol: heap.alloc_typed_unchecked(false).cast(),
+        requires_bazel_worker_sandboxing: heap
+            .alloc_typed_unchecked(requires_bazel_worker_sandboxing)
+            .cast(),
     }
 }
 

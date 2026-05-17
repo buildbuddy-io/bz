@@ -615,6 +615,10 @@ mod introspection {
                     Hash::hash(&self.0.hash(), &mut state);
                 }
 
+                fn as_any(&self) -> &dyn std::any::Any {
+                    self.0.as_any()
+                }
+
                 fn box_clone(&self) -> Box<dyn KeyForIntrospection> {
                     Box::new(self.clone())
                 }

@@ -83,7 +83,7 @@ load(":versions.bzl", "LibraryName", "LibraryVersion", "gather_versioned_depende
 def _merge_extensions(
         # {str: ("_a", "label")}
         extensions,
-        # Label
+        # ConfiguredProvidersLabel
         incoming_label,
         # {str: "_a"}
         incoming_extensions) -> None:
@@ -270,7 +270,7 @@ def _compute_pex_providers(
         library: PythonLibraryInfo,
         allow_cache_upload: bool,
         shared_libs: list[(SharedLibrary, str)],
-        extensions: dict[str, (LinkedObject, Label)],
+        extensions: dict[str, (LinkedObject, ConfiguredProvidersLabel)],
         link_args: list[LinkArgs],
         extra: dict[str, typing.Any],
         link_extra_artifacts: dict[str, typing.Any],

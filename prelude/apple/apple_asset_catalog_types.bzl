@@ -8,7 +8,7 @@
 
 StringWithSourceTarget = record(
     # Target providing the string value
-    source = field(Label),
+    source = field(ConfiguredProvidersLabel),
     value = field(str),
 )
 

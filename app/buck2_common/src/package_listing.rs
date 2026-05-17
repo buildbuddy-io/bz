@@ -14,3 +14,6 @@ pub mod file_listing;
 pub(crate) mod interpreter;
 pub mod listing;
 pub mod resolver;
+
+pub use interpreter::PackageListingStrategy;
+pub use interpreter::bazel_compat_package_listing_enabled;

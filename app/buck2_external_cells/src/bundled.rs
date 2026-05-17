@@ -10,24 +10,31 @@
 
 use std::env;
 use std::fs;
+use std::hash::Hash;
+use std::hash::Hasher;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::OnceLock;
 
 use buck2_build_api::actions::artifact::get_artifact_fs::GetArtifactFs;
+use buck2_common::cas_digest::CasDigestConfig;
 use buck2_common::file_ops::delegate::FileOpsDelegate;
 use buck2_common::file_ops::dice::ReadFileProxy;
 use buck2_common::file_ops::metadata::FileMetadata;
 use buck2_common::file_ops::metadata::FileType;
 use buck2_common::file_ops::metadata::RawDirEntry;
 use buck2_common::file_ops::metadata::RawPathMetadata;
+use buck2_common::file_ops::metadata::RawPathMetadataForNoWatchFs;
 use buck2_common::file_ops::metadata::TrackedFileDigest;
+use buck2_common::io::IoProvider;
+use buck2_common::io::NoWatchFsMetadataCache;
 use buck2_common::io::fs::is_executable;
 use buck2_core::cells::external::ExternalCellOrigin;
 use buck2_core::cells::name::CellName;
 use buck2_core::cells::paths::CellRelativePath;
 use buck2_core::cells::paths::CellRelativePathBuf;
 use buck2_core::directory_digest::DirectoryDigest;
+use buck2_core::fs::buck_out_path::BuckOutPathResolver;
 use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
 use buck2_directory::directory::builder::DirectoryBuilder;
 use buck2_directory::directory::directory::Directory;
@@ -156,10 +163,26 @@ pub(crate) fn find_bundled_data(cell_name: CellName) -> buck2_error::Result<Bund
         })
 }
 
-#[derive(Clone, PartialEq, Eq, Hash, Debug, allocative::Allocative)]
+#[derive(Clone, PartialEq, Eq, Debug, allocative::Allocative)]
 struct ContentsAndMetadata {
     contents: &'static [u8],
-    metadata: FileMetadata,
+    is_executable: bool,
+}
+
+impl ContentsAndMetadata {
+    fn metadata(&self, source_digest_config: CasDigestConfig) -> FileMetadata {
+        FileMetadata {
+            digest: TrackedFileDigest::from_content(self.contents, source_digest_config),
+            is_executable: self.is_executable,
+        }
+    }
+}
+
+impl Hash for ContentsAndMetadata {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.contents.len().hash(state);
+        self.is_executable.hash(state);
+    }
 }
 
 /// We don't actually need the directory digest, but unfortunately the directory tooling kind of
@@ -197,8 +220,6 @@ impl DirectoryDigester<ContentsAndMetadata, BundledDirectoryDigest> for BundledD
             > + 'a,
         Self: Sized,
     {
-        use std::hash::Hash;
-
         let mut hasher = Blake3StrongHasher::default();
         for (name, entry) in entries {
             name.hash(&mut hasher);
@@ -207,7 +228,7 @@ impl DirectoryDigester<ContentsAndMetadata, BundledDirectoryDigest> for BundledD
                     dir.as_fingerprinted_dyn().fingerprint().hash(&mut hasher);
                 }
                 DirectoryEntry::Leaf(leaf) => {
-                    leaf.metadata.hash(&mut hasher);
+                    leaf.hash(&mut hasher);
                 }
             }
         }
@@ -221,6 +242,9 @@ impl DirectoryDigester<ContentsAndMetadata, BundledDirectoryDigest> for BundledD
 
 #[derive(allocative::Allocative, PagablePanic)]
 pub(crate) struct BundledFileOpsDelegate {
+    cell: CellName,
+    buck_out_resolver: BuckOutPathResolver,
+    source_digest_config: CasDigestConfig,
     dir: ImmutableDirectory<ContentsAndMetadata, BundledDirectoryDigest>,
 }
 
@@ -236,6 +260,11 @@ enum BundledPathSearchError {
 }
 
 impl BundledFileOpsDelegate {
+    fn resolve(&self, path: &CellRelativePath) -> ProjectRelativePathBuf {
+        self.buck_out_resolver
+            .resolve_external_cell_source(path, ExternalCellOrigin::Bundled(self.cell))
+    }
+
     fn get_entry_at_path_if_exists(
         &self,
         path: &CellRelativePath,
@@ -296,12 +325,12 @@ impl BundledFileOpsDelegate {
         Ok(entries)
     }
 
-    fn read_file_if_exists(
+    fn get_file_at_path_if_exists(
         &self,
         path: &CellRelativePath,
-    ) -> buck2_error::Result<Option<&'static str>> {
+    ) -> buck2_error::Result<Option<&ContentsAndMetadata>> {
         match self.get_entry_at_path_if_exists(path)? {
-            Some(DirectoryEntry::Leaf(leaf)) => Ok(Some(str::from_utf8(leaf.contents)?)),
+            Some(DirectoryEntry::Leaf(leaf)) => Ok(Some(leaf)),
             Some(DirectoryEntry::Dir(_)) => {
                 Err(BundledPathSearchError::ExpectedFile(path.to_owned()).into())
             }
@@ -309,17 +338,53 @@ impl BundledFileOpsDelegate {
         }
     }
 
+    fn read_file_if_exists(
+        &self,
+        path: &CellRelativePath,
+    ) -> buck2_error::Result<Option<&'static str>> {
+        Ok(self
+            .get_file_at_path_if_exists(path)?
+            .map(|leaf| str::from_utf8(leaf.contents))
+            .transpose()?)
+    }
+
     fn read_path_metadata_if_exists(
         &self,
         path: &CellRelativePath,
     ) -> buck2_error::Result<Option<RawPathMetadata>> {
         match self.get_entry_at_path_if_exists(path)? {
-            Some(DirectoryEntry::Leaf(leaf)) => {
-                Ok(Some(RawPathMetadata::File(leaf.metadata.clone())))
-            }
+            Some(DirectoryEntry::Leaf(leaf)) => Ok(Some(RawPathMetadata::File(
+                leaf.metadata(self.source_digest_config),
+            ))),
             Some(DirectoryEntry::Dir(_)) => Ok(Some(RawPathMetadata::Directory)),
             None => Ok(None),
         }
+    }
+
+    async fn declare_file_source_artifact_if_exists(
+        &self,
+        ctx: &mut DiceComputations<'_>,
+        path: &CellRelativePath,
+    ) -> buck2_error::Result<()> {
+        let Some(leaf) = self.get_file_at_path_if_exists(path)? else {
+            return Ok(());
+        };
+
+        let project_path = self.resolve(path);
+        let contents = leaf.contents;
+        let is_executable = leaf.is_executable;
+        let materializer = ctx.per_transaction_data().get_materializer();
+        materializer
+            .declare_write(Box::new(move || {
+                Ok(vec![WriteRequest {
+                    path: project_path,
+                    content: contents.to_vec(),
+                    is_executable,
+                    configuration_path: None,
+                }])
+            }))
+            .await
+            .map(|_| ())
     }
 }
 
@@ -346,12 +411,44 @@ impl FileOpsDelegate for BundledFileOpsDelegate {
         self.read_dir(path).await
     }
 
+    async fn read_dir_for_no_watchfs_without_dice(
+        &self,
+        _io_provider: Arc<dyn IoProvider>,
+        path: &'async_trait CellRelativePath,
+    ) -> buck2_error::Result<Arc<[RawDirEntry]>> {
+        self.read_dir(path).await
+    }
+
     async fn read_path_metadata_if_exists(
+        &self,
+        ctx: &mut DiceComputations<'_>,
+        path: &'async_trait CellRelativePath,
+    ) -> buck2_error::Result<Option<RawPathMetadata>> {
+        let metadata = self.read_path_metadata_if_exists(path)?;
+        if matches!(metadata, Some(RawPathMetadata::File(_))) {
+            self.declare_file_source_artifact_if_exists(ctx, path)
+                .await?;
+        }
+        Ok(metadata)
+    }
+
+    async fn read_path_metadata_if_exists_for_no_watchfs(
         &self,
         _ctx: &mut DiceComputations<'_>,
         path: &'async_trait CellRelativePath,
     ) -> buck2_error::Result<Option<RawPathMetadata>> {
         self.read_path_metadata_if_exists(path)
+    }
+
+    async fn read_path_metadata_for_no_watchfs_if_exists_without_dice(
+        &self,
+        _io_provider: Arc<dyn IoProvider>,
+        path: &'async_trait CellRelativePath,
+        _cache: Option<Arc<NoWatchFsMetadataCache>>,
+    ) -> buck2_error::Result<Option<RawPathMetadataForNoWatchFs>> {
+        Ok(self
+            .read_path_metadata_if_exists(path)?
+            .map(RawPathMetadataForNoWatchFs::from))
     }
 
     fn eq_token(&self) -> PartialEqAny<'_> {
@@ -362,6 +459,8 @@ impl FileOpsDelegate for BundledFileOpsDelegate {
 fn get_file_ops_delegate_impl(
     data: BundledCell,
     digest_config: DigestConfig,
+    cell: CellName,
+    buck_out_resolver: BuckOutPathResolver,
 ) -> buck2_error::Result<BundledFileOpsDelegate> {
     let mut builder: DirectoryBuilder<ContentsAndMetadata, BundledDirectoryDigest> =
         DirectoryBuilder::empty();
@@ -369,23 +468,24 @@ fn get_file_ops_delegate_impl(
     for file in data.files {
         let path = ForwardRelativePath::new(file.path)
             .internal_error("non-forward relative bundled path")?;
-        let metadata = FileMetadata {
-            digest: TrackedFileDigest::from_content(file.contents, source_digest_config),
-            is_executable: file.is_executable,
-        };
 
         builder
             .insert(
                 path,
                 DirectoryEntry::Leaf(ContentsAndMetadata {
                     contents: file.contents,
-                    metadata,
+                    is_executable: file.is_executable,
                 }),
             )
             .internal_error("conflicting bundled source paths")?;
     }
     let builder = builder.fingerprint(&BundledDirectoryDigester);
-    Ok(BundledFileOpsDelegate { dir: builder })
+    Ok(BundledFileOpsDelegate {
+        cell,
+        buck_out_resolver,
+        source_digest_config,
+        dir: builder,
+    })
 }
 
 async fn declare_all_source_artifacts(
@@ -405,7 +505,7 @@ async fn declare_all_source_artifacts(
         requests.push(WriteRequest {
             path,
             content: entry.contents.to_vec(),
-            is_executable: entry.metadata.is_executable,
+            is_executable: entry.is_executable,
             configuration_path: None,
         });
     }
@@ -446,8 +546,13 @@ pub(crate) async fn get_file_ops_delegate(
             _cancellations: &CancellationContext,
         ) -> Self::Value {
             let data = find_bundled_data(self.0)?;
-            let ops = get_file_ops_delegate_impl(data, ctx.global_data().get_digest_config())?;
-            declare_all_source_artifacts(ctx, self.0, &ops).await?;
+            let artifact_fs = ctx.get_artifact_fs().await?;
+            let ops = get_file_ops_delegate_impl(
+                data,
+                ctx.global_data().get_digest_config(),
+                self.0,
+                artifact_fs.buck_out_path_resolver().clone(),
+            )?;
             Ok(Arc::new(ops))
         }
 
@@ -472,6 +577,7 @@ pub(crate) async fn materialize_all(
     let buck_out_resolver = artifact_fs.buck_out_path_resolver();
 
     let ops = get_file_ops_delegate(ctx, cell).await?;
+    declare_all_source_artifacts(ctx, cell, &ops).await?;
     let materializer = ctx.per_transaction_data().get_materializer();
     let mut paths = Vec::new();
     for (path, _entry) in ops.dir.unordered_walk_leaves().with_paths() {
@@ -496,8 +602,17 @@ mod tests {
     use super::*;
 
     fn testing_ops() -> BundledFileOpsDelegate {
-        let data = find_bundled_data(CellName::testing_new("test_bundled_cell")).unwrap();
-        get_file_ops_delegate_impl(data, DigestConfig::testing_default()).unwrap()
+        let cell = CellName::testing_new("test_bundled_cell");
+        let data = find_bundled_data(cell).unwrap();
+        get_file_ops_delegate_impl(
+            data,
+            DigestConfig::testing_default(),
+            cell,
+            BuckOutPathResolver::new(ProjectRelativePathBuf::unchecked_new(
+                "buck-out/v2".to_owned(),
+            )),
+        )
+        .unwrap()
     }
 
     #[tokio::test]
@@ -583,7 +698,16 @@ mod tests {
     #[test]
     fn test_load_all_bundled_cells() {
         for c in get_bundled_data() {
-            get_file_ops_delegate_impl(*c, DigestConfig::testing_default()).unwrap();
+            let cell = CellName::testing_new(c.name);
+            get_file_ops_delegate_impl(
+                *c,
+                DigestConfig::testing_default(),
+                cell,
+                BuckOutPathResolver::new(ProjectRelativePathBuf::unchecked_new(
+                    "buck-out/v2".to_owned(),
+                )),
+            )
+            .unwrap();
         }
     }
 }

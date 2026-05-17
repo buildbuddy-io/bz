@@ -1,0 +1,107 @@
+load("@crates//:defs.bzl", "aliases", "all_crate_deps")
+load("@rules_rust//cargo:defs.bzl", "cargo_build_script")
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_proc_macro")
+
+package(default_visibility = ["//visibility:public"])
+
+COMMON_RUSTC_ENV = {
+    "CARGO_MANIFEST_DIR": "app/buck2_cli_proto",
+    "CARGO_PKG_AUTHORS": "",
+    "CARGO_PKG_DESCRIPTION": "",
+    "CARGO_PKG_HOMEPAGE": "",
+    "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+    "CARGO_PKG_LICENSE_FILE": "",
+    "CARGO_PKG_NAME": "buck2_cli_proto",
+    "CARGO_PKG_README": "",
+    "CARGO_PKG_REPOSITORY": "https://github.com/facebook/buck2",
+    "CARGO_PKG_VERSION": "0.1.0",
+    "CARGO_PKG_VERSION_MAJOR": "0",
+    "CARGO_PKG_VERSION_MINOR": "1",
+    "CARGO_PKG_VERSION_PATCH": "0",
+    "CARGO_PKG_VERSION_PRE": "",
+    }
+
+cargo_build_script(
+    name = "build_script",
+    crate_name = "buck2_cli_proto_build_script",
+    crate_root = "build.rs",
+    srcs = ["build.rs"],
+    edition = "2024",
+    aliases = aliases(build = True, build_proc_macro = True),
+    deps = all_crate_deps(build = True) + [
+        "//app/buck2_protoc_dev:buck2_protoc_dev",
+    ],
+    proc_macro_deps = all_crate_deps(build_proc_macro = True) + [],
+    rustc_env = COMMON_RUSTC_ENV,
+    build_script_env = {
+        "BUCK2_BUILD_PROTOC": "$(execpath @crates__protoc-bin-vendored-macos-aarch_64-3.2.0//:bin/protoc)",
+        "BUCK2_BUILD_PROTOC_INCLUDE": "$(execpath @crates__protoc-bin-vendored-macos-aarch_64-3.2.0//:include/google/protobuf/descriptor.proto)",
+    },
+    data = glob(["**/*.proto", "**/*.lalrpop"], allow_empty = True) + [
+        "@crates__protoc-bin-vendored-macos-aarch_64-3.2.0//:bin/protoc",
+        "@crates__protoc-bin-vendored-macos-aarch_64-3.2.0//:include/google/protobuf/any.proto",
+        "@crates__protoc-bin-vendored-macos-aarch_64-3.2.0//:include/google/protobuf/api.proto",
+        "@crates__protoc-bin-vendored-macos-aarch_64-3.2.0//:include/google/protobuf/compiler/plugin.proto",
+        "@crates__protoc-bin-vendored-macos-aarch_64-3.2.0//:include/google/protobuf/cpp_features.proto",
+        "@crates__protoc-bin-vendored-macos-aarch_64-3.2.0//:include/google/protobuf/descriptor.proto",
+        "@crates__protoc-bin-vendored-macos-aarch_64-3.2.0//:include/google/protobuf/duration.proto",
+        "@crates__protoc-bin-vendored-macos-aarch_64-3.2.0//:include/google/protobuf/empty.proto",
+        "@crates__protoc-bin-vendored-macos-aarch_64-3.2.0//:include/google/protobuf/field_mask.proto",
+        "@crates__protoc-bin-vendored-macos-aarch_64-3.2.0//:include/google/protobuf/go_features.proto",
+        "@crates__protoc-bin-vendored-macos-aarch_64-3.2.0//:include/google/protobuf/java_features.proto",
+        "@crates__protoc-bin-vendored-macos-aarch_64-3.2.0//:include/google/protobuf/source_context.proto",
+        "@crates__protoc-bin-vendored-macos-aarch_64-3.2.0//:include/google/protobuf/struct.proto",
+        "@crates__protoc-bin-vendored-macos-aarch_64-3.2.0//:include/google/protobuf/timestamp.proto",
+        "@crates__protoc-bin-vendored-macos-aarch_64-3.2.0//:include/google/protobuf/type.proto",
+        "@crates__protoc-bin-vendored-macos-aarch_64-3.2.0//:include/google/protobuf/wrappers.proto",
+        "//app/buck2_action_metadata_proto:action_metadata.proto",
+        "//app/buck2_data:data.proto",
+        "//app/buck2_data:error.proto",
+        "//app/buck2_downward_api_proto:downward_api.proto",
+        "//app/buck2_forkserver_proto:forkserver.proto",
+        "//app/buck2_health_check_proto:health_check.proto",
+        "//app/buck2_host_sharing_proto:host_sharing.proto",
+        "//app/buck2_install_proto:install.proto",
+        "//app/buck2_subscription_proto:subscription.proto",
+        "//app/buck2_test_proto:test.proto",
+        "//app/buck2_worker_proto:worker.proto",
+        "//remote_execution/oss/re_grpc_proto:proto/build/bazel/remote/execution/v2/remote_execution.proto",
+        "//remote_execution/oss/re_grpc_proto:proto/build/bazel/semver/semver.proto",
+        "//remote_execution/oss/re_grpc_proto:proto/google/api/annotations.proto",
+        "//remote_execution/oss/re_grpc_proto:proto/google/api/client.proto",
+        "//remote_execution/oss/re_grpc_proto:proto/google/api/http.proto",
+        "//remote_execution/oss/re_grpc_proto:proto/google/api/launch_stage.proto",
+        "//remote_execution/oss/re_grpc_proto:proto/google/bytestream/bytestream.proto",
+        "//remote_execution/oss/re_grpc_proto:proto/google/longrunning/operations.proto",
+        "//remote_execution/oss/re_grpc_proto:proto/google/rpc/code.proto",
+        "//remote_execution/oss/re_grpc_proto:proto/google/rpc/status.proto",
+    ],
+)
+
+rust_library(
+    name = "buck2_cli_proto",
+    crate_name = "buck2_cli_proto",
+    crate_root = "src/lib.rs",
+    srcs = glob(["src/**/*.rs"]),
+    edition = "2024",
+    aliases = aliases(),
+    deps = all_crate_deps(normal = True) + [
+        ":build_script",
+        "//allocative/allocative:allocative",
+        "//app/buck2_core:buck2_core",
+        "//app/buck2_data:buck2_data",
+        "//app/buck2_error:buck2_error",
+        "//app/buck2_fs:buck2_fs",
+        "//app/buck2_subscription_proto:buck2_subscription_proto",
+    ],
+    proc_macro_deps = all_crate_deps(proc_macro = True) + [],
+    rustc_env = COMMON_RUSTC_ENV,
+    compile_data = glob([
+        "**/*",
+    ], allow_empty = True, exclude = [
+        "BUILD.bazel",
+        "BUCK",
+        "Cargo.toml",
+        "fuzz/**",
+    ]),
+)

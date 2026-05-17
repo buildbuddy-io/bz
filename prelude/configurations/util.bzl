@@ -11,21 +11,24 @@ def _configuration_info_union(infos):
         return ConfigurationInfo(
             constraints = {},
             values = {},
+            build_settings = {},
         )
     if len(infos) == 1:
         return infos[0]
     constraints = {k: v for info in infos for (k, v) in info.constraints.items()}
     values = {k: v for info in infos for (k, v) in info.values.items()}
+    build_settings = {k: v for info in infos for (k, v) in info.build_settings.items()}
     return ConfigurationInfo(
         constraints = constraints,
         values = values,
+        build_settings = build_settings,
     )
 
 def _constraint_values_to_configuration(values):
     return ConfigurationInfo(constraints = {
         info[ConstraintValueInfo].setting.label: info[ConstraintValueInfo]
         for info in values
-    }, values = {})
+    }, values = {}, build_settings = {})
 
 util = struct(
     configuration_info_union = _configuration_info_union,

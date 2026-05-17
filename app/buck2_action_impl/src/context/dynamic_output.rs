@@ -170,7 +170,7 @@ pub(crate) fn analysis_actions_methods_dynamic_output(methods: &mut MethodsBuild
             .map(|x| x.artifact())
             .collect::<buck2_error::Result<_>>()?;
 
-        let attributes = this.attributes;
+        let attributes = this.attributes.borrow().as_ref().copied();
         let plugins = this.plugins;
 
         let mut this = this.state()?;

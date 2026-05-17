@@ -38,9 +38,11 @@ use starlark::values::Value;
 use starlark::values::ValueLike;
 use starlark::values::any::FrozenAnyValue;
 use starlark::values::starlark_value;
+use starlark_map::small_map::SmallMap;
 
 use crate::interpreter::rule_defs::provider::ProviderLike;
 use crate::interpreter::rule_defs::provider::callable::UserProviderCallableData;
+use crate::interpreter::rule_defs::provider::callable::UserProviderSchema;
 
 #[derive(Debug, buck2_error::Error)]
 #[buck2(tag = Input)]
@@ -49,6 +51,8 @@ enum UserProviderError {
     MismatchedType(String, Ty, String),
     #[error("Required parameter `{0}` is missing")]
     MissingParameter(String),
+    #[error("Unexpected field `{0}` in provider constructor")]
+    UnexpectedField(String),
 }
 
 /// The result of calling the output of `provider()`. This is just a simple data structure of
@@ -59,6 +63,7 @@ enum UserProviderError {
 pub struct UserProviderGen<'v, V: ValueLike<'v>> {
     pub(crate) callable: FrozenAnyValue<UserProviderCallableData>,
     attributes: Box<[V]>,
+    attribute_names: Option<Box<[String]>>,
     _marker: PhantomData<&'v ()>,
 }
 
@@ -69,14 +74,26 @@ impl<'v, V: ValueLike<'v>> UserProviderGen<'v, V> {
         &self.callable
     }
 
-    fn iter_items(&self) -> impl Iterator<Item = (&str, V)> {
+    fn iter_items(&self) -> Vec<(&str, V)> {
         let callable_data = self.callable_data();
-        assert_eq!(callable_data.fields.len(), self.attributes.len());
-        callable_data
-            .fields
-            .keys()
-            .map(|s| s.as_str())
+        let names: Vec<&str> = match &callable_data.fields {
+            UserProviderSchema::Schema(fields) => {
+                assert_eq!(fields.len(), self.attributes.len());
+                fields.keys().map(|s| s.as_str()).collect()
+            }
+            UserProviderSchema::Schemaless => {
+                let names = self
+                    .attribute_names
+                    .as_ref()
+                    .expect("schemaless provider has instance attribute names");
+                assert_eq!(names.len(), self.attributes.len());
+                names.iter().map(|s| s.as_str()).collect()
+            }
+        };
+        names
+            .into_iter()
             .zip(self.attributes.iter().copied())
+            .collect()
     }
 }
 
@@ -92,13 +109,20 @@ impl<'v, V: ValueLike<'v>> Display for UserProviderGen<'v, V> {
     }
 }
 
-#[starlark_value(type = "Provider")]
+#[starlark_value(type = "struct")]
 impl<'v, V: ValueLike<'v>> StarlarkValue<'v> for UserProviderGen<'v, V>
 where
     Self: ProvidesStaticType<'v>,
 {
     fn dir_attr(&self) -> Vec<String> {
-        self.callable_data().fields.keys().cloned().collect()
+        match &self.callable_data().fields {
+            UserProviderSchema::Schema(fields) => fields.keys().cloned().collect(),
+            UserProviderSchema::Schemaless => self
+                .attribute_names
+                .as_ref()
+                .expect("schemaless provider has instance attribute names")
+                .to_vec(),
+        }
     }
 
     fn get_attr(&self, attribute: &str, _heap: Heap<'v>) -> Option<Value<'v>> {
@@ -106,11 +130,17 @@ where
     }
 
     fn get_attr_hashed(&self, attribute: Hashed<&str>, _heap: Heap<'v>) -> Option<Value<'v>> {
-        let index = self
-            .callable_data()
-            .fields
-            .raw_entry_v1()
-            .index_from_hash(attribute.hash().promote(), |k| k == attribute.key())?;
+        let index = match &self.callable_data().fields {
+            UserProviderSchema::Schema(fields) => fields
+                .raw_entry_v1()
+                .index_from_hash(attribute.hash().promote(), |k| k == attribute.key())?,
+            UserProviderSchema::Schemaless => self
+                .attribute_names
+                .as_ref()
+                .expect("schemaless provider has instance attribute names")
+                .iter()
+                .position(|name| name == attribute.key())?,
+        };
         Some(self.attributes[index].to_value())
     }
 
@@ -128,7 +158,7 @@ where
             // and lengths should be equal. So this code is unreachable.
             return Ok(false);
         }
-        for ((k1, v1), (k2, v2)) in this.iter_items().zip(other.iter_items()) {
+        for ((k1, v1), (k2, v2)) in this.iter_items().into_iter().zip(other.iter_items()) {
             if k1 != k2 {
                 // If provider ids are equal, then providers point to the same provider callable,
                 // and keys should be equal. So this code is unreachable.
@@ -170,7 +200,10 @@ impl<'v, V: ValueLike<'v>> ProviderLike<'v> for UserProviderGen<'v, V> {
     }
 
     fn items(&self) -> Vec<(&str, Value<'v>)> {
-        self.iter_items().map(|(k, v)| (k, v.to_value())).collect()
+        self.iter_items()
+            .into_iter()
+            .map(|(k, v)| (k, v.to_value()))
+            .collect()
     }
 }
 
@@ -180,32 +213,111 @@ pub(crate) fn user_provider_creator<'v>(
     eval: &Evaluator<'v, '_, '_>,
     param_parser: &mut ParametersParser<'v, '_>,
 ) -> buck2_error::Result<Value<'v>> {
-    let heap = eval.heap();
     let callable_data: &UserProviderCallableData = &callable;
-    let values = callable_data
-        .fields
-        .iter()
-        .map(|(name, field)| match param_parser.next_opt()? {
-            Some(value) => {
-                if !field.ty.matches(value) {
-                    return Err(UserProviderError::MismatchedType(
-                        name.to_owned(),
-                        field.ty.as_ty().dupe(),
-                        value.to_repr(),
-                    )
-                    .into());
-                }
-                Ok(value)
+    let (values, attribute_names) = match &callable_data.fields {
+        UserProviderSchema::Schema(fields) => {
+            let values = fields
+                .iter()
+                .map(|(name, field)| match param_parser.next_opt()? {
+                    Some(value) => {
+                        if !field.ty.matches(value) {
+                            return Err(UserProviderError::MismatchedType(
+                                name.to_owned(),
+                                field.ty.as_ty().dupe(),
+                                value.to_repr(),
+                            )
+                            .into());
+                        }
+                        Ok(value)
+                    }
+                    None => match field.default {
+                        Some(default) => Ok(default.to_value()),
+                        None => Err(UserProviderError::MissingParameter(name.to_owned()).into()),
+                    },
+                })
+                .collect::<buck2_error::Result<Box<[Value]>>>()?;
+            (values, None)
+        }
+        UserProviderSchema::Schemaless => {
+            let kwargs: SmallMap<String, Value<'v>> = param_parser.next()?;
+            let mut names = Vec::with_capacity(kwargs.len());
+            let mut values = Vec::with_capacity(kwargs.len());
+            for (name, value) in kwargs {
+                names.push(name);
+                values.push(value);
             }
-            None => match field.default {
-                Some(default) => Ok(default.to_value()),
-                None => Err(UserProviderError::MissingParameter(name.to_owned()).into()),
-            },
-        })
-        .collect::<buck2_error::Result<Box<[Value]>>>()?;
+            (values.into_boxed_slice(), Some(names.into_boxed_slice()))
+        }
+    };
+    user_provider_creator_from_values(callable, eval, values, attribute_names)
+}
+
+pub(crate) fn user_provider_creator_from_kwargs<'v>(
+    callable: FrozenAnyValue<UserProviderCallableData>,
+    eval: &Evaluator<'v, '_, '_>,
+    kwargs: SmallMap<String, Value<'v>>,
+) -> buck2_error::Result<Value<'v>> {
+    let callable_data: &UserProviderCallableData = &callable;
+    let (values, attribute_names) = match &callable_data.fields {
+        UserProviderSchema::Schema(fields) => {
+            for (name, _) in &kwargs {
+                if !fields.contains_key(name) {
+                    return Err(UserProviderError::UnexpectedField(name.to_owned()).into());
+                }
+            }
+            let values = fields
+                .iter()
+                .map(|(name, field)| {
+                    match kwargs
+                        .iter()
+                        .find_map(|(candidate, value)| (candidate == name).then_some(*value))
+                    {
+                        Some(value) => {
+                            if !field.ty.matches(value) {
+                                return Err(UserProviderError::MismatchedType(
+                                    name.to_owned(),
+                                    field.ty.as_ty().dupe(),
+                                    value.to_repr(),
+                                )
+                                .into());
+                            }
+                            Ok(value)
+                        }
+                        None => match field.default {
+                            Some(default) => Ok(default.to_value()),
+                            None => {
+                                Err(UserProviderError::MissingParameter(name.to_owned()).into())
+                            }
+                        },
+                    }
+                })
+                .collect::<buck2_error::Result<Box<[Value]>>>()?;
+            (values, None)
+        }
+        UserProviderSchema::Schemaless => {
+            let mut names = Vec::with_capacity(kwargs.len());
+            let mut values = Vec::with_capacity(kwargs.len());
+            for (name, value) in kwargs {
+                names.push(name);
+                values.push(value);
+            }
+            (values.into_boxed_slice(), Some(names.into_boxed_slice()))
+        }
+    };
+    user_provider_creator_from_values(callable, eval, values, attribute_names)
+}
+
+fn user_provider_creator_from_values<'v>(
+    callable: FrozenAnyValue<UserProviderCallableData>,
+    eval: &Evaluator<'v, '_, '_>,
+    values: Box<[Value<'v>]>,
+    attribute_names: Option<Box<[String]>>,
+) -> buck2_error::Result<Value<'v>> {
+    let heap = eval.heap();
     Ok(heap.alloc(UserProvider {
         callable,
         attributes: values,
+        attribute_names,
         _marker: PhantomData,
     }))
 }

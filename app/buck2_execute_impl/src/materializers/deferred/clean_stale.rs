@@ -28,6 +28,7 @@ use buck2_error::buck2_error;
 use buck2_events::daemon_id::DaemonId;
 use buck2_events::dispatch::EventDispatcher;
 use buck2_events::metadata;
+use buck2_execute::artifact_value::ArtifactValue;
 use buck2_execute::execute::blocking::IoRequest;
 use buck2_execute::execute::clean_output_paths::cleanup_path;
 use buck2_fs::error::IoResultExt;
@@ -35,6 +36,7 @@ use buck2_fs::fs_util;
 use buck2_fs::paths::abs_norm_path::AbsNormPath;
 use buck2_fs::paths::file_name::FileName;
 use buck2_fs::paths::file_name::FileNameBuf;
+use buck2_hash::BuckDashMap;
 use buck2_hash::StdBuckHashMap;
 use buck2_wrapper_common::invocation_id::TraceId;
 use chrono::DateTime;
@@ -199,6 +201,7 @@ impl CleanStaleArtifactsCommand {
             } else {
                 self.scan_and_create_clean_fut(
                     &mut processor.tree,
+                    &processor.declared_artifact_values,
                     sqlite_db,
                     &processor.io,
                     processor.cancellations,
@@ -213,6 +216,7 @@ impl CleanStaleArtifactsCommand {
     fn scan_and_create_clean_fut<T: IoHandler>(
         &self,
         tree: &mut ArtifactTree,
+        declared_artifact_values: &BuckDashMap<ProjectRelativePathBuf, ArtifactValue>,
         sqlite_db: &mut MaterializerStateSqliteDb,
         io: &Arc<T>,
         cancellations: &'static CancellationContext,
@@ -321,6 +325,7 @@ impl CleanStaleArtifactsCommand {
                 found_paths,
                 stats,
                 tree,
+                declared_artifact_values,
                 sqlite_db,
                 io,
                 cancellations,
@@ -363,6 +368,7 @@ fn create_clean_fut<T: IoHandler>(
     found_paths: Vec<FoundPath>,
     mut stats: CleanStaleStats,
     tree: &mut ArtifactTree,
+    declared_artifact_values: &BuckDashMap<ProjectRelativePathBuf, ArtifactValue>,
     sqlite_db: &mut MaterializerStateSqliteDb,
     io: &Arc<T>,
     cancellations: &'static CancellationContext,
@@ -378,8 +384,12 @@ fn create_clean_fut<T: IoHandler>(
         })
         .collect();
 
-    let existing_clean_futs =
+    let invalidation =
         tree.invalidate_paths_and_collect_futures(paths_to_invalidate, Some(sqlite_db))?;
+    for path in invalidation.paths {
+        declared_artifact_values.remove(&path);
+    }
+    let existing_clean_futs = invalidation.futures;
     let mut existing_materialization_futs = vec![];
     for data in tree.iter_without_paths() {
         if let super::Processing::Active {

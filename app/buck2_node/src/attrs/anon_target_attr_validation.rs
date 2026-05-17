@@ -49,6 +49,10 @@ impl AnonRuleAttrValidation for AttrType {
                 Ok(())
             }
             AttrTypeInner::Option(x) => x.inner.validate_for_anon_rule(),
+            AttrTypeInner::BazelLabel(x) => {
+                x.dep.validate_for_anon_rule()?;
+                x.source.validate_for_anon_rule()
+            }
             AttrTypeInner::String(_) => Ok(()),
             AttrTypeInner::Enum(_) => Ok(()),
             AttrTypeInner::Dep(_) => Ok(()),

@@ -141,7 +141,7 @@ def _deserialize_linkable(linkable: (str, typing.Any)) -> typing.Any:
 
     fail("Invalid linkable type: {}".format(typ))
 
-def _deserialize_link_info(actions: AnalysisActions, label: Label, info) -> LinkInfo:
+def _deserialize_link_info(actions: AnalysisActions, label: ConfiguredProvidersLabel, info) -> LinkInfo:
     name, pre_flags, post_flags, linkables, external_debug_info, metadata = info
     return LinkInfo(
         name = name,
@@ -160,7 +160,7 @@ def _deserialize_link_info(actions: AnalysisActions, label: Label, info) -> Link
 
 def _deserialize_link_args(
         actions: AnalysisActions,
-        label: Label,
+        label: ConfiguredProvidersLabel,
         link: (str, typing.Any)) -> LinkArgs:
     typ, payload = link
 
@@ -174,7 +174,7 @@ def _deserialize_link_args(
 
 def deserialize_anon_attrs(
         actions: AnalysisActions,
-        label: Label,
+        label: ConfiguredProvidersLabel,
         attrs: struct) -> (str, CxxLinkResultType, LinkOptions):
     opts = link_options(
         links = [_deserialize_link_args(actions, label, link) for link in attrs.links],

@@ -15,6 +15,7 @@ use std::sync::Arc;
 use allocative::Allocative;
 use async_trait::async_trait;
 use buck2_core::fs::buck_out_path::BuckOutPathResolver;
+use buck2_core::fs::buck_out_path::register_bazel_artifact_buck_out_path;
 use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
 use derive_more::Display;
 use dice::DiceComputations;
@@ -73,13 +74,9 @@ impl SetBuildContextData for DiceTransactionUpdater {
         &mut self,
         path: Option<ProjectRelativePathBuf>,
     ) -> buck2_error::Result<()> {
-        Ok(self.changed_to(vec![(
-            BuildDataKey,
-            Arc::new(BuildData {
-                buck_out_path: path.unwrap_or_else(|| {
-                    ProjectRelativePathBuf::unchecked_new("buck-out/v2".to_owned())
-                }),
-            }),
-        )])?)
+        let buck_out_path =
+            path.unwrap_or_else(|| ProjectRelativePathBuf::unchecked_new("buck-out/v2".to_owned()));
+        register_bazel_artifact_buck_out_path(buck_out_path.clone());
+        Ok(self.changed_to(vec![(BuildDataKey, Arc::new(BuildData { buck_out_path }))])?)
     }
 }

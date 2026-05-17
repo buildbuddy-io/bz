@@ -20,6 +20,10 @@ use pagable::Pagable;
 pub struct PreludePath(ImportPath);
 
 impl PreludePath {
+    pub fn new(import_path: ImportPath) -> PreludePath {
+        PreludePath(import_path)
+    }
+
     #[inline]
     pub fn import_path(&self) -> &ImportPath {
         &self.0
@@ -31,7 +35,7 @@ impl PreludePath {
     }
 
     pub fn is_prelude_path(&self, import_path: &CellPath) -> bool {
-        import_path.starts_with(self.0.path_parent())
+        import_path.cell() == self.0.cell()
     }
 
     pub fn testing_new(import_path: ImportPath) -> PreludePath {

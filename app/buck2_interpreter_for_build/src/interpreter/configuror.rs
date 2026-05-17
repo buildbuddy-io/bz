@@ -8,10 +8,12 @@
  * above-listed licenses.
  */
 
+use std::cell::RefCell;
 use std::fmt::Debug;
 use std::sync::Arc;
 
 use allocative::Allocative;
+use buck2_common::package_listing::PackageListingStrategy;
 use buck2_common::package_listing::listing::PackageListing;
 use buck2_core::build_file_path::BuildFilePath;
 use buck2_core::cells::cell_path_with_allowed_relative_dir::CellPathWithAllowedRelativeDir;
@@ -57,7 +59,7 @@ impl PartialEq for AdditionalGlobalsFn {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Allocative, PagablePanic)]
+#[derive(Clone, Debug, Allocative, PagablePanic)]
 pub struct BuildInterpreterConfiguror {
     /// Path to prelude import (typically `prelude//:prelude.bzl`).
     ///
@@ -73,6 +75,16 @@ pub struct BuildInterpreterConfiguror {
     global_target_interner: Arc<ConcurrentTargetLabelInterner>,
     /// For test.
     additional_globals: Option<AdditionalGlobalsFn>,
+}
+
+impl PartialEq for BuildInterpreterConfiguror {
+    fn eq(&self, other: &Self) -> bool {
+        self.prelude_import == other.prelude_import
+            && self.host_info == other.host_info
+            && self.record_target_call_stack == other.record_target_call_stack
+            && self.skip_targets_with_duplicate_names == other.skip_targets_with_duplicate_names
+            && self.additional_globals == other.additional_globals
+    }
 }
 
 impl BuildInterpreterConfiguror {
@@ -109,6 +121,8 @@ impl BuildInterpreterConfiguror {
         cell_info: &InterpreterCellInfo,
         buildfile_path: BuildFilePath,
         package_listing: PackageListing,
+        package_listing_strategy: PackageListingStrategy,
+        package_listing_restart: Arc<RefCell<Option<PackageListingStrategy>>>,
         super_package: SuperPackage,
         package_boundary_exception: bool,
         loaded_modules: &LoadedModules,
@@ -152,6 +166,8 @@ impl BuildInterpreterConfiguror {
             record_target_call_stack,
             skip_targets_with_duplicate_names,
             package_listing,
+            package_listing_strategy,
+            package_listing_restart,
             super_package,
         ))
     }

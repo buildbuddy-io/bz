@@ -9,6 +9,8 @@
  */
 
 use std::hash::Hash;
+use std::num::NonZeroUsize;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use allocative::Allocative;
@@ -25,7 +27,10 @@ use compact_str::CompactString;
 use derive_more::Display;
 use dupe::Dupe;
 use gazebo::variants::VariantName;
+use lru::LruCache;
+use once_cell::sync::Lazy;
 use pagable::Pagable;
+use parking_lot::Mutex;
 
 use crate::cas_digest::CasDigest;
 use crate::cas_digest::CasDigestConfig;
@@ -123,6 +128,83 @@ pub type FileDigest = CasDigest<FileDigestKind>;
 
 pub type TrackedFileDigest = TrackedCasDigest<FileDigestKind>;
 
+const COMPUTED_FILE_DIGEST_CACHE_ENTRIES: usize = 50_000;
+
+static COMPUTED_FILE_DIGEST_CACHE: Lazy<Mutex<LruCache<ComputedFileDigestCacheKey, FileDigest>>> =
+    Lazy::new(|| {
+        Mutex::new(LruCache::new(
+            NonZeroUsize::new(COMPUTED_FILE_DIGEST_CACHE_ENTRIES).unwrap(),
+        ))
+    });
+
+#[derive(Clone, Eq, Hash, PartialEq)]
+struct ComputedFileDigestCacheKey {
+    path: PathBuf,
+    config: CasDigestConfig,
+    metadata: ComputedFileDigestCacheMetadata,
+}
+
+impl ComputedFileDigestCacheKey {
+    fn new(file: &AbsPath, config: FileDigestConfig, metadata: &std::fs::Metadata) -> Self {
+        Self {
+            path: file.as_path().to_path_buf(),
+            config: config.as_cas_digest_config(),
+            metadata: ComputedFileDigestCacheMetadata::new(metadata),
+        }
+    }
+}
+
+#[cfg(unix)]
+#[derive(Clone, Eq, Hash, PartialEq)]
+struct ComputedFileDigestCacheMetadata {
+    dev: u64,
+    ino: u64,
+    size: u64,
+    mtime: i64,
+    mtime_nsec: i64,
+    ctime: i64,
+    ctime_nsec: i64,
+}
+
+#[cfg(unix)]
+impl ComputedFileDigestCacheMetadata {
+    fn new(metadata: &std::fs::Metadata) -> Self {
+        use std::os::unix::fs::MetadataExt;
+
+        Self {
+            dev: metadata.dev(),
+            ino: metadata.ino(),
+            size: metadata.len(),
+            mtime: metadata.mtime(),
+            mtime_nsec: metadata.mtime_nsec(),
+            ctime: metadata.ctime(),
+            ctime_nsec: metadata.ctime_nsec(),
+        }
+    }
+}
+
+#[cfg(not(unix))]
+#[derive(Clone, Eq, Hash, PartialEq)]
+struct ComputedFileDigestCacheMetadata {
+    size: u64,
+    modified: Option<(u64, u32)>,
+}
+
+#[cfg(not(unix))]
+impl ComputedFileDigestCacheMetadata {
+    fn new(metadata: &std::fs::Metadata) -> Self {
+        let modified = metadata
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| (d.as_secs(), d.subsec_nanos()));
+        Self {
+            size: metadata.len(),
+            modified,
+        }
+    }
+}
+
 #[derive(Copy, Dupe, Clone)]
 pub struct FileDigestConfig {
     config: CasDigestConfig,
@@ -216,6 +298,29 @@ impl FileDigest {
     /// Get the digest from disk. You should usually prefer `from_file`
     /// which also uses faster methods of getting the SHA1 if it can.
     fn from_file_disk(file: &AbsPath, config: FileDigestConfig) -> buck2_error::Result<Self> {
+        if buck2_env!("BUCK2_DISABLE_COMPUTED_FILE_DIGEST_CACHE", bool)? {
+            return Self::from_file_disk_uncached(file, config);
+        }
+
+        let metadata = fs_util::symlink_metadata(file).categorize_internal()?;
+        if !metadata.is_file() {
+            return Self::from_file_disk_uncached(file, config);
+        }
+
+        let key = ComputedFileDigestCacheKey::new(file, config, &metadata);
+        if let Some(digest) = COMPUTED_FILE_DIGEST_CACHE.lock().get(&key) {
+            return Ok(digest.dupe());
+        }
+
+        let digest = Self::from_file_disk_uncached(file, config)?;
+        COMPUTED_FILE_DIGEST_CACHE.lock().put(key, digest.dupe());
+        Ok(digest)
+    }
+
+    fn from_file_disk_uncached(
+        file: &AbsPath,
+        config: FileDigestConfig,
+    ) -> buck2_error::Result<Self> {
         let f = fs_util::open_file(file).categorize_internal()?;
         FileDigest::from_reader(f, config.as_cas_digest_config())
     }
@@ -242,6 +347,116 @@ impl FileMetadata {
     pub fn with_executable(mut self, executable: bool) -> Self {
         self.is_executable = executable;
         self
+    }
+}
+
+#[derive(Debug, Dupe, Hash, PartialEq, Eq, Clone, Allocative, Pagable)]
+pub struct FileContentsProxy {
+    pub size: u64,
+    pub modified_secs: i64,
+    pub modified_nanos: i64,
+    pub changed_secs: i64,
+    pub changed_nanos: i64,
+    pub node_id: u64,
+    pub is_executable: bool,
+}
+
+impl FileContentsProxy {
+    pub fn new(
+        size: u64,
+        modified_secs: i64,
+        modified_nanos: i64,
+        changed_secs: i64,
+        changed_nanos: i64,
+        node_id: u64,
+        is_executable: bool,
+    ) -> Self {
+        Self {
+            size,
+            modified_secs,
+            modified_nanos,
+            changed_secs,
+            changed_nanos,
+            node_id,
+            is_executable,
+        }
+    }
+}
+
+#[derive(Debug, Dupe, Hash, PartialEq, Eq, Clone, Allocative, Pagable)]
+pub struct SourceFileMetadata {
+    pub contents_proxy: Arc<FileContentsProxy>,
+}
+
+impl SourceFileMetadata {
+    pub fn new(contents_proxy: FileContentsProxy) -> Self {
+        Self {
+            contents_proxy: Arc::new(contents_proxy),
+        }
+    }
+}
+
+impl std::fmt::Display for SourceFileMetadata {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "SourceFile({:?})", self.contents_proxy)
+    }
+}
+
+#[derive(Debug, Dupe, Hash, PartialEq, Eq, Clone, Allocative, Pagable)]
+pub enum FileChangeMetadata {
+    Digest(FileMetadata),
+    ContentsProxy(FileContentsProxy),
+}
+
+#[derive(Debug, PartialEq, Dupe, Eq, Clone, Allocative, Pagable)]
+pub enum RawPathMetadataForNoWatchFs<T = Arc<CellPath>> {
+    Symlink { at: T, to: RawSymlink<T> },
+    File(FileChangeMetadata),
+    Directory,
+}
+
+impl<T> RawPathMetadataForNoWatchFs<T> {
+    pub fn map<O>(self, f: impl Fn(T) -> O) -> RawPathMetadataForNoWatchFs<O> {
+        match Self::try_map::<O, RawPathMetadataForNoWatchFs<O>>(self, |v| Ok(f(v))) {
+            Ok(out) => out,
+            Err(e) => e,
+        }
+    }
+
+    pub fn try_map<O, E>(
+        self,
+        f: impl Fn(T) -> Result<O, E>,
+    ) -> Result<RawPathMetadataForNoWatchFs<O>, E> {
+        match self {
+            Self::Directory => Ok(RawPathMetadataForNoWatchFs::Directory),
+            Self::File(file) => Ok(RawPathMetadataForNoWatchFs::File(file)),
+            Self::Symlink {
+                at,
+                to: RawSymlink::Relative(dest, dest_rel),
+            } => Ok(RawPathMetadataForNoWatchFs::Symlink {
+                at: f(at)?,
+                to: RawSymlink::Relative(f(dest)?, dest_rel),
+            }),
+            Self::Symlink {
+                at,
+                to: RawSymlink::External(e),
+            } => Ok(RawPathMetadataForNoWatchFs::Symlink {
+                at: f(at)?,
+                to: RawSymlink::External(e),
+            }),
+        }
+    }
+}
+
+impl<T> From<RawPathMetadata<T>> for RawPathMetadataForNoWatchFs<T> {
+    fn from(metadata: RawPathMetadata<T>) -> Self {
+        match metadata {
+            RawPathMetadata::Directory => RawPathMetadataForNoWatchFs::Directory,
+            RawPathMetadata::File(file) => {
+                RawPathMetadataForNoWatchFs::File(FileChangeMetadata::Digest(file))
+            }
+            RawPathMetadata::Symlink { at, to } => RawPathMetadataForNoWatchFs::Symlink { at, to },
+        }
     }
 }
 

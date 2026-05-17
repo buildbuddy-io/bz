@@ -23,7 +23,9 @@ use buck2_common::file_ops::dice::ReadFileProxy;
 use buck2_common::file_ops::metadata::FileDigestConfig;
 use buck2_common::file_ops::metadata::RawDirEntry;
 use buck2_common::file_ops::metadata::RawPathMetadata;
+use buck2_common::file_ops::metadata::RawPathMetadataForNoWatchFs;
 use buck2_common::io::IoProvider;
+use buck2_common::io::NoWatchFsMetadataCache;
 use buck2_common::io::fs::FsIoProvider;
 use buck2_core::cells::cell_path::CellPath;
 use buck2_core::cells::external::ExternalCellOrigin;
@@ -321,16 +323,15 @@ impl FileOpsDelegate for GitFileOpsDelegate {
         _ctx: &mut DiceComputations<'_>,
         path: &'async_trait CellRelativePath,
     ) -> buck2_error::Result<Arc<[RawDirEntry]>> {
-        let project_path = self.resolve(path);
-        let mut entries = (&self.io as &dyn IoProvider)
-            .read_dir(project_path)
-            .await
-            .with_buck_error_context(|| format!("Error listing dir `{path}`"))?;
+        self.read_dir_without_dice(path).await
+    }
 
-        // Make sure entries are deterministic, since read_dir isn't.
-        entries.sort_by(|a, b| a.file_name.cmp(&b.file_name));
-
-        Ok(entries.into())
+    async fn read_dir_for_no_watchfs_without_dice(
+        &self,
+        _io_provider: Arc<dyn IoProvider>,
+        path: &'async_trait CellRelativePath,
+    ) -> buck2_error::Result<Arc<[RawDirEntry]>> {
+        self.read_dir_without_dice(path).await
     }
 
     async fn read_path_metadata_if_exists(
@@ -359,8 +360,53 @@ impl FileOpsDelegate for GitFileOpsDelegate {
         )?))
     }
 
+    async fn read_path_metadata_for_no_watchfs_if_exists_without_dice(
+        &self,
+        _io_provider: Arc<dyn IoProvider>,
+        path: &'async_trait CellRelativePath,
+        cache: Option<Arc<NoWatchFsMetadataCache>>,
+    ) -> buck2_error::Result<Option<RawPathMetadataForNoWatchFs>> {
+        let project_path = self.resolve(path);
+
+        let Some(metadata) = (&self.io as &dyn IoProvider)
+            .read_path_metadata_if_exists_for_no_watchfs_with_cache(project_path, cache)
+            .await
+            .with_buck_error_context(|| format!("Error accessing metadata for path `{path}`"))?
+        else {
+            return Ok(None);
+        };
+        Ok(Some(metadata.try_map(
+            |path| match path.strip_prefix_opt(self.get_base_path()) {
+                Some(path) => Ok(Arc::new(CellPath::new(self.cell, path.to_owned().into()))),
+                None => Err(internal_error!(
+                    "Non-cell internal symlink at `{}` in cell `{}`",
+                    path,
+                    self.cell
+                )),
+            },
+        )?))
+    }
+
     fn eq_token(&self) -> PartialEqAny<'_> {
         PartialEqAny::always_false()
+    }
+}
+
+impl GitFileOpsDelegate {
+    async fn read_dir_without_dice(
+        &self,
+        path: &CellRelativePath,
+    ) -> buck2_error::Result<Arc<[RawDirEntry]>> {
+        let project_path = self.resolve(path);
+        let mut entries = (&self.io as &dyn IoProvider)
+            .read_dir(project_path)
+            .await
+            .with_buck_error_context(|| format!("Error listing dir `{path}`"))?;
+
+        // Make sure entries are deterministic, since read_dir isn't.
+        entries.sort_by(|a, b| a.file_name.cmp(&b.file_name));
+
+        Ok(entries.into())
     }
 }
 

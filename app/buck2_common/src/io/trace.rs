@@ -17,6 +17,7 @@ use buck2_hash::BuckDashSet;
 
 use crate::file_ops::metadata::RawDirEntry;
 use crate::file_ops::metadata::RawPathMetadata;
+use crate::file_ops::metadata::RawPathMetadataForNoWatchFs;
 use crate::file_ops::metadata::RawSymlink;
 use crate::io::IoProvider;
 
@@ -157,6 +158,31 @@ impl IoProvider for TracingIoProvider {
                 self.add_project_path(path);
             }
             Some(RawPathMetadata::Symlink { at, to }) => {
+                self.add_symlink(Symlink {
+                    at: at.clone(),
+                    to: to.clone(),
+                });
+            }
+            _ => {}
+        }
+
+        Ok(res)
+    }
+
+    async fn read_path_metadata_if_exists_for_no_watchfs_impl(
+        &self,
+        path: ProjectRelativePathBuf,
+    ) -> buck2_error::Result<Option<RawPathMetadataForNoWatchFs<ProjectRelativePathBuf>>> {
+        let res = self
+            .io
+            .read_path_metadata_if_exists_for_no_watchfs_impl(path.clone())
+            .await?;
+        match &res {
+            Some(RawPathMetadataForNoWatchFs::File(_))
+            | Some(RawPathMetadataForNoWatchFs::Directory) => {
+                self.add_project_path(path);
+            }
+            Some(RawPathMetadataForNoWatchFs::Symlink { at, to }) => {
                 self.add_symlink(Symlink {
                     at: at.clone(),
                     to: to.clone(),

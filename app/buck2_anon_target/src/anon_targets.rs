@@ -39,6 +39,7 @@ use buck2_build_api::deferred::calculation::DeferredHolder;
 use buck2_build_api::deferred::calculation::EVAL_ANON_TARGET;
 use buck2_build_api::deferred::calculation::GET_PROMISED_ARTIFACT;
 use buck2_build_api::interpreter::rule_defs::context::AnalysisContext;
+use buck2_build_api::interpreter::rule_defs::context::BazelCppOptions;
 use buck2_build_api::interpreter::rule_defs::plugins::AnalysisPlugins;
 use buck2_build_api::interpreter::rule_defs::provider::collection::ProviderCollection;
 use buck2_build_signals::env::WaitingData;
@@ -53,6 +54,7 @@ use buck2_core::deferred::base_deferred_key::BaseDeferredKeyDyn;
 use buck2_core::deferred::key::DeferredHolderKey;
 use buck2_core::execution_types::execution::ExecutionPlatformResolution;
 use buck2_core::execution_types::execution::ExecutionPlatformResolutionPartial;
+use buck2_core::fs::buck_out_path::BazelOutputRoot;
 use buck2_core::package::PackageLabel;
 use buck2_core::pattern::pattern::PatternData;
 use buck2_core::pattern::pattern::lex_target_pattern;
@@ -523,6 +525,8 @@ impl AnonTargetKey {
                 let ctx = AnalysisContext::prepare(
                     eval.heap(),
                     Some(attributes),
+                    None,
+                    None,
                     Some(self.0.configured_label()),
                     // FIXME(JakobDegen): There should probably be a way to pass plugins
                     // into anon targets
@@ -531,6 +535,13 @@ impl AnonTargetKey {
                             .alloc_typed(AnalysisPlugins::new(SmallMap::new()))
                             .into(),
                     ),
+                    Vec::new(),
+                    SmallMap::new(),
+                    BazelCppOptions::default(),
+                    BazelOutputRoot::Bin,
+                    false,
+                    None,
+                    None,
                     registry,
                     dice.global_data().get_digest_config(),
                 );

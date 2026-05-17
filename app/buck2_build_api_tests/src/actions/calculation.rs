@@ -14,6 +14,7 @@ use std::sync::Arc;
 use std::sync::Mutex;
 
 use assert_matches::assert_matches;
+use async_trait::async_trait;
 use buck2_analysis::analysis::calculation::AnalysisKey;
 use buck2_artifact::actions::key::ActionIndex;
 use buck2_artifact::actions::key::ActionKey;
@@ -132,6 +133,7 @@ fn registered_action(
         build_artifact.key().dupe(),
         action,
         CommandExecutorConfig::testing_local(),
+        None,
     );
     Arc::new(registered_action)
 }
@@ -210,8 +212,9 @@ async fn make_default_dice_state(
     struct CommandExecutorProvider {
         dry_run_tracker: Arc<Mutex<Vec<DryRunEntry>>>,
     }
+    #[async_trait]
     impl HasCommandExecutor for CommandExecutorProvider {
-        fn get_command_executor(
+        async fn get_command_executor(
             &self,
             artifact_fs: &ArtifactFs,
             _config: &CommandExecutorConfig,
@@ -336,6 +339,7 @@ async fn test_build_action() -> buck2_error::Result<()> {
             outputs: vec![CommandExecutionOutput::BuildArtifact {
                 path: build_artifact.get_path().dupe(),
                 output_type: OutputType::File,
+                produced_path: None,
             }],
             env: sorted_vector_map![]
         }
@@ -385,6 +389,7 @@ async fn test_build_artifact() -> buck2_error::Result<()> {
             outputs: vec![CommandExecutionOutput::BuildArtifact {
                 path: build_artifact.get_path().dupe(),
                 output_type: OutputType::File,
+                produced_path: None,
             }],
             env: sorted_vector_map![]
         }
@@ -434,6 +439,7 @@ async fn test_ensure_artifact_build_artifact() -> buck2_error::Result<()> {
             outputs: vec![CommandExecutionOutput::BuildArtifact {
                 path: build_artifact.get_path().dupe(),
                 output_type: OutputType::File,
+                produced_path: None,
             }],
             env: sorted_vector_map![]
         }

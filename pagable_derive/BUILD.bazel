@@ -1,0 +1,41 @@
+load("@crates//:defs.bzl", "aliases", "all_crate_deps")
+load("@rules_rust//cargo:defs.bzl", "cargo_build_script")
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_proc_macro")
+
+package(default_visibility = ["//visibility:public"])
+
+COMMON_RUSTC_ENV = {
+    "CARGO_MANIFEST_DIR": "pagable_derive",
+    "CARGO_PKG_AUTHORS": "Meta",
+    "CARGO_PKG_DESCRIPTION": "Implementation of derive(Pagable) for pagable crate",
+    "CARGO_PKG_HOMEPAGE": "",
+    "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+    "CARGO_PKG_LICENSE_FILE": "",
+    "CARGO_PKG_NAME": "pagable_derive",
+    "CARGO_PKG_README": "",
+    "CARGO_PKG_REPOSITORY": "",
+    "CARGO_PKG_VERSION": "0.3.3",
+    "CARGO_PKG_VERSION_MAJOR": "0",
+    "CARGO_PKG_VERSION_MINOR": "3",
+    "CARGO_PKG_VERSION_PATCH": "3",
+    "CARGO_PKG_VERSION_PRE": "",
+    }
+
+rust_proc_macro(
+    name = "pagable_derive",
+    crate_name = "pagable_derive",
+    crate_root = "src/lib.rs",
+    srcs = glob(["src/**/*.rs"]),
+    edition = "2021",
+    aliases = aliases(),
+    deps = all_crate_deps(normal = True) + [],
+    rustc_env = COMMON_RUSTC_ENV,
+    compile_data = glob([
+        "**/*",
+    ], allow_empty = True, exclude = [
+        "BUILD.bazel",
+        "BUCK",
+        "Cargo.toml",
+        "fuzz/**",
+    ]),
+)

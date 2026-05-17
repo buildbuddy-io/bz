@@ -50,10 +50,11 @@ pub(crate) const THREAD_DEFAULT_STACK_SIZE: usize = {
         // ASAN requires much larger stack size.
         8 << 20
     } else if cfg!(debug_assertions) {
-        // Need 4MB for windows-debug according to D60449433.
-        4 << 20
+        // Need a larger stack for debug builds and real-world Bazel Starlark evaluation.
+        8 << 20
     } else {
-        2 << 20
+        // Bazel module extensions and rule loading can build deep Rust/Starlark stacks.
+        8 << 20
     }
 };
 

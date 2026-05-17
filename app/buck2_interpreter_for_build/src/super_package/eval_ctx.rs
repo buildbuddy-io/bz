@@ -123,6 +123,7 @@ impl PackageFileEvalCtx {
             merged_package_values,
             visibility,
             within_view,
+            self.parent.default_testonly(),
             cfg_constructor,
             test_config_unification_rollout,
         )

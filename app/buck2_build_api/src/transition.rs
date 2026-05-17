@@ -10,6 +10,7 @@
 
 use std::sync::Arc;
 
+use allocative::Allocative;
 use async_trait::async_trait;
 use buck2_core::configuration::data::ConfigurationData;
 use buck2_core::configuration::transition::applied::TransitionApplied;
@@ -17,7 +18,26 @@ use buck2_core::configuration::transition::id::TransitionId;
 use buck2_node::attrs::configured_attr::ConfiguredAttr;
 use buck2_util::late_binding::LateBinding;
 use dice::DiceComputations;
+use dupe::Dupe;
+use pagable::Pagable;
 use starlark_map::ordered_map::OrderedMap;
+
+#[derive(Debug, Clone, Dupe, Eq, PartialEq, Allocative, Pagable)]
+pub enum TransitionAttrs {
+    None,
+    Listed(Arc<[String]>),
+    All,
+    BazelAll,
+}
+
+impl TransitionAttrs {
+    pub fn requires_post_transition_attr_check(&self) -> bool {
+        match self {
+            TransitionAttrs::None | TransitionAttrs::BazelAll => false,
+            TransitionAttrs::Listed(_) | TransitionAttrs::All => true,
+        }
+    }
+}
 
 #[async_trait]
 pub trait TransitionCalculation: Send + Sync + 'static {
@@ -49,5 +69,5 @@ pub trait TransitionAttrProvider: Send + Sync + 'static {
         &self,
         ctx: &mut DiceComputations<'_>,
         transition_id: &TransitionId,
-    ) -> buck2_error::Result<Option<Arc<[String]>>>;
+    ) -> buck2_error::Result<TransitionAttrs>;
 }

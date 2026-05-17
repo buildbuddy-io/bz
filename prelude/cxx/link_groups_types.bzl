@@ -17,7 +17,7 @@ load(":groups_types.bzl", "Group", "GroupFilterInfo", "Traversal")
 # These are targets or link groups that will be added to .linker.argsfile
 # Targets will be expanded to .o files, link groups will be added to NEEDS
 LinkGroupsDebugLinkableEntry = record(
-    name = field(TargetLabel | Label | str),
+    name = field(TargetLabel | ConfiguredProvidersLabel | str),
     output_style = field(LibOutputStyle),
 )
 
@@ -43,14 +43,14 @@ LinkGroupInfo = provider(
         "graph": provider_field(typing.Any, default = None),  # LinkableGraph
         "groups": provider_field(dict[str, Group]),
         "groups_hash": provider_field(int),
-        "mappings": provider_field(dict[Label, str]),
+        "mappings": provider_field(dict[ConfiguredProvidersLabel, str]),
     },
 )
 
 LinkGroupDefinitions = provider(
     fields = {
         # The label is the top-level target
-        "definitions": provider_field(typing.Callable[[Label, LinkStrategy], list[Group] | None]),
+        "definitions": provider_field(typing.Callable[[ConfiguredProvidersLabel, LinkStrategy], list[Group] | None]),
     },
 )
 

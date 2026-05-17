@@ -229,7 +229,7 @@ def _declare_index_store(actions: AnalysisActions, src_compile_cmd: CxxSrcCompil
         filename_base = filename_base,
     )
 
-def _compile_index_store(actions: AnalysisActions, target_label: Label, index_store_output: OutputArtifact, filename_base: str, toolchain: CxxToolchainInfo, compile_cmd: cmd_args) -> None:
+def _compile_index_store(actions: AnalysisActions, target_label: ConfiguredProvidersLabel, index_store_output: OutputArtifact, filename_base: str, toolchain: CxxToolchainInfo, compile_cmd: cmd_args) -> None:
     """
     Compile index store inside the dynamic action.
     This is called after outputs are declared, during execution.

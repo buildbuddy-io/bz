@@ -65,6 +65,10 @@ impl PackageListing {
         &self.listing.files
     }
 
+    pub fn dirs(&self) -> impl ExactSizeIterator<Item = &PackageRelativePath> {
+        self.listing.directories.iter().map(|x| &**x)
+    }
+
     pub fn get_file(&self, file: &PackageRelativePath) -> Option<ArcS<PackageRelativePath>> {
         self.listing.files.get_file(file)
     }

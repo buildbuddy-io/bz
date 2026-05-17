@@ -247,7 +247,7 @@ def make_py_package(
         build_args: list[ArgLike],
         pex_modules: PexModules,
         shared_libraries: list[(SharedLibrary, str)],
-        preload_labels: set[Label],
+        preload_labels: set[ConfiguredProvidersLabel],
         main: EntryPoint,
         allow_cache_upload: bool,
         link_args: list[LinkArgs] = [],
@@ -1165,7 +1165,7 @@ def _check_hidden_resources(
         package_style.value,
     )
 
-def _hidden_resources_error_message(current_target: Label, hidden_resources: list[ArgLike] | None, style_name: str) -> str:
+def _hidden_resources_error_message(current_target: ConfiguredProvidersLabel, hidden_resources: list[ArgLike] | None, style_name: str) -> str:
     """
     Friendlier error message about putting non-python resources into standalone/outplace bins
     """

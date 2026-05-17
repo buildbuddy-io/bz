@@ -122,7 +122,15 @@ def genrule_impl(ctx: AnalysisContext) -> list[Provider]:
     # `src` is the current directory
     # Buck1 uses `.` as output, but that won't work since
     # Buck2 clears the output directory before execution, and thus src/sh too.
-    return process_genrule(ctx, ctx.attrs.out, ctx.attrs.outs)
+    out = ctx.attrs.out
+    outs = ctx.attrs.outs
+    if type(outs) == type([]):
+        if len(outs) == 1:
+            out = outs[0]
+            outs = None
+        else:
+            outs = {path: [path] for path in outs}
+    return process_genrule(ctx, out, outs)
 
 def _project_output(out: Artifact, path: str) -> Artifact:
     if path == ".":
@@ -156,7 +164,7 @@ def _generate_error_handler(category: str, stderr_errorformats: list[str] | None
 def process_genrule(
         ctx: AnalysisContext,
         out_attr: [str, None],
-        outs_attr: [dict, None],
+        outs_attr: typing.Any,
         extra_env_vars: dict = {},
         identifier: [str, None] = None,
         other_outputs: list[Artifact] = [],
@@ -243,19 +251,24 @@ def process_genrule(
     cmd = cmd_args(cmd, ignore_artifacts = _ignore_artifacts(ctx), replace_regex = replace_regex)
 
     if type(ctx.attrs.srcs) == type([]):
+        srcs = [src for src in ctx.attrs.srcs if not isinstance(src, str)]
         # FIXME: We should always use the short_path, but currently that is sometimes blank.
         # See fbcode//buck2/tests/targets/rules/genrule:genrule-dot-input for a test that exposes it.
-        symlinks = {src.short_path: src for src in ctx.attrs.srcs}
+        symlinks = {src.short_path: src for src in srcs}
 
-        if len(symlinks) != len(ctx.attrs.srcs):
-            for src in ctx.attrs.srcs:
+        if len(symlinks) != len(srcs):
+            for src in srcs:
                 name = src.short_path
                 if symlinks[name] != src:
                     msg = "genrule srcs include duplicative name: `{}`. ".format(name)
                     msg += "`{}` conflicts with `{}`".format(symlinks[name].owner, src.owner)
                     fail(msg)
     else:
-        symlinks = ctx.attrs.srcs
+        symlinks = {
+            name: src
+            for name, src in ctx.attrs.srcs.items()
+            if not isinstance(src, str)
+        }
     srcs_artifact = ctx.actions.symlinked_dir(
         "srcs" if not identifier else "{}-srcs".format(identifier),
         symlinks,

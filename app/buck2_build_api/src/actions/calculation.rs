@@ -36,6 +36,8 @@ use buck2_events::dispatch::get_dispatcher;
 use buck2_events::dispatch::span_async;
 use buck2_events::span::SpanId;
 use buck2_execute::artifact::artifact_dyn::ArtifactDyn;
+use buck2_execute::execute::kind::CommandExecutionKind;
+use buck2_execute::execute::output::CommandStdStreams;
 use buck2_execute::execute::result::CommandExecutionReport;
 use buck2_execute::execute::result::CommandExecutionStatus;
 use buck2_execute::output_size::OutputSize;
@@ -44,6 +46,7 @@ use buck2_interpreter::print_handler::EventDispatcherPrintHandler;
 use buck2_interpreter::soft_error::Buck2StarlarkSoftErrorHandler;
 use buck2_node::nodes::configured_frontend::ConfiguredTargetNodeCalculation;
 use buck2_util::time_span::TimeSpan;
+use buck2_util::time_span::TimeSpanBuilder;
 use derive_more::Display;
 use dice::DiceComputations;
 use dice::DiceTrackedInvalidationPath;
@@ -69,13 +72,15 @@ use crate::actions::error::ActionError;
 use crate::actions::error_handler::ActionErrorHandlerError;
 use crate::actions::error_handler::ActionSubErrorResult;
 use crate::actions::error_handler::StarlarkActionErrorContext;
+use crate::actions::execute::action_executor::ActionExecutionKind;
+use crate::actions::execute::action_executor::ActionExecutionMetadata;
 use crate::actions::execute::action_executor::ActionOutputs;
 use crate::actions::execute::action_executor::BuckActionExecutor;
 use crate::actions::execute::action_executor::HasActionExecutor;
 use crate::actions::execute::error::ExecuteError;
 use crate::artifact_groups::ArtifactGroup;
 use crate::artifact_groups::ArtifactGroupValues;
-use crate::artifact_groups::calculation::ensure_artifact_group_staged;
+use crate::artifact_groups::calculation::ArtifactGroupCalculation;
 use crate::build::detailed_aggregated_metrics::dice::HasDetailedAggregatedMetrics;
 use crate::build::detailed_aggregated_metrics::types::ActionExecutionMetrics;
 use crate::deferred::calculation::ActionLookup;
@@ -146,54 +151,54 @@ async fn build_action_no_redirect(
         None
     };
 
-    let ensured_inputs = if inputs.is_empty() {
-        BuckIndexMap::default()
-    } else {
-        let ready_inputs: Vec<_> = tokio::task::unconstrained(KeepGoing::try_compute_join_all(
-            ctx,
-            inputs.iter(),
-            |ctx, v| {
-                async move {
-                    let resolved = v.resolved_artifact(ctx).await?;
-                    buck2_error::Ok(
-                        ensure_artifact_group_staged(ctx, resolved.clone())
-                            .await?
-                            .into_group_values(&resolved)?,
-                    )
-                }
-                .boxed()
-            },
-        ))
-        .await?;
+    let target_rule_type_name = action.target_rule_type_name().map(str::to_owned);
+    let is_eligible_for_dedupe = is_action_eligible_for_dedupe(&action, inputs.iter());
+    let is_expected_eligible_for_dedupe = expected_eligible_for_dedupe(&action);
 
-        let mut results = BuckIndexMap::with_capacity(inputs.len());
-        for (artifact, ready) in zip(inputs.iter(), ready_inputs) {
-            results.insert(artifact.clone(), ready);
+    if let Some(local_action_cache_inputs) = action.local_action_cache_inputs()? {
+        let ensured_local_action_cache_inputs =
+            ensure_action_inputs(ctx, &local_action_cache_inputs).await?;
+        let (execute_result, command_reports) = executor
+            .try_execute_local_action_cache(
+                waiting_data.clone(),
+                ensured_local_action_cache_inputs,
+                action.as_ref(),
+                cancellation,
+            )
+            .await;
+
+        let execute_result = match execute_result {
+            Ok(Some(result)) => Some(Ok(result)),
+            Ok(None) => None,
+            Err(e) => Some(Err(e)),
+        };
+
+        if let Some(execute_result) = execute_result {
+            let start_event = action_execution_start_event(&action);
+            let now = TimeSpan::start_now();
+            let fut = build_action_result(
+                ctx,
+                &executor,
+                execute_result,
+                command_reports,
+                &action,
+                target_rule_type_name.clone(),
+                is_eligible_for_dedupe,
+                is_expected_eligible_for_dedupe,
+            );
+
+            let (action_execution_data, spans) =
+                async_record_root_spans(span_async(start_event, fut.boxed())).await;
+            return finish_action_execution(ctx, &action, now, action_execution_data, spans);
         }
-        results
-    };
+    }
 
-    let start_event = buck2_data::ActionExecutionStart {
-        key: Some(action.key().as_proto()),
-        kind: action.kind().into(),
-        name: Some(buck2_data::ActionName {
-            category: action.category().as_str().to_owned(),
-            identifier: action.identifier().unwrap_or("").to_owned(),
-        }),
-    };
+    let ensured_inputs = ensure_action_inputs(ctx, &inputs).await?;
+
+    let start_event = action_execution_start_event(&action);
 
     let now = TimeSpan::start_now();
     let action = &action;
-
-    let target = match action.key().owner() {
-        BaseDeferredKey::TargetLabel(target_label) => Some(target_label.dupe()),
-        _ => None,
-    };
-
-    let target_rule_type_name = match target {
-        Some(label) => Some(get_target_rule_type_name(ctx, &label).await?),
-        None => None,
-    };
 
     let fut = build_action_inner(
         ctx,
@@ -203,12 +208,57 @@ async fn build_action_no_redirect(
         ensured_inputs,
         action,
         target_rule_type_name,
+        is_eligible_for_dedupe,
+        is_expected_eligible_for_dedupe,
     );
 
     // boxed() the future so that we don't need to allocate space for it while waiting on input dependencies.
     let (action_execution_data, spans) =
         async_record_root_spans(span_async(start_event, fut.boxed())).await;
 
+    finish_action_execution(ctx, action, now, action_execution_data, spans)
+}
+
+async fn ensure_action_inputs(
+    ctx: &mut DiceComputations<'_>,
+    inputs: &[ArtifactGroup],
+) -> buck2_error::Result<BuckIndexMap<ArtifactGroup, ArtifactGroupValues>> {
+    if inputs.is_empty() {
+        return Ok(BuckIndexMap::default());
+    }
+
+    let ready_inputs: Vec<_> = tokio::task::unconstrained(KeepGoing::try_compute_join_all(
+        ctx,
+        inputs.iter(),
+        |ctx, v| async move { ctx.ensure_artifact_group(v).await }.boxed(),
+    ))
+    .await?;
+
+    let mut results = BuckIndexMap::with_capacity(inputs.len());
+    for (artifact, ready) in zip(inputs.iter(), ready_inputs) {
+        results.insert(artifact.clone(), ready);
+    }
+    Ok(results)
+}
+
+fn action_execution_start_event(action: &RegisteredAction) -> buck2_data::ActionExecutionStart {
+    buck2_data::ActionExecutionStart {
+        key: Some(action.key().as_proto()),
+        kind: action.kind().into(),
+        name: Some(buck2_data::ActionName {
+            category: action.category().as_str().to_owned(),
+            identifier: action.identifier().unwrap_or("").to_owned(),
+        }),
+    }
+}
+
+fn finish_action_execution(
+    ctx: &mut DiceComputations<'_>,
+    action: &Arc<RegisteredAction>,
+    now: TimeSpanBuilder,
+    action_execution_data: ActionExecutionData,
+    spans: SmallVec<[SpanId; 1]>,
+) -> buck2_error::Result<ActionOutputs> {
     let execution_metrics = ActionExecutionMetrics {
         key: action.key().dupe(),
         execution_time_ms: action_execution_data
@@ -298,30 +348,131 @@ async fn build_action_inner(
     ensured_inputs: BuckIndexMap<ArtifactGroup, ArtifactGroupValues>,
     action: &Arc<RegisteredAction>,
     target_rule_type_name: Option<String>,
+    is_eligible_for_dedupe: buck2_data::EligibleForDedupe,
+    is_expected_eligible_for_dedupe: buck2_data::ExpectedEligibleForDedupe,
 ) -> (ActionExecutionData, Box<buck2_data::ActionExecutionEnd>) {
-    let is_eligible_for_dedupe = is_action_eligible_for_dedupe(action, &ensured_inputs);
-    let is_expected_eligible_for_dedupe = match action.is_expected_eligible_for_dedupe() {
-        Some(v) => {
-            if v {
-                buck2_data::ExpectedEligibleForDedupe::ExpectedEligible
-            } else {
-                buck2_data::ExpectedEligibleForDedupe::ExpectedIneligible
-            }
-        }
-        None => buck2_data::ExpectedEligibleForDedupe::UnknownEligibility,
-    };
     let (execute_result, command_reports) = executor
         .execute(waiting_data, ensured_inputs, action, cancellation)
         .await;
 
+    build_action_result(
+        ctx,
+        executor,
+        execute_result,
+        command_reports,
+        action,
+        target_rule_type_name,
+        is_eligible_for_dedupe,
+        is_expected_eligible_for_dedupe,
+    )
+    .await
+}
+
+async fn build_action_result(
+    ctx: &mut DiceComputations<'_>,
+    executor: &BuckActionExecutor,
+    execute_result: Result<(ActionOutputs, ActionExecutionMetadata), ExecuteError>,
+    command_reports: Vec<CommandExecutionReport>,
+    action: &Arc<RegisteredAction>,
+    target_rule_type_name: Option<String>,
+    is_eligible_for_dedupe: buck2_data::EligibleForDedupe,
+    is_expected_eligible_for_dedupe: buck2_data::ExpectedEligibleForDedupe,
+) -> (ActionExecutionData, Box<buck2_data::ActionExecutionEnd>) {
+    let local_action_cache_action_digest =
+        local_action_cache_action_digest(&execute_result, &command_reports);
+    if let Some(action_digest) = local_action_cache_action_digest {
+        let Ok((outputs, meta)) = execute_result else {
+            unreachable!("local action cache digest only exists for successful executions")
+        };
+        let queue_duration = command_reports.last().and_then(|r| r.timing.queue_duration);
+        let action_key = action.key().as_proto();
+        let action_name = buck2_data::ActionName {
+            category: action.category().as_str().to_owned(),
+            identifier: action.identifier().unwrap_or("").to_owned(),
+        };
+        let wall_time = Some(meta.timing.wall_time);
+        let execution_kind = meta.execution_kind.as_enum();
+        let invalidation_info = action_invalidation_info(ctx, executor);
+
+        return (
+            ActionExecutionData {
+                action_result: Ok(outputs),
+                wall_time,
+                queue_duration,
+                memory_peak: None,
+                extra_data: ActionExtraData {
+                    execution_kind,
+                    target_rule_type_name: target_rule_type_name.clone(),
+                    action_digest: Some(action_digest),
+                    invalidation_info: invalidation_info.clone(),
+                    execution_time_ms: Some(0),
+                    output_size: 0,
+                    re_platform_name: None,
+                },
+                waiting_data: meta.waiting_data,
+            },
+            Box::new(buck2_data::ActionExecutionEnd {
+                key: Some(action_key),
+                kind: action.kind().into(),
+                name: Some(action_name),
+                failed: false,
+                error: None,
+                always_print_stderr: action.always_print_stderr(),
+                wall_time: wall_time.and_then(|d| d.try_into().ok()),
+                execution_kind: execution_kind as i32,
+                output_size: 0,
+                commands: Vec::new(),
+                outputs: Vec::new(),
+                prefers_local: false,
+                requires_local: false,
+                allows_cache_upload: false,
+                cache_upload_result: buck2_data::UploadResult::DidNotUploadUnspecified as i32,
+                allows_dep_file_cache_upload: false,
+                dep_file_cache_upload_result: buck2_data::UploadResult::DidNotUploadUnspecified
+                    as i32,
+                dep_file_key: None,
+                eligible_for_full_hybrid: None,
+                buck2_revision: None,
+                buck2_build_time: None,
+                hostname: None,
+                error_diagnostics: None,
+                input_files_bytes: meta.input_files_bytes,
+                invalidation_info,
+                target_rule_type_name,
+                scheduling_mode: None,
+                incremental_kind: None,
+                eligible_for_dedupe: is_eligible_for_dedupe as i32,
+                expected_eligible_for_dedupe: is_expected_eligible_for_dedupe as i32,
+            }),
+        );
+    }
+
     let allow_omit_details = execute_result.is_ok();
 
-    let commands = future::join_all(
-        command_reports
+    let commands = if allow_omit_details {
+        let fast_commands = command_reports
             .iter()
-            .map(|r| command_execution_report_to_proto(r, allow_omit_details)),
-    )
-    .await;
+            .map(local_action_cache_command_execution_report_to_proto)
+            .collect::<Option<Vec<_>>>();
+        match fast_commands {
+            Some(commands) => commands,
+            None => {
+                future::join_all(
+                    command_reports
+                        .iter()
+                        .map(|r| command_execution_report_to_proto(r, allow_omit_details)),
+                )
+                .await
+            }
+        }
+    } else {
+        future::join_all(
+            command_reports
+                .iter()
+                .map(|r| command_execution_report_to_proto(r, allow_omit_details)),
+        )
+        .await
+    };
 
     let action_digest = get_action_digest(&commands);
 
@@ -458,26 +609,7 @@ async fn build_action_inner(
         })
         .unwrap_or_default();
 
-    let invalidation_info = if executor.invalidation_tracking_enabled() {
-        fn to_proto(
-            invalidation_path: &DiceTrackedInvalidationPath,
-        ) -> Option<buck2_data::command_invalidation_info::InvalidationSource> {
-            match invalidation_path {
-                dice::DiceTrackedInvalidationPath::Clean
-                | dice::DiceTrackedInvalidationPath::Unknown => None,
-                dice::DiceTrackedInvalidationPath::Invalidated(_) => {
-                    Some(buck2_data::command_invalidation_info::InvalidationSource {})
-                }
-            }
-        }
-        let invalidation_paths = ctx.get_invalidation_paths();
-        Some(buck2_data::CommandInvalidationInfo {
-            changed_any: to_proto(&invalidation_paths.normal_priority_path),
-            changed_file: to_proto(&invalidation_paths.high_priority_path),
-        })
-    } else {
-        None
-    };
+    let invalidation_info = action_invalidation_info(ctx, executor);
 
     let execution_kind = execution_kind.unwrap_or(buck2_data::ActionExecutionKind::NotSet);
 
@@ -547,9 +679,9 @@ async fn build_action_inner(
     )
 }
 
-fn is_action_eligible_for_dedupe(
+fn is_action_eligible_for_dedupe<'a>(
     action: &Arc<RegisteredAction>,
-    inputs: &BuckIndexMap<ArtifactGroup, ArtifactGroupValues>,
+    inputs: impl IntoIterator<Item = &'a ArtifactGroup>,
 ) -> buck2_data::EligibleForDedupe {
     let target_platform =
         if let BaseDeferredKey::TargetLabel(configured_label) = action.key().owner() {
@@ -562,7 +694,7 @@ fn is_action_eligible_for_dedupe(
         return buck2_data::EligibleForDedupe::IneligibleOutput;
     }
 
-    for (ag, _agv) in inputs.iter() {
+    for ag in inputs {
         let eligibility = ag.is_eligible_for_dedupe(target_platform);
         if eligibility != buck2_data::EligibleForDedupe::Eligible {
             return eligibility;
@@ -570,6 +702,67 @@ fn is_action_eligible_for_dedupe(
     }
 
     buck2_data::EligibleForDedupe::Eligible
+}
+
+fn expected_eligible_for_dedupe(
+    action: &Arc<RegisteredAction>,
+) -> buck2_data::ExpectedEligibleForDedupe {
+    match action.is_expected_eligible_for_dedupe() {
+        Some(true) => buck2_data::ExpectedEligibleForDedupe::ExpectedEligible,
+        Some(false) => buck2_data::ExpectedEligibleForDedupe::ExpectedIneligible,
+        None => buck2_data::ExpectedEligibleForDedupe::UnknownEligibility,
+    }
+}
+
+fn action_invalidation_info(
+    ctx: &mut DiceComputations<'_>,
+    executor: &BuckActionExecutor,
+) -> Option<buck2_data::CommandInvalidationInfo> {
+    if !executor.invalidation_tracking_enabled() {
+        return None;
+    }
+
+    fn to_proto(
+        invalidation_path: &DiceTrackedInvalidationPath,
+    ) -> Option<buck2_data::command_invalidation_info::InvalidationSource> {
+        match invalidation_path {
+            DiceTrackedInvalidationPath::Clean | DiceTrackedInvalidationPath::Unknown => None,
+            DiceTrackedInvalidationPath::Invalidated(_) => {
+                Some(buck2_data::command_invalidation_info::InvalidationSource {})
+            }
+        }
+    }
+
+    let invalidation_paths = ctx.get_invalidation_paths();
+    Some(buck2_data::CommandInvalidationInfo {
+        changed_any: to_proto(&invalidation_paths.normal_priority_path),
+        changed_file: to_proto(&invalidation_paths.high_priority_path),
+    })
+}
+
+fn local_action_cache_action_digest(
+    execute_result: &Result<(ActionOutputs, ActionExecutionMetadata), ExecuteError>,
+    command_reports: &[CommandExecutionReport],
+) -> Option<String> {
+    let Ok((_outputs, meta)) = execute_result else {
+        return None;
+    };
+    match &meta.execution_kind {
+        ActionExecutionKind::Command { kind, .. } => match kind.as_ref() {
+            CommandExecutionKind::LocalActionCache { digest } => Some(digest.to_string()),
+            _ => None,
+        },
+        ActionExecutionKind::LocalActionCache => command_reports.iter().find_map(|report| {
+            let CommandExecutionStatus::Success {
+                execution_kind: CommandExecutionKind::LocalActionCache { digest },
+            } = &report.status
+            else {
+                return None;
+            };
+            Some(digest.to_string())
+        }),
+        _ => None,
+    }
 }
 
 fn check_infra_error_patterns(
@@ -814,6 +1007,33 @@ impl Key for BuildKey {
     }
 }
 
+fn local_action_cache_command_execution_report_to_proto(
+    report: &CommandExecutionReport,
+) -> Option<buck2_data::CommandExecution> {
+    let CommandExecutionStatus::Success {
+        execution_kind: kind @ CommandExecutionKind::LocalActionCache { .. },
+    } = &report.status
+    else {
+        return None;
+    };
+    if !matches!(&report.std_streams, CommandStdStreams::Empty) {
+        return None;
+    }
+
+    Some(buck2_data::CommandExecution {
+        details: Some(buck2_data::CommandExecutionDetails {
+            cmd_stdout: String::new(),
+            cmd_stderr: String::new(),
+            command_kind: Some(kind.to_proto(true)),
+            signed_exit_code: report.exit_code,
+            metadata: Some(report.timing.to_proto()),
+            additional_message: report.additional_message.clone(),
+        }),
+        status: Some(buck2_data::command_execution::Success {}.into()),
+        inline_environment_metadata: Some(report.inline_environment_metadata),
+    })
+}
+
 async fn command_execution_report_to_proto(
     report: &CommandExecutionReport,
     allow_omit_details: bool,
@@ -868,7 +1088,10 @@ pub async fn command_details(
 
     if omit_details {
         stdout = Default::default();
-        stderr = command.std_streams.to_lossy_stderr().await;
+        stderr = match &command.std_streams {
+            CommandStdStreams::Empty => String::new(),
+            _ => command.std_streams.to_lossy_stderr().await,
+        };
     } else {
         let pair = command.std_streams.to_lossy().await;
         stdout = pair.stdout;
@@ -895,10 +1118,42 @@ pub async fn get_target_rule_type_name(
     label: &ConfiguredTargetLabel,
 ) -> buck2_error::Result<String> {
     Ok(ctx
-        .get_configured_target_node(label)
-        .await
-        .require_compatible()?
-        .underlying_rule_type()
-        .name()
-        .to_owned())
+        .compute(&TargetRuleTypeNameKey(label.dupe()))
+        .await??
+        .to_string())
+}
+
+#[derive(Clone, Dupe, Eq, PartialEq, Hash, Display, Debug, Allocative, Pagable)]
+#[display("target_rule_type_name({})", _0)]
+#[pagable_typetag(dice::DiceKeyDyn)]
+struct TargetRuleTypeNameKey(ConfiguredTargetLabel);
+
+#[async_trait]
+impl Key for TargetRuleTypeNameKey {
+    type Value = buck2_error::Result<Arc<str>>;
+
+    async fn compute(
+        &self,
+        ctx: &mut DiceComputations,
+        _cancellation: &CancellationContext,
+    ) -> Self::Value {
+        Ok(Arc::from(
+            ctx.get_configured_target_node(&self.0)
+                .await
+                .require_compatible()?
+                .underlying_rule_type()
+                .name(),
+        ))
+    }
+
+    fn equality(x: &Self::Value, y: &Self::Value) -> bool {
+        match (x, y) {
+            (Ok(x), Ok(y)) => x == y,
+            _ => false,
+        }
+    }
+
+    fn value_serialize() -> impl ValueSerialize<Value = Self::Value> {
+        OkPagableValueSerialize::<Self::Value>::new()
+    }
 }

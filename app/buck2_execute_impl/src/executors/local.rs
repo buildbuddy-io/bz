@@ -11,8 +11,11 @@
 use std::ffi::OsStr;
 use std::ffi::OsString;
 use std::ops::ControlFlow;
+use std::path::Path;
 use std::process::Command;
 use std::sync::Arc;
+use std::sync::atomic::AtomicU64;
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 use std::time::Instant;
 use std::time::SystemTime;
@@ -58,12 +61,15 @@ use buck2_execute::execute::manager::CommandExecutionManagerWithClaim;
 use buck2_execute::execute::output::CommandStdStreams;
 use buck2_execute::execute::prepared::PreparedCommand;
 use buck2_execute::execute::prepared::PreparedCommandExecutor;
+use buck2_execute::execute::prepared::PreparedCommandOptionalExecutor;
+use buck2_execute::execute::prepared::UnpreparedCommand;
 use buck2_execute::execute::request::CommandExecutionInput;
 use buck2_execute::execute::request::CommandExecutionOutput;
 use buck2_execute::execute::request::CommandExecutionOutputRef;
 use buck2_execute::execute::request::CommandExecutionRequest;
 use buck2_execute::execute::request::ExecutorPreference;
 use buck2_execute::execute::request::NetworkAccess;
+use buck2_execute::execute::request::WorkerProtocol;
 use buck2_execute::execute::result::CommandExecutionMetadata;
 use buck2_execute::execute::result::CommandExecutionResult;
 use buck2_execute::knobs::ExecutorGlobalKnobs;
@@ -81,9 +87,12 @@ use buck2_execute_local::status_decoder::DefaultStatusDecoder;
 use buck2_fs::IoResultExt;
 use buck2_fs::async_fs_util;
 use buck2_fs::fs_util;
+use buck2_fs::paths::abs_norm_path::AbsNormPath;
 use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
 use buck2_fs::paths::abs_path::AbsPath;
+use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
 use buck2_hash::BuckIndexMap;
+use buck2_hash::BuckIndexSet;
 use buck2_resource_control::ActionFreezeEvent;
 use buck2_resource_control::ActionFreezeEventReceiver;
 use buck2_resource_control::CommandType;
@@ -109,11 +118,16 @@ use host_sharing::host_sharing::HostSharingGuard;
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tracing::info;
 
+use crate::executors::local_action_cache::LocalActionCache;
+use crate::executors::local_action_cache::local_action_cache_outputs_fingerprint;
 use crate::executors::worker::WorkerHandle;
 use crate::executors::worker::WorkerPool;
 use crate::incremental_actions_helper::get_incremental_path_map;
 use crate::incremental_actions_helper::save_content_based_incremental_state;
 use crate::sqlite::incremental_state_db::IncrementalDbState;
+
+static ARTIFACT_PATH_ALIAS_TMP_COUNTER: AtomicU64 = AtomicU64::new(0);
+static BAZEL_WORKER_SANDBOX_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, buck2_error::Error)]
 #[buck2(input)]
@@ -123,6 +137,12 @@ enum LocalExecutionError {
 
     #[error("Trying to execute a remote-only action on a local executor")]
     RemoteOnlyAction,
+}
+
+enum LocalActionCacheMetadataLookup {
+    Hit(BuckIndexMap<CommandExecutionOutput, ArtifactValue>),
+    MissingMetadata,
+    Stale,
 }
 
 #[derive(Clone, Dupe, Allocative)]
@@ -137,6 +157,7 @@ pub struct LocalExecutor {
     artifact_fs: ArtifactFs,
     materializer: Arc<dyn Materializer>,
     incremental_db_state: Arc<IncrementalDbState>,
+    local_action_cache: Arc<LocalActionCache>,
     blocking_executor: Arc<dyn BlockingExecutor>,
     pub(crate) host_sharing_broker: Arc<HostSharingBroker>,
     root: AbsNormPathBuf,
@@ -153,6 +174,7 @@ impl LocalExecutor {
         artifact_fs: ArtifactFs,
         materializer: Arc<dyn Materializer>,
         incremental_db_state: Arc<IncrementalDbState>,
+        local_action_cache: Arc<LocalActionCache>,
         blocking_executor: Arc<dyn BlockingExecutor>,
         host_sharing_broker: Arc<HostSharingBroker>,
         root: AbsNormPathBuf,
@@ -166,6 +188,7 @@ impl LocalExecutor {
             artifact_fs,
             materializer,
             incremental_db_state,
+            local_action_cache,
             blocking_executor,
             host_sharing_broker,
             root,
@@ -195,6 +218,7 @@ impl LocalExecutor {
     ) -> impl futures::future::Future<Output = buck2_error::Result<CommandResult>> + Send + 'a {
         async move {
             let working_directory = self.root.join_cow(working_directory);
+            prepare_bazel_execroot_working_directory(&self.root, &working_directory)?;
 
             let result = match &self.forkserver {
                 #[cfg(unix)]
@@ -278,6 +302,7 @@ impl LocalExecutor {
         args: &[String],
         worker: Option<&WorkerHandle>,
         env: &[(&str, StrOrOsStr<'_>)],
+        materialized_inputs: &MaterializedInputPaths,
         cgroup: Option<CgroupPathBuf>,
         freeze_rx: impl ActionFreezeEventReceiver,
     ) -> Result<
@@ -289,11 +314,14 @@ impl LocalExecutor {
         ),
         CommandExecutionResult,
     > {
-        if let Err(e) = executor_stage_async(
+        let bazel_worker_sandbox = match executor_stage_async(
             buck2_data::LocalStage {
                 stage: Some(buck2_data::LocalPrepareOutputDirs {}.into()),
             },
             async {
+                let working_directory = self.root.join_cow(request.working_directory());
+                prepare_bazel_execroot_working_directory(&self.root, &working_directory)?;
+
                 tokio::try_join!(
                     create_output_dirs(
                         &self.artifact_fs,
@@ -306,13 +334,31 @@ impl LocalExecutor {
                 )
                 .buck_error_context("Error creating output directories")?;
 
-                buck2_error::Ok(())
+                let bazel_worker_sandbox = if request.worker().as_ref().is_some_and(|worker| {
+                    worker.protocol == WorkerProtocol::Bazel && worker.bazel_worker_sandboxing
+                }) {
+                    Some(
+                        prepare_bazel_worker_sandbox(
+                            &self.artifact_fs,
+                            request,
+                            materialized_inputs,
+                            action_digest,
+                            self.blocking_executor.as_ref(),
+                        )
+                        .await?,
+                    )
+                } else {
+                    None
+                };
+
+                buck2_error::Ok(bazel_worker_sandbox)
             },
         )
         .boxed()
         .await
         {
-            return Err(manager.error("prepare_output_dirs_failed", e));
+            Ok(bazel_worker_sandbox) => bazel_worker_sandbox,
+            Err(e) => return Err(manager.error("prepare_output_dirs_failed", e)),
         };
 
         let (time_span, start_time, res) = executor_stage_async(
@@ -357,9 +403,20 @@ impl LocalExecutor {
                         .into_iter()
                         .map(|(k, v)| (OsString::from(k), v.to_owned()))
                         .collect();
-                    Ok(worker
-                        .exec_cmd(request.args(), env, request.timeout())
-                        .await)
+                    match expand_bazel_worker_args(&self.artifact_fs, request, materialized_inputs)
+                    {
+                        Ok(worker_args) => Ok(worker
+                            .exec_cmd(
+                                &worker_args,
+                                env,
+                                request.timeout(),
+                                bazel_worker_sandbox
+                                    .as_ref()
+                                    .map(|sandbox| sandbox.relative_path.clone()),
+                            )
+                            .await),
+                        Err(e) => Err(e),
+                    }
                 } else {
                     self.exec(
                         &args[0],
@@ -378,6 +435,21 @@ impl LocalExecutor {
                 };
 
                 let time_span = execution_start.end_now();
+
+                let r = match (r, &bazel_worker_sandbox) {
+                    (Ok(res), Some(sandbox)) => match promote_bazel_worker_sandbox_outputs(
+                        &self.artifact_fs,
+                        request,
+                        sandbox,
+                        self.blocking_executor.as_ref(),
+                    )
+                    .await
+                    {
+                        Ok(()) => Ok(res),
+                        Err(e) => Err(e),
+                    },
+                    (r, _) => r,
+                };
 
                 (time_span, start_time, r)
             },
@@ -402,6 +474,7 @@ impl LocalExecutor {
         args: &[String],
         worker: Option<&WorkerHandle>,
         env: &[(&str, StrOrOsStr<'_>)],
+        materialized_inputs: &MaterializedInputPaths,
     ) -> Result<
         (
             TimeSpan,
@@ -488,6 +561,7 @@ impl LocalExecutor {
                     args,
                     worker,
                     env,
+                    materialized_inputs,
                     cgroup_session.as_ref().map(|s| s.path.clone()),
                     freeze_rx,
                 )
@@ -544,6 +618,9 @@ impl LocalExecutor {
             async {
                 let start = Instant::now();
 
+                let working_directory = self.root.join_cow(request.working_directory());
+                prepare_bazel_execroot_working_directory(&self.root, &working_directory)?;
+
                 let (r1, r2) = future::join(
                     async {
                         materialize_inputs(
@@ -580,21 +657,22 @@ impl LocalExecutor {
                 )
                 .await;
 
-                let scratch_path = r1?.scratch;
+                let materialized_inputs = r1?;
                 r2?;
 
-                buck2_error::Ok((scratch_path, Instant::now() - start))
+                buck2_error::Ok((materialized_inputs, Instant::now() - start))
             },
         )
         .boxed()
         .await;
 
-        let (scratch_path, input_materialization_duration) = match executor_stage_result {
-            Ok((scratch_path, input_materialization_duration)) => {
-                (scratch_path, input_materialization_duration)
+        let (materialized_inputs, input_materialization_duration) = match executor_stage_result {
+            Ok((materialized_inputs, input_materialization_duration)) => {
+                (materialized_inputs, input_materialization_duration)
             }
             Err(e) => return manager.error("materialize_inputs_failed", e),
         };
+        let scratch_path = &materialized_inputs.scratch;
 
         manager.start_waiting_category(WaitingCategory::Unknown);
 
@@ -693,10 +771,11 @@ impl LocalExecutor {
                 manager,
                 cancellations,
                 liveliness_observer,
-                &scratch_path,
+                scratch_path,
                 args,
                 worker.as_deref(),
                 &env,
+                &materialized_inputs,
             )
             .await
         {
@@ -741,7 +820,7 @@ impl LocalExecutor {
                 // it, that's detected when BuckActionExecutor.execute validates
                 // that all outputs were actually returned.
                 let (outputs, hashing_time) = match self
-                    .calculate_and_declare_output_values(request, digest_config)
+                    .calculate_and_declare_output_values(request, digest_config, true, true)
                     .boxed()
                     .await
                 {
@@ -779,6 +858,26 @@ impl LocalExecutor {
                 timing.hashed_artifacts_count = hashing_time.hashed_artifacts_count;
 
                 if exit_code == 0 {
+                    let outputs_fingerprint =
+                        match local_action_cache_outputs_fingerprint(&self.artifact_fs, &outputs) {
+                            Ok(fingerprint) => fingerprint,
+                            Err(e) => {
+                                return manager.error("local_action_cache_fingerprint_failed", e);
+                            }
+                        };
+                    if let Err(e) = self
+                        .local_action_cache
+                        .insert(action_digest, outputs_fingerprint.clone())
+                    {
+                        return manager.error("local_action_cache_insert_failed", e);
+                    }
+                    if let Err(e) = self.insert_local_action_cache_metadata(
+                        request,
+                        &outputs_fingerprint,
+                        &outputs,
+                    ) {
+                        return manager.error("local_action_cache_insert_metadata_failed", e);
+                    }
                     manager.success(execution_kind, outputs, std_streams, *timing)
                 } else {
                     let manager = check_inputs(
@@ -841,7 +940,7 @@ impl LocalExecutor {
             }
             GatherOutputStatus::TimedOut(duration) => {
                 let (outputs, hashing_time) = match self
-                    .calculate_and_declare_output_values(request, digest_config)
+                    .calculate_and_declare_output_values(request, digest_config, true, true)
                     .boxed()
                     .await
                 {
@@ -877,13 +976,31 @@ impl LocalExecutor {
             );
         }
 
+        self.cleanup_bazel_private_execroot(request);
+
         result
+    }
+
+    fn cleanup_bazel_private_execroot(&self, request: &CommandExecutionRequest) {
+        let working_directory = self.root.join_cow(request.working_directory());
+        if !is_bazel_private_execroot_working_directory(&working_directory) {
+            return;
+        }
+
+        if let Err(e) = fs_util::remove_all(&*working_directory)
+            .categorize_internal()
+            .buck_error_context("Error cleaning Bazel private execroot working directory")
+        {
+            let _unused = soft_error!("bazel_private_execroot_cleanup_failed", e);
+        }
     }
 
     async fn calculate_and_declare_output_values(
         &self,
         request: &CommandExecutionRequest,
         digest_config: DigestConfig,
+        declare_outputs: bool,
+        promote_outputs: bool,
     ) -> buck2_error::Result<(
         BuckIndexMap<CommandExecutionOutput, ArtifactValue>,
         HashingInfo,
@@ -895,12 +1012,21 @@ impl LocalExecutor {
         let mut total_hashing_time = Duration::ZERO;
         let mut total_hashed_outputs = 0;
         for output in request.outputs() {
+            let produced_path = output
+                .resolve_for_execution(
+                    &self.artifact_fs,
+                    Some(&ContentBasedPathHash::for_output_artifact()),
+                )?
+                .into_path();
             let path = output
                 .resolve(
                     &self.artifact_fs,
                     Some(&ContentBasedPathHash::for_output_artifact()),
                 )?
                 .into_path();
+            if promote_outputs {
+                promote_produced_output_path(&self.artifact_fs, &produced_path, &path)?;
+            }
             let abspath = self.root.join(&path);
             let (entry, hashing_info) = build_entry_from_disk(
                 abspath,
@@ -1003,28 +1129,32 @@ impl LocalExecutor {
             }
         }
 
-        let configuration_paths = configuration_path_to_content_based_path_symlinks
-            .iter()
-            .map(|(p, _)| p.clone())
-            .collect();
-        self.materializer.declare_existing(to_declare).await?;
-        buck2_util::future::try_join_all(output_path_to_content_based_path_copies.into_iter().map(
-            |(path, value, copied_artifacts, cfg_path)| {
-                self.materializer
-                    .declare_copy(path, value, copied_artifacts, cfg_path)
-            },
-        ))
-        .await?;
-        buck2_util::future::try_join_all(
-            configuration_path_to_content_based_path_symlinks
-                .into_iter()
-                .map(|(path, value)| self.materializer.declare_copy(path, value, vec![], None)),
-        )
-        .await?;
-
-        self.materializer
-            .ensure_materialized(configuration_paths)
+        if declare_outputs {
+            let configuration_paths = configuration_path_to_content_based_path_symlinks
+                .iter()
+                .map(|(p, _)| p.clone())
+                .collect();
+            self.materializer.declare_existing(to_declare).await?;
+            buck2_util::future::try_join_all(
+                output_path_to_content_based_path_copies.into_iter().map(
+                    |(path, value, copied_artifacts, cfg_path)| {
+                        self.materializer
+                            .declare_copy(path, value, copied_artifacts, cfg_path)
+                    },
+                ),
+            )
             .await?;
+            buck2_util::future::try_join_all(
+                configuration_path_to_content_based_path_symlinks
+                    .into_iter()
+                    .map(|(path, value)| self.materializer.declare_copy(path, value, vec![], None)),
+            )
+            .await?;
+
+            self.materializer
+                .ensure_materialized(configuration_paths)
+                .await?;
+        }
 
         Ok((
             mapped_outputs,
@@ -1035,13 +1165,150 @@ impl LocalExecutor {
         ))
     }
 
+    async fn local_action_cache_outputs_from_materializer(
+        &self,
+        outputs_to_check: Vec<CommandExecutionOutput>,
+        expected_fingerprint: &[u8],
+    ) -> buck2_error::Result<LocalActionCacheMetadataLookup> {
+        let mut output_paths = Vec::new();
+        let mut output_keys = Vec::new();
+        for output in outputs_to_check {
+            let path = output
+                .as_ref()
+                .resolve(
+                    &self.artifact_fs,
+                    Some(&ContentBasedPathHash::for_output_artifact()),
+                )?
+                .into_path();
+            output_paths.push(path);
+            output_keys.push(output);
+        }
+
+        let values = self
+            .materializer
+            .get_declared_artifact_values(output_paths)
+            .await?;
+        if values.iter().any(Option::is_none) {
+            return Ok(LocalActionCacheMetadataLookup::MissingMetadata);
+        }
+
+        let mut outputs = BuckIndexMap::with_capacity(values.len());
+        for (output, value) in std::iter::zip(output_keys, values) {
+            let Some(value) = value else {
+                return Ok(LocalActionCacheMetadataLookup::MissingMetadata);
+            };
+            outputs.insert(output, value);
+        }
+
+        let actual_fingerprint =
+            local_action_cache_outputs_fingerprint(&self.artifact_fs, &outputs)?;
+        if actual_fingerprint.as_slice() != expected_fingerprint {
+            return Ok(LocalActionCacheMetadataLookup::Stale);
+        }
+
+        // For ordinary outputs the value above came from the same materializer path that
+        // `declare_match` would check, so another materializer round trip is redundant. Bazel's
+        // action cache similarly injects cached output metadata on hits instead of revalidating the
+        // same metadata through a second path. Content-based outputs still need the extra match
+        // because their configuration path and content-addressed path are distinct declarations.
+        if !outputs
+            .keys()
+            .any(CommandExecutionOutput::has_content_based_path)
+        {
+            return Ok(LocalActionCacheMetadataLookup::Hit(outputs));
+        }
+
+        let output_matches = outputs
+            .iter()
+            .map(|(output, value)| {
+                Ok((
+                    output
+                        .as_ref()
+                        .resolve(&self.artifact_fs, Some(&value.content_based_path_hash()))?
+                        .into_path(),
+                    value.dupe(),
+                ))
+            })
+            .collect::<buck2_error::Result<Vec<_>>>()?;
+        if !self
+            .materializer
+            .declare_match(output_matches)
+            .await?
+            .is_match()
+        {
+            return Ok(LocalActionCacheMetadataLookup::Stale);
+        }
+
+        Ok(LocalActionCacheMetadataLookup::Hit(outputs))
+    }
+
+    fn insert_local_action_cache_metadata(
+        &self,
+        request: &CommandExecutionRequest,
+        outputs_fingerprint: &[u8],
+        outputs: &BuckIndexMap<CommandExecutionOutput, ArtifactValue>,
+    ) -> buck2_error::Result<()> {
+        if let Some(local_action_cache_key) = request.local_action_cache_key() {
+            self.insert_local_action_cache_key_metadata(
+                local_action_cache_key,
+                outputs_fingerprint,
+                outputs,
+            )?;
+        }
+        Ok(())
+    }
+
+    fn insert_local_action_cache_key_metadata(
+        &self,
+        local_action_cache_key: &buck2_execute::execute::request::LocalActionCacheKey,
+        outputs_fingerprint: &[u8],
+        outputs: &BuckIndexMap<CommandExecutionOutput, ArtifactValue>,
+    ) -> buck2_error::Result<()> {
+        let output_values: Arc<[ArtifactValue]> =
+            outputs.values().cloned().collect::<Vec<_>>().into();
+        self.local_action_cache.insert_action_metadata(
+            local_action_cache_key.key.clone(),
+            local_action_cache_key.action_key_digest.clone(),
+            local_action_cache_key.input_metadata_digest.clone(),
+            local_action_cache_key.fingerprint.clone(),
+            outputs_fingerprint.to_vec(),
+            output_values,
+        )?;
+        Ok(())
+    }
+
+    fn local_action_cache_outputs_from_entry(
+        outputs_to_check: &BuckIndexSet<CommandExecutionOutput>,
+        entry: &crate::executors::local_action_cache::LocalActionCacheEntry,
+    ) -> buck2_error::Result<Option<BuckIndexMap<CommandExecutionOutput, ArtifactValue>>> {
+        if entry.output_values.len() != outputs_to_check.len() {
+            return Ok(None);
+        }
+
+        let outputs = outputs_to_check
+            .iter()
+            .cloned()
+            .zip(entry.output_values.iter().cloned())
+            .collect::<BuckIndexMap<_, _>>();
+
+        Ok(Some(outputs))
+    }
+
     async fn acquire_worker_permit(
         &self,
         request: &CommandExecutionRequest,
     ) -> Option<HostSharingGuard> {
         if let (Some(worker_spec), Some(worker_pool)) = (request.worker(), self.worker_pool.dupe())
         {
-            if let Some(broker) = &worker_pool.get_worker_broker(worker_spec) {
+            let working_directory;
+            let worker_root: &AbsNormPath = if worker_spec.protocol == WorkerProtocol::Bazel {
+                working_directory = self.root.join_cow(request.working_directory());
+                working_directory.as_ref()
+            } else {
+                self.root.as_ref()
+            };
+
+            if let Some(broker) = &worker_pool.get_worker_broker(worker_spec, worker_root) {
                 Some(
                     executor_stage_async(
                         buck2_data::LocalStage {
@@ -1085,6 +1352,13 @@ impl LocalExecutor {
         if let (Some(worker_spec), Some(worker_pool), ForkserverAccess::Client(_)) =
             (request.worker(), self.worker_pool.dupe(), &self.forkserver)
         {
+            let working_directory;
+            let worker_root: &AbsNormPath = if worker_spec.protocol == WorkerProtocol::Bazel {
+                working_directory = self.root.join_cow(request.working_directory());
+                working_directory.as_ref()
+            } else {
+                self.root.as_ref()
+            };
             let env = worker_spec
                 .env
                 .iter()
@@ -1092,7 +1366,7 @@ impl LocalExecutor {
             let (new_worker, worker_fut) = worker_pool.get_or_create_worker(
                 worker_spec,
                 env,
-                &self.root,
+                worker_root,
                 self.forkserver.dupe(),
                 dispatcher,
             );
@@ -1267,8 +1541,6 @@ impl PreparedCommandExecutor for LocalExecutor {
         )
         .await;
 
-        let _worker_permit = self.acquire_worker_permit(request).await;
-
         let _permit = executor_stage_async(
             buck2_data::LocalStage {
                 stage: Some(buck2_data::LocalQueued {}.into()),
@@ -1277,6 +1549,8 @@ impl PreparedCommandExecutor for LocalExecutor {
                 .acquire(request.host_sharing_requirements()),
         )
         .await;
+
+        let _worker_permit = self.acquire_worker_permit(request).await;
         manager.start_waiting_category(WaitingCategory::Unknown);
 
         // If we start running something, we don't want this task to get dropped, because if we do
@@ -1306,6 +1580,339 @@ impl PreparedCommandExecutor for LocalExecutor {
     }
 }
 
+#[async_trait]
+impl PreparedCommandOptionalExecutor for LocalExecutor {
+    fn insert_unprepared_action_cache_metadata(
+        &self,
+        local_action_cache_key: &buck2_execute::execute::request::LocalActionCacheKey,
+        outputs: &BuckIndexMap<CommandExecutionOutput, ArtifactValue>,
+    ) -> buck2_error::Result<()> {
+        let outputs_fingerprint =
+            local_action_cache_outputs_fingerprint(&self.artifact_fs, outputs)?;
+        self.insert_local_action_cache_key_metadata(
+            local_action_cache_key,
+            &outputs_fingerprint,
+            outputs,
+        )
+    }
+
+    async fn maybe_execute_unprepared(
+        &self,
+        command: &UnpreparedCommand<'_, '_>,
+        manager: CommandExecutionManager,
+        _cancellations: &CancellationContext,
+    ) -> ControlFlow<CommandExecutionResult, CommandExecutionManager> {
+        let Some(entry) = self
+            .local_action_cache
+            .get_action_metadata(&command.local_action_cache_key.key)
+        else {
+            return ControlFlow::Continue(manager);
+        };
+        if entry.action_key_digest.as_ref()
+            != command.local_action_cache_key.action_key_digest.as_slice()
+            || entry.input_metadata_digest.as_ref()
+                != command
+                    .local_action_cache_key
+                    .input_metadata_digest
+                    .as_slice()
+            || entry.action_fingerprint.as_ref()
+                != command.local_action_cache_key.fingerprint.as_slice()
+        {
+            if let Err(e) = self
+                .local_action_cache
+                .remove_action_metadata(&command.local_action_cache_key.key)
+            {
+                return ControlFlow::Break(
+                    manager.error("local_action_cache_remove_metadata_failed", e),
+                );
+            }
+            return ControlFlow::Continue(manager);
+        }
+
+        let start = TimeSpan::start_now();
+        let start_time = SystemTime::now();
+        match Self::local_action_cache_outputs_from_entry(command.outputs, &entry) {
+            Ok(Some(outputs)) => {
+                let time_span = start.end_now();
+                let timing = CommandExecutionMetadata {
+                    time_span,
+                    execution_time: Duration::ZERO,
+                    start_time,
+                    execution_stats: None,
+                    input_materialization_duration: Duration::ZERO,
+                    hashing_duration: Duration::ZERO,
+                    hashed_artifacts_count: 0,
+                    queue_duration: None,
+                    suspend_duration: None,
+                    suspend_count: None,
+                };
+                let digest = ActionDigest::from_content(
+                    &command.local_action_cache_key.fingerprint,
+                    command.digest_config.cas_digest_config(),
+                );
+
+                ControlFlow::Break(manager.success_without_claim(
+                    CommandExecutionKind::LocalActionCache { digest },
+                    outputs,
+                    CommandStdStreams::Empty,
+                    timing,
+                ))
+            }
+            Ok(None) => {
+                if let Err(e) = self
+                    .local_action_cache
+                    .remove_action_metadata(&command.local_action_cache_key.key)
+                {
+                    return ControlFlow::Break(
+                        manager.error("local_action_cache_remove_metadata_failed", e),
+                    );
+                }
+                ControlFlow::Continue(manager)
+            }
+            Err(e) => {
+                ControlFlow::Break(manager.error("local_action_cache_metadata_decode_failed", e))
+            }
+        }
+    }
+
+    async fn maybe_execute(
+        &self,
+        command: &PreparedCommand<'_, '_>,
+        manager: CommandExecutionManager,
+        _cancellations: &CancellationContext,
+    ) -> ControlFlow<CommandExecutionResult, CommandExecutionManager> {
+        let action_digest = command.prepared_action.digest();
+        let expected_fingerprint = match self.local_action_cache.get(&action_digest) {
+            Some(fingerprint) => fingerprint,
+            None => return ControlFlow::Continue(manager),
+        };
+
+        let start = TimeSpan::start_now();
+        let start_time = SystemTime::now();
+        match self
+            .local_action_cache_outputs_from_materializer(
+                command
+                    .request
+                    .outputs()
+                    .map(|output| output.cloned())
+                    .collect(),
+                expected_fingerprint.as_ref(),
+            )
+            .await
+        {
+            Ok(LocalActionCacheMetadataLookup::Hit(outputs)) => {
+                if let Err(e) = self.insert_local_action_cache_metadata(
+                    command.request,
+                    expected_fingerprint.as_ref(),
+                    &outputs,
+                ) {
+                    return ControlFlow::Break(
+                        manager.error("local_action_cache_insert_metadata_failed", e),
+                    );
+                }
+                let time_span = start.end_now();
+                let timing = CommandExecutionMetadata {
+                    time_span,
+                    execution_time: Duration::ZERO,
+                    start_time,
+                    execution_stats: None,
+                    input_materialization_duration: Duration::ZERO,
+                    hashing_duration: Duration::ZERO,
+                    hashed_artifacts_count: 0,
+                    queue_duration: None,
+                    suspend_duration: None,
+                    suspend_count: None,
+                };
+
+                return ControlFlow::Break(manager.success_without_claim(
+                    CommandExecutionKind::LocalActionCache {
+                        digest: action_digest,
+                    },
+                    outputs,
+                    CommandStdStreams::Empty,
+                    timing,
+                ));
+            }
+            Ok(LocalActionCacheMetadataLookup::MissingMetadata) => {}
+            Ok(LocalActionCacheMetadataLookup::Stale) => {
+                tracing::debug!(
+                    "local action cache miss for `{}` because persisted output metadata did not match",
+                    action_digest
+                );
+                if let Err(e) = self.local_action_cache.remove(&action_digest) {
+                    return ControlFlow::Break(
+                        manager.error("local_action_cache_remove_failed", e),
+                    );
+                }
+                return ControlFlow::Continue(manager);
+            }
+            Err(e) => {
+                return ControlFlow::Break(
+                    manager.error("local_action_cache_metadata_lookup_failed", e),
+                );
+            }
+        }
+
+        // The persisted cache entry proves these outputs should exist, and the
+        // fingerprint check below proves the bytes still match. Declare the
+        // verified outputs so a cold daemon can reuse materializer metadata on
+        // the next invocation, but do not promote produced paths: this is a
+        // cache hit, so nothing just wrote to the execution-only output path.
+        let (outputs, hashing_info) = match self
+            .calculate_and_declare_output_values(
+                command.request,
+                command.digest_config,
+                true,
+                false,
+            )
+            .boxed()
+            .await
+        {
+            Ok(outputs) => outputs,
+            Err(e) => {
+                tracing::debug!(
+                    "local action cache miss for `{}` while reading outputs: {}",
+                    action_digest,
+                    e
+                );
+                if let Err(e) = self.local_action_cache.remove(&action_digest) {
+                    return ControlFlow::Break(
+                        manager.error("local_action_cache_remove_failed", e),
+                    );
+                }
+                return ControlFlow::Continue(manager);
+            }
+        };
+
+        let actual_fingerprint =
+            match local_action_cache_outputs_fingerprint(&self.artifact_fs, &outputs) {
+                Ok(fingerprint) => fingerprint,
+                Err(e) => {
+                    return ControlFlow::Break(
+                        manager.error("local_action_cache_fingerprint_failed", e),
+                    );
+                }
+            };
+
+        if actual_fingerprint.as_slice() != expected_fingerprint.as_ref() {
+            tracing::debug!(
+                "local action cache miss for `{}` because outputs changed",
+                action_digest
+            );
+            if let Err(e) = self.local_action_cache.remove(&action_digest) {
+                return ControlFlow::Break(manager.error("local_action_cache_remove_failed", e));
+            }
+            return ControlFlow::Continue(manager);
+        }
+
+        if !outputs
+            .keys()
+            .any(CommandExecutionOutput::has_content_based_path)
+        {
+            if let Err(e) = self.insert_local_action_cache_metadata(
+                command.request,
+                expected_fingerprint.as_ref(),
+                &outputs,
+            ) {
+                return ControlFlow::Break(
+                    manager.error("local_action_cache_insert_metadata_failed", e),
+                );
+            }
+            let time_span = start.end_now();
+            let timing = CommandExecutionMetadata {
+                time_span,
+                execution_time: Duration::ZERO,
+                start_time,
+                execution_stats: None,
+                input_materialization_duration: Duration::ZERO,
+                hashing_duration: hashing_info.hashing_duration,
+                hashed_artifacts_count: hashing_info.hashed_artifacts_count,
+                queue_duration: None,
+                suspend_duration: None,
+                suspend_count: None,
+            };
+
+            return ControlFlow::Break(manager.success_without_claim(
+                CommandExecutionKind::LocalActionCache {
+                    digest: action_digest,
+                },
+                outputs,
+                CommandStdStreams::Empty,
+                timing,
+            ));
+        }
+
+        let output_matches = match outputs
+            .iter()
+            .map(|(output, value)| {
+                Ok((
+                    output
+                        .as_ref()
+                        .resolve(&self.artifact_fs, Some(&value.content_based_path_hash()))?
+                        .into_path(),
+                    value.dupe(),
+                ))
+            })
+            .collect::<buck2_error::Result<Vec<_>>>()
+        {
+            Ok(output_matches) => output_matches,
+            Err(e) => {
+                return ControlFlow::Break(
+                    manager.error("local_action_cache_match_paths_failed", e),
+                );
+            }
+        };
+        let materializer_accepts = match self.materializer.declare_match(output_matches).await {
+            Ok(outcome) => outcome.is_match(),
+            Err(e) => {
+                return ControlFlow::Break(manager.error("local_action_cache_match_failed", e));
+            }
+        };
+        if !materializer_accepts {
+            tracing::debug!(
+                "local action cache miss for `{}` because materializer state did not match",
+                action_digest
+            );
+            if let Err(e) = self.local_action_cache.remove(&action_digest) {
+                return ControlFlow::Break(manager.error("local_action_cache_remove_failed", e));
+            }
+            return ControlFlow::Continue(manager);
+        }
+
+        let time_span = start.end_now();
+        if let Err(e) = self.insert_local_action_cache_metadata(
+            command.request,
+            expected_fingerprint.as_ref(),
+            &outputs,
+        ) {
+            return ControlFlow::Break(
+                manager.error("local_action_cache_insert_metadata_failed", e),
+            );
+        }
+        let timing = CommandExecutionMetadata {
+            time_span,
+            execution_time: Duration::ZERO,
+            start_time,
+            execution_stats: None,
+            input_materialization_duration: Duration::ZERO,
+            hashing_duration: hashing_info.hashing_duration,
+            hashed_artifacts_count: hashing_info.hashed_artifacts_count,
+            queue_duration: None,
+            suspend_duration: None,
+            suspend_count: None,
+        };
+
+        ControlFlow::Break(manager.success_without_claim(
+            CommandExecutionKind::LocalActionCache {
+                digest: action_digest,
+            },
+            outputs,
+            CommandStdStreams::Empty,
+            timing,
+        ))
+    }
+}
+
 /// Either a str or a OsStr, so that we can turn it back into a String without having to check for
 /// valid utf-8, while using the same struct.
 #[derive(Copy, Clone, Dupe, From)]
@@ -1330,9 +1937,459 @@ impl<'a> StrOrOsStr<'a> {
     }
 }
 
+fn prepare_bazel_execroot_working_directory(
+    _project_root: &AbsNormPathBuf,
+    working_directory: &AbsNormPath,
+) -> buck2_error::Result<()> {
+    if !is_bazel_execroot_working_directory(working_directory) {
+        return Ok(());
+    }
+
+    fs_util::create_dir_all(working_directory)
+        .buck_error_context("Error creating Bazel execroot working directory")?;
+
+    // Bazel local actions share a durable execroot. Keep a Buck-local buck-out under it so
+    // execroot-relative generated paths do not race the project buck-out tree.
+    let buck_out = ForwardRelativePathBuf::unchecked_new("buck-out".to_owned());
+    fs_util::create_dir_all(working_directory.join(&buck_out))
+        .buck_error_context("Error creating Bazel execroot buck-out directory")
+}
+
+fn is_bazel_execroot_working_directory(working_directory: &AbsNormPath) -> bool {
+    let path = working_directory.as_path();
+    path.ends_with("__bazel_execroot")
+        || path
+            .parent()
+            .is_some_and(|parent| parent.ends_with("__bazel_execroot"))
+}
+
+fn is_bazel_private_execroot_working_directory(working_directory: &AbsNormPath) -> bool {
+    working_directory
+        .as_path()
+        .parent()
+        .is_some_and(|parent| parent.ends_with("__bazel_execroot"))
+}
+
+struct BazelWorkerSandbox {
+    relative_path: String,
+    project_path: ProjectRelativePathBuf,
+}
+
+async fn prepare_bazel_worker_sandbox(
+    artifact_fs: &ArtifactFs,
+    request: &CommandExecutionRequest,
+    materialized_inputs: &MaterializedInputPaths,
+    _action_digest: &ActionDigest,
+    blocking_executor: &dyn BlockingExecutor,
+) -> buck2_error::Result<BazelWorkerSandbox> {
+    let sandbox_id = BAZEL_WORKER_SANDBOX_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let relative_path = format!(
+        "__buck2_worker_sandbox/{}-{}",
+        std::process::id(),
+        sandbox_id
+    );
+    let relative_path_buf = ForwardRelativePathBuf::unchecked_new(relative_path.clone());
+    let sandbox_project_path = request.working_directory().join(&relative_path_buf);
+
+    blocking_executor
+        .execute_io_inline(|| {
+            let fs = artifact_fs.fs();
+            CleanOutputPaths::clean(std::iter::once(sandbox_project_path.as_ref()), fs)?;
+
+            let working_directory_abs = fs.resolve(request.working_directory());
+            let sandbox_abs = fs.resolve(&sandbox_project_path);
+            fs_util::create_dir_all(&sandbox_abs)
+                .buck_error_context("Error creating Bazel worker sandbox directory")?;
+
+            // Mirror the execroot shape with symlinks, but keep buck-out private so worker
+            // outputs are written under the per-request sandbox_dir.
+            for entry in fs_util::read_dir(&working_directory_abs).categorize_internal()? {
+                let entry = entry?;
+                let file_name = entry.file_name();
+                let file_name = file_name.to_string_lossy();
+                if file_name == "buck-out" || file_name == "__buck2_worker_sandbox" {
+                    continue;
+                }
+                let source = entry.path();
+                let dest = AbsNormPathBuf::unchecked_new(sandbox_abs.as_path().join(file_name.as_ref()));
+                create_or_replace_symlink(source.as_path(), &dest)?;
+            }
+
+            for input_path in &materialized_inputs.paths {
+                let Some(relative) = input_path.strip_prefix_opt(request.working_directory())
+                else {
+                    continue;
+                };
+                if !relative.as_str().starts_with("buck-out/") {
+                    continue;
+                }
+                let sandbox_input_path = sandbox_project_path.join(relative);
+                let source = fs.resolve(input_path);
+                let dest = fs.resolve(&sandbox_input_path);
+                create_or_replace_symlink(source.as_path(), &dest)?;
+            }
+
+            for (source_path, path) in &materialized_inputs.artifact_path_aliases {
+                let Some(relative) = path.strip_prefix_opt(request.working_directory()) else {
+                    continue;
+                };
+                let sandbox_input_path = sandbox_project_path.join(relative);
+                let source = fs.resolve(source_path);
+                let dest = fs.resolve(&sandbox_input_path);
+                create_or_replace_symlink(source.as_path(), &dest)?;
+            }
+
+            for output in request.outputs() {
+                let produced = output.resolve_for_execution(
+                    artifact_fs,
+                    Some(&ContentBasedPathHash::for_output_artifact()),
+                )?;
+                let output_path = produced.path();
+                let relative = output_path
+                    .strip_prefix_opt(request.working_directory())
+                    .ok_or_else(|| {
+                        buck2_error::internal_error!(
+                            "Bazel worker output path `{}` is outside working directory `{}`",
+                            output_path,
+                            request.working_directory()
+                        )
+                    })?;
+                let sandbox_output_path = sandbox_project_path.join(relative);
+                CleanOutputPaths::clean(std::iter::once(sandbox_output_path.as_ref()), fs)?;
+
+                if let Some(path_to_create) = produced.path_to_create() {
+                    let relative = path_to_create
+                        .strip_prefix_opt(request.working_directory())
+                        .ok_or_else(|| {
+                            buck2_error::internal_error!(
+                                "Bazel worker output directory `{}` is outside working directory `{}`",
+                                path_to_create,
+                                request.working_directory()
+                            )
+                        })?;
+                    fs_util::create_dir_all(fs.resolve(&sandbox_project_path.join(relative)))?;
+                }
+            }
+
+            buck2_error::Ok(())
+        })
+        .await?;
+
+    Ok(BazelWorkerSandbox {
+        relative_path,
+        project_path: sandbox_project_path,
+    })
+}
+
+async fn promote_bazel_worker_sandbox_outputs(
+    artifact_fs: &ArtifactFs,
+    request: &CommandExecutionRequest,
+    sandbox: &BazelWorkerSandbox,
+    blocking_executor: &dyn BlockingExecutor,
+) -> buck2_error::Result<()> {
+    blocking_executor
+        .execute_io_inline(|| {
+            for output in request.outputs() {
+                let produced = output.resolve_for_execution(
+                    artifact_fs,
+                    Some(&ContentBasedPathHash::for_output_artifact()),
+                )?;
+                let output_path = produced.path();
+                let relative = output_path
+                    .strip_prefix_opt(request.working_directory())
+                    .ok_or_else(|| {
+                        buck2_error::internal_error!(
+                            "Bazel worker output path `{}` is outside working directory `{}`",
+                            output_path,
+                            request.working_directory()
+                        )
+                    })?;
+                let sandbox_output_path = sandbox.project_path.join(relative);
+                promote_produced_output_path(artifact_fs, &sandbox_output_path, output_path)?;
+            }
+            CleanOutputPaths::clean(
+                std::iter::once(sandbox.project_path.as_ref()),
+                artifact_fs.fs(),
+            )
+        })
+        .await
+}
+
+fn create_or_replace_symlink(source: &Path, dest: &AbsNormPath) -> buck2_error::Result<()> {
+    if fs_util::read_link(dest)
+        .map(|target| target == source)
+        .unwrap_or(false)
+    {
+        return Ok(());
+    }
+
+    fs_util::remove_all(dest).categorize_internal()?;
+    if let Some(parent) = dest.parent() {
+        fs_util::create_dir_all(parent)?;
+    }
+    fs_util::symlink(source, dest).categorize_internal()
+}
+
 pub struct MaterializedInputPaths {
     pub scratch: ScratchPath,
     pub paths: Vec<ProjectRelativePathBuf>,
+    pub artifact_path_aliases: Vec<(ProjectRelativePathBuf, ProjectRelativePathBuf)>,
+}
+
+fn expand_bazel_worker_args(
+    artifact_fs: &ArtifactFs,
+    request: &CommandExecutionRequest,
+    materialized_inputs: &MaterializedInputPaths,
+) -> buck2_error::Result<Vec<String>> {
+    if !request
+        .worker()
+        .as_ref()
+        .is_some_and(|worker| worker.protocol == WorkerProtocol::Bazel)
+    {
+        return Ok(request.args().to_vec());
+    }
+
+    let mut expanded = Vec::new();
+    for arg in request.args() {
+        expand_bazel_worker_arg(
+            artifact_fs,
+            request,
+            materialized_inputs,
+            arg,
+            &mut expanded,
+        )?;
+    }
+    Ok(expanded)
+}
+
+fn expand_bazel_worker_arg(
+    artifact_fs: &ArtifactFs,
+    request: &CommandExecutionRequest,
+    materialized_inputs: &MaterializedInputPaths,
+    arg: &str,
+    expanded: &mut Vec<String>,
+) -> buck2_error::Result<()> {
+    if !is_bazel_worker_flag_file_arg(arg) {
+        expanded.push(arg.to_owned());
+        return Ok(());
+    }
+
+    let arg_path = &arg[1..];
+    let path = resolve_bazel_worker_flag_file_path(request, materialized_inputs, arg_path)?;
+    let content = fs_util::read_to_string(artifact_fs.fs().resolve(&path))
+        .categorize_internal()
+        .with_buck_error_context(|| format!("Error reading Bazel worker flag file `{arg_path}`"))?;
+    for line in content.lines() {
+        expand_bazel_worker_arg(artifact_fs, request, materialized_inputs, line, expanded)?;
+    }
+    Ok(())
+}
+
+fn is_bazel_worker_flag_file_arg(arg: &str) -> bool {
+    arg.starts_with('@') && !arg.starts_with("@@") && !arg[1..].contains("//")
+}
+
+fn resolve_bazel_worker_flag_file_path(
+    request: &CommandExecutionRequest,
+    materialized_inputs: &MaterializedInputPaths,
+    arg_path: &str,
+) -> buck2_error::Result<ProjectRelativePathBuf> {
+    let relative = ForwardRelativePathBuf::new(arg_path.to_owned())
+        .buck_error_context("Invalid Bazel worker flag-file path")?;
+    let execroot_path = request.working_directory().join(relative);
+    for (source_path, alias_path) in &materialized_inputs.artifact_path_aliases {
+        if alias_path == &execroot_path {
+            return Ok(source_path.clone());
+        }
+    }
+    Ok(execroot_path)
+}
+
+fn materialize_artifact_path_alias(
+    artifact_fs: &ArtifactFs,
+    source_path: &ProjectRelativePath,
+    path: &ProjectRelativePath,
+) -> buck2_error::Result<()> {
+    let fs = artifact_fs.fs();
+    let source = fs.resolve(source_path);
+    let dest = fs.resolve(path);
+    if artifact_path_alias_is_current(&dest, &source) {
+        return Ok(());
+    }
+
+    if let Some(parent) = dest.parent() {
+        fs_util::create_dir_all(parent).with_buck_error_context(|| {
+            format!("Error creating parent directory for artifact path alias `{path}`")
+        })?;
+    }
+
+    match create_artifact_path_alias_symlink(&source, &dest) {
+        Ok(()) => Ok(()),
+        Err(e) if artifact_path_alias_is_current(&dest, &source) => Ok(()),
+        Err(_) => {
+            CleanOutputPaths::clean(std::iter::once(path), fs)?;
+            match create_artifact_path_alias_symlink(&source, &dest) {
+                Ok(()) => Ok(()),
+                Err(e) if artifact_path_alias_is_current(&dest, &source) => Ok(()),
+                Err(e) => Err(e).with_buck_error_context(|| {
+                    format!("Error creating artifact path alias `{path}` -> `{source_path}`")
+                }),
+            }
+        }
+    }
+}
+
+fn create_artifact_path_alias_symlink(
+    source: &AbsNormPathBuf,
+    dest: &AbsNormPathBuf,
+) -> buck2_error::Result<()> {
+    if artifact_path_alias_is_current(dest, source) {
+        return Ok(());
+    }
+
+    match fs_util::symlink(source, dest).categorize_internal() {
+        Ok(()) => Ok(()),
+        Err(e) if artifact_path_alias_is_current(dest, source) => Ok(()),
+        Err(e) => {
+            let tmp = artifact_path_alias_tmp_path(dest)?;
+            let _ignored = fs_util::remove_file(&tmp);
+            fs_util::symlink(source, &tmp)
+                .categorize_internal()
+                .buck_error_context("Error creating temporary artifact path alias")?;
+            match fs_util::rename(&tmp, dest).categorize_internal() {
+                Ok(()) => Ok(()),
+                Err(rename_error) if artifact_path_alias_is_current(dest, source) => {
+                    let _ignored = fs_util::remove_file(&tmp);
+                    Ok(())
+                }
+                Err(rename_error) => {
+                    let _ignored = fs_util::remove_file(&tmp);
+                    if artifact_path_alias_is_current(dest, source) {
+                        Ok(())
+                    } else {
+                        Err(rename_error).buck_error_context(e.to_string())
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn artifact_path_alias_tmp_path(dest: &AbsNormPathBuf) -> buck2_error::Result<AbsNormPathBuf> {
+    let parent = dest.parent().ok_or_else(|| {
+        buck2_error!(
+            buck2_error::ErrorTag::Tier0,
+            "Artifact path alias has no parent directory"
+        )
+    })?;
+    let file_name = dest
+        .as_path()
+        .file_name()
+        .map(|name| name.to_string_lossy())
+        .unwrap_or_else(|| "alias".into());
+    let id = ARTIFACT_PATH_ALIAS_TMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let mut tmp = parent.as_path().to_owned();
+    tmp.push(format!(
+        ".{file_name}.buck2-tmp-{}-{id}",
+        std::process::id()
+    ));
+    AbsNormPathBuf::new(tmp)
+}
+
+fn artifact_path_alias_is_current(dest: &AbsNormPathBuf, source: &AbsNormPathBuf) -> bool {
+    fs_util::read_link(dest)
+        .map(|target| artifact_path_alias_target_is_compatible(dest, source, &target))
+        .unwrap_or(false)
+}
+
+fn artifact_path_alias_target_is_compatible(
+    dest: &AbsNormPathBuf,
+    source: &AbsNormPathBuf,
+    target: &Path,
+) -> bool {
+    let Some(target) = resolve_artifact_path_alias_target(dest, source, target) else {
+        return false;
+    };
+
+    target.as_path() == source.as_path()
+        || artifact_path_alias_files_are_equivalent(&target, source)
+}
+
+fn resolve_artifact_path_alias_target(
+    dest: &AbsNormPathBuf,
+    source: &AbsNormPathBuf,
+    target: &Path,
+) -> Option<AbsNormPathBuf> {
+    if target == source.as_path() {
+        return Some(source.clone());
+    }
+
+    if target.is_absolute() {
+        return AbsNormPathBuf::new(target.to_owned()).ok();
+    }
+
+    let Some(parent) = dest.parent() else {
+        return None;
+    };
+    fs_util::relative_path_from_system(target)
+        .and_then(|target| parent.join_normalized(target.as_ref()))
+        .ok()
+}
+
+fn artifact_path_alias_files_are_equivalent(
+    target: &AbsNormPathBuf,
+    source: &AbsNormPathBuf,
+) -> bool {
+    let Ok(target_metadata) = fs_util::metadata(target) else {
+        return false;
+    };
+    let Ok(source_metadata) = fs_util::metadata(source) else {
+        return false;
+    };
+    if !target_metadata.is_file()
+        || !source_metadata.is_file()
+        || target_metadata.len() != source_metadata.len()
+    {
+        return false;
+    }
+
+    let Ok(target_content) = fs_util::read(target) else {
+        return false;
+    };
+    let Ok(source_content) = fs_util::read(source) else {
+        return false;
+    };
+    target_content == source_content
+}
+
+fn promote_produced_output_path(
+    artifact_fs: &ArtifactFs,
+    produced_path: &ProjectRelativePath,
+    output_path: &ProjectRelativePath,
+) -> buck2_error::Result<()> {
+    if produced_path == output_path {
+        return Ok(());
+    }
+
+    let fs = artifact_fs.fs();
+    let produced = fs.resolve(produced_path);
+    if !fs_util::try_exists(&produced)? {
+        return Ok(());
+    }
+
+    CleanOutputPaths::clean(std::iter::once(output_path), fs)?;
+    let output = fs.resolve(output_path);
+    if let Some(parent) = output.parent() {
+        fs_util::create_dir_all(parent).with_buck_error_context(|| {
+            format!("Error creating parent directory for output path `{output_path}`")
+        })?;
+    }
+    fs.copy(produced_path, output_path)
+        .with_buck_error_context(|| {
+            format!("Error copying produced output `{produced_path}` to `{output_path}`")
+        })?;
+
+    Ok(())
 }
 
 /// Materialize all inputs artifact for CommandExecutionRequest so the command can be executed
@@ -1349,14 +2406,23 @@ pub async fn materialize_inputs(
     let mut paths = vec![];
     let mut scratch = ScratchPath(None);
     let mut configuration_path_to_content_based_path_symlinks = vec![];
+    let mut shared_artifact_path_aliases = vec![];
+    let mut sandbox_artifact_path_aliases = vec![];
+    let use_bazel_worker_sandbox = request.worker().as_ref().is_some_and(|worker| {
+        worker.protocol == WorkerProtocol::Bazel && worker.bazel_worker_sandboxing
+    });
 
-    for input in request.inputs().iter().chain(
-        request
-            .worker()
-            .as_ref()
-            .map(|w| w.inputs())
-            .unwrap_or_default(),
-    ) {
+    let worker_inputs = request
+        .worker()
+        .as_ref()
+        .map(|w| w.inputs())
+        .unwrap_or_default();
+    for (input, is_worker_input) in request
+        .inputs()
+        .iter()
+        .map(|input| (input, false))
+        .chain(worker_inputs.iter().map(|input| (input, true)))
+    {
         match input {
             CommandExecutionInput::Artifact(group) => {
                 for (artifact, artifact_value) in group.iter() {
@@ -1392,6 +2458,26 @@ pub async fn materialize_inputs(
                     }
                 }
             }
+            CommandExecutionInput::ArtifactPathAlias {
+                source_path,
+                source_requires_materialization,
+                path,
+                ..
+            } => {
+                if *source_requires_materialization {
+                    paths.push(source_path.clone());
+                }
+                let sandbox_alias = use_bazel_worker_sandbox
+                    && !is_worker_input
+                    && path
+                        .strip_prefix_opt(request.working_directory())
+                        .is_some_and(|relative| relative.as_str().starts_with("buck-out/"));
+                if sandbox_alias {
+                    sandbox_artifact_path_aliases.push((source_path.clone(), path.clone()));
+                } else {
+                    shared_artifact_path_aliases.push((source_path.clone(), path.clone()));
+                }
+            }
             CommandExecutionInput::ActionMetadata(metadata) => {
                 let path = artifact_fs
                     .buck_out_path_resolver()
@@ -1420,7 +2506,6 @@ pub async fn materialize_inputs(
             .map(|(path, value)| materializer.declare_copy(path, value, vec![], None)),
     )
     .await?;
-
     let mut stream = materializer.materialize_many(paths.clone()).await?;
     while let Some(res) = stream.next().await {
         match res {
@@ -1443,7 +2528,16 @@ pub async fn materialize_inputs(
         }
     }
 
-    Ok(MaterializedInputPaths { scratch, paths })
+    for (source_path, path) in &shared_artifact_path_aliases {
+        materialize_artifact_path_alias(artifact_fs, source_path.as_ref(), path.as_ref())?;
+        paths.push(path.clone());
+    }
+
+    Ok(MaterializedInputPaths {
+        scratch,
+        paths,
+        artifact_path_aliases: sandbox_artifact_path_aliases,
+    })
 }
 
 /// A scratch path discovered during `materialize_inputs`.
@@ -1493,6 +2587,20 @@ async fn check_inputs(
                                 );
                             }
                         }
+                    }
+                    CommandExecutionInput::ArtifactPathAlias { path, .. } => {
+                        let abs_path = artifact_fs.fs().resolve(path);
+
+                        // We ignore the result here because while we want to tag it, we'd
+                        // prefer to just show the normal error to the user, so we don't
+                        // want to propagate it.
+                        let _ignored = tag_result!(
+                            "missing_local_inputs",
+                            fs_util::symlink_metadata(&abs_path).categorize_internal().buck_error_context("Missing input"),
+                            quiet: true,
+                            task: false,
+                            daemon_materializer_state_is_corrupted: true
+                        );
                     }
                     CommandExecutionInput::ActionMetadata(..) => {
                         // Ignore those here.
@@ -1566,10 +2674,15 @@ pub async fn create_output_dirs(
     let outputs: Vec<_> = request
         .outputs()
         .map(|output| {
-            output.resolve(
+            let produced = output.resolve_for_execution(
                 artifact_fs,
                 Some(&ContentBasedPathHash::for_output_artifact()),
-            )
+            )?;
+            let declared = output.resolve(
+                artifact_fs,
+                Some(&ContentBasedPathHash::for_output_artifact()),
+            )?;
+            Ok((produced, declared))
         })
         .collect::<buck2_error::Result<Vec<_>>>()?;
 
@@ -1578,7 +2691,13 @@ pub async fn create_output_dirs(
     // different outputs with a different materialization method that will become invalid
     // now. However, nothing should reference those stale outputs, so while this does not
     // do a good job of cleaning up garbage, it prevents using invalid artifacts.
-    let output_paths = outputs.map(|output| output.path.to_owned());
+    let mut output_paths = Vec::new();
+    for (produced, declared) in &outputs {
+        output_paths.push(produced.path().to_owned());
+        if produced.path() != declared.path() {
+            output_paths.push(declared.path().to_owned());
+        }
+    }
     materializer.invalidate_many(output_paths.clone()).await?;
 
     if request.outputs_cleanup {
@@ -1595,8 +2714,13 @@ pub async fn create_output_dirs(
     }
 
     let project_fs = artifact_fs.fs();
-    for output in outputs {
-        if let Some(path) = output.path_to_create() {
+    for (produced, declared) in outputs {
+        if let Some(path) = produced.path_to_create() {
+            fs_util::create_dir_all(project_fs.resolve(path))?;
+        }
+        if produced.path() != declared.path()
+            && let Some(path) = declared.path_to_create()
+        {
             fs_util::create_dir_all(project_fs.resolve(path))?;
         }
     }
@@ -1786,6 +2910,26 @@ mod tests {
         )
     }
 
+    #[test]
+    fn test_artifact_path_alias_replaces_stale_symlink() -> buck2_error::Result<()> {
+        let temp = ProjectRootTemp::new()?;
+        temp.write_file("source", "new");
+        temp.write_file("old_source", "old");
+        let source = temp.path().resolve(ProjectRelativePath::new("source")?);
+        let old_source = temp.path().resolve(ProjectRelativePath::new("old_source")?);
+        let dest = temp.path().resolve(ProjectRelativePath::new("dest")?);
+
+        fs_util::symlink(&old_source, &dest).categorize_internal()?;
+        create_artifact_path_alias_symlink(&source, &dest)?;
+
+        assert!(artifact_path_alias_is_current(&dest, &source));
+        assert_eq!(
+            fs_util::read_link(&dest).categorize_internal()?.as_path(),
+            source.as_path()
+        );
+        Ok(())
+    }
+
     fn test_executor() -> buck2_error::Result<(LocalExecutor, AbsNormPathBuf, ProjectRootTemp)> {
         let temp = ProjectRootTemp::new().unwrap();
         let project_fs = temp.path();
@@ -1795,6 +2939,7 @@ mod tests {
             artifact_fs,
             Arc::new(NoDiskMaterializer),
             Arc::new(IncrementalDbState::db_disabled()),
+            Arc::new(LocalActionCache::testing_new_in_memory()?),
             Arc::new(DummyBlockingExecutor {
                 fs: project_fs.dupe(),
             }),

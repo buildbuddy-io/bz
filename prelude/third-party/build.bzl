@@ -14,7 +14,7 @@ load(
 )
 load(":providers.bzl", "ThirdPartyBuild", "ThirdPartyBuildInfo", "third_party_build_info")
 
-def prefix_from_label(label: Label, prefix: str = "/usr/local") -> str:
+def prefix_from_label(label: ConfiguredProvidersLabel, prefix: str = "/usr/local") -> str:
     """
     Generate a unique third-party prefix for the given label.
     """

@@ -19,6 +19,7 @@ use dupe::Dupe;
 use crate::api::computations::DiceComputations;
 use crate::api::key::Key;
 use crate::api::user_data::UserComputationData;
+use crate::introspection::graph::AnyKey;
 use crate::transaction::DiceTransactionImpl;
 use crate::transaction_update::DiceTransactionUpdaterImpl;
 use crate::versions::VersionNumber;
@@ -59,6 +60,10 @@ impl DiceTransactionUpdater {
         self.0.changed_to(changed)
     }
 
+    pub fn pending_change_count(&self) -> usize {
+        self.0.pending_change_count()
+    }
+
     /// Commit the changes registered via 'changed' and 'changed_to' to the current newest version.
     pub fn commit(self) -> impl Future<Output = DiceTransaction> {
         self.0.commit()
@@ -75,6 +80,46 @@ impl DiceTransactionUpdater {
 
     pub fn unstable_take(self) -> Self {
         Self(self.0.unstable_take())
+    }
+
+    /// Returns the keys that are currently present in the DICE graph.
+    ///
+    /// This is intended for invalidation strategies that need to operate over
+    /// already-observed state without discovering new filesystem state.
+    pub fn existing_keys_for_introspection(&self) -> Vec<AnyKey> {
+        self.0.existing_keys_for_introspection()
+    }
+
+    pub fn existing_keys_of_type_for_introspection<K>(&self) -> Vec<K>
+    where
+        K: Key + Clone,
+    {
+        self.0.existing_keys_of_type_for_introspection::<K>()
+    }
+
+    pub fn existing_key_values_of_type_for_introspection<K>(&self) -> Vec<(K, Option<K::Value>)>
+    where
+        K: Key + Clone,
+        K::Value: Clone,
+    {
+        self.0.existing_key_values_of_type_for_introspection::<K>()
+    }
+
+    /// Returns current values for two key types using a single scan of the existing graph.
+    ///
+    /// This is intended for invalidation strategies that apply a union dirtiness checker over
+    /// already-observed state.
+    pub fn existing_key_values_of_two_types_for_introspection<K1, K2>(
+        &self,
+    ) -> (Vec<(K1, Option<K1::Value>)>, Vec<(K2, Option<K2::Value>)>)
+    where
+        K1: Key + Clone,
+        K1::Value: Clone,
+        K2: Key + Clone,
+        K2::Value: Clone,
+    {
+        self.0
+            .existing_key_values_of_two_types_for_introspection::<K1, K2>()
     }
 }
 

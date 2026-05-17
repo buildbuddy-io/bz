@@ -9,7 +9,11 @@
  */
 
 use std::borrow::Cow;
+use std::cell::RefCell;
+use std::hash::Hash;
+use std::hash::Hasher;
 use std::ops::ControlFlow;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -34,42 +38,71 @@ use buck2_build_api::actions::impls::expanded_command_line::ExpandedCommandLineF
 use buck2_build_api::artifact_groups::ArtifactGroup;
 use buck2_build_api::artifact_groups::ArtifactGroupValues;
 use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact::StarlarkArtifact;
+use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::ValueAsInputArtifactLike;
+use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::bazel_artifact_path;
+use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::bazel_normalize_buck_owned_exec_paths;
 use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_value::StarlarkArtifactValue;
 use buck2_build_api::interpreter::rule_defs::artifact::starlark_output_artifact::FrozenStarlarkOutputArtifact;
 use buck2_build_api::interpreter::rule_defs::artifact::starlark_output_artifact::StarlarkOutputArtifact;
 use buck2_build_api::interpreter::rule_defs::artifact_tagging::ArtifactTag;
 use buck2_build_api::interpreter::rule_defs::cmd_args::ArtifactPathMapper;
+use buck2_build_api::interpreter::rule_defs::cmd_args::ArtifactPathMapperImpl;
 use buck2_build_api::interpreter::rule_defs::cmd_args::CommandLineArgLike;
 use buck2_build_api::interpreter::rule_defs::cmd_args::CommandLineArtifactVisitor;
 use buck2_build_api::interpreter::rule_defs::cmd_args::CommandLineBuilder;
 use buck2_build_api::interpreter::rule_defs::cmd_args::CommandLineContext;
+use buck2_build_api::interpreter::rule_defs::cmd_args::CommandLineLocation;
 use buck2_build_api::interpreter::rule_defs::cmd_args::DefaultCommandLineContext;
 use buck2_build_api::interpreter::rule_defs::cmd_args::FrozenStarlarkCmdArgs;
+use buck2_build_api::interpreter::rule_defs::cmd_args::ParamFileFormat;
 use buck2_build_api::interpreter::rule_defs::cmd_args::SimpleCommandLineArtifactVisitor;
 use buck2_build_api::interpreter::rule_defs::cmd_args::StarlarkCmdArgs;
+use buck2_build_api::interpreter::rule_defs::cmd_args::param_file::bazel_param_file_content;
+use buck2_build_api::interpreter::rule_defs::cmd_args::param_file::visit_bazel_param_file_content;
 use buck2_build_api::interpreter::rule_defs::cmd_args::space_separated::SpaceSeparatedCommandLineBuilder;
 use buck2_build_api::interpreter::rule_defs::cmd_args::value_as::ValueAsCommandLineLike;
+use buck2_build_api::interpreter::rule_defs::provider::builtin::cc_info::BazelCcCompileCommandLine;
+use buck2_build_api::interpreter::rule_defs::provider::builtin::cc_info::FrozenBazelCcCompileCommandLine;
 use buck2_build_api::interpreter::rule_defs::provider::builtin::worker_info::FrozenWorkerInfo;
 use buck2_build_api::interpreter::rule_defs::provider::builtin::worker_info::WorkerInfo;
 use buck2_build_signals::env::WaitingCategory;
 use buck2_build_signals::env::WaitingData;
+use buck2_common::cas_digest::CasDigestConfig;
+use buck2_common::cas_digest::CasDigestData;
+use buck2_common::cas_digest::DataDigester;
+use buck2_common::file_ops::metadata::FileDigest;
+use buck2_common::file_ops::metadata::FileMetadata;
+use buck2_common::file_ops::metadata::TrackedFileDigest;
 use buck2_common::io::trace::TracingIoProvider;
 use buck2_core::category::Category;
 use buck2_core::category::CategoryRef;
+use buck2_core::cells::cell_path::CellPathRef;
 use buck2_core::content_hash::ContentBasedPathHash;
 use buck2_core::deferred::base_deferred_key::BaseDeferredKey;
+use buck2_core::deferred::key::DeferredHolderKey;
 use buck2_core::execution_types::executor_config::MetaInternalExtraParams;
+use buck2_core::execution_types::executor_config::PathSeparatorKind;
 use buck2_core::execution_types::executor_config::ReGangWorker;
 use buck2_core::execution_types::executor_config::RemoteExecutorCustomImage;
 use buck2_core::execution_types::executor_config::RemoteExecutorDependency;
 use buck2_core::fs::artifact_path_resolver::ArtifactFs;
+use buck2_core::fs::buck_out_path::BazelOutputRoot;
 use buck2_core::fs::buck_out_path::BuckOutPathKind;
+use buck2_core::fs::buck_out_path::BuckOutScratchPath;
 use buck2_core::fs::buck_out_path::BuildArtifactPath;
+use buck2_core::fs::project_rel_path::ProjectRelativePath;
+use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
+use buck2_directory::directory::dashmap_directory_interner::DashMapDirectoryInterner;
 use buck2_error::BuckErrorContext;
 use buck2_error::buck2_error;
 use buck2_error::internal_error;
 use buck2_events::dispatch::span_async_simple;
+use buck2_execute::artifact::artifact_dyn::ArtifactDyn;
 use buck2_execute::artifact::fs::ExecutorFs;
+use buck2_execute::artifact::group::artifact_group_values_dyn::ArtifactGroupValuesDyn;
+use buck2_execute::artifact_value::ArtifactValue;
+use buck2_execute::digest_config::DigestConfig;
+use buck2_execute::directory::ActionDirectoryMember;
 use buck2_execute::execute::action_digest::ActionDigest;
 use buck2_execute::execute::action_digest_and_blobs::ActionDigestAndBlobs;
 use buck2_execute::execute::cache_uploader::IntoRemoteDepFile;
@@ -83,19 +116,26 @@ use buck2_execute::execute::request::CommandExecutionOutput;
 use buck2_execute::execute::request::CommandExecutionPaths;
 use buck2_execute::execute::request::CommandExecutionRequest;
 use buck2_execute::execute::request::ExecutorPreference;
+use buck2_execute::execute::request::LocalActionCacheKey;
+use buck2_execute::execute::request::OutputCreationBehavior;
+use buck2_execute::execute::request::OutputType;
 use buck2_execute::execute::request::RemoteWorkerSpec;
 use buck2_execute::execute::request::WorkerId;
+use buck2_execute::execute::request::WorkerProtocol;
 use buck2_execute::execute::request::WorkerSpec;
 use buck2_execute::execute::result::CommandExecutionResult;
 use buck2_execute::materialize::materializer::WriteRequest;
 use buck2_fs::fs_util;
+use buck2_fs::paths::RelativePathBuf;
 use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
+use buck2_hash::BuckDefaultHasher;
 use buck2_hash::BuckIndexMap;
 use buck2_hash::BuckIndexSet;
 use buck2_hash::buck_indexmap;
 use buck2_util::thin_box::ThinBoxSlice;
 use derive_more::Display;
 use dupe::Dupe;
+use either::Either;
 use gazebo::prelude::*;
 use host_sharing::HostSharingRequirements;
 use host_sharing::WeightClass;
@@ -108,6 +148,7 @@ use starlark::values::Freeze;
 use starlark::values::FreezeResult;
 use starlark::values::Freezer;
 use starlark::values::FrozenStringValue;
+use starlark::values::FrozenValue;
 use starlark::values::FrozenValueOfUnchecked;
 use starlark::values::FrozenValueTyped;
 use starlark::values::Heap;
@@ -120,6 +161,7 @@ use starlark::values::StarlarkValue;
 use starlark::values::StringValue;
 use starlark::values::Trace;
 use starlark::values::UnpackValue;
+use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::ValueOfUnchecked;
 use starlark::values::ValueTyped;
@@ -127,7 +169,9 @@ use starlark::values::ValueTypedComplex;
 use starlark::values::dict::AllocDict;
 use starlark::values::dict::DictRef;
 use starlark::values::dict::DictType;
+use starlark::values::list::ListRef;
 use starlark::values::starlark_value;
+use starlark::values::structs::StructRef;
 
 use self::dep_files::DepFileBundle;
 use crate::actions::impls::offline;
@@ -136,6 +180,7 @@ use crate::actions::impls::run::dep_files::RunActionDepFiles;
 use crate::actions::impls::run::dep_files::make_dep_file_bundle;
 use crate::actions::impls::run::dep_files::populate_dep_files;
 use crate::actions::impls::run::metadata::metadata_content;
+use crate::actions::impls::run::metadata::metadata_digest;
 use crate::context::run::RunActionError;
 
 pub(crate) mod audit_dep_files;
@@ -260,6 +305,11 @@ pub(crate) struct UnregisteredRunAction {
     pub(crate) meta_internal_extra_params: Arc<MetaInternalExtraParams>,
     pub(crate) expected_eligible_for_dedupe: Option<bool>,
     pub(crate) timeout: Option<Duration>,
+    pub(crate) bazel_use_default_shell_env: Option<bool>,
+    pub(crate) bazel_string_args: Option<Box<[String]>>,
+    #[pagable(discard = "None")]
+    pub(crate) precomputed_local_action_cache_command_line_digest:
+        Option<ExpandedCommandLineDigest>,
 }
 
 impl UnregisteredAction for UnregisteredRunAction {
@@ -281,6 +331,10 @@ impl UnregisteredAction for UnregisteredRunAction {
 pub(crate) struct StarlarkRunActionValues<'v> {
     pub(crate) exe: ValueTyped<'v, StarlarkCmdArgs<'v>>,
     pub(crate) args: ValueTyped<'v, StarlarkCmdArgs<'v>>,
+    pub(crate) bazel_inputs: Option<ValueTyped<'v, StarlarkCmdArgs<'v>>>,
+    pub(crate) bazel_executable_runfiles: Option<Value<'v>>,
+    pub(crate) bazel_tool_runfiles: Option<Value<'v>>,
+    pub(crate) bazel_cc_command_line: Option<ValueTyped<'v, BazelCcCompileCommandLine<'v>>>,
     pub(crate) env: Option<ValueOfUnchecked<'v, DictType<String, ValueAsCommandLineLike<'static>>>>,
     pub(crate) worker: Option<ValueTypedComplex<'v, WorkerInfo<'v>>>,
     pub(crate) remote_worker: Option<ValueTypedComplex<'v, WorkerInfo<'v>>>,
@@ -302,6 +356,11 @@ pub(crate) struct StarlarkRunActionValues<'v> {
 pub(crate) struct FrozenStarlarkRunActionValues {
     pub(crate) exe: FrozenValueTyped<'static, FrozenStarlarkCmdArgs>,
     pub(crate) args: FrozenValueTyped<'static, FrozenStarlarkCmdArgs>,
+    pub(crate) bazel_inputs: Option<FrozenValueTyped<'static, FrozenStarlarkCmdArgs>>,
+    pub(crate) bazel_executable_runfiles: Option<FrozenValue>,
+    pub(crate) bazel_tool_runfiles: Option<FrozenValue>,
+    pub(crate) bazel_cc_command_line:
+        Option<FrozenValueTyped<'static, FrozenBazelCcCompileCommandLine>>,
     pub(crate) env:
         Option<FrozenValueOfUnchecked<'static, DictType<String, ValueAsCommandLineLike<'static>>>>,
     pub(crate) worker: Option<FrozenValueTyped<'static, FrozenWorkerInfo>>,
@@ -326,6 +385,10 @@ impl<'v> Freeze for StarlarkRunActionValues<'v> {
         let StarlarkRunActionValues {
             exe,
             args,
+            bazel_inputs,
+            bazel_executable_runfiles,
+            bazel_tool_runfiles,
+            bazel_cc_command_line,
             env,
             worker,
             remote_worker,
@@ -336,6 +399,10 @@ impl<'v> Freeze for StarlarkRunActionValues<'v> {
         Ok(FrozenStarlarkRunActionValues {
             exe: exe.freeze(freezer)?,
             args: args.freeze(freezer)?,
+            bazel_inputs: bazel_inputs.freeze(freezer)?,
+            bazel_executable_runfiles: bazel_executable_runfiles.freeze(freezer)?,
+            bazel_tool_runfiles: bazel_tool_runfiles.freeze(freezer)?,
+            bazel_cc_command_line: bazel_cc_command_line.freeze(freezer)?,
             env: env.freeze(freezer)?,
             worker: worker.freeze(freezer)?,
             remote_worker: remote_worker.freeze(freezer)?,
@@ -384,15 +451,169 @@ struct UnpackedWorkerValues<'v> {
     id: WorkerId,
     concurrency: Option<usize>,
     streaming: bool,
+    supports_bazel_local_persistent_worker_protocol: bool,
     supports_bazel_remote_persistent_worker_protocol: bool,
+    requires_bazel_worker_sandboxing: bool,
 }
 
 struct UnpackedRunActionValues<'v> {
     exe: &'v dyn CommandLineArgLike<'v>,
     args: &'v dyn CommandLineArgLike<'v>,
+    bazel_inputs: Option<&'v dyn CommandLineArgLike<'v>>,
+    bazel_executable_runfiles: Option<Value<'v>>,
+    bazel_tool_runfiles: Option<Value<'v>>,
+    bazel_cc_command_line: Option<&'v FrozenBazelCcCompileCommandLine>,
     env: Vec<(&'v str, &'v dyn CommandLineArgLike<'v>)>,
     worker: Option<UnpackedWorkerValues<'v>>,
     remote_worker: Option<UnpackedWorkerValues<'v>>,
+}
+
+enum LocalActionCacheWorkerRef<'a> {
+    Borrowed(&'a WorkerSpec),
+    Owned(WorkerSpec),
+    Probe(LocalActionCacheWorkerProbe),
+}
+
+impl LocalActionCacheWorkerRef<'_> {
+    fn id(&self) -> WorkerId {
+        match self {
+            Self::Borrowed(worker) => worker.id,
+            Self::Owned(worker) => worker.id,
+            Self::Probe(worker) => worker.id,
+        }
+    }
+
+    fn protocol(&self) -> WorkerProtocol {
+        match self {
+            Self::Borrowed(worker) => worker.protocol,
+            Self::Owned(worker) => worker.protocol,
+            Self::Probe(worker) => worker.protocol,
+        }
+    }
+
+    fn exe(&self) -> &[String] {
+        match self {
+            Self::Borrowed(worker) => &worker.exe,
+            Self::Owned(worker) => &worker.exe,
+            Self::Probe(worker) => &worker.exe,
+        }
+    }
+
+    fn env(&self) -> &SortedVectorMap<String, String> {
+        match self {
+            Self::Borrowed(worker) => &worker.env,
+            Self::Owned(worker) => &worker.env,
+            Self::Probe(worker) => &worker.env,
+        }
+    }
+
+    fn concurrency(&self) -> Option<usize> {
+        match self {
+            Self::Borrowed(worker) => worker.concurrency,
+            Self::Owned(worker) => worker.concurrency,
+            Self::Probe(worker) => worker.concurrency,
+        }
+    }
+
+    fn streaming(&self) -> bool {
+        match self {
+            Self::Borrowed(worker) => worker.streaming,
+            Self::Owned(worker) => worker.streaming,
+            Self::Probe(worker) => worker.streaming,
+        }
+    }
+
+    fn bazel_worker_sandboxing(&self) -> bool {
+        match self {
+            Self::Borrowed(worker) => worker.bazel_worker_sandboxing,
+            Self::Owned(worker) => worker.bazel_worker_sandboxing,
+            Self::Probe(worker) => worker.bazel_worker_sandboxing,
+        }
+    }
+
+    fn remote_key(&self) -> Option<&TrackedFileDigest> {
+        match self {
+            Self::Borrowed(worker) => worker.remote_key.as_ref(),
+            Self::Owned(worker) => worker.remote_key.as_ref(),
+            Self::Probe(worker) => worker.remote_key.as_ref(),
+        }
+    }
+
+    fn inputs(&self) -> &[CommandExecutionInput] {
+        match self {
+            Self::Borrowed(worker) => worker.inputs(),
+            Self::Owned(worker) => worker.inputs(),
+            Self::Probe(worker) => &worker.inputs,
+        }
+    }
+}
+
+struct LocalActionCacheWorkerProbe {
+    id: WorkerId,
+    protocol: WorkerProtocol,
+    exe: Vec<String>,
+    env: SortedVectorMap<String, String>,
+    concurrency: Option<usize>,
+    streaming: bool,
+    bazel_worker_sandboxing: bool,
+    remote_key: Option<TrackedFileDigest>,
+    inputs: Vec<CommandExecutionInput>,
+}
+
+enum LocalActionCacheRemoteWorkerRef<'a> {
+    Borrowed(&'a RemoteWorkerSpec),
+    Owned(RemoteWorkerSpec),
+    Probe(LocalActionCacheRemoteWorkerProbe),
+}
+
+impl LocalActionCacheRemoteWorkerRef<'_> {
+    fn id(&self) -> WorkerId {
+        match self {
+            Self::Borrowed(remote_worker) => remote_worker.id,
+            Self::Owned(remote_worker) => remote_worker.id,
+            Self::Probe(remote_worker) => remote_worker.id,
+        }
+    }
+
+    fn init(&self) -> &[String] {
+        match self {
+            Self::Borrowed(remote_worker) => &remote_worker.init,
+            Self::Owned(remote_worker) => &remote_worker.init,
+            Self::Probe(remote_worker) => &remote_worker.init,
+        }
+    }
+
+    fn env(&self) -> &SortedVectorMap<String, String> {
+        match self {
+            Self::Borrowed(remote_worker) => &remote_worker.env,
+            Self::Owned(remote_worker) => &remote_worker.env,
+            Self::Probe(remote_worker) => &remote_worker.env,
+        }
+    }
+
+    fn concurrency(&self) -> Option<usize> {
+        match self {
+            Self::Borrowed(remote_worker) => remote_worker.concurrency,
+            Self::Owned(remote_worker) => remote_worker.concurrency,
+            Self::Probe(remote_worker) => remote_worker.concurrency,
+        }
+    }
+
+    fn inputs(&self) -> &[CommandExecutionInput] {
+        match self {
+            Self::Borrowed(remote_worker) => remote_worker.inputs(),
+            Self::Owned(remote_worker) => remote_worker.inputs(),
+            Self::Probe(remote_worker) => &remote_worker.inputs,
+        }
+    }
+}
+
+struct LocalActionCacheRemoteWorkerProbe {
+    id: WorkerId,
+    init: Vec<String>,
+    env: SortedVectorMap<String, String>,
+    concurrency: Option<usize>,
+    inputs: Vec<CommandExecutionInput>,
 }
 
 #[derive(Debug, Allocative, Pagable)]
@@ -400,15 +621,23 @@ pub(crate) struct RunAction {
     inner: UnregisteredRunAction,
     starlark_values: OwnedFrozenValueTyped<FrozenStarlarkRunActionValues>,
     outputs: BoxSliceSet<BuildArtifact>,
+    inputs: Box<[ArtifactGroup]>,
+    command_inputs: Box<[ArtifactGroup]>,
+    local_action_cache_inputs: Box<[ArtifactGroup]>,
+    non_hidden_inputs: Box<[ArtifactGroup]>,
     error_handler: Option<OwnedFrozenValue>,
 }
 
 #[allow(clippy::large_enum_variant)]
 enum ExecuteResult {
     LocalDepFileHit(ActionOutputs, ActionExecutionMetadata),
+    LocalActionCacheHit {
+        result: CommandExecutionResult,
+        executor_preference: ExecutorPreference,
+    },
     ExecutedOrReHit {
         result: CommandExecutionResult,
-        dep_file_bundle: DepFileBundle,
+        dep_file_bundle: Option<DepFileBundle>,
         executor_preference: ExecutorPreference,
         action_and_blobs: ActionDigestAndBlobs,
         input_files_bytes: u64,
@@ -420,6 +649,1156 @@ pub struct DepFilesPlaceholderArtifactPathMapper {}
 impl ArtifactPathMapper for DepFilesPlaceholderArtifactPathMapper {
     fn get(&self, _artifact: &Artifact) -> Option<&ContentBasedPathHash> {
         Some(&ContentBasedPathHash::DepFilesPlaceholder)
+    }
+}
+
+struct DepFilesPlaceholderArtifactPathMapperWithValues<'a> {
+    values: &'a dyn ArtifactPathMapper,
+}
+
+impl ArtifactPathMapper for DepFilesPlaceholderArtifactPathMapperWithValues<'_> {
+    fn get(&self, _artifact: &Artifact) -> Option<&ContentBasedPathHash> {
+        Some(&ContentBasedPathHash::DepFilesPlaceholder)
+    }
+
+    fn artifact_value(
+        &self,
+        artifact: &Artifact,
+    ) -> Option<&buck2_execute::artifact_value::ArtifactValue> {
+        self.values.artifact_value(artifact)
+    }
+}
+
+fn artifact_is_run_action_output(
+    outputs: &BoxSliceSet<BuildArtifact>,
+    artifact: &Artifact,
+) -> bool {
+    match artifact.as_parts().0 {
+        BaseArtifactKind::Build(build) => outputs.iter().any(|output| output == build),
+        BaseArtifactKind::Source(_) => false,
+    }
+}
+
+fn artifact_group_is_run_action_output(
+    outputs: &BoxSliceSet<BuildArtifact>,
+    artifact_group: &ArtifactGroup,
+) -> bool {
+    match artifact_group {
+        ArtifactGroup::Artifact(artifact) => artifact_is_run_action_output(outputs, artifact),
+        ArtifactGroup::TransitiveSetProjection(_) | ArtifactGroup::Promise(_) => false,
+    }
+}
+
+struct RunActionOutputArtifactPathMapper<'a> {
+    outputs: &'a BoxSliceSet<BuildArtifact>,
+    inner: &'a dyn ArtifactPathMapper,
+    output_hash: ContentBasedPathHash,
+}
+
+impl<'a> RunActionOutputArtifactPathMapper<'a> {
+    fn new(outputs: &'a BoxSliceSet<BuildArtifact>, inner: &'a dyn ArtifactPathMapper) -> Self {
+        Self {
+            outputs,
+            inner,
+            output_hash: ContentBasedPathHash::for_output_artifact(),
+        }
+    }
+}
+
+impl ArtifactPathMapper for RunActionOutputArtifactPathMapper<'_> {
+    fn get(&self, artifact: &Artifact) -> Option<&ContentBasedPathHash> {
+        if artifact_is_run_action_output(self.outputs, artifact) {
+            Some(&self.output_hash)
+        } else {
+            self.inner.get(artifact)
+        }
+    }
+
+    fn artifact_value(
+        &self,
+        artifact: &Artifact,
+    ) -> Option<&buck2_execute::artifact_value::ArtifactValue> {
+        if artifact_is_run_action_output(self.outputs, artifact) {
+            None
+        } else {
+            self.inner.artifact_value(artifact)
+        }
+    }
+}
+
+struct BazelRunActionArtifactPathMapper<'a> {
+    ctx: &'a dyn ActionExecutionCtx,
+    inputs: &'a [ArtifactGroup],
+    values: RefCell<Option<Vec<&'a ArtifactGroupValues>>>,
+}
+
+impl<'a> BazelRunActionArtifactPathMapper<'a> {
+    fn new(ctx: &'a dyn ActionExecutionCtx, inputs: &'a [ArtifactGroup]) -> Self {
+        Self {
+            ctx,
+            inputs,
+            values: RefCell::new(None),
+        }
+    }
+}
+
+impl ArtifactPathMapper for BazelRunActionArtifactPathMapper<'_> {
+    fn get(&self, _artifact: &Artifact) -> Option<&ContentBasedPathHash> {
+        None
+    }
+
+    fn artifact_value(&self, artifact: &Artifact) -> Option<&ArtifactValue> {
+        if self.values.borrow().is_none() {
+            let values = self
+                .inputs
+                .iter()
+                .map(|input| self.ctx.artifact_values(input))
+                .collect();
+            *self.values.borrow_mut() = Some(values);
+        }
+        let values = self.values.borrow();
+        let values = values.as_ref()?;
+        for values in values {
+            for (input_artifact, value) in values.iter() {
+                if input_artifact == artifact {
+                    return Some(value);
+                }
+            }
+        }
+        None
+    }
+}
+
+enum RunActionInputArtifactPathMapper<'a> {
+    Default(ArtifactPathMapperImpl<'a>),
+    Bazel(BazelRunActionArtifactPathMapper<'a>),
+}
+
+impl ArtifactPathMapper for RunActionInputArtifactPathMapper<'_> {
+    fn get(&self, artifact: &Artifact) -> Option<&ContentBasedPathHash> {
+        match self {
+            Self::Default(mapper) => mapper.get(artifact),
+            Self::Bazel(mapper) => mapper.get(artifact),
+        }
+    }
+
+    fn artifact_value(&self, artifact: &Artifact) -> Option<&ArtifactValue> {
+        match self {
+            Self::Default(mapper) => mapper.artifact_value(artifact),
+            Self::Bazel(mapper) => mapper.artifact_value(artifact),
+        }
+    }
+}
+
+struct BazelCommandLineContext<'v> {
+    inner: DefaultCommandLineContext<'v>,
+}
+
+impl<'v> BazelCommandLineContext<'v> {
+    fn new(fs: &'v ExecutorFs<'v>) -> Self {
+        Self {
+            inner: DefaultCommandLineContext::new(fs),
+        }
+    }
+}
+
+impl CommandLineContext for BazelCommandLineContext<'_> {
+    fn resolve_project_path(
+        &self,
+        path: ProjectRelativePathBuf,
+    ) -> buck2_error::Result<CommandLineLocation<'_>> {
+        self.inner.resolve_project_path(path)
+    }
+
+    fn fs(&self) -> &ExecutorFs<'_> {
+        self.inner.fs()
+    }
+
+    fn resolve_artifact(
+        &self,
+        artifact: &Artifact,
+        _artifact_path_mapping: &dyn ArtifactPathMapper,
+    ) -> buck2_error::Result<CommandLineLocation<'_>> {
+        Ok(CommandLineLocation::from_relative_path(
+            RelativePathBuf::from(bazel_artifact_path(artifact.get_path())),
+            self.fs().path_separator(),
+        ))
+    }
+
+    fn resolve_output_artifact(
+        &self,
+        artifact: &Artifact,
+    ) -> buck2_error::Result<CommandLineLocation<'_>> {
+        Ok(CommandLineLocation::from_relative_path(
+            RelativePathBuf::from(bazel_artifact_path(artifact.get_path())),
+            self.fs().path_separator(),
+        ))
+    }
+
+    fn next_macro_file_path(&mut self) -> buck2_error::Result<buck2_fs::paths::RelativePathBuf> {
+        self.inner.next_macro_file_path()
+    }
+}
+
+#[derive(Clone, Copy, Dupe)]
+enum RunActionParamFileMode {
+    Record,
+    RecordDigestOnly,
+    Replay,
+}
+
+#[derive(Clone)]
+struct RunActionParamFile {
+    path: BuildArtifactPath,
+    digest: TrackedFileDigest,
+    content_hash: ContentBasedPathHash,
+    content: Vec<u8>,
+    command_line_path: buck2_fs::paths::RelativePathBuf,
+    bazel_exec_path: Option<String>,
+}
+
+struct PendingActionMetadataWrite {
+    path: BuildArtifactPath,
+    content_hash: ContentBasedPathHash,
+    content: Vec<u8>,
+}
+
+struct RunActionParamFiles {
+    owner: DeferredHolderKey,
+    base_path: ForwardRelativePathBuf,
+    base_bazel_exec_path: Option<String>,
+    bazel_output_root: BazelOutputRoot,
+    path_resolution_method: BuckOutPathKind,
+    digest_config: DigestConfig,
+    files: Vec<RunActionParamFile>,
+    replay_cursor: usize,
+}
+
+#[derive(Clone)]
+struct RunActionParamFilesRef(Rc<RefCell<RunActionParamFiles>>);
+
+impl RunActionParamFilesRef {
+    fn new(
+        owner: DeferredHolderKey,
+        base_path: ForwardRelativePathBuf,
+        base_bazel_exec_path: Option<String>,
+        bazel_output_root: BazelOutputRoot,
+        path_resolution_method: BuckOutPathKind,
+        digest_config: DigestConfig,
+    ) -> Self {
+        Self(Rc::new(RefCell::new(RunActionParamFiles {
+            owner,
+            base_path,
+            base_bazel_exec_path,
+            bazel_output_root,
+            path_resolution_method,
+            digest_config,
+            files: Vec::new(),
+            replay_cursor: 0,
+        })))
+    }
+
+    fn add_param_file(
+        &self,
+        fs: &ExecutorFs<'_>,
+        mode: RunActionParamFileMode,
+        content: Vec<u8>,
+    ) -> buck2_error::Result<CommandLineLocation<'_>> {
+        let mut state = self.0.borrow_mut();
+        match mode {
+            RunActionParamFileMode::Record | RunActionParamFileMode::RecordDigestOnly => {
+                let index = state.files.len();
+                let path =
+                    BuildArtifactPath::with_dynamic_actions_action_key_and_bazel_owner_and_output_root(
+                        state.owner.dupe(),
+                        derive_param_file_path(&state.base_path, index)?,
+                        state.path_resolution_method,
+                        None,
+                        state.bazel_output_root,
+                    );
+                let digest = TrackedFileDigest::from_content(
+                    &content,
+                    state.digest_config.cas_digest_config(),
+                );
+                let content_hash = ContentBasedPathHash::new(digest.raw_digest().as_bytes())?;
+                let command_line_path =
+                    if let Some(base_bazel_exec_path) = &state.base_bazel_exec_path {
+                        buck2_fs::paths::RelativePathBuf::from(derive_param_file_exec_path(
+                            base_bazel_exec_path,
+                            index,
+                        ))
+                    } else {
+                        fs.fs()
+                            .buck_out_path_resolver()
+                            .resolve_gen(&path, Some(&content_hash))?
+                            .into()
+                    };
+                let bazel_exec_path = state
+                    .base_bazel_exec_path
+                    .as_ref()
+                    .map(|base| derive_param_file_exec_path(base, index));
+                state.files.push(RunActionParamFile {
+                    path,
+                    digest,
+                    content_hash,
+                    content,
+                    command_line_path: command_line_path.clone(),
+                    bazel_exec_path,
+                });
+                Ok(CommandLineLocation::from_relative_path(
+                    command_line_path,
+                    fs.path_separator(),
+                ))
+            }
+            RunActionParamFileMode::Replay => {
+                let index = state.replay_cursor;
+                let Some(param_file) = state.files.get(index) else {
+                    return Err(internal_error!(
+                        "param-file replay requested entry {index}, but only {} were recorded",
+                        state.files.len()
+                    ));
+                };
+                if param_file.content != content {
+                    return Err(internal_error!(
+                        "param-file replay content mismatch for entry {index}"
+                    ));
+                }
+                let command_line_path = param_file.command_line_path.clone();
+                state.replay_cursor += 1;
+                Ok(CommandLineLocation::from_relative_path(
+                    command_line_path,
+                    fs.path_separator(),
+                ))
+            }
+        }
+    }
+
+    fn add_param_file_args(
+        &self,
+        fs: &ExecutorFs<'_>,
+        mode: RunActionParamFileMode,
+        args: Vec<String>,
+        format: ParamFileFormat,
+    ) -> buck2_error::Result<CommandLineLocation<'_>> {
+        match mode {
+            RunActionParamFileMode::RecordDigestOnly => {
+                let mut state = self.0.borrow_mut();
+                let index = state.files.len();
+                let path =
+                    BuildArtifactPath::with_dynamic_actions_action_key_and_bazel_owner_and_output_root(
+                        state.owner.dupe(),
+                        derive_param_file_path(&state.base_path, index)?,
+                        state.path_resolution_method,
+                        None,
+                        state.bazel_output_root,
+                    );
+                let mut digester = FileDigest::digester(state.digest_config.cas_digest_config());
+                visit_bazel_param_file_content(args.iter(), format, |bytes| {
+                    digester.update(bytes);
+                });
+                let digest = TrackedFileDigest::new(
+                    digester.finalize(),
+                    state.digest_config.cas_digest_config(),
+                );
+                let content_hash = ContentBasedPathHash::new(digest.raw_digest().as_bytes())?;
+                let command_line_path =
+                    if let Some(base_bazel_exec_path) = &state.base_bazel_exec_path {
+                        buck2_fs::paths::RelativePathBuf::from(derive_param_file_exec_path(
+                            base_bazel_exec_path,
+                            index,
+                        ))
+                    } else {
+                        fs.fs()
+                            .buck_out_path_resolver()
+                            .resolve_gen(&path, Some(&content_hash))?
+                            .into()
+                    };
+                let bazel_exec_path = state
+                    .base_bazel_exec_path
+                    .as_ref()
+                    .map(|base| derive_param_file_exec_path(base, index));
+                state.files.push(RunActionParamFile {
+                    path,
+                    digest,
+                    content_hash,
+                    content: Vec::new(),
+                    command_line_path: command_line_path.clone(),
+                    bazel_exec_path,
+                });
+                Ok(CommandLineLocation::from_relative_path(
+                    command_line_path,
+                    fs.path_separator(),
+                ))
+            }
+            RunActionParamFileMode::Record | RunActionParamFileMode::Replay => {
+                self.add_param_file(fs, mode, bazel_param_file_content(args, format))
+            }
+        }
+    }
+
+    fn files(&self, require_replay: bool) -> buck2_error::Result<Vec<RunActionParamFile>> {
+        let state = self.0.borrow();
+        if require_replay && state.replay_cursor != state.files.len() {
+            return Err(internal_error!(
+                "param-file replay consumed {} entries, but {} were recorded",
+                state.replay_cursor,
+                state.files.len()
+            ));
+        }
+        Ok(state.files.clone())
+    }
+}
+
+fn derive_param_file_path(
+    base_path: &buck2_fs::paths::forward_rel_path::ForwardRelativePath,
+    index: usize,
+) -> buck2_error::Result<ForwardRelativePathBuf> {
+    let file_name = base_path
+        .file_name()
+        .ok_or_else(|| internal_error!("cannot derive param-file path from empty output path"))?;
+    let derived_name = format!("{}-{index}.params", file_name.as_str());
+    if let Some(parent) = base_path.parent()
+        && !parent.is_empty()
+    {
+        ForwardRelativePathBuf::new(format!("{}/{derived_name}", parent.as_str()))
+    } else {
+        ForwardRelativePathBuf::new(derived_name)
+    }
+}
+
+fn derive_param_file_exec_path(base_exec_path: &str, index: usize) -> String {
+    let (parent, file_name) = base_exec_path
+        .rsplit_once('/')
+        .map_or(("", base_exec_path), |(parent, file_name)| {
+            (parent, file_name)
+        });
+    let derived_name = format!("{file_name}-{index}.params");
+    if parent.is_empty() {
+        derived_name
+    } else {
+        format!("{parent}/{derived_name}")
+    }
+}
+
+fn bazel_param_file_base_path(base_exec_path: &str) -> buck2_error::Result<ForwardRelativePathBuf> {
+    let rest = base_exec_path
+        .strip_prefix("buck-out/bin/")
+        .or_else(|| base_exec_path.strip_prefix("buck-out/genfiles/"))
+        .ok_or_else(|| {
+            internal_error!(
+                "Bazel output path `{base_exec_path}` is not under buck-out/bin or buck-out/genfiles"
+            )
+        })?;
+    let (_, path) = rest.split_once('/').ok_or_else(|| {
+        internal_error!("Bazel output path `{base_exec_path}` has no configuration segment")
+    })?;
+    ForwardRelativePathBuf::new(path.to_owned()).buck_error_context("Invalid Bazel param-file path")
+}
+
+enum RunActionCommandLineContext<'v> {
+    Default {
+        inner: DefaultCommandLineContext<'v>,
+        param_files: RunActionParamFilesRef,
+        param_file_mode: RunActionParamFileMode,
+    },
+    Bazel {
+        inner: BazelCommandLineContext<'v>,
+        param_files: RunActionParamFilesRef,
+        param_file_mode: RunActionParamFileMode,
+    },
+}
+
+impl<'v> RunActionCommandLineContext<'v> {
+    fn new(
+        fs: &'v ExecutorFs<'v>,
+        bazel_paths: bool,
+        param_files: RunActionParamFilesRef,
+        param_file_mode: RunActionParamFileMode,
+    ) -> Self {
+        if bazel_paths {
+            Self::Bazel {
+                inner: BazelCommandLineContext::new(fs),
+                param_files,
+                param_file_mode,
+            }
+        } else {
+            Self::Default {
+                inner: DefaultCommandLineContext::new(fs),
+                param_files,
+                param_file_mode,
+            }
+        }
+    }
+}
+
+impl CommandLineContext for RunActionCommandLineContext<'_> {
+    fn resolve_project_path(
+        &self,
+        path: ProjectRelativePathBuf,
+    ) -> buck2_error::Result<CommandLineLocation<'_>> {
+        match self {
+            Self::Default { inner, .. } => inner.resolve_project_path(path),
+            Self::Bazel { inner, .. } => inner.resolve_project_path(path),
+        }
+    }
+
+    fn fs(&self) -> &ExecutorFs<'_> {
+        match self {
+            Self::Default { inner, .. } => inner.fs(),
+            Self::Bazel { inner, .. } => inner.fs(),
+        }
+    }
+
+    fn resolve_artifact(
+        &self,
+        artifact: &Artifact,
+        artifact_path_mapping: &dyn ArtifactPathMapper,
+    ) -> buck2_error::Result<CommandLineLocation<'_>> {
+        match self {
+            Self::Default { inner, .. } => inner.resolve_artifact(artifact, artifact_path_mapping),
+            Self::Bazel { inner, .. } => inner.resolve_artifact(artifact, artifact_path_mapping),
+        }
+    }
+
+    fn resolve_output_artifact(
+        &self,
+        artifact: &Artifact,
+    ) -> buck2_error::Result<CommandLineLocation<'_>> {
+        match self {
+            Self::Default { inner, .. } => inner.resolve_output_artifact(artifact),
+            Self::Bazel { inner, .. } => inner.resolve_output_artifact(artifact),
+        }
+    }
+
+    fn next_macro_file_path(&mut self) -> buck2_error::Result<buck2_fs::paths::RelativePathBuf> {
+        match self {
+            Self::Default { inner, .. } => inner.next_macro_file_path(),
+            Self::Bazel { inner, .. } => inner.next_macro_file_path(),
+        }
+    }
+
+    fn add_param_file(&mut self, content: Vec<u8>) -> buck2_error::Result<CommandLineLocation<'_>> {
+        match self {
+            Self::Default {
+                inner,
+                param_files,
+                param_file_mode,
+            } => param_files.add_param_file(inner.fs(), *param_file_mode, content),
+            Self::Bazel {
+                inner,
+                param_files,
+                param_file_mode,
+            } => param_files.add_param_file(inner.fs(), *param_file_mode, content),
+        }
+    }
+
+    fn add_param_file_args(
+        &mut self,
+        args: Vec<String>,
+        format: ParamFileFormat,
+    ) -> buck2_error::Result<CommandLineLocation<'_>> {
+        match self {
+            Self::Default {
+                inner,
+                param_files,
+                param_file_mode,
+            } => param_files.add_param_file_args(inner.fs(), *param_file_mode, args, format),
+            Self::Bazel {
+                inner,
+                param_files,
+                param_file_mode,
+            } => param_files.add_param_file_args(inner.fs(), *param_file_mode, args, format),
+        }
+    }
+
+    fn normalize_param_file_arg(&self, arg: String) -> String {
+        match self {
+            Self::Default { .. } => arg,
+            Self::Bazel { .. } => bazel_normalize_buck_owned_exec_paths(&arg),
+        }
+    }
+}
+
+struct LocalActionCacheCommandLineFingerprinter<'a> {
+    inner: &'a mut ExpandedCommandLineFingerprinter,
+    bazel_paths: bool,
+}
+
+impl CommandLineBuilder for LocalActionCacheCommandLineFingerprinter<'_> {
+    fn push_arg(&mut self, s: String) {
+        if self.bazel_paths {
+            self.inner
+                .push_arg(bazel_normalize_buck_owned_exec_paths(&s));
+        } else {
+            self.inner.push_arg(s);
+        }
+    }
+}
+
+fn fingerprint_param_files(
+    command_line_digest: &mut ExpandedCommandLineFingerprinter,
+    param_files: &[RunActionParamFile],
+) {
+    for param_file in param_files {
+        fingerprint_param_file_digest(command_line_digest, &param_file.digest);
+    }
+    command_line_digest.push_count();
+}
+
+fn fingerprint_param_file_digest(
+    command_line_digest: &mut ExpandedCommandLineFingerprinter,
+    digest: &TrackedFileDigest,
+) {
+    command_line_digest.push_arg_bytes(digest.raw_digest().as_bytes());
+    command_line_digest.push_arg_bytes(&digest.size().to_le_bytes());
+}
+
+fn fingerprint_expanded_command_line_for_local_action_cache(
+    expanded: &ExpandedCommandLine,
+    param_files: &[RunActionParamFile],
+) -> ExpandedCommandLineDigest {
+    let mut command_line_digest = ExpandedCommandLineFingerprinter::new();
+    for arg in &expanded.exe {
+        command_line_digest.push_arg(arg.to_owned());
+    }
+    command_line_digest.push_count();
+
+    for arg in &expanded.args {
+        command_line_digest.push_arg(arg.to_owned());
+    }
+    command_line_digest.push_count();
+
+    for (key, value) in &expanded.env {
+        command_line_digest.push_arg(key.to_owned());
+        command_line_digest.push_arg(value.to_owned());
+    }
+    command_line_digest.push_count();
+
+    fingerprint_param_files(&mut command_line_digest, param_files);
+    command_line_digest.finalize()
+}
+
+fn push_string_args_for_local_action_cache(
+    command_line_digest: &mut ExpandedCommandLineFingerprinter,
+    args: &[String],
+    bazel_paths: bool,
+) {
+    for arg in args {
+        if bazel_paths {
+            command_line_digest.push_arg(bazel_normalize_buck_owned_exec_paths(arg));
+        } else {
+            command_line_digest.push_arg(arg.to_owned());
+        }
+    }
+}
+
+pub(crate) fn precompute_bazel_local_action_cache_command_line_digest_for_cc_compile_command_line<
+    'v,
+>(
+    exe: &str,
+    command_line: &BazelCcCompileCommandLine<'v>,
+    heap: Heap<'v>,
+) -> starlark::Result<ExpandedCommandLineDigest> {
+    let mut command_line_digest = ExpandedCommandLineFingerprinter::new();
+
+    command_line_digest.push_arg(bazel_normalize_buck_owned_exec_paths(exe));
+    command_line_digest.push_count();
+
+    command_line.visit_argument_strings(heap, &mut |arg| {
+        command_line_digest.push_arg(bazel_normalize_buck_owned_exec_paths(&arg));
+        Ok(())
+    })?;
+    command_line_digest.push_count();
+
+    let env = command_line.environment_strings(heap)?;
+    let mut env = env.into_iter().collect::<SortedVectorMap<_, _>>();
+    bazel_normalize_command_env(&mut env);
+    for (key, value) in env {
+        command_line_digest.push_arg(key);
+        command_line_digest.push_arg(value);
+    }
+    command_line_digest.push_count();
+
+    command_line_digest.push_count();
+    Ok(command_line_digest.finalize())
+}
+
+fn expand_bazel_cc_compile_command_line(
+    command_line: &FrozenBazelCcCompileCommandLine,
+) -> buck2_error::Result<(Vec<String>, Vec<(String, String)>)> {
+    Heap::temp(|heap| {
+        let args = command_line.argument_strings(heap)?;
+        let env = command_line.environment_strings(heap)?;
+        starlark::Result::Ok((args, env))
+    })
+    .map_err(buck2_error::Error::from)
+}
+
+struct EmptyArtifactPathMapper;
+
+impl ArtifactPathMapper for EmptyArtifactPathMapper {
+    fn get(&self, _artifact: &Artifact) -> Option<&ContentBasedPathHash> {
+        None
+    }
+}
+
+struct BazelLocalActionCachePrecomputeContext {
+    base_bazel_exec_path: String,
+    digest_config: DigestConfig,
+    param_file_digests: Vec<TrackedFileDigest>,
+}
+
+impl BazelLocalActionCachePrecomputeContext {
+    fn new(base_bazel_exec_path: String, digest_config: DigestConfig) -> Self {
+        Self {
+            base_bazel_exec_path,
+            digest_config,
+            param_file_digests: Vec::new(),
+        }
+    }
+
+    fn add_param_file_digest(
+        &mut self,
+        digest: TrackedFileDigest,
+    ) -> buck2_error::Result<CommandLineLocation<'_>> {
+        let index = self.param_file_digests.len();
+        let command_line_path = RelativePathBuf::from(derive_param_file_exec_path(
+            &self.base_bazel_exec_path,
+            index,
+        ));
+        self.param_file_digests.push(digest);
+        Ok(CommandLineLocation::from_relative_path(
+            command_line_path,
+            PathSeparatorKind::system_default(),
+        ))
+    }
+}
+
+impl CommandLineContext for BazelLocalActionCachePrecomputeContext {
+    fn resolve_project_path(
+        &self,
+        _path: ProjectRelativePathBuf,
+    ) -> buck2_error::Result<CommandLineLocation<'_>> {
+        Err(internal_error!(
+            "project-relative paths are not supported in Bazel local action cache precompute"
+        ))
+    }
+
+    fn fs(&self) -> &ExecutorFs<'_> {
+        panic!("ExecutorFs is not available during Bazel local action cache precompute")
+    }
+
+    fn resolve_artifact(
+        &self,
+        artifact: &Artifact,
+        _artifact_path_mapping: &dyn ArtifactPathMapper,
+    ) -> buck2_error::Result<CommandLineLocation<'_>> {
+        Ok(CommandLineLocation::from_relative_path(
+            RelativePathBuf::from(bazel_artifact_path(artifact.get_path())),
+            PathSeparatorKind::system_default(),
+        ))
+    }
+
+    fn resolve_output_artifact(
+        &self,
+        artifact: &Artifact,
+    ) -> buck2_error::Result<CommandLineLocation<'_>> {
+        self.resolve_artifact(artifact, &EmptyArtifactPathMapper)
+    }
+
+    fn resolve_cell_path(
+        &self,
+        _path: CellPathRef,
+    ) -> buck2_error::Result<CommandLineLocation<'_>> {
+        Err(internal_error!(
+            "cell paths are not supported in Bazel local action cache precompute"
+        ))
+    }
+
+    fn next_macro_file_path(&mut self) -> buck2_error::Result<RelativePathBuf> {
+        Err(internal_error!(
+            "write-to-file macros are not supported in Bazel local action cache precompute"
+        ))
+    }
+
+    fn add_param_file(&mut self, content: Vec<u8>) -> buck2_error::Result<CommandLineLocation<'_>> {
+        let digest =
+            TrackedFileDigest::from_content(&content, self.digest_config.cas_digest_config());
+        self.add_param_file_digest(digest)
+    }
+
+    fn add_param_file_args(
+        &mut self,
+        args: Vec<String>,
+        format: ParamFileFormat,
+    ) -> buck2_error::Result<CommandLineLocation<'_>> {
+        let mut digester = FileDigest::digester(self.digest_config.cas_digest_config());
+        visit_bazel_param_file_content(args.iter(), format, |bytes| {
+            digester.update(bytes);
+        });
+        let digest =
+            TrackedFileDigest::new(digester.finalize(), self.digest_config.cas_digest_config());
+        self.add_param_file_digest(digest)
+    }
+
+    fn normalize_param_file_arg(&self, arg: String) -> String {
+        bazel_normalize_buck_owned_exec_paths(&arg)
+    }
+}
+
+pub(crate) fn precompute_bazel_local_action_cache_command_line_digest_for_cmd_args<'v>(
+    exe: &StarlarkCmdArgs<'v>,
+    args: &StarlarkCmdArgs<'v>,
+    env: &[(&'v str, &'v str)],
+    outputs: &BuckIndexSet<OutputArtifact<'v>>,
+    digest_config: DigestConfig,
+) -> Option<ExpandedCommandLineDigest> {
+    let base_output = outputs.iter().next()?;
+    let base_bazel_exec_path =
+        bazel_normalize_buck_owned_exec_paths(&bazel_artifact_path(base_output.get_path()));
+    let mut ctx = BazelLocalActionCachePrecomputeContext::new(base_bazel_exec_path, digest_config);
+    let artifact_path_mapping = EmptyArtifactPathMapper;
+    let mut command_line_digest = ExpandedCommandLineFingerprinter::new();
+
+    {
+        let mut command_line_builder = LocalActionCacheCommandLineFingerprinter {
+            inner: &mut command_line_digest,
+            bazel_paths: true,
+        };
+        exe.add_to_command_line(&mut command_line_builder, &mut ctx, &artifact_path_mapping)
+            .ok()?;
+    }
+    command_line_digest.push_count();
+
+    {
+        let mut command_line_builder = LocalActionCacheCommandLineFingerprinter {
+            inner: &mut command_line_digest,
+            bazel_paths: true,
+        };
+        args.add_to_command_line(&mut command_line_builder, &mut ctx, &artifact_path_mapping)
+            .ok()?;
+    }
+    command_line_digest.push_count();
+
+    let mut env = env
+        .iter()
+        .map(|(key, value)| ((*key).to_owned(), (*value).to_owned()))
+        .collect::<SortedVectorMap<_, _>>();
+    bazel_normalize_command_env(&mut env);
+    for (key, value) in env {
+        command_line_digest.push_arg(key);
+        command_line_digest.push_arg(value);
+    }
+    command_line_digest.push_count();
+
+    for digest in &ctx.param_file_digests {
+        fingerprint_param_file_digest(&mut command_line_digest, digest);
+    }
+    command_line_digest.push_count();
+    Some(command_line_digest.finalize())
+}
+
+fn bazel_normalize_command_line(args: &mut [String]) {
+    for arg in args {
+        *arg = bazel_normalize_buck_owned_exec_paths(arg);
+    }
+}
+
+fn bazel_normalize_command_env(env: &mut SortedVectorMap<String, String>) {
+    for (_, value) in env.iter_mut() {
+        *value = bazel_normalize_buck_owned_exec_paths(value);
+    }
+}
+
+pub(crate) fn action_cache_add_bytes(fingerprint: &mut DataDigester, bytes: &[u8]) {
+    fingerprint.update(&(bytes.len() as u64).to_le_bytes());
+    fingerprint.update(bytes);
+}
+
+pub(crate) fn action_cache_add_str(fingerprint: &mut DataDigester, value: &str) {
+    action_cache_add_bytes(fingerprint, value.as_bytes());
+}
+
+pub(crate) fn action_cache_add_bool(fingerprint: &mut DataDigester, value: bool) {
+    fingerprint.update(&[value as u8]);
+}
+
+pub(crate) fn action_cache_add_u64(fingerprint: &mut DataDigester, value: u64) {
+    fingerprint.update(&value.to_le_bytes());
+}
+
+fn action_cache_add_option_usize(fingerprint: &mut DataDigester, value: Option<usize>) {
+    match value {
+        Some(value) => {
+            action_cache_add_bool(fingerprint, true);
+            action_cache_add_u64(fingerprint, value as u64);
+        }
+        None => action_cache_add_bool(fingerprint, false),
+    }
+}
+
+fn action_cache_add_option_bool(fingerprint: &mut DataDigester, value: Option<bool>) {
+    match value {
+        Some(value) => {
+            action_cache_add_bool(fingerprint, true);
+            action_cache_add_bool(fingerprint, value);
+        }
+        None => action_cache_add_bool(fingerprint, false),
+    }
+}
+
+fn action_cache_add_option_duration(fingerprint: &mut DataDigester, value: Option<Duration>) {
+    match value {
+        Some(value) => {
+            action_cache_add_bool(fingerprint, true);
+            action_cache_add_u64(fingerprint, value.as_secs());
+            action_cache_add_u64(fingerprint, u64::from(value.subsec_nanos()));
+        }
+        None => action_cache_add_bool(fingerprint, false),
+    }
+}
+
+fn action_cache_add_tracked_file_digest(
+    fingerprint: &mut DataDigester,
+    digest: &TrackedFileDigest,
+) {
+    let raw_digest = digest.raw_digest();
+    fingerprint.update(&[raw_digest.algorithm() as u8]);
+    action_cache_add_bytes(fingerprint, raw_digest.as_bytes());
+    action_cache_add_u64(fingerprint, digest.size());
+}
+
+fn action_cache_add_option_tracked_file_digest(
+    fingerprint: &mut DataDigester,
+    digest: Option<&TrackedFileDigest>,
+) {
+    match digest {
+        Some(digest) => {
+            action_cache_add_bool(fingerprint, true);
+            action_cache_add_tracked_file_digest(fingerprint, digest);
+        }
+        None => action_cache_add_bool(fingerprint, false),
+    }
+}
+
+pub(crate) fn action_cache_add_debug(fingerprint: &mut DataDigester, value: impl std::fmt::Debug) {
+    action_cache_add_str(fingerprint, &format!("{value:?}"));
+}
+
+fn action_cache_add_output_type(fingerprint: &mut DataDigester, output_type: OutputType) {
+    let value = match output_type {
+        OutputType::FileOrDirectory => 0,
+        OutputType::File => 1,
+        OutputType::Directory => 2,
+        OutputType::Symlink => 3,
+    };
+    fingerprint.update(&[value]);
+}
+
+fn action_cache_add_output_creation_behavior(
+    fingerprint: &mut DataDigester,
+    behavior: OutputCreationBehavior,
+) {
+    let value = match behavior {
+        OutputCreationBehavior::Create => 0,
+        OutputCreationBehavior::Parent => 1,
+    };
+    fingerprint.update(&[value]);
+}
+
+fn action_cache_add_worker_id(fingerprint: &mut DataDigester, worker_id: WorkerId) {
+    action_cache_add_u64(fingerprint, worker_id.0);
+}
+
+fn action_cache_add_worker_protocol(fingerprint: &mut DataDigester, protocol: WorkerProtocol) {
+    let value = match protocol {
+        WorkerProtocol::Buck2 => 0,
+        WorkerProtocol::Bazel => 1,
+    };
+    fingerprint.update(&[value]);
+}
+
+pub(crate) fn fingerprint_artifact_group_values(
+    fingerprint: &mut DataDigester,
+    fs: &ArtifactFs,
+    values: &dyn ArtifactGroupValuesDyn,
+) -> buck2_error::Result<()> {
+    if let Some(bytes) = values.action_cache_fingerprint() {
+        fingerprint.update(bytes);
+        return Ok(());
+    }
+
+    action_cache_add_str(fingerprint, "artifact_group");
+    if let Some((directory_fingerprint, directory_size)) =
+        values.directory_fingerprint_for_action_cache()
+    {
+        action_cache_add_str(fingerprint, "directory");
+        action_cache_add_tracked_file_digest(fingerprint, directory_fingerprint);
+        action_cache_add_u64(fingerprint, directory_size);
+        return Ok(());
+    }
+    for (artifact, value) in values.iter() {
+        let path = artifact.resolve_path(
+            fs,
+            if artifact.has_content_based_path() {
+                Some(value.content_based_path_hash())
+            } else {
+                None
+            }
+            .as_ref(),
+        )?;
+        action_cache_add_str(fingerprint, path.as_str());
+        value.hash_action_cache_fingerprint(fingerprint);
+    }
+    Ok(())
+}
+
+fn fingerprint_command_execution_input(
+    fingerprint: &mut DataDigester,
+    fs: &ArtifactFs,
+    input: &CommandExecutionInput,
+) -> buck2_error::Result<()> {
+    match input {
+        CommandExecutionInput::Artifact(values) => {
+            fingerprint_artifact_group_values(fingerprint, fs, values.as_ref())?;
+        }
+        CommandExecutionInput::ArtifactPathAlias {
+            source_path,
+            source_requires_materialization,
+            path,
+            value,
+        } => {
+            action_cache_add_str(fingerprint, "artifact_path_alias");
+            action_cache_add_str(fingerprint, source_path.as_str());
+            action_cache_add_bool(fingerprint, *source_requires_materialization);
+            action_cache_add_str(fingerprint, path.as_str());
+            value.hash_action_cache_fingerprint(fingerprint);
+        }
+        CommandExecutionInput::ActionMetadata(metadata) => {
+            action_cache_add_str(fingerprint, "action_metadata");
+            action_cache_add_tracked_file_digest(fingerprint, &metadata.digest);
+            action_cache_add_str(fingerprint, metadata.path.path().as_str());
+            action_cache_add_str(fingerprint, metadata.content_hash.as_str());
+        }
+        CommandExecutionInput::ScratchPath(path) => {
+            action_cache_add_str(fingerprint, "scratch_path");
+            action_cache_add_debug(fingerprint, path);
+        }
+        CommandExecutionInput::IncrementalRemoteOutput(path, entry) => {
+            action_cache_add_str(fingerprint, "incremental_remote_output");
+            action_cache_add_str(fingerprint, path.as_str());
+            action_cache_add_debug(fingerprint, entry);
+        }
+    }
+    Ok(())
+}
+
+fn fingerprint_run_local_action_cache_inputs(
+    fingerprint: &mut DataDigester,
+    fs: &ArtifactFs,
+    artifact_inputs: &[&ArtifactGroupValues],
+    extra_inputs: &[CommandExecutionInput],
+) -> buck2_error::Result<()> {
+    for input in artifact_inputs {
+        fingerprint_artifact_group_values(fingerprint, fs, *input)?;
+    }
+    for input in extra_inputs {
+        fingerprint_command_execution_input(fingerprint, fs, input)?;
+    }
+    Ok(())
+}
+
+pub(crate) fn fingerprint_command_execution_output(
+    fingerprint: &mut DataDigester,
+    fs: &ArtifactFs,
+    output: &CommandExecutionOutput,
+) -> buck2_error::Result<()> {
+    let resolved_path = output
+        .as_ref()
+        .resolve(fs, Some(&ContentBasedPathHash::for_output_artifact()))?
+        .into_path();
+    action_cache_add_str(fingerprint, "output");
+    action_cache_add_str(fingerprint, resolved_path.as_str());
+    match output {
+        CommandExecutionOutput::BuildArtifact {
+            output_type,
+            produced_path,
+            ..
+        } => {
+            action_cache_add_str(fingerprint, "build_artifact");
+            action_cache_add_output_type(fingerprint, *output_type);
+            if let Some(produced_path) = produced_path {
+                action_cache_add_bool(fingerprint, true);
+                action_cache_add_str(fingerprint, produced_path.as_str());
+            } else {
+                action_cache_add_bool(fingerprint, false);
+            }
+        }
+        CommandExecutionOutput::TestPath { create, .. } => {
+            action_cache_add_str(fingerprint, "test_path");
+            action_cache_add_output_creation_behavior(fingerprint, *create);
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn finalize_action_cache_digest(fingerprint: DataDigester) -> Vec<u8> {
+    fingerprint.finalize().raw_digest().as_bytes().to_vec()
+}
+
+pub(crate) fn compose_local_action_cache_fingerprint(
+    cas_digest_config: CasDigestConfig,
+    action_key_digest: &[u8],
+    input_metadata_digest: &[u8],
+) -> Vec<u8> {
+    let mut fingerprint = CasDigestData::digester(cas_digest_config);
+    action_cache_add_str(&mut fingerprint, "buck2-local-action-cache-entry-v1");
+    action_cache_add_bytes(&mut fingerprint, action_key_digest);
+    action_cache_add_bytes(&mut fingerprint, input_metadata_digest);
+    finalize_action_cache_digest(fingerprint)
+}
+
+struct RunActionOutputFilteringArtifactVisitor<'a, 'v> {
+    outputs: &'a BoxSliceSet<BuildArtifact>,
+    inner: &'a mut dyn CommandLineArtifactVisitor<'v>,
+}
+
+impl<'a, 'v> RunActionOutputFilteringArtifactVisitor<'a, 'v> {
+    fn new(
+        outputs: &'a BoxSliceSet<BuildArtifact>,
+        inner: &'a mut dyn CommandLineArtifactVisitor<'v>,
+    ) -> Self {
+        Self { outputs, inner }
+    }
+}
+
+impl<'v> CommandLineArtifactVisitor<'v> for RunActionOutputFilteringArtifactVisitor<'_, 'v> {
+    fn visit_input(&mut self, input: ArtifactGroup, tags: Vec<&ArtifactTag>) {
+        if !artifact_group_is_run_action_output(self.outputs, &input) {
+            self.inner.visit_input(input, tags);
+        }
+    }
+
+    fn visit_declared_output(&mut self, artifact: OutputArtifact<'v>, tags: Vec<&ArtifactTag>) {
+        self.inner.visit_declared_output(artifact, tags);
+    }
+
+    fn visit_frozen_output(&mut self, artifact: Artifact, tags: Vec<&ArtifactTag>) {
+        if !artifact_is_run_action_output(self.outputs, &artifact) {
+            self.inner.visit_frozen_output(artifact, tags);
+        }
+    }
+
+    fn push_frame(&mut self) -> buck2_error::Result<()> {
+        self.inner.push_frame()
+    }
+
+    fn pop_frame(&mut self) {
+        self.inner.pop_frame()
+    }
+
+    fn skip_hidden(&self) -> bool {
+        self.inner.skip_hidden()
     }
 }
 
@@ -452,25 +1831,302 @@ impl CommandLineArtifactVisitor<'_> for SkipHiddenCommandLineArtifactVisitor {
     }
 }
 
+struct BazelOutputExecPathVisitor<'a> {
+    outputs: &'a BoxSliceSet<BuildArtifact>,
+    paths: &'a mut BuckIndexMap<BuildArtifactPath, String>,
+}
+
+impl<'a> BazelOutputExecPathVisitor<'a> {
+    fn new(
+        outputs: &'a BoxSliceSet<BuildArtifact>,
+        paths: &'a mut BuckIndexMap<BuildArtifactPath, String>,
+    ) -> Self {
+        Self { outputs, paths }
+    }
+
+    fn record_path(&mut self, path: buck2_execute::path::artifact_path::ArtifactPath<'_>) {
+        let build_path = match path.base_path.as_ref() {
+            Either::Left(build_path) => (**build_path).dupe(),
+            Either::Right(_) => return,
+        };
+        self.paths.insert(
+            build_path,
+            bazel_normalize_buck_owned_exec_paths(&bazel_artifact_path(path)),
+        );
+    }
+}
+
+impl<'v> CommandLineArtifactVisitor<'v> for BazelOutputExecPathVisitor<'_> {
+    fn visit_input(&mut self, _input: ArtifactGroup, _tags: Vec<&ArtifactTag>) {}
+
+    fn visit_declared_output(&mut self, artifact: OutputArtifact<'v>, _tags: Vec<&ArtifactTag>) {
+        self.record_path(artifact.get_path());
+    }
+
+    fn visit_frozen_output(&mut self, artifact: Artifact, _tags: Vec<&ArtifactTag>) {
+        if artifact_is_run_action_output(self.outputs, &artifact) {
+            self.record_path(artifact.get_path());
+        }
+    }
+}
+
+fn visit_run_action_command_line_artifacts<'v>(
+    outputs: &BoxSliceSet<BuildArtifact>,
+    command_line: &dyn CommandLineArgLike<'v>,
+    artifact_visitor: &mut dyn CommandLineArtifactVisitor<'v>,
+) -> buck2_error::Result<()> {
+    let mut artifact_visitor =
+        RunActionOutputFilteringArtifactVisitor::new(outputs, artifact_visitor);
+    command_line.visit_artifacts(&mut artifact_visitor)
+}
+
+struct BazelRunfilesEntry<'v> {
+    path: &'v str,
+    target_file: Value<'v>,
+}
+
+struct BazelToolRunfiles<'v> {
+    executable: Value<'v>,
+    runfiles: Value<'v>,
+}
+
+fn bazel_runfiles_entries<'v>(
+    runfiles: Value<'v>,
+) -> buck2_error::Result<impl Iterator<Item = buck2_error::Result<BazelRunfilesEntry<'v>>> + 'v> {
+    let entries = ListRef::from_value(runfiles)
+        .ok_or_else(|| internal_error!("Bazel executable runfiles should be a list"))?;
+    Ok(entries.iter().map(|entry| {
+        let entry = StructRef::from_value(entry)
+            .ok_or_else(|| internal_error!("Bazel executable runfiles entry should be a struct"))?;
+        let mut path = None;
+        let mut target_file = None;
+        for (name, value) in entry.iter() {
+            match name.as_str() {
+                "path" => path = value.unpack_str(),
+                "target_file" => target_file = Some(value),
+                _ => {}
+            }
+        }
+        let path = path.ok_or_else(|| {
+            internal_error!("Bazel executable runfiles entry should have string field `path`")
+        })?;
+        let target_file = target_file.ok_or_else(|| {
+            internal_error!("Bazel executable runfiles entry should have field `target_file`")
+        })?;
+        Ok(BazelRunfilesEntry { path, target_file })
+    }))
+}
+
+fn bazel_tool_runfiles<'v>(
+    tool_runfiles: Value<'v>,
+) -> buck2_error::Result<impl Iterator<Item = buck2_error::Result<BazelToolRunfiles<'v>>> + 'v> {
+    let tools = ListRef::from_value(tool_runfiles)
+        .ok_or_else(|| internal_error!("Bazel tool runfiles should be a list"))?;
+    Ok(tools.iter().map(|tool| {
+        let tool = StructRef::from_value(tool)
+            .ok_or_else(|| internal_error!("Bazel tool runfiles entry should be a struct"))?;
+        let mut executable = None;
+        let mut runfiles = None;
+        for (name, value) in tool.iter() {
+            match name.as_str() {
+                "executable" => executable = Some(value),
+                "runfiles" => runfiles = Some(value),
+                _ => {}
+            }
+        }
+        Ok(BazelToolRunfiles {
+            executable: executable.ok_or_else(|| {
+                internal_error!("Bazel tool runfiles entry should have field `executable`")
+            })?,
+            runfiles: runfiles.ok_or_else(|| {
+                internal_error!("Bazel tool runfiles entry should have field `runfiles`")
+            })?,
+        })
+    }))
+}
+
+fn visit_bazel_runfiles_artifacts<'v>(
+    runfiles: Value<'v>,
+    artifact_visitor: &mut dyn CommandLineArtifactVisitor<'v>,
+) -> buck2_error::Result<()> {
+    if artifact_visitor.skip_hidden() {
+        return Ok(());
+    }
+    for entry in bazel_runfiles_entries(runfiles)? {
+        let entry = entry?;
+        let artifact =
+            ValueAsInputArtifactLike::unpack_value(entry.target_file)?.ok_or_else(|| {
+                internal_error!("Bazel executable runfiles target_file should be File")
+            })?;
+        artifact_visitor.visit_input(artifact.0.get_artifact_group()?, Vec::new());
+    }
+    Ok(())
+}
+
+fn visit_bazel_tool_runfiles_artifacts<'v>(
+    tool_runfiles: Value<'v>,
+    artifact_visitor: &mut dyn CommandLineArtifactVisitor<'v>,
+) -> buck2_error::Result<()> {
+    if artifact_visitor.skip_hidden() {
+        return Ok(());
+    }
+    for tool in bazel_tool_runfiles(tool_runfiles)? {
+        let tool = tool?;
+        let executable = ValueAsInputArtifactLike::unpack_value(tool.executable)?
+            .ok_or_else(|| internal_error!("Bazel tool runfiles executable should be File"))?;
+        artifact_visitor.visit_input(executable.0.get_artifact_group()?, Vec::new());
+        visit_bazel_runfiles_artifacts(tool.runfiles, artifact_visitor)?;
+    }
+    Ok(())
+}
+
 impl RunAction {
-    fn visit_artifacts<'a>(
-        &'a self,
+    fn bazel_worker_execroot(fs: &ArtifactFs) -> ProjectRelativePathBuf {
+        fs.buck_out_path_resolver()
+            .root()
+            .join(ForwardRelativePathBuf::unchecked_new(
+                "__bazel_execroot".to_owned(),
+            ))
+    }
+
+    fn bazel_private_execroot(
+        fs: &ArtifactFs,
+        scratch: &BuckOutScratchPath,
+    ) -> buck2_error::Result<ProjectRelativePathBuf> {
+        let scratch_path = fs.buck_out_path_resolver().resolve_scratch(scratch)?;
+        let mut hasher = BuckDefaultHasher::new();
+        scratch_path.as_str().hash(&mut hasher);
+
+        Ok(fs
+            .buck_out_path_resolver()
+            .root()
+            .join(ForwardRelativePathBuf::unchecked_new(format!(
+                "__bazel_execroot/{:016x}",
+                hasher.finish()
+            ))))
+    }
+
+    fn bazel_execroot_path(
+        bazel_execroot: &ProjectRelativePath,
+        path: String,
+    ) -> buck2_error::Result<ProjectRelativePathBuf> {
+        let path = ForwardRelativePathBuf::try_from(path)
+            .buck_error_context("Invalid Bazel execroot path")?;
+        Ok(bazel_execroot.join(path))
+    }
+
+    fn collect_inputs(
+        inner: &UnregisteredRunAction,
+        starlark_values: &OwnedFrozenValueTyped<FrozenStarlarkRunActionValues>,
+        outputs: &BoxSliceSet<BuildArtifact>,
+    ) -> buck2_error::Result<(
+        Box<[ArtifactGroup]>,
+        Box<[ArtifactGroup]>,
+        Box<[ArtifactGroup]>,
+    )> {
+        let mut artifact_visitor = SimpleCommandLineArtifactVisitor::new();
+        Self::visit_artifacts_for(inner, starlark_values, outputs, &mut artifact_visitor)?;
+        let inputs = artifact_visitor
+            .inputs
+            .into_iter()
+            .collect::<Vec<_>>()
+            .into_boxed_slice();
+
+        let command_inputs = if inner.dep_files.is_empty() && inner.metadata_param.is_none() {
+            let mut command_input_visitor = DepFilesCommandLineVisitor::new(&inner.dep_files);
+            Self::visit_command_artifacts_for(
+                inner,
+                starlark_values,
+                outputs,
+                &mut command_input_visitor,
+            )?;
+            let mut command_inputs = BuckIndexSet::default();
+            command_input_visitor
+                .inputs
+                .iter()
+                .flat_map(|inputs| inputs.iter())
+                .for_each(|input| {
+                    command_inputs.insert(input.dupe());
+                });
+            command_inputs
+                .into_iter()
+                .collect::<Vec<_>>()
+                .into_boxed_slice()
+        } else {
+            Box::default()
+        };
+
+        let mut non_hidden_visitor = SkipHiddenCommandLineArtifactVisitor::new();
+        Self::visit_artifacts_for(inner, starlark_values, outputs, &mut non_hidden_visitor)?;
+        let non_hidden_inputs = non_hidden_visitor
+            .inputs
+            .into_iter()
+            .collect::<Vec<_>>()
+            .into_boxed_slice();
+
+        Ok((inputs, command_inputs, non_hidden_inputs))
+    }
+
+    fn visit_artifacts_for<'a>(
+        inner: &'a UnregisteredRunAction,
+        starlark_values: &'a OwnedFrozenValueTyped<FrozenStarlarkRunActionValues>,
+        outputs: &'a BoxSliceSet<BuildArtifact>,
         artifact_visitor: &mut dyn CommandLineArtifactVisitor<'a>,
     ) -> buck2_error::Result<()> {
-        let values = Self::unpack(&self.starlark_values)?;
-        values.args.visit_artifacts(artifact_visitor)?;
-        values.exe.visit_artifacts(artifact_visitor)?;
+        let values = Self::unpack(starlark_values)?;
+        if inner.bazel_use_default_shell_env.is_some() {
+            if let Some(bazel_inputs) = values.bazel_inputs {
+                visit_run_action_command_line_artifacts(outputs, bazel_inputs, artifact_visitor)?;
+            }
+            visit_run_action_command_line_artifacts(outputs, values.exe, artifact_visitor)?;
+            visit_run_action_command_line_artifacts(outputs, values.args, artifact_visitor)?;
+            if let Some(runfiles) = values.bazel_executable_runfiles {
+                visit_bazel_runfiles_artifacts(runfiles, artifact_visitor)?;
+            }
+            if let Some(tool_runfiles) = values.bazel_tool_runfiles {
+                visit_bazel_tool_runfiles_artifacts(tool_runfiles, artifact_visitor)?;
+            }
+        } else {
+            visit_run_action_command_line_artifacts(outputs, values.args, artifact_visitor)?;
+            visit_run_action_command_line_artifacts(outputs, values.exe, artifact_visitor)?;
+        }
         if let Some(worker) = values.worker {
-            worker.exe.visit_artifacts(artifact_visitor)?;
+            visit_run_action_command_line_artifacts(outputs, worker.exe, artifact_visitor)?;
         }
         if let Some(remote_worker) = values.remote_worker {
-            remote_worker.exe.visit_artifacts(artifact_visitor)?;
+            visit_run_action_command_line_artifacts(outputs, remote_worker.exe, artifact_visitor)?;
             for (_, v) in remote_worker.env.iter() {
-                v.visit_artifacts(artifact_visitor)?;
+                visit_run_action_command_line_artifacts(outputs, *v, artifact_visitor)?;
             }
         }
         for (_, v) in values.env.iter() {
-            v.visit_artifacts(artifact_visitor)?;
+            visit_run_action_command_line_artifacts(outputs, *v, artifact_visitor)?;
+        }
+        Ok(())
+    }
+
+    fn visit_command_artifacts_for<'a>(
+        inner: &'a UnregisteredRunAction,
+        starlark_values: &'a OwnedFrozenValueTyped<FrozenStarlarkRunActionValues>,
+        outputs: &'a BoxSliceSet<BuildArtifact>,
+        artifact_visitor: &mut dyn CommandLineArtifactVisitor<'a>,
+    ) -> buck2_error::Result<()> {
+        let values = Self::unpack(starlark_values)?;
+        visit_run_action_command_line_artifacts(outputs, values.exe, artifact_visitor)?;
+        visit_run_action_command_line_artifacts(outputs, values.args, artifact_visitor)?;
+        if inner.bazel_use_default_shell_env.is_some() {
+            if let Some(bazel_inputs) = values.bazel_inputs {
+                visit_run_action_command_line_artifacts(outputs, bazel_inputs, artifact_visitor)?;
+            }
+            if let Some(runfiles) = values.bazel_executable_runfiles {
+                visit_bazel_runfiles_artifacts(runfiles, artifact_visitor)?;
+            }
+            if let Some(tool_runfiles) = values.bazel_tool_runfiles {
+                visit_bazel_tool_runfiles_artifacts(tool_runfiles, artifact_visitor)?;
+            }
+        }
+        for (_, v) in values.env.iter() {
+            visit_run_action_command_line_artifacts(outputs, *v, artifact_visitor)?;
         }
         Ok(())
     }
@@ -504,8 +2160,11 @@ impl RunAction {
             id: WorkerId(worker.id),
             concurrency: worker.concurrency(),
             streaming: worker.streaming(),
+            supports_bazel_local_persistent_worker_protocol: worker
+                .supports_bazel_local_persistent_worker_protocol(),
             supports_bazel_remote_persistent_worker_protocol: worker
                 .supports_bazel_remote_persistent_worker_protocol(),
+            requires_bazel_worker_sandboxing: worker.requires_bazel_worker_sandboxing(),
         });
 
         let remote_worker: Option<&WorkerInfo> = values.remote_worker()?.map(|v| v.typed);
@@ -516,12 +2175,25 @@ impl RunAction {
             id: WorkerId(remote_worker.id),
             concurrency: remote_worker.concurrency(),
             streaming: false,
+            supports_bazel_local_persistent_worker_protocol: false,
             supports_bazel_remote_persistent_worker_protocol: false,
+            requires_bazel_worker_sandboxing: false,
         });
 
         Ok(UnpackedRunActionValues {
             exe,
             args,
+            bazel_inputs: values
+                .bazel_inputs
+                .as_ref()
+                .map(|bazel_inputs| &**bazel_inputs as &dyn CommandLineArgLike),
+            bazel_executable_runfiles: values
+                .bazel_executable_runfiles
+                .map(|runfiles: FrozenValue| runfiles.to_value()),
+            bazel_tool_runfiles: values
+                .bazel_tool_runfiles
+                .map(|runfiles: FrozenValue| runfiles.to_value()),
+            bazel_cc_command_line: values.bazel_cc_command_line.as_deref(),
             env,
             worker,
             remote_worker,
@@ -529,42 +2201,347 @@ impl RunAction {
     }
 
     /// Get the command line expansion for this RunAction.
+    fn prepare_command_line_for_local_action_cache_probe<'v>(
+        &'v self,
+        action_execution_ctx: &dyn ActionExecutionCtx,
+        artifact_visitor: &mut RunActionVisitor<'v>,
+        collect_action_inputs: bool,
+    ) -> buck2_error::Result<(ExpandedCommandLineDigest, Vec<RunActionParamFile>)> {
+        let values = Self::unpack(&self.starlark_values)?;
+        let bazel_cc_command_line = values
+            .bazel_cc_command_line
+            .map(expand_bazel_cc_compile_command_line)
+            .transpose()?;
+
+        let fs = &action_execution_ctx.executor_fs();
+        let bazel_paths = self.inner.bazel_use_default_shell_env.is_some();
+        let base_output = self
+            .outputs
+            .iter()
+            .next()
+            .ok_or_else(|| internal_error!("run actions must have at least one output"))?;
+        let base_bazel_exec_path = if bazel_paths {
+            let artifact = Artifact::from(base_output.dupe());
+            Some(bazel_normalize_buck_owned_exec_paths(&bazel_artifact_path(
+                artifact.get_path(),
+            )))
+        } else {
+            None
+        };
+        let base_path = if let Some(base_bazel_exec_path) = &base_bazel_exec_path {
+            bazel_param_file_base_path(base_bazel_exec_path)?
+        } else {
+            base_output.get_path().path().to_owned()
+        };
+        let param_files = RunActionParamFilesRef::new(
+            base_output.get_path().owner().dupe(),
+            base_path,
+            base_bazel_exec_path,
+            base_output.get_path().bazel_output_root(),
+            if self.all_outputs_are_content_based() {
+                BuckOutPathKind::ContentHash
+            } else {
+                BuckOutPathKind::Configuration
+            },
+            action_execution_ctx.digest_config(),
+        );
+
+        if bazel_paths && collect_action_inputs {
+            let mut output_visitor = BazelOutputExecPathVisitor::new(
+                &self.outputs,
+                &mut artifact_visitor.bazel_output_exec_paths,
+            );
+            values.exe.visit_artifacts(&mut output_visitor)?;
+            if values.bazel_cc_command_line.is_none() {
+                values.args.visit_artifacts(&mut output_visitor)?;
+            }
+            if let Some(bazel_inputs) = values.bazel_inputs {
+                bazel_inputs.visit_artifacts(&mut output_visitor)?;
+            }
+            for (_, value) in &values.env {
+                value.visit_artifacts(&mut output_visitor)?;
+            }
+            if let Some(worker) = &values.worker {
+                worker.exe.visit_artifacts(&mut output_visitor)?;
+                for (_, value) in &worker.env {
+                    value.visit_artifacts(&mut output_visitor)?;
+                }
+            }
+            if let Some(remote_worker) = &values.remote_worker {
+                remote_worker.exe.visit_artifacts(&mut output_visitor)?;
+                for (_, value) in &remote_worker.env {
+                    value.visit_artifacts(&mut output_visitor)?;
+                }
+            }
+        }
+
+        // Creating the artifact_path_mapping isn't free, because we have to iterate TSets.
+        // Therefore, only create a mapping if we're going to use it - i.e. if the input
+        // is not hidden.
+        let input_artifact_group_values;
+        let input_artifact_path_mapping = if bazel_paths {
+            RunActionInputArtifactPathMapper::Bazel(BazelRunActionArtifactPathMapper::new(
+                action_execution_ctx,
+                &self.non_hidden_inputs,
+            ))
+        } else {
+            input_artifact_group_values = self
+                .non_hidden_inputs
+                .iter()
+                .map(|group| action_execution_ctx.artifact_values(group))
+                .collect::<Vec<_>>();
+            RunActionInputArtifactPathMapper::Default(ArtifactPathMapperImpl::from_values(
+                input_artifact_group_values.iter().copied(),
+            ))
+        };
+        let artifact_path_mapping =
+            RunActionOutputArtifactPathMapper::new(&self.outputs, &input_artifact_path_mapping);
+
+        let mut command_line_digest = ExpandedCommandLineFingerprinter::new();
+        if let Some(args) = &self.inner.bazel_string_args {
+            push_string_args_for_local_action_cache(&mut command_line_digest, args, bazel_paths);
+        } else {
+            let mut cli_ctx = RunActionCommandLineContext::new(
+                fs,
+                bazel_paths,
+                param_files.clone(),
+                RunActionParamFileMode::RecordDigestOnly,
+            );
+            let mut command_line_builder = LocalActionCacheCommandLineFingerprinter {
+                inner: &mut command_line_digest,
+                bazel_paths,
+            };
+            values.exe.add_to_command_line(
+                &mut command_line_builder,
+                &mut cli_ctx,
+                &artifact_path_mapping,
+            )?;
+        }
+        command_line_digest.push_count();
+        if collect_action_inputs {
+            visit_run_action_command_line_artifacts(&self.outputs, values.exe, artifact_visitor)?;
+        }
+
+        if let Some((args, _)) = &bazel_cc_command_line {
+            push_string_args_for_local_action_cache(&mut command_line_digest, args, bazel_paths);
+        } else {
+            let mut cli_ctx = RunActionCommandLineContext::new(
+                fs,
+                bazel_paths,
+                param_files.clone(),
+                RunActionParamFileMode::RecordDigestOnly,
+            );
+            let mut command_line_builder = LocalActionCacheCommandLineFingerprinter {
+                inner: &mut command_line_digest,
+                bazel_paths,
+            };
+            values.args.add_to_command_line(
+                &mut command_line_builder,
+                &mut cli_ctx,
+                &artifact_path_mapping,
+            )?;
+        }
+        command_line_digest.push_count();
+        if collect_action_inputs
+            && self.inner.bazel_string_args.is_none()
+            && values.bazel_cc_command_line.is_none()
+        {
+            visit_run_action_command_line_artifacts(&self.outputs, values.args, artifact_visitor)?;
+        }
+
+        if collect_action_inputs && let Some(bazel_inputs) = values.bazel_inputs {
+            visit_run_action_command_line_artifacts(&self.outputs, bazel_inputs, artifact_visitor)?;
+        }
+        if collect_action_inputs && let Some(runfiles) = values.bazel_executable_runfiles {
+            visit_bazel_runfiles_artifacts(runfiles, artifact_visitor)?;
+        }
+        if collect_action_inputs && let Some(tool_runfiles) = values.bazel_tool_runfiles {
+            visit_bazel_tool_runfiles_artifacts(tool_runfiles, artifact_visitor)?;
+        }
+
+        let cli_env: buck2_error::Result<SortedVectorMap<_, _>> = values
+            .env
+            .into_iter()
+            .map(|(k, v)| {
+                let mut env = String::new();
+                let mut ctx = RunActionCommandLineContext::new(
+                    fs,
+                    bazel_paths,
+                    param_files.clone(),
+                    RunActionParamFileMode::RecordDigestOnly,
+                );
+                v.add_to_command_line(
+                    &mut SpaceSeparatedCommandLineBuilder::wrap_string(&mut env),
+                    &mut ctx,
+                    &artifact_path_mapping,
+                )?;
+                if collect_action_inputs {
+                    visit_run_action_command_line_artifacts(&self.outputs, v, artifact_visitor)?;
+                }
+                Ok((k.to_owned(), env))
+            })
+            .collect();
+        let mut cli_env = cli_env?;
+        if let Some((_, env)) = &bazel_cc_command_line {
+            for (key, value) in env {
+                cli_env.insert(key.to_owned(), value.to_owned());
+            }
+        }
+        if bazel_paths {
+            bazel_normalize_command_env(&mut cli_env);
+        }
+        for (k, v) in cli_env {
+            command_line_digest.push_arg(k);
+            command_line_digest.push_arg(v);
+        }
+        command_line_digest.push_count();
+
+        let param_files = param_files.files(false)?;
+        fingerprint_param_files(&mut command_line_digest, &param_files);
+
+        Ok((command_line_digest.finalize(), param_files))
+    }
+
     fn expand_command_line_and_worker<'v>(
         &'v self,
         action_execution_ctx: &dyn ActionExecutionCtx,
         artifact_visitor: &mut RunActionVisitor<'v>,
+        collect_dep_file_digest: bool,
+        collect_action_inputs: bool,
     ) -> buck2_error::Result<(
         ExpandedCommandLine,
-        ExpandedCommandLineDigestForDepFiles,
+        Option<ExpandedCommandLineDigestForDepFiles>,
         Option<WorkerSpec>,
         Option<RemoteWorkerSpec>,
+        Vec<RunActionParamFile>,
     )> {
         let fs = &action_execution_ctx.executor_fs();
-        let mut cli_ctx = DefaultCommandLineContext::new(fs);
+        let bazel_paths = self.inner.bazel_use_default_shell_env.is_some();
+        let base_output = self
+            .outputs
+            .iter()
+            .next()
+            .ok_or_else(|| internal_error!("run actions must have at least one output"))?;
+        let base_bazel_exec_path = if bazel_paths {
+            let artifact = Artifact::from(base_output.dupe());
+            Some(bazel_normalize_buck_owned_exec_paths(&bazel_artifact_path(
+                artifact.get_path(),
+            )))
+        } else {
+            None
+        };
+        let base_path = if let Some(base_bazel_exec_path) = &base_bazel_exec_path {
+            bazel_param_file_base_path(base_bazel_exec_path)?
+        } else {
+            base_output.get_path().path().to_owned()
+        };
+        let param_files = RunActionParamFilesRef::new(
+            base_output.get_path().owner().dupe(),
+            base_path,
+            base_bazel_exec_path,
+            base_output.get_path().bazel_output_root(),
+            if self.all_outputs_are_content_based() {
+                BuckOutPathKind::ContentHash
+            } else {
+                BuckOutPathKind::Configuration
+            },
+            action_execution_ctx.digest_config(),
+        );
+        let mut cli_ctx = RunActionCommandLineContext::new(
+            fs,
+            bazel_paths,
+            param_files.clone(),
+            RunActionParamFileMode::Record,
+        );
+        let mut cli_digest_ctx = collect_dep_file_digest.then(|| {
+            RunActionCommandLineContext::new(
+                fs,
+                bazel_paths,
+                param_files.clone(),
+                RunActionParamFileMode::Replay,
+            )
+        });
         let values = Self::unpack(&self.starlark_values)?;
+        let bazel_cc_command_line = values
+            .bazel_cc_command_line
+            .map(expand_bazel_cc_compile_command_line)
+            .transpose()?;
+        if bazel_paths && collect_action_inputs {
+            let mut output_visitor = BazelOutputExecPathVisitor::new(
+                &self.outputs,
+                &mut artifact_visitor.bazel_output_exec_paths,
+            );
+            values.exe.visit_artifacts(&mut output_visitor)?;
+            if values.bazel_cc_command_line.is_none() {
+                values.args.visit_artifacts(&mut output_visitor)?;
+            }
+            if let Some(bazel_inputs) = values.bazel_inputs {
+                bazel_inputs.visit_artifacts(&mut output_visitor)?;
+            }
+            for (_, value) in &values.env {
+                value.visit_artifacts(&mut output_visitor)?;
+            }
+            if let Some(worker) = &values.worker {
+                worker.exe.visit_artifacts(&mut output_visitor)?;
+                for (_, value) in &worker.env {
+                    value.visit_artifacts(&mut output_visitor)?;
+                }
+            }
+            if let Some(remote_worker) = &values.remote_worker {
+                remote_worker.exe.visit_artifacts(&mut output_visitor)?;
+                for (_, value) in &remote_worker.env {
+                    value.visit_artifacts(&mut output_visitor)?;
+                }
+            }
+        }
 
-        let mut command_line_digest_for_dep_files = ExpandedCommandLineFingerprinter::new();
+        let mut command_line_digest_for_dep_files =
+            collect_dep_file_digest.then(ExpandedCommandLineFingerprinter::new);
 
         let mut exe_rendered = Vec::<String>::new();
 
         // Creating the artifact_path_mapping isn't free, because we have to iterate TSets.
         // Therefore, only create a mapping if we're going to use it - i.e. if the input
         // is not hidden.
-        let mut skip_hidden_visitor = SkipHiddenCommandLineArtifactVisitor::new();
-        self.visit_artifacts(&mut skip_hidden_visitor)?;
+        let input_artifact_group_values;
+        let input_artifact_path_mapping = if bazel_paths {
+            RunActionInputArtifactPathMapper::Bazel(BazelRunActionArtifactPathMapper::new(
+                action_execution_ctx,
+                &self.non_hidden_inputs,
+            ))
+        } else {
+            input_artifact_group_values = self
+                .non_hidden_inputs
+                .iter()
+                .map(|group| action_execution_ctx.artifact_values(group))
+                .collect::<Vec<_>>();
+            RunActionInputArtifactPathMapper::Default(ArtifactPathMapperImpl::from_values(
+                input_artifact_group_values.iter().copied(),
+            ))
+        };
         let artifact_path_mapping =
-            action_execution_ctx.artifact_path_mapping(Some(skip_hidden_visitor.inputs));
-        let artifact_path_mapping_for_dep_files = DepFilesPlaceholderArtifactPathMapper {};
+            RunActionOutputArtifactPathMapper::new(&self.outputs, &input_artifact_path_mapping);
+        let dep_files_artifact_path_mapping = DepFilesPlaceholderArtifactPathMapperWithValues {
+            values: &input_artifact_path_mapping,
+        };
+        let artifact_path_mapping_for_dep_files =
+            RunActionOutputArtifactPathMapper::new(&self.outputs, &dep_files_artifact_path_mapping);
         values
             .exe
             .add_to_command_line(&mut exe_rendered, &mut cli_ctx, &artifact_path_mapping)?;
-        values.exe.add_to_command_line(
-            &mut command_line_digest_for_dep_files,
-            &mut cli_ctx,
-            &artifact_path_mapping_for_dep_files,
-        )?;
-        values.exe.visit_artifacts(artifact_visitor)?;
-        command_line_digest_for_dep_files.push_count();
+        if let Some(command_line_digest_for_dep_files) = &mut command_line_digest_for_dep_files {
+            values.exe.add_to_command_line(
+                command_line_digest_for_dep_files,
+                cli_digest_ctx
+                    .as_mut()
+                    .expect("dep-file digest context must exist when digest is collected"),
+                &artifact_path_mapping_for_dep_files,
+            )?;
+            command_line_digest_for_dep_files.push_count();
+        }
+        if collect_action_inputs {
+            visit_run_action_command_line_artifacts(&self.outputs, values.exe, artifact_visitor)?;
+        }
 
         let worker = if let Some(worker) = values.worker {
             let mut worker_rendered = Vec::<String>::new();
@@ -574,32 +2551,60 @@ impl RunAction {
                 &mut cli_ctx,
                 &artifact_path_mapping,
             )?;
-            worker.exe.add_to_command_line(
-                &mut command_line_digest_for_dep_files,
-                &mut cli_ctx,
-                &artifact_path_mapping_for_dep_files,
+            if let Some(command_line_digest_for_dep_files) = &mut command_line_digest_for_dep_files
+            {
+                worker.exe.add_to_command_line(
+                    command_line_digest_for_dep_files,
+                    cli_digest_ctx
+                        .as_mut()
+                        .expect("dep-file digest context must exist when digest is collected"),
+                    &artifact_path_mapping_for_dep_files,
+                )?;
+            }
+            visit_run_action_command_line_artifacts(
+                &self.outputs,
+                worker.exe,
+                &mut local_worker_visitor,
             )?;
-            worker.exe.visit_artifacts(&mut local_worker_visitor)?;
             let worker_env: buck2_error::Result<SortedVectorMap<_, _>> = worker
                 .env
                 .into_iter()
                 .map(|(k, v)| {
                     let mut env = String::new();
-                    let mut ctx = DefaultCommandLineContext::new(fs);
+                    let mut ctx = RunActionCommandLineContext::new(
+                        fs,
+                        bazel_paths,
+                        param_files.clone(),
+                        RunActionParamFileMode::Record,
+                    );
                     v.add_to_command_line(
                         &mut SpaceSeparatedCommandLineBuilder::wrap_string(&mut env),
                         &mut ctx,
                         &artifact_path_mapping,
                     )?;
-                    v.visit_artifacts(&mut local_worker_visitor)?;
-
-                    command_line_digest_for_dep_files.push_arg(k.to_owned());
-                    v.add_to_command_line(
-                        &mut command_line_digest_for_dep_files,
-                        &mut ctx,
-                        &artifact_path_mapping_for_dep_files,
+                    visit_run_action_command_line_artifacts(
+                        &self.outputs,
+                        v,
+                        &mut local_worker_visitor,
                     )?;
-                    command_line_digest_for_dep_files.push_count();
+
+                    if let Some(command_line_digest_for_dep_files) =
+                        &mut command_line_digest_for_dep_files
+                    {
+                        let mut digest_ctx = RunActionCommandLineContext::new(
+                            fs,
+                            bazel_paths,
+                            param_files.clone(),
+                            RunActionParamFileMode::Replay,
+                        );
+                        command_line_digest_for_dep_files.push_arg(k.to_owned());
+                        v.add_to_command_line(
+                            command_line_digest_for_dep_files,
+                            &mut digest_ctx,
+                            &artifact_path_mapping_for_dep_files,
+                        )?;
+                        command_line_digest_for_dep_files.push_count();
+                    }
                     Ok((k.to_owned(), env))
                 })
                 .collect();
@@ -625,7 +2630,11 @@ impl RunAction {
 
             let worker_key = if worker.supports_bazel_remote_persistent_worker_protocol {
                 let mut worker_visitor = SimpleCommandLineArtifactVisitor::new();
-                worker.exe.visit_artifacts(&mut worker_visitor)?;
+                visit_run_action_command_line_artifacts(
+                    &self.outputs,
+                    worker.exe,
+                    &mut worker_visitor,
+                )?;
                 if !worker_visitor.declared_outputs.is_empty()
                     && !worker_visitor.frozen_outputs.is_empty()
                 {
@@ -639,7 +2648,7 @@ impl RunAction {
                     .inputs()
                     .map(|group| action_execution_ctx.artifact_values(group))
                     .collect();
-                let (_, worker_digest) = metadata_content(
+                let worker_digest = metadata_digest(
                     fs.fs(),
                     &worker_inputs,
                     action_execution_ctx.digest_config(),
@@ -652,9 +2661,15 @@ impl RunAction {
             Some(WorkerSpec {
                 exe: worker_rendered,
                 id: worker.id,
+                protocol: if worker.supports_bazel_local_persistent_worker_protocol {
+                    WorkerProtocol::Bazel
+                } else {
+                    WorkerProtocol::Buck2
+                },
                 env: worker_env?,
                 concurrency: worker.concurrency,
                 streaming: worker.streaming,
+                bazel_worker_sandboxing: worker.requires_bazel_worker_sandboxing,
                 remote_key: worker_key,
                 input_paths,
             })
@@ -670,35 +2685,61 @@ impl RunAction {
                 &mut cli_ctx,
                 &artifact_path_mapping,
             )?;
-            remote_worker.exe.add_to_command_line(
-                &mut command_line_digest_for_dep_files,
-                &mut cli_ctx,
-                &artifact_path_mapping_for_dep_files,
+            if let Some(command_line_digest_for_dep_files) = &mut command_line_digest_for_dep_files
+            {
+                remote_worker.exe.add_to_command_line(
+                    command_line_digest_for_dep_files,
+                    cli_digest_ctx
+                        .as_mut()
+                        .expect("dep-file digest context must exist when digest is collected"),
+                    &artifact_path_mapping_for_dep_files,
+                )?;
+            }
+            visit_run_action_command_line_artifacts(
+                &self.outputs,
+                remote_worker.exe,
+                &mut remote_worker_init_visitor,
             )?;
-            remote_worker
-                .exe
-                .visit_artifacts(&mut remote_worker_init_visitor)?;
 
             let remote_worker_env: buck2_error::Result<SortedVectorMap<_, _>> = remote_worker
                 .env
                 .into_iter()
                 .map(|(k, v)| {
                     let mut env = String::new();
-                    let mut ctx = DefaultCommandLineContext::new(fs);
+                    let mut ctx = RunActionCommandLineContext::new(
+                        fs,
+                        bazel_paths,
+                        param_files.clone(),
+                        RunActionParamFileMode::Record,
+                    );
                     v.add_to_command_line(
                         &mut SpaceSeparatedCommandLineBuilder::wrap_string(&mut env),
                         &mut ctx,
                         &artifact_path_mapping,
                     )?;
-                    v.visit_artifacts(&mut remote_worker_init_visitor)?;
-
-                    command_line_digest_for_dep_files.push_arg(k.to_owned());
-                    v.add_to_command_line(
-                        &mut command_line_digest_for_dep_files,
-                        &mut ctx,
-                        &artifact_path_mapping_for_dep_files,
+                    visit_run_action_command_line_artifacts(
+                        &self.outputs,
+                        v,
+                        &mut remote_worker_init_visitor,
                     )?;
-                    command_line_digest_for_dep_files.push_count();
+
+                    if let Some(command_line_digest_for_dep_files) =
+                        &mut command_line_digest_for_dep_files
+                    {
+                        let mut digest_ctx = RunActionCommandLineContext::new(
+                            fs,
+                            bazel_paths,
+                            param_files.clone(),
+                            RunActionParamFileMode::Replay,
+                        );
+                        command_line_digest_for_dep_files.push_arg(k.to_owned());
+                        v.add_to_command_line(
+                            command_line_digest_for_dep_files,
+                            &mut digest_ctx,
+                            &artifact_path_mapping_for_dep_files,
+                        )?;
+                        command_line_digest_for_dep_files.push_count();
+                    }
                     Ok((k.to_owned(), env))
                 })
                 .collect();
@@ -733,57 +2774,382 @@ impl RunAction {
         };
 
         let mut args_rendered = Vec::<String>::new();
-        values.args.add_to_command_line(
-            &mut args_rendered,
-            &mut cli_ctx,
-            &artifact_path_mapping,
-        )?;
-        values.args.add_to_command_line(
-            &mut command_line_digest_for_dep_files,
-            &mut cli_ctx,
-            &artifact_path_mapping_for_dep_files,
-        )?;
-        values.args.visit_artifacts(artifact_visitor)?;
-        command_line_digest_for_dep_files.push_count();
+        if let Some(args) = &self.inner.bazel_string_args {
+            args_rendered.extend(args.iter().cloned());
+            if let Some(command_line_digest_for_dep_files) = &mut command_line_digest_for_dep_files
+            {
+                for arg in args {
+                    command_line_digest_for_dep_files.push_arg(arg.to_owned());
+                }
+                command_line_digest_for_dep_files.push_count();
+            }
+        } else if let Some((args, _)) = &bazel_cc_command_line {
+            args_rendered.extend(args.iter().cloned());
+            if let Some(command_line_digest_for_dep_files) = &mut command_line_digest_for_dep_files
+            {
+                for arg in args {
+                    command_line_digest_for_dep_files.push_arg(arg.to_owned());
+                }
+                command_line_digest_for_dep_files.push_count();
+            }
+        } else {
+            values.args.add_to_command_line(
+                &mut args_rendered,
+                &mut cli_ctx,
+                &artifact_path_mapping,
+            )?;
+            if let Some(command_line_digest_for_dep_files) = &mut command_line_digest_for_dep_files
+            {
+                values.args.add_to_command_line(
+                    command_line_digest_for_dep_files,
+                    cli_digest_ctx
+                        .as_mut()
+                        .expect("dep-file digest context must exist when digest is collected"),
+                    &artifact_path_mapping_for_dep_files,
+                )?;
+                command_line_digest_for_dep_files.push_count();
+            }
+        }
+        if collect_action_inputs
+            && self.inner.bazel_string_args.is_none()
+            && values.bazel_cc_command_line.is_none()
+        {
+            visit_run_action_command_line_artifacts(&self.outputs, values.args, artifact_visitor)?;
+        }
 
-        let env_len = values.env.len();
+        if collect_action_inputs && let Some(bazel_inputs) = values.bazel_inputs {
+            visit_run_action_command_line_artifacts(&self.outputs, bazel_inputs, artifact_visitor)?;
+        }
+        if collect_action_inputs && let Some(runfiles) = values.bazel_executable_runfiles {
+            visit_bazel_runfiles_artifacts(runfiles, artifact_visitor)?;
+        }
+        if collect_action_inputs && let Some(tool_runfiles) = values.bazel_tool_runfiles {
+            visit_bazel_tool_runfiles_artifacts(tool_runfiles, artifact_visitor)?;
+        }
+
+        let bazel_cc_env_len = bazel_cc_command_line
+            .as_ref()
+            .map_or(0, |(_, env)| env.len());
+        let env_len = values.env.len() + bazel_cc_env_len;
         let cli_env: buck2_error::Result<SortedVectorMap<_, _>> = values
             .env
             .into_iter()
             .map(|(k, v)| {
                 let mut env = String::new();
-                let mut ctx = DefaultCommandLineContext::new(fs);
+                let mut ctx = RunActionCommandLineContext::new(
+                    fs,
+                    bazel_paths,
+                    param_files.clone(),
+                    RunActionParamFileMode::Record,
+                );
                 v.add_to_command_line(
                     &mut SpaceSeparatedCommandLineBuilder::wrap_string(&mut env),
                     &mut ctx,
                     &artifact_path_mapping,
                 )?;
-                v.visit_artifacts(artifact_visitor)?;
+                if collect_action_inputs {
+                    visit_run_action_command_line_artifacts(&self.outputs, v, artifact_visitor)?;
+                }
 
-                command_line_digest_for_dep_files.push_arg(k.to_owned());
-                v.add_to_command_line(
-                    &mut command_line_digest_for_dep_files,
-                    &mut ctx,
-                    &artifact_path_mapping_for_dep_files,
-                )?;
-                command_line_digest_for_dep_files.push_count();
+                if let Some(command_line_digest_for_dep_files) =
+                    &mut command_line_digest_for_dep_files
+                {
+                    let mut digest_ctx = RunActionCommandLineContext::new(
+                        fs,
+                        bazel_paths,
+                        param_files.clone(),
+                        RunActionParamFileMode::Replay,
+                    );
+                    command_line_digest_for_dep_files.push_arg(k.to_owned());
+                    v.add_to_command_line(
+                        command_line_digest_for_dep_files,
+                        &mut digest_ctx,
+                        &artifact_path_mapping_for_dep_files,
+                    )?;
+                    command_line_digest_for_dep_files.push_count();
+                }
                 Ok((k.to_owned(), env))
             })
             .collect();
+        let mut cli_env = cli_env?;
+        if let Some((_, env)) = &bazel_cc_command_line {
+            for (key, value) in env {
+                cli_env.insert(key.to_owned(), value.to_owned());
+                if let Some(command_line_digest_for_dep_files) =
+                    &mut command_line_digest_for_dep_files
+                {
+                    command_line_digest_for_dep_files.push_arg(key.to_owned());
+                    command_line_digest_for_dep_files.push_arg(value.to_owned());
+                    command_line_digest_for_dep_files.push_count();
+                }
+            }
+        }
 
-        command_line_digest_for_dep_files.push_arg(env_len.to_string());
-        command_line_digest_for_dep_files.push_count();
+        if let Some(command_line_digest_for_dep_files) = &mut command_line_digest_for_dep_files {
+            command_line_digest_for_dep_files.push_arg(env_len.to_string());
+            command_line_digest_for_dep_files.push_count();
+        }
+
+        let mut worker = worker;
+        let mut remote_worker = remote_worker;
+        if bazel_paths {
+            bazel_normalize_command_line(&mut exe_rendered);
+            bazel_normalize_command_line(&mut args_rendered);
+            bazel_normalize_command_env(&mut cli_env);
+            if let Some(worker) = &mut worker {
+                bazel_normalize_command_line(&mut worker.exe);
+                bazel_normalize_command_env(&mut worker.env);
+            }
+            if let Some(remote_worker) = &mut remote_worker {
+                bazel_normalize_command_line(&mut remote_worker.init);
+                bazel_normalize_command_env(&mut remote_worker.env);
+            }
+        }
 
         Ok((
             ExpandedCommandLine {
                 exe: exe_rendered,
                 args: args_rendered,
-                env: cli_env?,
+                env: cli_env,
             },
-            command_line_digest_for_dep_files.finalize(),
+            command_line_digest_for_dep_files.map(|digest| digest.finalize()),
             worker,
             remote_worker,
+            param_files.files(collect_dep_file_digest)?,
         ))
+    }
+
+    fn prepare_workers_for_local_action_cache_probe<'v>(
+        &'v self,
+        action_execution_ctx: &dyn ActionExecutionCtx,
+        values: &UnpackedRunActionValues<'v>,
+    ) -> buck2_error::Result<
+        Option<(
+            Option<LocalActionCacheWorkerRef<'static>>,
+            Option<LocalActionCacheRemoteWorkerRef<'static>>,
+        )>,
+    > {
+        if values.worker.is_none() && values.remote_worker.is_none() {
+            return Ok(Some((None, None)));
+        }
+
+        let fs = &action_execution_ctx.executor_fs();
+        let bazel_paths = self.inner.bazel_use_default_shell_env.is_some();
+        let base_output = self
+            .outputs
+            .iter()
+            .next()
+            .ok_or_else(|| internal_error!("run actions must have at least one output"))?;
+        let base_bazel_exec_path = if bazel_paths {
+            let artifact = Artifact::from(base_output.dupe());
+            Some(bazel_normalize_buck_owned_exec_paths(&bazel_artifact_path(
+                artifact.get_path(),
+            )))
+        } else {
+            None
+        };
+        let base_path = if let Some(base_bazel_exec_path) = &base_bazel_exec_path {
+            bazel_param_file_base_path(base_bazel_exec_path)?
+        } else {
+            base_output.get_path().path().to_owned()
+        };
+        let param_files = RunActionParamFilesRef::new(
+            base_output.get_path().owner().dupe(),
+            base_path,
+            base_bazel_exec_path,
+            base_output.get_path().bazel_output_root(),
+            if self.all_outputs_are_content_based() {
+                BuckOutPathKind::ContentHash
+            } else {
+                BuckOutPathKind::Configuration
+            },
+            action_execution_ctx.digest_config(),
+        );
+
+        let input_artifact_group_values;
+        let input_artifact_path_mapping = if bazel_paths {
+            RunActionInputArtifactPathMapper::Bazel(BazelRunActionArtifactPathMapper::new(
+                action_execution_ctx,
+                &self.non_hidden_inputs,
+            ))
+        } else {
+            input_artifact_group_values = self
+                .non_hidden_inputs
+                .iter()
+                .map(|group| action_execution_ctx.artifact_values(group))
+                .collect::<Vec<_>>();
+            RunActionInputArtifactPathMapper::Default(ArtifactPathMapperImpl::from_values(
+                input_artifact_group_values.iter().copied(),
+            ))
+        };
+        let artifact_path_mapping =
+            RunActionOutputArtifactPathMapper::new(&self.outputs, &input_artifact_path_mapping);
+
+        let worker = if let Some(worker) = &values.worker {
+            let mut worker_rendered = Vec::<String>::new();
+            let mut cli_ctx = RunActionCommandLineContext::new(
+                fs,
+                bazel_paths,
+                param_files.clone(),
+                RunActionParamFileMode::RecordDigestOnly,
+            );
+            worker.exe.add_to_command_line(
+                &mut worker_rendered,
+                &mut cli_ctx,
+                &artifact_path_mapping,
+            )?;
+
+            let mut local_worker_visitor = SimpleCommandLineArtifactVisitor::new();
+            visit_run_action_command_line_artifacts(
+                &self.outputs,
+                worker.exe,
+                &mut local_worker_visitor,
+            )?;
+            let worker_env: buck2_error::Result<SortedVectorMap<_, _>> = worker
+                .env
+                .iter()
+                .map(|(k, v)| {
+                    let mut env = String::new();
+                    let mut ctx = RunActionCommandLineContext::new(
+                        fs,
+                        bazel_paths,
+                        param_files.clone(),
+                        RunActionParamFileMode::RecordDigestOnly,
+                    );
+                    v.add_to_command_line(
+                        &mut SpaceSeparatedCommandLineBuilder::wrap_string(&mut env),
+                        &mut ctx,
+                        &artifact_path_mapping,
+                    )?;
+                    visit_run_action_command_line_artifacts(
+                        &self.outputs,
+                        *v,
+                        &mut local_worker_visitor,
+                    )?;
+                    Ok(((*k).to_owned(), env))
+                })
+                .collect();
+
+            let local_worker_inputs: Vec<&ArtifactGroupValues> = local_worker_visitor
+                .inputs()
+                .map(|group| action_execution_ctx.artifact_values(group))
+                .collect();
+            let inputs: Vec<CommandExecutionInput> = local_worker_inputs[..]
+                .map(|&i| CommandExecutionInput::Artifact(Box::new(i.dupe())));
+
+            let worker_key = if worker.supports_bazel_remote_persistent_worker_protocol {
+                let worker_digest = metadata_digest(
+                    fs.fs(),
+                    &local_worker_inputs,
+                    action_execution_ctx.digest_config(),
+                )?;
+                Some(worker_digest)
+            } else {
+                None
+            };
+
+            Some(LocalActionCacheWorkerProbe {
+                exe: worker_rendered,
+                id: worker.id,
+                protocol: if worker.supports_bazel_local_persistent_worker_protocol {
+                    WorkerProtocol::Bazel
+                } else {
+                    WorkerProtocol::Buck2
+                },
+                env: worker_env?,
+                concurrency: worker.concurrency,
+                streaming: worker.streaming,
+                bazel_worker_sandboxing: worker.requires_bazel_worker_sandboxing,
+                remote_key: worker_key,
+                inputs,
+            })
+        } else {
+            None
+        };
+
+        let remote_worker = if let Some(remote_worker) = &values.remote_worker {
+            let mut remote_worker_init_visitor = SimpleCommandLineArtifactVisitor::new();
+            let mut remote_worker_init_rendered = Vec::<String>::new();
+            let mut cli_ctx = RunActionCommandLineContext::new(
+                fs,
+                bazel_paths,
+                param_files.clone(),
+                RunActionParamFileMode::RecordDigestOnly,
+            );
+            remote_worker.exe.add_to_command_line(
+                &mut remote_worker_init_rendered,
+                &mut cli_ctx,
+                &artifact_path_mapping,
+            )?;
+            visit_run_action_command_line_artifacts(
+                &self.outputs,
+                remote_worker.exe,
+                &mut remote_worker_init_visitor,
+            )?;
+
+            let remote_worker_env: buck2_error::Result<SortedVectorMap<_, _>> = remote_worker
+                .env
+                .iter()
+                .map(|(k, v)| {
+                    let mut env = String::new();
+                    let mut ctx = RunActionCommandLineContext::new(
+                        fs,
+                        bazel_paths,
+                        param_files.clone(),
+                        RunActionParamFileMode::RecordDigestOnly,
+                    );
+                    v.add_to_command_line(
+                        &mut SpaceSeparatedCommandLineBuilder::wrap_string(&mut env),
+                        &mut ctx,
+                        &artifact_path_mapping,
+                    )?;
+                    visit_run_action_command_line_artifacts(
+                        &self.outputs,
+                        *v,
+                        &mut remote_worker_init_visitor,
+                    )?;
+                    Ok(((*k).to_owned(), env))
+                })
+                .collect();
+
+            let artifact_inputs: Vec<&ArtifactGroupValues> = remote_worker_init_visitor
+                .inputs()
+                .map(|group| action_execution_ctx.artifact_values(group))
+                .collect();
+            let inputs: Vec<CommandExecutionInput> =
+                artifact_inputs[..].map(|&i| CommandExecutionInput::Artifact(Box::new(i.dupe())));
+            Some(LocalActionCacheRemoteWorkerProbe {
+                id: remote_worker.id,
+                init: remote_worker_init_rendered,
+                env: remote_worker_env?,
+                concurrency: remote_worker.concurrency,
+                inputs,
+            })
+        } else {
+            None
+        };
+
+        let mut worker = worker;
+        let mut remote_worker = remote_worker;
+        if bazel_paths {
+            if let Some(worker) = &mut worker {
+                bazel_normalize_command_line(&mut worker.exe);
+                bazel_normalize_command_env(&mut worker.env);
+            }
+            if let Some(remote_worker) = &mut remote_worker {
+                bazel_normalize_command_line(&mut remote_worker.init);
+                bazel_normalize_command_env(&mut remote_worker.env);
+            }
+        }
+
+        if !param_files.files(false)?.is_empty() {
+            return Ok(None);
+        }
+
+        Ok(Some((
+            worker.map(LocalActionCacheWorkerRef::Probe),
+            remote_worker.map(LocalActionCacheRemoteWorkerRef::Probe),
+        )))
     }
 
     pub(crate) fn new(
@@ -803,12 +3169,352 @@ impl RunAction {
             return Err(RunActionError::NoOutputsSpecified.into());
         }
 
+        let outputs = BoxSliceSet::from(outputs);
+        let (inputs, command_inputs, non_hidden_inputs) =
+            Self::collect_inputs(&inner, &starlark_values, &outputs)?;
+        let local_action_cache_inputs =
+            Self::collect_local_action_cache_inputs(&inner, &command_inputs, &non_hidden_inputs);
+
         Ok(RunAction {
             inner,
             starlark_values,
-            outputs: BoxSliceSet::from(outputs),
+            outputs,
+            inputs,
+            command_inputs,
+            local_action_cache_inputs,
+            non_hidden_inputs,
             error_handler,
         })
+    }
+
+    fn collect_local_action_cache_inputs(
+        inner: &UnregisteredRunAction,
+        command_inputs: &[ArtifactGroup],
+        non_hidden_inputs: &[ArtifactGroup],
+    ) -> Box<[ArtifactGroup]> {
+        if !inner.dep_files.is_empty() || inner.metadata_param.is_some() {
+            return Vec::new().into_boxed_slice();
+        }
+
+        let mut inputs =
+            BuckIndexSet::with_capacity(command_inputs.len() + non_hidden_inputs.len());
+        for input in command_inputs.iter().chain(non_hidden_inputs.iter()) {
+            inputs.insert(input.dupe());
+        }
+        inputs.into_iter().collect::<Vec<_>>().into_boxed_slice()
+    }
+
+    fn add_bazel_execroot_path_aliases(
+        &self,
+        inputs: &mut Vec<CommandExecutionInput>,
+        artifact_inputs: &[&ArtifactGroupValues],
+        artifact_fs: &ArtifactFs,
+        bazel_execroot: Option<&ProjectRelativePath>,
+    ) -> buck2_error::Result<()> {
+        let Some(bazel_execroot) = bazel_execroot else {
+            return Ok(());
+        };
+
+        let mut aliases = BuckIndexSet::new();
+        for artifact_group_values in artifact_inputs {
+            for (artifact, value) in artifact_group_values.iter() {
+                let source_path = artifact
+                    .get_path()
+                    .resolve(
+                        artifact_fs,
+                        if artifact.path_resolution_requires_artifact_value() {
+                            Some(value.content_based_path_hash())
+                        } else {
+                            None
+                        }
+                        .as_ref(),
+                    )
+                    .buck_error_context("Invalid Bazel execroot source path")?;
+                let source_requires_materialization =
+                    artifact.requires_materialization(artifact_fs);
+
+                let bazel_path = bazel_normalize_buck_owned_exec_paths(&bazel_artifact_path(
+                    artifact.get_path(),
+                ));
+                let bazel_alias = Self::bazel_execroot_path(bazel_execroot, bazel_path)?;
+                if aliases.insert(bazel_alias.clone()) && source_path != bazel_alias {
+                    inputs.push(CommandExecutionInput::ArtifactPathAlias {
+                        source_path: source_path.clone(),
+                        source_requires_materialization,
+                        path: bazel_alias,
+                        value: value.dupe(),
+                    });
+                }
+
+                let source_alias =
+                    Self::bazel_execroot_path(bazel_execroot, source_path.as_str().to_owned())?;
+                if aliases.insert(source_alias.clone()) && source_path != source_alias {
+                    inputs.push(CommandExecutionInput::ArtifactPathAlias {
+                        source_path: source_path.clone(),
+                        source_requires_materialization,
+                        path: source_alias,
+                        value: value.dupe(),
+                    });
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn bazel_runfiles_alias_path(
+        bazel_execroot: &ProjectRelativePath,
+        executable_path: &str,
+        runfiles_path: &str,
+    ) -> buck2_error::Result<ProjectRelativePathBuf> {
+        let runfiles_path = runfiles_path.strip_prefix("../").unwrap_or(runfiles_path);
+        Self::bazel_execroot_path(
+            bazel_execroot,
+            format!("{executable_path}.runfiles/{runfiles_path}"),
+        )
+    }
+
+    fn artifact_value_for<'a>(
+        artifact_inputs: &'a [&ArtifactGroupValues],
+        artifact: &Artifact,
+    ) -> buck2_error::Result<&'a ArtifactValue> {
+        for artifact_group_values in artifact_inputs {
+            for (input_artifact, value) in artifact_group_values.iter() {
+                if input_artifact == artifact {
+                    return Ok(value);
+                }
+            }
+        }
+        Err(internal_error!(
+            "Bazel executable runfiles artifact was not present in action inputs"
+        ))
+    }
+
+    fn add_bazel_runfiles_path_aliases(
+        &self,
+        inputs: &mut Vec<CommandExecutionInput>,
+        artifact_inputs: &[&ArtifactGroupValues],
+        artifact_fs: &ArtifactFs,
+        bazel_execroot: Option<&ProjectRelativePath>,
+        executable_path: Option<&str>,
+        runfiles: Option<Value<'_>>,
+    ) -> buck2_error::Result<()> {
+        let (Some(bazel_execroot), Some(executable_path), Some(runfiles)) =
+            (bazel_execroot, executable_path, runfiles)
+        else {
+            return Ok(());
+        };
+
+        let mut aliases = BuckIndexSet::new();
+        for entry in bazel_runfiles_entries(runfiles)? {
+            let entry = entry?;
+            let artifact = ValueAsInputArtifactLike::unpack_value(entry.target_file)?
+                .ok_or_else(|| {
+                    internal_error!("Bazel executable runfiles target_file should be File")
+                })?
+                .0
+                .get_bound_artifact()?;
+            let value = Self::artifact_value_for(artifact_inputs, &artifact)?;
+            let alias =
+                Self::bazel_runfiles_alias_path(bazel_execroot, executable_path, entry.path)?;
+            if aliases.insert(alias.clone()) {
+                let source_path = artifact
+                    .get_path()
+                    .resolve(
+                        artifact_fs,
+                        if artifact.path_resolution_requires_artifact_value() {
+                            Some(value.content_based_path_hash())
+                        } else {
+                            None
+                        }
+                        .as_ref(),
+                    )
+                    .buck_error_context("Invalid Bazel runfiles source path")?;
+                if source_path == alias {
+                    continue;
+                }
+                inputs.push(CommandExecutionInput::ArtifactPathAlias {
+                    source_path,
+                    source_requires_materialization: artifact.requires_materialization(artifact_fs),
+                    path: alias,
+                    value: value.dupe(),
+                });
+            }
+        }
+        Ok(())
+    }
+
+    fn add_bazel_tool_runfiles_path_aliases(
+        &self,
+        inputs: &mut Vec<CommandExecutionInput>,
+        artifact_inputs: &[&ArtifactGroupValues],
+        artifact_fs: &ArtifactFs,
+        bazel_execroot: Option<&ProjectRelativePath>,
+        tool_runfiles: Option<Value<'_>>,
+    ) -> buck2_error::Result<()> {
+        let (Some(bazel_execroot), Some(tool_runfiles)) = (bazel_execroot, tool_runfiles) else {
+            return Ok(());
+        };
+
+        for tool in bazel_tool_runfiles(tool_runfiles)? {
+            let tool = tool?;
+            let executable = ValueAsInputArtifactLike::unpack_value(tool.executable)?
+                .ok_or_else(|| internal_error!("Bazel tool runfiles executable should be File"))?
+                .0
+                .get_bound_artifact()?;
+            let executable_path =
+                bazel_normalize_buck_owned_exec_paths(&bazel_artifact_path(executable.get_path()));
+            self.add_bazel_runfiles_path_aliases(
+                inputs,
+                artifact_inputs,
+                artifact_fs,
+                Some(bazel_execroot),
+                Some(&executable_path),
+                Some(tool.runfiles),
+            )?;
+        }
+        Ok(())
+    }
+
+    async fn prepare_local_action_cache_probe<'v>(
+        &'v self,
+        visitor: &mut RunActionVisitor<'v>,
+        ctx: &mut dyn ActionExecutionCtx,
+    ) -> buck2_error::Result<Option<(LocalActionCacheKey, BuckIndexSet<CommandExecutionOutput>)>>
+    {
+        let collect_action_inputs =
+            !self.inner.dep_files.is_empty() || self.inner.metadata_param.is_some();
+        let (command_line_digest, worker, remote_worker, _param_files) = {
+            let values = Self::unpack(&self.starlark_values)?;
+            let has_worker = values.worker.is_some() || values.remote_worker.is_some();
+            if !collect_action_inputs
+                && let Some(command_line_digest) = self
+                    .inner
+                    .precomputed_local_action_cache_command_line_digest
+                    .as_ref()
+                && let Some((worker, remote_worker)) =
+                    self.prepare_workers_for_local_action_cache_probe(ctx, &values)?
+            {
+                (
+                    command_line_digest.clone(),
+                    worker,
+                    remote_worker,
+                    Vec::new(),
+                )
+            } else if has_worker {
+                let (expanded, _, worker, remote_worker, param_files) = self
+                    .expand_command_line_and_worker(ctx, visitor, false, collect_action_inputs)?;
+                (
+                    fingerprint_expanded_command_line_for_local_action_cache(
+                        &expanded,
+                        &param_files,
+                    ),
+                    worker.map(LocalActionCacheWorkerRef::Owned),
+                    remote_worker.map(LocalActionCacheRemoteWorkerRef::Owned),
+                    param_files,
+                )
+            } else {
+                let (command_line_digest, param_files) = self
+                    .prepare_command_line_for_local_action_cache_probe(
+                        ctx,
+                        visitor,
+                        collect_action_inputs,
+                    )?;
+                (command_line_digest, None, None, param_files)
+            }
+        };
+
+        let executor_fs = ctx.executor_fs();
+        let fs = executor_fs.fs();
+        let artifact_inputs: Vec<&ArtifactGroupValues> = if collect_action_inputs {
+            visitor
+                .inputs()
+                .map(|group| ctx.artifact_values(group))
+                .collect()
+        } else {
+            self.command_inputs
+                .iter()
+                .map(|group| ctx.artifact_values(group))
+                .collect()
+        };
+        let mut local_action_cache_extra_inputs: Vec<CommandExecutionInput> = Vec::with_capacity(2);
+
+        let mut extra_env = Vec::new();
+        let cli_ctx = DefaultCommandLineContext::new(&executor_fs);
+        let mut ignored_inputs = Vec::new();
+        let mut ignored_pending_action_metadata_writes = Vec::new();
+        self.prepare_action_metadata(
+            ctx,
+            &cli_ctx,
+            fs,
+            visitor,
+            &mut ignored_inputs,
+            &mut local_action_cache_extra_inputs,
+            &mut extra_env,
+            &mut ignored_pending_action_metadata_writes,
+            false,
+        )
+        .await?;
+
+        let mut ignored_shared_content_based_paths = Vec::new();
+        self.prepare_scratch_path(
+            ctx,
+            &cli_ctx,
+            fs,
+            &mut ignored_inputs,
+            &mut ignored_shared_content_based_paths,
+            &mut extra_env,
+        )?;
+
+        let bazel_paths = self.inner.bazel_use_default_shell_env.is_some();
+        let bazel_execroot = if bazel_paths {
+            Some(if worker.is_some() {
+                Self::bazel_worker_execroot(fs)
+            } else {
+                Self::bazel_private_execroot(fs, &ctx.target().scratch_path())?
+            })
+        } else {
+            None
+        };
+        let outputs = self
+            .outputs
+            .iter()
+            .map(|b| {
+                let produced_path = if let Some(bazel_execroot) = bazel_execroot.as_deref() {
+                    let bazel_path =
+                        if let Some(path) = visitor.bazel_output_exec_paths.get(b.get_path()) {
+                            path.clone()
+                        } else {
+                            let artifact = Artifact::from(b.dupe());
+                            bazel_normalize_buck_owned_exec_paths(&bazel_artifact_path(
+                                artifact.get_path(),
+                            ))
+                        };
+                    Some(Self::bazel_execroot_path(bazel_execroot, bazel_path)?)
+                } else {
+                    None
+                };
+                Ok(CommandExecutionOutput::BuildArtifact {
+                    path: b.get_path().dupe(),
+                    output_type: b.output_type(),
+                    produced_path,
+                })
+            })
+            .collect::<buck2_error::Result<BuckIndexSet<_>>>()?;
+        let outputs = CommandExecutionPaths::sort_outputs_for_execution(outputs, ctx.fs());
+
+        Ok(self
+            .local_action_cache_key(
+                ctx,
+                &command_line_digest,
+                &extra_env,
+                &[],
+                Some((&artifact_inputs, &local_action_cache_extra_inputs)),
+                &outputs,
+                worker,
+                remote_worker,
+            )?
+            .map(|key| (key, outputs)))
     }
 
     async fn prepare<'v>(
@@ -816,12 +3522,22 @@ impl RunAction {
         visitor: &mut RunActionVisitor<'v>,
         ctx: &mut dyn ActionExecutionCtx,
     ) -> buck2_error::Result<(
-        PreparedRunAction,
-        ExpandedCommandLineDigestForDepFiles,
+        UnpreparedRunAction,
+        Option<ExpandedCommandLineDigestForDepFiles>,
         HostSharingRequirements,
     )> {
-        let (expanded, expanded_command_line_digest_for_dep_files, worker, remote_worker) =
-            self.expand_command_line_and_worker(ctx, visitor)?;
+        let (
+            expanded,
+            expanded_command_line_digest_for_dep_files,
+            worker,
+            remote_worker,
+            param_files,
+        ) = self.expand_command_line_and_worker(
+            ctx,
+            visitor,
+            !self.inner.dep_files.is_empty(),
+            true,
+        )?;
 
         let executor_fs = ctx.executor_fs();
         let fs = executor_fs.fs();
@@ -833,13 +3549,77 @@ impl RunAction {
             .map(|group| ctx.artifact_values(group))
             .collect();
 
-        let mut inputs: Vec<CommandExecutionInput> =
+        let mut local_action_cache_inputs: Vec<CommandExecutionInput> =
             artifact_inputs[..].map(|&i| CommandExecutionInput::Artifact(Box::new(i.dupe())));
+        let bazel_paths = self.inner.bazel_use_default_shell_env.is_some();
+        let mut inputs: Vec<CommandExecutionInput> = if bazel_paths {
+            Vec::new()
+        } else {
+            artifact_inputs[..].map(|&i| CommandExecutionInput::Artifact(Box::new(i.dupe())))
+        };
+        let scratch = ctx.target().scratch_path();
+        let bazel_execroot = if bazel_paths {
+            Some(if worker.is_some() {
+                Self::bazel_worker_execroot(fs)
+            } else {
+                Self::bazel_private_execroot(fs, &scratch)?
+            })
+        } else {
+            None
+        };
+        self.add_bazel_execroot_path_aliases(
+            &mut inputs,
+            &artifact_inputs,
+            fs,
+            bazel_execroot.as_deref(),
+        )?;
+        let bazel_executable_runfiles = {
+            let values = Self::unpack(&self.starlark_values)?;
+            values.bazel_executable_runfiles
+        };
+        self.add_bazel_runfiles_path_aliases(
+            &mut inputs,
+            &artifact_inputs,
+            fs,
+            bazel_execroot.as_deref(),
+            expanded.exe.first().map(String::as_str),
+            bazel_executable_runfiles,
+        )?;
+        let bazel_tool_runfiles = {
+            let values = Self::unpack(&self.starlark_values)?;
+            values.bazel_tool_runfiles
+        };
+        self.add_bazel_tool_runfiles_path_aliases(
+            &mut inputs,
+            &artifact_inputs,
+            fs,
+            bazel_execroot.as_deref(),
+            bazel_tool_runfiles,
+        )?;
 
         let mut extra_env = Vec::new();
+        let mut pending_action_metadata_writes = Vec::new();
         let cli_ctx = DefaultCommandLineContext::new(&executor_fs);
-        self.prepare_action_metadata(ctx, &cli_ctx, fs, visitor, &mut inputs, &mut extra_env)
-            .await?;
+        self.prepare_param_files(
+            fs,
+            &param_files,
+            &mut inputs,
+            bazel_execroot.as_deref(),
+            &mut pending_action_metadata_writes,
+        )?;
+        let local_action_cache_extra_inputs_start = local_action_cache_inputs.len();
+        self.prepare_action_metadata(
+            ctx,
+            &cli_ctx,
+            fs,
+            visitor,
+            &mut inputs,
+            &mut local_action_cache_inputs,
+            &mut extra_env,
+            &mut pending_action_metadata_writes,
+            true,
+        )
+        .await?;
 
         let mut shared_content_based_paths = Vec::new();
         self.prepare_scratch_path(
@@ -863,41 +3643,130 @@ impl RunAction {
             }
         }
 
+        let mut host_sharing_tokens = shared_content_based_paths;
+        let outputs = self
+            .outputs
+            .iter()
+            .map(|b| {
+                let produced_path = if let Some(bazel_execroot) = bazel_execroot.as_deref() {
+                    let bazel_path =
+                        if let Some(path) = visitor.bazel_output_exec_paths.get(b.get_path()) {
+                            path.clone()
+                        } else {
+                            let artifact = Artifact::from(b.dupe());
+                            bazel_normalize_buck_owned_exec_paths(&bazel_artifact_path(
+                                artifact.get_path(),
+                            ))
+                        };
+                    Some(Self::bazel_execroot_path(bazel_execroot, bazel_path)?)
+                } else {
+                    None
+                };
+                if let Some(produced_path) = &produced_path {
+                    host_sharing_tokens.push(produced_path.as_str().to_owned());
+                }
+                Ok(CommandExecutionOutput::BuildArtifact {
+                    path: b.get_path().dupe(),
+                    output_type: b.output_type(),
+                    produced_path,
+                })
+            })
+            .collect::<buck2_error::Result<BuckIndexSet<_>>>()?;
+        let outputs = CommandExecutionPaths::sort_outputs_for_execution(outputs, ctx.fs());
+
         // TODO(ianc) Only do this if we're actually going to run the action?
-        let host_sharing_requirements = if !shared_content_based_paths.is_empty() {
-            HostSharingRequirements::OnePerTokens(
-                shared_content_based_paths.into(),
-                self.inner.weight,
-            )
+        let host_sharing_requirements = if !host_sharing_tokens.is_empty() {
+            HostSharingRequirements::OnePerTokens(host_sharing_tokens.into(), self.inner.weight)
         } else {
             HostSharingRequirements::Shared(self.inner.weight)
         };
 
-        let paths = CommandExecutionPaths::new(
-            inputs,
-            self.outputs
-                .iter()
-                .map(|b| CommandExecutionOutput::BuildArtifact {
-                    path: b.get_path().dupe(),
-                    output_type: b.output_type(),
-                })
-                .collect(),
-            ctx.fs(),
-            ctx.digest_config(),
-            ctx.run_action_knobs().action_paths_interner.as_ref(),
+        let command_line_digest =
+            fingerprint_expanded_command_line_for_local_action_cache(&expanded, &param_files);
+        let command_artifact_inputs;
+        let local_action_cache_probe_inputs =
+            if self.inner.dep_files.is_empty() && self.inner.metadata_param.is_none() {
+                command_artifact_inputs = self
+                    .command_inputs
+                    .iter()
+                    .map(|group| ctx.artifact_values(group))
+                    .collect::<Vec<_>>();
+                Some((
+                    command_artifact_inputs.as_slice(),
+                    &local_action_cache_inputs[local_action_cache_extra_inputs_start..],
+                ))
+            } else {
+                None
+            };
+        let local_action_cache_key = self.local_action_cache_key(
+            ctx,
+            &command_line_digest,
+            &extra_env,
+            &local_action_cache_inputs,
+            local_action_cache_probe_inputs,
+            &outputs,
+            worker.as_ref().map(LocalActionCacheWorkerRef::Borrowed),
+            remote_worker
+                .as_ref()
+                .map(LocalActionCacheRemoteWorkerRef::Borrowed),
         )?;
 
         Ok((
-            PreparedRunAction {
+            UnpreparedRunAction {
                 expanded,
                 extra_env,
-                paths,
+                inputs,
+                outputs,
                 worker,
                 remote_worker,
+                local_action_cache_key,
+                pending_action_metadata_writes,
             },
             expanded_command_line_digest_for_dep_files,
             host_sharing_requirements,
         ))
+    }
+
+    fn prepare_param_files(
+        &self,
+        fs: &ArtifactFs,
+        param_files: &[RunActionParamFile],
+        inputs: &mut Vec<CommandExecutionInput>,
+        bazel_execroot: Option<&ProjectRelativePath>,
+        pending_action_metadata_writes: &mut Vec<PendingActionMetadataWrite>,
+    ) -> buck2_error::Result<()> {
+        for param_file in param_files {
+            let project_rel_path = fs
+                .buck_out_path_resolver()
+                .resolve_gen(&param_file.path, Some(&param_file.content_hash))?;
+            pending_action_metadata_writes.push(PendingActionMetadataWrite {
+                path: param_file.path.dupe(),
+                content_hash: param_file.content_hash.clone(),
+                content: param_file.content.clone(),
+            });
+
+            let metadata = ActionMetadataBlob {
+                digest: param_file.digest.dupe(),
+                path: param_file.path.dupe(),
+                content_hash: param_file.content_hash.clone(),
+            };
+            inputs.push(CommandExecutionInput::ActionMetadata(metadata.clone()));
+
+            if let (Some(bazel_execroot), Some(bazel_exec_path)) =
+                (bazel_execroot, &param_file.bazel_exec_path)
+            {
+                inputs.push(CommandExecutionInput::ArtifactPathAlias {
+                    source_path: project_rel_path,
+                    source_requires_materialization: true,
+                    path: Self::bazel_execroot_path(bazel_execroot, bazel_exec_path.clone())?,
+                    value: ArtifactValue::file(FileMetadata {
+                        digest: param_file.digest.dupe(),
+                        is_executable: false,
+                    }),
+                });
+            }
+        }
+        Ok(())
     }
 
     /// Handle case when user requested file with action metadata to be generated.
@@ -911,7 +3780,10 @@ impl RunAction {
         fs: &ArtifactFs,
         visitor: &mut RunActionVisitor<'_>,
         inputs: &mut Vec<CommandExecutionInput>,
+        local_action_cache_inputs: &mut Vec<CommandExecutionInput>,
         extra_env: &mut Vec<(String, String)>,
+        pending_action_metadata_writes: &mut Vec<PendingActionMetadataWrite>,
+        write_metadata: bool,
     ) -> buck2_error::Result<()> {
         if let Some(metadata_param) = &self.inner.metadata_param {
             let path = BuildArtifactPath::new(
@@ -929,33 +3801,34 @@ impl RunAction {
                 .iter()
                 .map(|group| ctx.artifact_values(group))
                 .collect();
-            let (data, digest) = metadata_content(fs, &artifact_inputs, ctx.digest_config())?;
+            let (digest, content) = if write_metadata {
+                let (data, digest) = metadata_content(fs, &artifact_inputs, ctx.digest_config())?;
+                (digest, Some(data.0.0))
+            } else {
+                (
+                    metadata_digest(fs, &artifact_inputs, ctx.digest_config())?,
+                    None,
+                )
+            };
             let content_hash = ContentBasedPathHash::new(digest.raw_digest().as_bytes())?;
             let project_rel_path = fs
                 .buck_out_path_resolver()
                 .resolve_gen(&path, Some(&content_hash))?;
+            if let Some(content) = content {
+                pending_action_metadata_writes.push(PendingActionMetadataWrite {
+                    path: path.dupe(),
+                    content_hash: content_hash.clone(),
+                    content,
+                });
+            }
 
-            let configuration_path = ctx
-                .materializer()
-                .maybe_eager_configuration_path(fs, &path)?;
-
-            ctx.materializer()
-                .declare_write(Box::new(|| {
-                    Ok(vec![WriteRequest {
-                        path: project_rel_path.clone(),
-                        content: data.0.0,
-                        is_executable: false,
-                        configuration_path,
-                    }])
-                }))
-                .await
-                .buck_error_context("Failed to write action metadata!")?;
-
-            inputs.push(CommandExecutionInput::ActionMetadata(ActionMetadataBlob {
+            let metadata = ActionMetadataBlob {
                 digest,
                 path,
                 content_hash,
-            }));
+            };
+            inputs.push(CommandExecutionInput::ActionMetadata(metadata.clone()));
+            local_action_cache_inputs.push(CommandExecutionInput::ActionMetadata(metadata));
 
             let env = cli_ctx
                 .resolve_project_path(project_rel_path)?
@@ -987,6 +3860,141 @@ impl RunAction {
         inputs.push(CommandExecutionInput::ScratchPath(scratch));
 
         Ok(())
+    }
+
+    fn local_action_cache_key(
+        &self,
+        ctx: &dyn ActionExecutionCtx,
+        command_line_digest: &ExpandedCommandLineDigest,
+        extra_env: &[(String, String)],
+        inputs: &[CommandExecutionInput],
+        local_action_cache_probe_inputs: Option<(
+            &[&ArtifactGroupValues],
+            &[CommandExecutionInput],
+        )>,
+        outputs: &BuckIndexSet<CommandExecutionOutput>,
+        worker: Option<LocalActionCacheWorkerRef<'_>>,
+        remote_worker: Option<LocalActionCacheRemoteWorkerRef<'_>>,
+    ) -> buck2_error::Result<Option<LocalActionCacheKey>> {
+        let Some(first_output) = outputs.iter().next() else {
+            return Ok(None);
+        };
+        let key = first_output
+            .as_ref()
+            .resolve(ctx.fs(), Some(&ContentBasedPathHash::for_output_artifact()))?
+            .into_path()
+            .to_string();
+
+        let cas_digest_config = ctx.digest_config().cas_digest_config();
+        let mut action_key = CasDigestData::digester(cas_digest_config);
+        action_cache_add_str(&mut action_key, "buck2-local-action-cache-action-key-v3");
+        action_cache_add_str(&mut action_key, &ctx.fs().fs().root().to_string());
+        action_cache_add_debug(&mut action_key, self.inner.executor_preference);
+        action_cache_add_option_duration(&mut action_key, self.inner.timeout);
+        action_cache_add_bool(&mut action_key, self.inner.no_outputs_cleanup);
+        action_cache_add_bool(&mut action_key, self.inner.unique_input_inodes);
+        action_cache_add_option_bool(&mut action_key, self.inner.bazel_use_default_shell_env);
+        action_cache_add_debug(&mut action_key, &self.inner.remote_execution_dependencies);
+        action_cache_add_debug(&mut action_key, &self.inner.re_gang_workers);
+        action_cache_add_debug(&mut action_key, &self.inner.remote_execution_custom_image);
+        action_cache_add_debug(&mut action_key, &self.inner.meta_internal_extra_params);
+
+        action_cache_add_str(&mut action_key, "command_line");
+        action_cache_add_bytes(&mut action_key, command_line_digest.as_bytes());
+        action_cache_add_str(&mut action_key, "extra_env");
+        for (key, value) in extra_env {
+            action_cache_add_str(&mut action_key, key);
+            action_cache_add_str(&mut action_key, value);
+        }
+
+        action_cache_add_str(&mut action_key, "outputs");
+        for output in outputs {
+            fingerprint_command_execution_output(&mut action_key, ctx.fs(), output)?;
+        }
+
+        action_cache_add_str(&mut action_key, "worker");
+        if let Some(worker) = worker.as_ref() {
+            action_cache_add_worker_id(&mut action_key, worker.id());
+            action_cache_add_worker_protocol(&mut action_key, worker.protocol());
+            action_cache_add_option_usize(&mut action_key, worker.concurrency());
+            action_cache_add_bool(&mut action_key, worker.streaming());
+            action_cache_add_bool(&mut action_key, worker.bazel_worker_sandboxing());
+            action_cache_add_option_tracked_file_digest(&mut action_key, worker.remote_key());
+            for arg in worker.exe() {
+                action_cache_add_str(&mut action_key, arg);
+            }
+            for (key, value) in worker.env() {
+                action_cache_add_str(&mut action_key, key);
+                action_cache_add_str(&mut action_key, value);
+            }
+        }
+
+        action_cache_add_str(&mut action_key, "remote_worker");
+        if let Some(remote_worker) = remote_worker.as_ref() {
+            action_cache_add_worker_id(&mut action_key, remote_worker.id());
+            action_cache_add_option_usize(&mut action_key, remote_worker.concurrency());
+            for arg in remote_worker.init() {
+                action_cache_add_str(&mut action_key, arg);
+            }
+            for (key, value) in remote_worker.env() {
+                action_cache_add_str(&mut action_key, key);
+                action_cache_add_str(&mut action_key, value);
+            }
+        }
+
+        let mut input_metadata = CasDigestData::digester(cas_digest_config);
+        action_cache_add_str(
+            &mut input_metadata,
+            "buck2-local-action-cache-input-metadata-v1",
+        );
+        action_cache_add_str(&mut input_metadata, "inputs");
+        if let Some((artifact_inputs, extra_inputs)) = local_action_cache_probe_inputs {
+            fingerprint_run_local_action_cache_inputs(
+                &mut input_metadata,
+                ctx.fs(),
+                artifact_inputs,
+                extra_inputs,
+            )?;
+        } else {
+            for input in inputs {
+                fingerprint_command_execution_input(&mut input_metadata, ctx.fs(), input)?;
+            }
+        }
+        action_cache_add_str(&mut input_metadata, "worker_input_directory");
+        if let Some(worker) = worker.as_ref() {
+            action_cache_add_bool(&mut input_metadata, true);
+            action_cache_add_str(&mut input_metadata, "worker_inputs");
+            for input in worker.inputs() {
+                fingerprint_command_execution_input(&mut input_metadata, ctx.fs(), input)?;
+            }
+        } else {
+            action_cache_add_bool(&mut input_metadata, false);
+        }
+        action_cache_add_str(&mut input_metadata, "remote_worker_input_directory");
+        if let Some(remote_worker) = remote_worker.as_ref() {
+            action_cache_add_bool(&mut input_metadata, true);
+            action_cache_add_str(&mut input_metadata, "remote_worker_inputs");
+            for input in remote_worker.inputs() {
+                fingerprint_command_execution_input(&mut input_metadata, ctx.fs(), input)?;
+            }
+        } else {
+            action_cache_add_bool(&mut input_metadata, false);
+        }
+
+        let action_key_digest = finalize_action_cache_digest(action_key);
+        let input_metadata_digest = finalize_action_cache_digest(input_metadata);
+        let fingerprint = compose_local_action_cache_fingerprint(
+            cas_digest_config,
+            &action_key_digest,
+            &input_metadata_digest,
+        );
+
+        Ok(Some(LocalActionCacheKey {
+            key,
+            action_key_digest,
+            input_metadata_digest,
+            fingerprint,
+        }))
     }
 
     pub(crate) async fn check_cache_result_is_useable(
@@ -1047,23 +4055,93 @@ impl RunAction {
         let mut run_action_visitor =
             RunActionVisitor::new(&self.inner.dep_files, incremental_action_ignore_tags);
         waiting_data.start_waiting_category_now(WaitingCategory::PreparingAction);
-        let (prepared_run_action, cmdline_digest_for_dep_files, host_sharing_requirements) =
+        if let Some((local_action_cache_key, outputs)) = self
+            .prepare_local_action_cache_probe(&mut run_action_visitor, ctx)
+            .await?
+        {
+            waiting_data.start_waiting_category_now(WaitingCategory::CheckingCaches);
+            let manager = ctx.command_execution_manager(waiting_data.clone());
+            match ctx
+                .unprepared_action_cache(manager, &local_action_cache_key, &outputs)
+                .await
+            {
+                ControlFlow::Break(result) => {
+                    return Ok(ExecuteResult::LocalActionCacheHit {
+                        result,
+                        executor_preference: self.inner.executor_preference,
+                    });
+                }
+                ControlFlow::Continue(_) => {
+                    waiting_data.start_waiting_category_now(WaitingCategory::PreparingAction);
+                    run_action_visitor = RunActionVisitor::new(
+                        &self.inner.dep_files,
+                        incremental_action_ignore_tags,
+                    );
+                }
+            }
+        }
+
+        let (unprepared_run_action, cmdline_digest_for_dep_files, host_sharing_requirements) =
             self.prepare(&mut run_action_visitor, ctx).await?;
 
-        let dep_file_bundle = make_dep_file_bundle(
-            ctx,
-            run_action_visitor.dep_files_visitor,
-            cmdline_digest_for_dep_files,
-            &prepared_run_action.paths,
-            prepared_run_action.worker.as_ref().map(|w| &w.input_paths),
+        waiting_data.start_waiting_category_now(WaitingCategory::CheckingCaches);
+        let manager = ctx.command_execution_manager(waiting_data);
+        let manager = if let Some(local_action_cache_key) =
+            unprepared_run_action.local_action_cache_key.as_ref()
+        {
+            match ctx
+                .unprepared_action_cache(
+                    manager,
+                    local_action_cache_key,
+                    &unprepared_run_action.outputs,
+                )
+                .await
+            {
+                ControlFlow::Break(result) => {
+                    return Ok(ExecuteResult::LocalActionCacheHit {
+                        result,
+                        executor_preference: self.inner.executor_preference,
+                    });
+                }
+                ControlFlow::Continue(manager) => manager,
+            }
+        } else {
+            manager
+        };
+
+        unprepared_run_action
+            .declare_action_metadata_writes(ctx)
+            .await?;
+
+        let prepared_run_action = unprepared_run_action.into_prepared(
+            ctx.fs(),
+            ctx.digest_config(),
+            ctx.run_action_knobs().action_paths_interner.as_ref(),
         )?;
+
+        let dep_file_bundle = cmdline_digest_for_dep_files
+            .map(|cmdline_digest_for_dep_files| {
+                make_dep_file_bundle(
+                    ctx,
+                    run_action_visitor.dep_files_visitor,
+                    cmdline_digest_for_dep_files,
+                    &prepared_run_action.paths,
+                    prepared_run_action.worker.as_ref().map(|w| &w.input_paths),
+                )
+            })
+            .transpose()?;
 
         // First, check in the local dep file cache if an identical action can be found there.
         // Do this before checking the action cache as we can avoid a potentially large download.
         // Once the action cache lookup misses, we will do the full dep file cache look up.
-        let (outputs, should_fully_check_dep_file_cache) = dep_file_bundle
-            .check_local_dep_file_cache_for_identical_action(ctx, self.outputs.as_slice())
-            .await?;
+        let (outputs, should_fully_check_dep_file_cache) =
+            if let Some(dep_file_bundle) = dep_file_bundle.as_ref() {
+                dep_file_bundle
+                    .check_local_dep_file_cache_for_identical_action(ctx, self.outputs.as_slice())
+                    .await?
+            } else {
+                (None, false)
+            };
         if let Some((outputs, metadata)) = outputs {
             return Ok(ExecuteResult::LocalDepFileHit(outputs, metadata));
         }
@@ -1073,8 +4151,6 @@ impl RunAction {
 
         // Prepare the action, check the action cache, fully check the local dep file cache if needed, then execute the command
         let prepared_action = ctx.prepare_action(&req, true)?;
-        waiting_data.start_waiting_category_now(WaitingCategory::CheckingCaches);
-        let manager = ctx.command_execution_manager(waiting_data);
 
         let action_cache_result = ctx.action_cache(manager, &req, &prepared_action).await;
 
@@ -1084,19 +4160,26 @@ impl RunAction {
                 // If we didn't find anything in the action cache, first do a local dep file cache lookup, and if that fails,
                 // try to find a remote dep file cache hit.
                 if should_fully_check_dep_file_cache {
-                    let lookup = dep_file_bundle
-                        .check_local_dep_file_cache(ctx, self.outputs.as_slice())
-                        .await?;
-                    if let Some((outputs, metadata)) = lookup {
-                        return Ok(ExecuteResult::LocalDepFileHit(outputs, metadata));
+                    if let Some(dep_file_bundle) = dep_file_bundle.as_ref() {
+                        let lookup = dep_file_bundle
+                            .check_local_dep_file_cache(ctx, self.outputs.as_slice())
+                            .await?;
+                        if let Some((outputs, metadata)) = lookup {
+                            return Ok(ExecuteResult::LocalDepFileHit(outputs, metadata));
+                        }
                     }
                 }
 
-                let supports_remote_dep_files =
-                    self.inner.allow_dep_file_cache_upload && dep_file_bundle.has_dep_files();
+                let supports_remote_dep_files = self.inner.allow_dep_file_cache_upload
+                    && dep_file_bundle
+                        .as_ref()
+                        .is_some_and(DepFileBundle::has_dep_files);
 
                 // Enable remote dep file cache lookup for actions that have remote depfile uploads enabled.
                 if supports_remote_dep_files {
+                    let dep_file_bundle = dep_file_bundle
+                        .as_ref()
+                        .expect("remote dep-file cache requires a dep-file bundle");
                     let remote_dep_file_key = dep_file_bundle
                         .remote_dep_file_action(
                             ctx.digest_config(),
@@ -1118,7 +4201,7 @@ impl RunAction {
                                 &req,
                                 &prepared_action.action_and_blobs.action,
                                 res,
-                                &dep_file_bundle,
+                                dep_file_bundle,
                                 &remote_dep_file_key,
                             )
                             .await?;
@@ -1214,6 +4297,11 @@ impl RunAction {
         host_sharing_requirements: HostSharingRequirements,
     ) -> buck2_error::Result<CommandExecutionRequest> {
         let outputs_for_error_handler = self.outputs_for_error_handler()?;
+        let local_environment_inheritance = match self.inner.bazel_use_default_shell_env {
+            None | Some(true) => EnvironmentInheritance::local_command_exclusions(),
+            Some(false) => EnvironmentInheritance::empty(),
+        };
+        let uses_worker = prepared_run_action.worker.is_some();
         let mut req = prepared_run_action
             .into_command_execution_request()
             .with_prefetch_lossy_stderr(true)
@@ -1221,7 +4309,7 @@ impl RunAction {
             .with_host_sharing_requirements(host_sharing_requirements.into())
             .with_low_pass_filter(self.inner.low_pass_filter)
             .with_outputs_cleanup(!self.inner.no_outputs_cleanup)
-            .with_local_environment_inheritance(EnvironmentInheritance::local_command_exclusions())
+            .with_local_environment_inheritance(local_environment_inheritance)
             .with_force_full_hybrid_if_capable(self.inner.force_full_hybrid_if_capable)
             .with_unique_input_inodes(self.inner.unique_input_inodes)
             .with_remote_execution_dependencies(self.inner.remote_execution_dependencies.to_vec())
@@ -1231,6 +4319,16 @@ impl RunAction {
             )
             .with_meta_internal_extra_params(self.inner.meta_internal_extra_params.clone())
             .with_outputs_for_error_handler(outputs_for_error_handler);
+
+        if self.inner.bazel_use_default_shell_env.is_some() {
+            let scratch = ctx.target().scratch_path();
+            let working_directory = if uses_worker {
+                Self::bazel_worker_execroot(ctx.executor_fs().fs())
+            } else {
+                Self::bazel_private_execroot(ctx.executor_fs().fs(), &scratch)?
+            };
+            req = req.with_working_directory(working_directory);
+        }
 
         if let Some(timeout) = self.inner.timeout {
             req = req.with_timeout(timeout);
@@ -1273,6 +4371,75 @@ impl RunAction {
     }
 }
 
+pub(crate) struct UnpreparedRunAction {
+    expanded: ExpandedCommandLine,
+    /// Environment which is added on top of the one coming from `ExpandedCommandLine::env`
+    extra_env: Vec<(String, String)>,
+    inputs: Vec<CommandExecutionInput>,
+    outputs: BuckIndexSet<CommandExecutionOutput>,
+    worker: Option<WorkerSpec>,
+    remote_worker: Option<RemoteWorkerSpec>,
+    local_action_cache_key: Option<LocalActionCacheKey>,
+    pending_action_metadata_writes: Vec<PendingActionMetadataWrite>,
+}
+
+impl UnpreparedRunAction {
+    async fn declare_action_metadata_writes(
+        &self,
+        ctx: &dyn ActionExecutionCtx,
+    ) -> buck2_error::Result<()> {
+        let fs = ctx.fs();
+        for write in &self.pending_action_metadata_writes {
+            let path = fs
+                .buck_out_path_resolver()
+                .resolve_gen(&write.path, Some(&write.content_hash))?;
+            let content = write.content.clone();
+            let configuration_path = ctx
+                .materializer()
+                .maybe_eager_configuration_path(fs, &write.path)?;
+            ctx.materializer()
+                .declare_write(Box::new(move || {
+                    Ok(vec![WriteRequest {
+                        path,
+                        content,
+                        is_executable: false,
+                        configuration_path,
+                    }])
+                }))
+                .await
+                .buck_error_context("Failed to write action metadata!")?;
+        }
+        Ok(())
+    }
+
+    fn into_prepared(
+        self,
+        fs: &ArtifactFs,
+        digest_config: DigestConfig,
+        interner: Option<&DashMapDirectoryInterner<ActionDirectoryMember, TrackedFileDigest>>,
+    ) -> buck2_error::Result<PreparedRunAction> {
+        let Self {
+            expanded,
+            extra_env,
+            inputs,
+            outputs,
+            worker,
+            remote_worker,
+            local_action_cache_key,
+            pending_action_metadata_writes: _,
+        } = self;
+        let paths = CommandExecutionPaths::new(inputs, outputs, fs, digest_config, interner)?;
+        Ok(PreparedRunAction {
+            expanded,
+            extra_env,
+            paths,
+            worker,
+            remote_worker,
+            local_action_cache_key,
+        })
+    }
+}
+
 pub(crate) struct PreparedRunAction {
     expanded: ExpandedCommandLine,
     /// Environment which is added on top of the one coming from `ExpandedCommandLine::env`
@@ -1280,6 +4447,7 @@ pub(crate) struct PreparedRunAction {
     paths: CommandExecutionPaths,
     worker: Option<WorkerSpec>,
     remote_worker: Option<RemoteWorkerSpec>,
+    local_action_cache_key: Option<LocalActionCacheKey>,
 }
 
 impl PreparedRunAction {
@@ -1290,6 +4458,7 @@ impl PreparedRunAction {
             paths,
             worker,
             remote_worker,
+            local_action_cache_key,
         } = self;
 
         for (k, v) in extra_env {
@@ -1299,12 +4468,14 @@ impl PreparedRunAction {
         CommandExecutionRequest::new(exe, args, paths, env)
             .with_worker(worker)
             .with_remote_worker(remote_worker)
+            .with_local_action_cache_key(local_action_cache_key)
     }
 }
 
 pub struct RunActionVisitor<'a> {
     pub(crate) dep_files_visitor: DepFilesCommandLineVisitor<'a>,
     pub(crate) incremental_metadata_inputs: Vec<ArtifactGroup>,
+    pub(crate) bazel_output_exec_paths: BuckIndexMap<BuildArtifactPath, String>,
     incremental_metadata_ignore_tags: Option<&'a SmallSet<ArtifactTag>>,
 }
 
@@ -1316,6 +4487,7 @@ impl<'a> RunActionVisitor<'a> {
         Self {
             dep_files_visitor: DepFilesCommandLineVisitor::new(dep_files),
             incremental_metadata_inputs: Vec::new(),
+            bazel_output_exec_paths: BuckIndexMap::new(),
             incremental_metadata_ignore_tags,
         }
     }
@@ -1338,12 +4510,31 @@ impl<'v> CommandLineArtifactVisitor<'v> for RunActionVisitor<'v> {
         self.dep_files_visitor.visit_input(input, tags);
     }
 
-    fn visit_declared_output(&mut self, _artifact: OutputArtifact<'v>, tags: Vec<&ArtifactTag>) {
-        self.dep_files_visitor
-            .visit_declared_output(_artifact, tags);
+    fn visit_declared_output(&mut self, artifact: OutputArtifact<'v>, tags: Vec<&ArtifactTag>) {
+        let bazel_output_exec_path = {
+            let path = artifact.get_path();
+            let build_path = match path.base_path.as_ref() {
+                Either::Left(build_path) => Some((**build_path).dupe()),
+                Either::Right(_) => None,
+            };
+            build_path.map(|build_path| {
+                let exec_path = bazel_normalize_buck_owned_exec_paths(&bazel_artifact_path(path));
+                (build_path, exec_path)
+            })
+        };
+        if let Some((build_path, exec_path)) = bazel_output_exec_path {
+            self.bazel_output_exec_paths.insert(build_path, exec_path);
+        }
+        self.dep_files_visitor.visit_declared_output(artifact, tags);
     }
 
     fn visit_frozen_output(&mut self, artifact: Artifact, tags: Vec<&ArtifactTag>) {
+        if let BaseArtifactKind::Build(build) = artifact.as_parts().0 {
+            self.bazel_output_exec_paths.insert(
+                build.get_path().dupe(),
+                bazel_normalize_buck_owned_exec_paths(&bazel_artifact_path(artifact.get_path())),
+            );
+        }
         self.dep_files_visitor.visit_frozen_output(artifact, tags);
     }
 }
@@ -1384,9 +4575,15 @@ impl Action for RunAction {
     }
 
     fn inputs(&self) -> buck2_error::Result<Cow<'_, [ArtifactGroup]>> {
-        let mut artifact_visitor = SimpleCommandLineArtifactVisitor::new();
-        self.visit_artifacts(&mut artifact_visitor)?;
-        Ok(Cow::Owned(artifact_visitor.inputs.into_iter().collect()))
+        Ok(Cow::Borrowed(&self.inputs))
+    }
+
+    fn local_action_cache_inputs(&self) -> buck2_error::Result<Option<Cow<'_, [ArtifactGroup]>>> {
+        if self.local_action_cache_inputs.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(Cow::Borrowed(&self.local_action_cache_inputs)))
+        }
     }
 
     fn outputs(&self) -> Cow<'_, [BuildArtifact]> {
@@ -1428,16 +4625,52 @@ impl Action for RunAction {
         artifact_path_mapping: &dyn ArtifactPathMapper,
     ) -> BuckIndexMap<String, String> {
         let mut cli_rendered = Vec::<String>::new();
-        let mut ctx = DefaultCommandLineContext::new(fs);
+        let base_output = self.outputs.iter().next().unwrap();
+        let base_bazel_exec_path = if self.inner.bazel_use_default_shell_env.is_some() {
+            let artifact = Artifact::from(base_output.dupe());
+            Some(bazel_normalize_buck_owned_exec_paths(&bazel_artifact_path(
+                artifact.get_path(),
+            )))
+        } else {
+            None
+        };
+        let base_path = if let Some(base_bazel_exec_path) = &base_bazel_exec_path {
+            bazel_param_file_base_path(base_bazel_exec_path)
+                .expect("Bazel aquery param-file path should be valid")
+        } else {
+            base_output.get_path().path().to_owned()
+        };
+        let param_files = RunActionParamFilesRef::new(
+            base_output.get_path().owner().dupe(),
+            base_path,
+            base_bazel_exec_path,
+            base_output.get_path().bazel_output_root(),
+            if self.all_outputs_are_content_based() {
+                BuckOutPathKind::ContentHash
+            } else {
+                BuckOutPathKind::Configuration
+            },
+            DigestConfig::testing_default(),
+        );
+        let mut ctx = RunActionCommandLineContext::new(
+            fs,
+            self.inner.bazel_use_default_shell_env.is_some(),
+            param_files,
+            RunActionParamFileMode::Record,
+        );
         let values = Self::unpack(&self.starlark_values).unwrap();
         values
             .exe
             .add_to_command_line(&mut cli_rendered, &mut ctx, artifact_path_mapping)
             .unwrap();
-        values
-            .args
-            .add_to_command_line(&mut cli_rendered, &mut ctx, artifact_path_mapping)
-            .unwrap();
+        if let Some(args) = &self.inner.bazel_string_args {
+            cli_rendered.extend(args.iter().cloned());
+        } else {
+            values
+                .args
+                .add_to_command_line(&mut cli_rendered, &mut ctx, artifact_path_mapping)
+                .unwrap();
+        }
         let cmd = format!("[{}]", cli_rendered.iter().join(", "));
         buck_indexmap! {
             "cmd".to_owned() => cmd,
@@ -1540,6 +4773,20 @@ impl Action for RunAction {
             // Cache miss - fall through to normal execution
         }
 
+        let allow_cache_upload = self
+            .inner
+            .allow_cache_upload
+            .unwrap_or_else(|| ctx.run_action_knobs().default_allow_cache_upload);
+        let incremental_kind = match (
+            self.inner.no_outputs_cleanup,
+            self.inner.incremental_remote_outputs,
+        ) {
+            (true, true) => buck2_data::IncrementalKind::IncrementalLocalAndRemote,
+            (false, true) => buck2_data::IncrementalKind::IncrementalRemote,
+            (true, false) => buck2_data::IncrementalKind::IncrementalLocal,
+            (false, false) => buck2_data::IncrementalKind::NonIncremental,
+        };
+
         let (
             mut result,
             mut dep_file_bundle,
@@ -1549,6 +4796,19 @@ impl Action for RunAction {
         ) = match self.execute_inner(ctx, waiting_data).await? {
             ExecuteResult::LocalDepFileHit(outputs, metadata) => {
                 return Ok((outputs, metadata));
+            }
+            ExecuteResult::LocalActionCacheHit {
+                result,
+                executor_preference,
+            } => {
+                return ctx.unpack_command_execution_result(
+                    executor_preference,
+                    result,
+                    allow_cache_upload,
+                    self.inner.allow_dep_file_cache_upload,
+                    None,
+                    incremental_kind,
+                );
             }
             ExecuteResult::ExecutedOrReHit {
                 result,
@@ -1565,21 +4825,10 @@ impl Action for RunAction {
             ),
         };
 
-        let allow_cache_upload = self
-            .inner
-            .allow_cache_upload
-            .unwrap_or_else(|| ctx.run_action_knobs().default_allow_cache_upload);
-        let supports_remote_dep_files =
-            self.inner.allow_dep_file_cache_upload && dep_file_bundle.has_dep_files();
-        let incremental_kind = match (
-            self.inner.no_outputs_cleanup,
-            self.inner.incremental_remote_outputs,
-        ) {
-            (true, true) => buck2_data::IncrementalKind::IncrementalLocalAndRemote,
-            (false, true) => buck2_data::IncrementalKind::IncrementalRemote,
-            (true, false) => buck2_data::IncrementalKind::IncrementalLocal,
-            (false, false) => buck2_data::IncrementalKind::NonIncremental,
-        };
+        let supports_remote_dep_files = self.inner.allow_dep_file_cache_upload
+            && dep_file_bundle
+                .as_ref()
+                .is_some_and(DepFileBundle::has_dep_files);
 
         // If there is a dep file entry AND if dep file cache upload is enabled, upload it
         if result.was_success()
@@ -1594,7 +4843,9 @@ impl Action for RunAction {
                     re_result,
                     // match needed for coercion, https://github.com/rust-lang/rust/issues/108999
                     if supports_remote_dep_files {
-                        Some(&mut dep_file_bundle)
+                        dep_file_bundle
+                            .as_mut()
+                            .map(|dep_file_bundle| dep_file_bundle as &mut dyn IntoRemoteDepFile)
                     } else {
                         None
                     },
@@ -1634,8 +4885,66 @@ impl Action for RunAction {
             }
         }
 
-        populate_dep_files(ctx, dep_file_bundle, &outputs, was_locally_executed).await?;
+        if let Some(dep_file_bundle) = dep_file_bundle {
+            populate_dep_files(ctx, dep_file_bundle, &outputs, was_locally_executed).await?;
+        }
 
         Ok((outputs, metadata))
+    }
+
+    async fn try_execute_local_action_cache(
+        &self,
+        ctx: &mut dyn ActionExecutionCtx,
+        mut waiting_data: WaitingData,
+    ) -> Result<Option<(ActionOutputs, ActionExecutionMetadata)>, ExecuteError> {
+        let incremental_action_ignore_tags = self
+            .inner
+            .metadata_param
+            .as_ref()
+            .map(|metadata_param| &metadata_param.ignore_tags);
+        let mut run_action_visitor =
+            RunActionVisitor::new(&self.inner.dep_files, incremental_action_ignore_tags);
+
+        waiting_data.start_waiting_category_now(WaitingCategory::PreparingAction);
+        let Some((local_action_cache_key, outputs)) = self
+            .prepare_local_action_cache_probe(&mut run_action_visitor, ctx)
+            .await?
+        else {
+            return Ok(None);
+        };
+
+        waiting_data.start_waiting_category_now(WaitingCategory::CheckingCaches);
+        let manager = ctx.command_execution_manager(waiting_data);
+        match ctx
+            .unprepared_action_cache(manager, &local_action_cache_key, &outputs)
+            .await
+        {
+            ControlFlow::Break(result) => {
+                let allow_cache_upload = self
+                    .inner
+                    .allow_cache_upload
+                    .unwrap_or_else(|| ctx.run_action_knobs().default_allow_cache_upload);
+                let incremental_kind = match (
+                    self.inner.no_outputs_cleanup,
+                    self.inner.incremental_remote_outputs,
+                ) {
+                    (true, true) => buck2_data::IncrementalKind::IncrementalLocalAndRemote,
+                    (false, true) => buck2_data::IncrementalKind::IncrementalRemote,
+                    (true, false) => buck2_data::IncrementalKind::IncrementalLocal,
+                    (false, false) => buck2_data::IncrementalKind::NonIncremental,
+                };
+
+                ctx.unpack_command_execution_result(
+                    self.inner.executor_preference,
+                    result,
+                    allow_cache_upload,
+                    self.inner.allow_dep_file_cache_upload,
+                    None,
+                    incremental_kind,
+                )
+                .map(Some)
+            }
+            ControlFlow::Continue(_) => Ok(None),
+        }
     }
 }

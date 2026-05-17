@@ -8,10 +8,12 @@
  * above-listed licenses.
  */
 
+use std::fmt::Debug;
 use std::sync::Arc;
 
 use buck2_core::provider::id::ProviderId;
 use starlark::any::ProvidesStaticType;
+use starlark::values::Value;
 use starlark::values::ValueLike;
 
 pub trait ProviderCallableLike {
@@ -20,6 +22,20 @@ pub trait ProviderCallableLike {
 
 unsafe impl<'v> ProvidesStaticType<'v> for &'v dyn ProviderCallableLike {
     type StaticType = &'static dyn ProviderCallableLike;
+}
+
+/// Implemented by providers (builtin or user defined).
+pub trait ProviderLike<'v>: Debug {
+    /// The ID. Guaranteed to be set on the `ProviderCallable` before constructing this object.
+    fn id(&self) -> &Arc<ProviderId>;
+
+    /// Returns a list of all the keys and values.
+    // TODO(cjhopman): I'd rather return an iterator. I couldn't get that to work, though.
+    fn items(&self) -> Vec<(&str, Value<'v>)>;
+}
+
+unsafe impl<'v> ProvidesStaticType<'v> for &'v dyn ProviderLike<'v> {
+    type StaticType = &'static dyn ProviderLike<'static>;
 }
 
 pub trait ValueAsProviderCallableLike<'v> {

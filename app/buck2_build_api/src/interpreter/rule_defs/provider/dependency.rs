@@ -18,7 +18,9 @@ use buck2_core::execution_types::execution::ExecutionPlatformResolution;
 use buck2_core::provider::label::ConfiguredProvidersLabel;
 use buck2_core::provider::label::ProviderName;
 use buck2_error::BuckErrorContext;
+use buck2_error::internal_error;
 use buck2_interpreter::types::configured_providers_label::StarlarkConfiguredProvidersLabel;
+use dupe::Dupe;
 use starlark::any::ProvidesStaticType;
 use starlark::coerce::Coerce;
 use starlark::environment::GlobalsBuilder;
@@ -40,9 +42,16 @@ use starlark::values::ValueOfUnchecked;
 use starlark::values::ValueOfUncheckedGeneric;
 use starlark::values::none::NoneOr;
 use starlark::values::starlark_value;
+use starlark::values::structs::StructRef;
 use starlark_map::StarlarkHasher;
 
+use crate::interpreter::rule_defs::provider::DefaultInfo;
+use crate::interpreter::rule_defs::provider::FrozenDefaultInfo;
+use crate::interpreter::rule_defs::provider::builtin::default_info::BazelRunfiles;
+use crate::interpreter::rule_defs::provider::builtin::template_variable_info::FrozenTemplateVariableInfo;
 use crate::interpreter::rule_defs::provider::collection::FrozenProviderCollection;
+use crate::interpreter::rule_defs::provider::collection::ProviderCollection;
+use crate::interpreter::rule_defs::provider::collection::empty_provider_collection_value;
 use crate::interpreter::rule_defs::provider::execution_platform::StarlarkExecutionPlatformResolution;
 use crate::interpreter::rule_defs::provider::ty::abstract_provider::AbstractProvider;
 
@@ -70,6 +79,7 @@ enum DependencyError {
 pub struct DependencyGen<V: ValueLifetimeless> {
     label: ValueOfUncheckedGeneric<V, StarlarkConfiguredProvidersLabel>,
     provider_collection: FrozenValueTyped<'static, FrozenProviderCollection>,
+    extra_provider_collection: V,
     // This could be `Option<...>`, but that breaks `Coerce`.
     execution_platform: ValueOfUncheckedGeneric<V, NoneOr<StarlarkExecutionPlatformResolution>>,
 }
@@ -87,6 +97,23 @@ impl<V: ValueLifetimeless> Display for DependencyGen<V> {
 impl<'v, V: ValueLike<'v>> DependencyGen<V> {
     pub fn label(&self) -> &'v StarlarkConfiguredProvidersLabel {
         StarlarkConfiguredProvidersLabel::from_value(self.label.get().to_value()).unwrap()
+    }
+
+    pub fn label_value(&self) -> Value<'v> {
+        self.label.get().to_value()
+    }
+
+    pub fn configured_providers_label(&self) -> ConfiguredProvidersLabel {
+        self.label().inner().dupe()
+    }
+
+    pub fn provider_collection_value(&self) -> Value<'v> {
+        let extra = self.extra_provider_collection.to_value();
+        if extra.is_none() {
+            self.provider_collection.to_value()
+        } else {
+            extra
+        }
     }
 }
 
@@ -112,8 +139,94 @@ impl<'v> Dependency<'v> {
                     FrozenValueTyped<'_, FrozenProviderCollection>,
                 >(provider_collection)
             },
+            extra_provider_collection: Value::new_none(),
             execution_platform,
         }
+    }
+
+    pub fn new_with_provider_collection(
+        heap: Heap<'v>,
+        label: ConfiguredProvidersLabel,
+        base_provider_collection: FrozenValueTyped<'v, FrozenProviderCollection>,
+        provider_collection: ProviderCollection<'v>,
+        execution_platform: Option<&ExecutionPlatformResolution>,
+    ) -> Self {
+        let execution_platform: ValueOfUnchecked<NoneOr<StarlarkExecutionPlatformResolution>> =
+            match execution_platform {
+                Some(e) => ValueOfUnchecked::new(
+                    heap.alloc(StarlarkExecutionPlatformResolution(e.clone())),
+                ),
+                None => ValueOfUnchecked::new(Value::new_none()),
+            };
+        Dependency {
+            label: heap.alloc_typed_unchecked(StarlarkConfiguredProvidersLabel::new(label)),
+            provider_collection: unsafe {
+                mem::transmute::<
+                    FrozenValueTyped<'_, FrozenProviderCollection>,
+                    FrozenValueTyped<'_, FrozenProviderCollection>,
+                >(base_provider_collection)
+            },
+            extra_provider_collection: heap.alloc(provider_collection),
+            execution_platform,
+        }
+    }
+
+    pub fn new_with_runtime_provider_collection(
+        heap: Heap<'v>,
+        label: ConfiguredProvidersLabel,
+        provider_collection: ProviderCollection<'v>,
+        execution_platform: Option<&ExecutionPlatformResolution>,
+    ) -> Self {
+        let execution_platform: ValueOfUnchecked<NoneOr<StarlarkExecutionPlatformResolution>> =
+            match execution_platform {
+                Some(e) => ValueOfUnchecked::new(
+                    heap.alloc(StarlarkExecutionPlatformResolution(e.clone())),
+                ),
+                None => ValueOfUnchecked::new(Value::new_none()),
+            };
+        Dependency {
+            label: heap.alloc_typed_unchecked(StarlarkConfiguredProvidersLabel::new(label)),
+            provider_collection: empty_provider_collection_value(),
+            extra_provider_collection: heap.alloc(provider_collection),
+            execution_platform,
+        }
+    }
+
+    pub fn base_provider_collection(&self) -> FrozenValueTyped<'v, FrozenProviderCollection> {
+        unsafe {
+            mem::transmute::<
+                FrozenValueTyped<'_, FrozenProviderCollection>,
+                FrozenValueTyped<'_, FrozenProviderCollection>,
+            >(self.provider_collection)
+        }
+    }
+
+    pub fn provider_collection_shallow_clone(&self) -> ProviderCollection<'v> {
+        ProviderCollection::from_value(self.provider_collection_value())
+            .expect("Dependency provider collection should be a provider collection")
+            .shallow_clone()
+    }
+
+    fn map_default_info<T>(
+        &self,
+        f: impl FnOnce(&DefaultInfo<'v>) -> buck2_error::Result<T>,
+        frozen_f: impl FnOnce(&FrozenDefaultInfo) -> buck2_error::Result<T>,
+    ) -> buck2_error::Result<T> {
+        let collection = ProviderCollection::from_value(self.provider_collection_value())
+            .expect("Dependency provider collection should be a provider collection");
+        let default_info = collection.default_info_value()?;
+        if let Some(default_info) = default_info.downcast_ref::<DefaultInfo<'v>>() {
+            return f(default_info);
+        }
+        if let Some(default_info) = default_info
+            .unpack_frozen()
+            .and_then(|value| value.downcast_ref::<FrozenDefaultInfo>())
+        {
+            return frozen_f(default_info);
+        }
+        Err(internal_error!(
+            "DefaultInfo provider should have the expected provider type"
+        ))
     }
 
     pub fn execution_platform(&self) -> buck2_error::Result<Option<&ExecutionPlatformResolution>> {
@@ -123,6 +236,58 @@ impl<'v> Dependency<'v> {
             NoneOr::None => Ok(None),
             NoneOr::Other(e) => Ok(Some(&e.0)),
         }
+    }
+
+    pub fn default_output_values(&self) -> buck2_error::Result<Vec<Value<'v>>> {
+        self.map_default_info(
+            |info| info.default_output_values_for_dependency(),
+            |info| info.default_output_values(),
+        )
+    }
+
+    pub fn files_to_run_executable(&self) -> buck2_error::Result<Option<Value<'v>>> {
+        let files_to_run = self.map_default_info(
+            |info| Ok(info.files_to_run_raw_for_dependency()),
+            |info| Ok(info.files_to_run_raw().to_value()),
+        )?;
+        Ok(StructRef::from_value(files_to_run).and_then(|st| {
+            st.iter().find_map(|(name, value)| {
+                (name.as_str() == "executable" && !value.is_none()).then_some(value)
+            })
+        }))
+    }
+
+    pub fn default_runfiles_value(&self) -> buck2_error::Result<Value<'v>> {
+        self.map_default_info(
+            |info| Ok(info.default_runfiles_raw_for_dependency()),
+            |info| Ok(info.default_runfiles_raw().to_value()),
+        )
+    }
+
+    pub fn template_variable_info(
+        &self,
+    ) -> Option<FrozenValueTyped<'_, FrozenTemplateVariableInfo>> {
+        self.provider_collection.builtin_provider()
+    }
+
+    pub fn data_runfiles(&'v self) -> buck2_error::Result<&'v BazelRunfiles<'v>> {
+        let value = self.map_default_info(
+            |info| Ok(info.data_runfiles_raw_for_dependency()),
+            |info| Ok(info.data_runfiles_raw().to_value()),
+        )?;
+        BazelRunfiles::from_value(value).ok_or_else(|| {
+            buck2_error::internal_error!("DefaultInfo.data_runfiles should be a runfiles object")
+        })
+    }
+
+    pub fn default_runfiles(&'v self) -> buck2_error::Result<&'v BazelRunfiles<'v>> {
+        let value = self.map_default_info(
+            |info| Ok(info.default_runfiles_raw_for_dependency()),
+            |info| Ok(info.default_runfiles_raw().to_value()),
+        )?;
+        BazelRunfiles::from_value(value).ok_or_else(|| {
+            buck2_error::internal_error!("DefaultInfo.default_runfiles should be a runfiles object")
+        })
     }
 }
 
@@ -141,15 +306,14 @@ where
     }
 
     fn at(&self, index: Value<'v>, heap: Heap<'v>) -> starlark::Result<Value<'v>> {
-        self.provider_collection
-            .to_value()
+        self.provider_collection_value()
             .at(index, heap)
             .with_buck_error_context(|| format!("Error accessing dependencies of `{}`", self.label))
             .map_err(Into::into)
     }
 
     fn is_in(&self, other: Value<'v>) -> starlark::Result<bool> {
-        self.provider_collection.to_value().is_in(other)
+        self.provider_collection_value().is_in(other)
     }
 
     fn equals(&self, other: Value<'v>) -> starlark::Result<bool> {
@@ -211,12 +375,48 @@ fn dependency_methods(builder: &mut MethodsBuilder) {
         Ok(this.label)
     }
 
+    /// Bazel target-style shortcut for `dep[DefaultInfo].files`.
+    #[starlark(attribute)]
+    fn files<'v>(this: &Dependency<'v>) -> starlark::Result<Value<'v>> {
+        Ok(this.map_default_info(
+            |info| Ok(info.files_raw_for_dependency()),
+            |info| Ok(info.files_raw().to_value()),
+        )?)
+    }
+
+    /// Bazel target-style shortcut for `dep[DefaultInfo].files_to_run`.
+    #[starlark(attribute)]
+    fn files_to_run<'v>(this: &Dependency<'v>) -> starlark::Result<Value<'v>> {
+        Ok(this.map_default_info(
+            |info| Ok(info.files_to_run_raw_for_dependency()),
+            |info| Ok(info.files_to_run_raw().to_value()),
+        )?)
+    }
+
+    /// Bazel target-style shortcut for `dep[DefaultInfo].data_runfiles`.
+    #[starlark(attribute)]
+    fn data_runfiles<'v>(this: &Dependency<'v>) -> starlark::Result<Value<'v>> {
+        Ok(this.map_default_info(
+            |info| Ok(info.data_runfiles_raw_for_dependency()),
+            |info| Ok(info.data_runfiles_raw().to_value()),
+        )?)
+    }
+
+    /// Bazel target-style shortcut for `dep[DefaultInfo].default_runfiles`.
+    #[starlark(attribute)]
+    fn default_runfiles<'v>(this: &Dependency<'v>) -> starlark::Result<Value<'v>> {
+        Ok(this.map_default_info(
+            |info| Ok(info.default_runfiles_raw_for_dependency()),
+            |info| Ok(info.default_runfiles_raw().to_value()),
+        )?)
+    }
+
     /// Returns a list of all providers available from this dependency.
     // TODO(nga): should return provider collection.
     #[starlark(attribute)]
-    fn providers<'v>(this: &Dependency) -> starlark::Result<Vec<FrozenValue>> {
+    fn providers<'v>(this: &Dependency<'v>) -> starlark::Result<Vec<Value<'v>>> {
         Ok(this
-            .provider_collection
+            .provider_collection_shallow_clone()
             .providers
             .values()
             .copied()
@@ -285,7 +485,7 @@ fn dependency_methods(builder: &mut MethodsBuilder) {
         index: Value<'v>,
     ) -> starlark::Result<NoneOr<ValueOfUnchecked<'v, AbstractProvider>>> {
         Ok(this
-            .provider_collection
+            .provider_collection_shallow_clone()
             .get(index)
             .with_buck_error_context(|| {
                 format!("Error accessing dependencies of `{}`", this.label)

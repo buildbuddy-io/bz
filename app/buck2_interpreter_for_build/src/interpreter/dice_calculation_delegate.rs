@@ -19,9 +19,12 @@ use buck2_common::file_ops::error::FileReadErrorContext;
 use buck2_common::legacy_configs::dice::HasLegacyConfigs;
 use buck2_common::legacy_configs::dice::OpaqueLegacyBuckConfigOnDice;
 use buck2_common::package_boundary::HasPackageBoundaryExceptions;
+use buck2_common::package_listing::PackageListingStrategy;
+use buck2_common::package_listing::bazel_compat_package_listing_enabled;
 use buck2_common::package_listing::dice::DicePackageListingResolver;
 use buck2_common::package_listing::listing::PackageListing;
 use buck2_core::build_file_path::BuildFilePath;
+use buck2_core::bzl::ImportPath;
 use buck2_core::cells::build_file_cell::BuildFileCell;
 use buck2_core::cells::cell_path::CellPath;
 use buck2_core::package::PackageLabel;
@@ -60,11 +63,14 @@ use starlark::environment::Module;
 use starlark::syntax::AstModule;
 use starlark::values::FrozenHeapName;
 
+use crate::bazel_repository::BazelRepositoryRuleEvaluation;
 use crate::interpreter::buckconfig::ConfigsOnDiceViewForStarlark;
+use crate::interpreter::build_context::BazelRepositoryRuleInvocation;
 use crate::interpreter::cell_info::InterpreterCellInfo;
 use crate::interpreter::check_starlark_stack_size::check_starlark_stack_size;
 use crate::interpreter::cycles::LoadCycleDescriptor;
 use crate::interpreter::global_interpreter_state::HasGlobalInterpreterState;
+use crate::interpreter::interpreter_for_dir::BuildFileEvalResult;
 use crate::interpreter::interpreter_for_dir::InterpreterForDir;
 use crate::interpreter::interpreter_for_dir::ParseData;
 use crate::interpreter::interpreter_for_dir::ParseResult;
@@ -146,8 +152,11 @@ impl<'c, 'd> HasCalculationDelegate<'c, 'd> for DiceComputations<'d> {
                 )?))
             }
 
-            fn equality(_: &Self::Value, _: &Self::Value) -> bool {
-                false
+            fn equality(x: &Self::Value, y: &Self::Value) -> bool {
+                match (x, y) {
+                    (Ok(x), Ok(y)) => x.equivalent(y),
+                    _ => false,
+                }
             }
 
             fn value_serialize() -> impl ValueSerialize<Value = Self::Value> {
@@ -156,15 +165,24 @@ impl<'c, 'd> HasCalculationDelegate<'c, 'd> for DiceComputations<'d> {
         }
 
         let build_file_cell = path.borrow().build_file_cell();
+        let path_ref = path.borrow();
+        let import_dir = match path_ref {
+            StarlarkPath::LoadFile(path)
+            | StarlarkPath::JsonFile(path)
+            | StarlarkPath::TomlFile(path) => path.package_root().cloned(),
+            StarlarkPath::BuildFile(_)
+            | StarlarkPath::PackageFile(_)
+            | StarlarkPath::BxlFile(_) => None,
+        }
+        .unwrap_or_else(|| {
+            path_ref
+                .path()
+                .parent()
+                .expect("starlark path to have parent")
+                .to_owned()
+        });
         let configs = self
-            .compute(&InterpreterConfigForDirKey(
-                path.borrow()
-                    .path()
-                    .parent()
-                    .expect("starlark path to have parent")
-                    .to_owned(),
-                build_file_cell,
-            ))
+            .compute(&InterpreterConfigForDirKey(import_dir, build_file_cell))
             .await??;
 
         Ok(DiceCalculationDelegate {
@@ -203,7 +221,6 @@ impl<'c, 'd: 'c> DiceCalculationDelegate<'c, 'd> {
             // Should potentially add support for other file types as well
             _ => result.without_package_context_information(),
         }?;
-
         self.configs.parse(starlark_path, content)
     }
 
@@ -233,17 +250,33 @@ impl<'c, 'd: 'c> DiceCalculationDelegate<'c, 'd> {
         ))
     }
 
+    async fn eval_deps_with_cycle_guard(
+        ctx: &mut DiceComputations<'_>,
+        modules: &[(Option<FileSpan>, OwnedStarlarkModulePath)],
+    ) -> buck2_error::Result<ModuleDeps> {
+        let deps = CycleGuard::<LoadCycleDescriptor>::new(ctx)?
+            .guard_this(Self::eval_deps(ctx, modules))
+            .await
+            .into_result(ctx)
+            .await?;
+        deps.map_err(buck2_error::Error::from)?
+    }
+
     pub async fn prepare_eval(
         &mut self,
         starlark_file: StarlarkPath<'_>,
     ) -> buck2_error::Result<(AstModule, ModuleDeps)> {
-        let ParseData(ast, imports) = self.parse_file(starlark_file).await??;
-        let deps = CycleGuard::<LoadCycleDescriptor>::new(self.ctx)?
-            .guard_this(Self::eval_deps(self.ctx, &imports))
-            .await
-            .into_result(self.ctx)
-            .await???;
-        Ok((ast, deps))
+        let (parse_data, deps) = self.prepare_eval_with_parse_data(starlark_file).await?;
+        Ok((parse_data.ast, deps))
+    }
+
+    async fn prepare_eval_with_parse_data(
+        &mut self,
+        starlark_file: StarlarkPath<'_>,
+    ) -> buck2_error::Result<(ParseData, ModuleDeps)> {
+        let parse_data = self.parse_file(starlark_file).await??;
+        let deps = Self::eval_deps_with_cycle_guard(self.ctx, &parse_data.imports).await?;
+        Ok((parse_data, deps))
     }
 
     pub fn prepare_eval_with_content(
@@ -367,6 +400,66 @@ impl<'c, 'd: 'c> DiceCalculationDelegate<'c, 'd> {
             loaded_modules,
             evaluation,
         ))
+    }
+
+    pub async fn eval_bzlmod_module_extension(
+        &mut self,
+        extension_path: &ImportPath,
+        extension_module: &LoadedModule,
+        extension_name: &str,
+        extension_usages_json: &str,
+        module_ctx_working_dir: &str,
+        cancellation: &CancellationContext,
+    ) -> buck2_error::Result<crate::bazel_repository::BazelModuleExtensionEvaluation> {
+        let buckconfig = self.get_legacy_buck_config_for_starlark().await?;
+        let root_buckconfig = self.ctx.get_legacy_root_config_on_dice().await?;
+
+        let configs = &self.configs;
+        let ctx = &mut *self.ctx;
+        let eval_kind = StarlarkEvalKind::Unknown(
+            format!("bzlmod_module_extension/{extension_path}%{extension_name}").into(),
+        );
+        let provider = StarlarkEvaluatorProvider::new(ctx, eval_kind).await?;
+        let mut buckconfigs = ConfigsOnDiceViewForStarlark::new(ctx, buckconfig, root_buckconfig);
+        configs.eval_bzlmod_module_extension(
+            extension_path,
+            extension_module.env(),
+            extension_name,
+            extension_usages_json,
+            module_ctx_working_dir,
+            &mut buckconfigs,
+            provider,
+            cancellation,
+        )
+    }
+
+    pub(crate) async fn eval_bzlmod_repository_rule(
+        &mut self,
+        rule_path: &ImportPath,
+        rule_module: &LoadedModule,
+        invocation: &BazelRepositoryRuleInvocation,
+        repository_ctx_working_dir: &str,
+        cancellation: &CancellationContext,
+    ) -> buck2_error::Result<BazelRepositoryRuleEvaluation> {
+        let buckconfig = self.get_legacy_buck_config_for_starlark().await?;
+        let root_buckconfig = self.ctx.get_legacy_root_config_on_dice().await?;
+
+        let configs = &self.configs;
+        let ctx = &mut *self.ctx;
+        let eval_kind = StarlarkEvalKind::Unknown(
+            format!("bzlmod_repository_rule/{}", invocation.rule_id).into(),
+        );
+        let provider = StarlarkEvaluatorProvider::new(ctx, eval_kind).await?;
+        let mut buckconfigs = ConfigsOnDiceViewForStarlark::new(ctx, buckconfig, root_buckconfig);
+        configs.eval_bzlmod_repository_rule(
+            rule_path,
+            rule_module.env(),
+            invocation,
+            repository_ctx_working_dir,
+            &mut buckconfigs,
+            provider,
+            cancellation,
+        )
     }
 
     /// Eval parent `PACKAGE` file for given package file.
@@ -589,6 +682,24 @@ impl<'c, 'd: 'c> DiceCalculationDelegate<'c, 'd> {
         .await
     }
 
+    async fn resolve_package_listing_with_strategy(
+        ctx: &mut DiceComputations<'_>,
+        package: PackageLabel,
+        strategy: PackageListingStrategy,
+    ) -> buck2_error::Result<PackageListing> {
+        span_async_simple(
+            buck2_data::LoadPackageStart {
+                path: package.as_cell_path().to_string(),
+            },
+            DicePackageListingResolver(ctx)
+                .resolve_package_listing_with_strategy(package.dupe(), strategy),
+            buck2_data::LoadPackageEnd {
+                path: package.as_cell_path().to_string(),
+            },
+        )
+        .await
+    }
+
     pub async fn eval_build_file(
         &mut self,
         package: PackageLabel,
@@ -597,19 +708,83 @@ impl<'c, 'd: 'c> DiceCalculationDelegate<'c, 'd> {
         let mut now = None;
         let eval_kind = StarlarkEvalKind::LoadBuildFile(package.dupe());
         let eval_result: buck2_error::Result<_> = try {
-            let ((), listing) = self
+            let package_cell = package.cell_name();
+            let ((), bazel_compat_listing) = self
                 .ctx
                 .try_compute2(
                     |ctx| check_starlark_stack_size(ctx).boxed(),
-                    |ctx| Self::resolve_package_listing(ctx, package.dupe()).boxed(),
+                    |ctx| {
+                        async move { bazel_compat_package_listing_enabled(ctx, package_cell).await }
+                            .boxed()
+                    },
                 )
                 .await?;
 
-            let build_file_path =
-                BuildFilePath::new(package.dupe(), listing.buildfile().to_owned());
-            let (ast, deps) = self
-                .prepare_eval(StarlarkPath::BuildFile(&build_file_path))
-                .await?;
+            let (mut listing, build_file_path, ast, deps, mut listing_strategy) =
+                if bazel_compat_listing {
+                    let shallow_listing = Self::resolve_package_listing_with_strategy(
+                        self.ctx,
+                        package.dupe(),
+                        PackageListingStrategy::Shallow,
+                    )
+                    .await?;
+                    let build_file_path =
+                        BuildFilePath::new(package.dupe(), shallow_listing.buildfile().to_owned());
+                    let parse_data = self
+                        .parse_file(StarlarkPath::BuildFile(&build_file_path))
+                        .await??;
+                    let strategy = parse_data
+                        .bazel_package_listing_strategy
+                        .clone()
+                        .unwrap_or(PackageListingStrategy::Recursive);
+                    let (listing, deps) = if strategy == PackageListingStrategy::Shallow {
+                        let deps =
+                            Self::eval_deps_with_cycle_guard(self.ctx, &parse_data.imports).await?;
+                        (shallow_listing, deps)
+                    } else {
+                        let imports = parse_data.imports.clone();
+                        self.ctx
+                            .try_compute2(
+                                {
+                                    let package = package.dupe();
+                                    let strategy = strategy.clone();
+                                    move |ctx| {
+                                        async move {
+                                            Self::resolve_package_listing_with_strategy(
+                                                ctx,
+                                                package.dupe(),
+                                                strategy.clone(),
+                                            )
+                                            .await
+                                        }
+                                        .boxed()
+                                    }
+                                },
+                                move |ctx| {
+                                    async move {
+                                        Self::eval_deps_with_cycle_guard(ctx, &imports).await
+                                    }
+                                    .boxed()
+                                },
+                            )
+                            .await?
+                    };
+                    (listing, build_file_path, parse_data.ast, deps, strategy)
+                } else {
+                    let listing = Self::resolve_package_listing(self.ctx, package.dupe()).await?;
+                    let build_file_path =
+                        BuildFilePath::new(package.dupe(), listing.buildfile().to_owned());
+                    let (ast, deps) = self
+                        .prepare_eval(StarlarkPath::BuildFile(&build_file_path))
+                        .await?;
+                    (
+                        listing,
+                        build_file_path,
+                        ast,
+                        deps,
+                        PackageListingStrategy::Recursive,
+                    )
+                };
             let super_package = self
                 .eval_package_file_for_build_file(package.dupe(), &listing)
                 .await?;
@@ -623,65 +798,100 @@ impl<'c, 'd: 'c> DiceCalculationDelegate<'c, 'd> {
             let root_buckconfig = self.ctx.get_legacy_root_config_on_dice().await?;
             let module_id = build_file_path.to_string();
             let cell_str = build_file_path.cell().as_str().to_owned();
-            let start_event = buck2_data::LoadBuildFileStart {
-                cell: cell_str.clone(),
-                module_id: module_id.clone(),
-            };
 
             let configs = &self.configs;
-            let ctx = &mut *self.ctx;
 
             now = Some(TimeSpan::start_now());
-            let provider = StarlarkEvaluatorProvider::new(ctx, eval_kind).await?;
-            let mut buckconfigs =
-                ConfigsOnDiceViewForStarlark::new(ctx, buckconfig, root_buckconfig);
-
-            let (profile_data, eval_result) = span(start_event, move || {
-                let result_with_stats = configs
-                    .eval_build_file(
-                        &build_file_path,
-                        &mut buckconfigs,
-                        listing,
-                        super_package,
-                        package_boundary_exception,
-                        ast,
-                        deps.get_loaded_modules(),
-                        provider,
-                        false,
-                        cancellation,
-                    )
-                    .with_buck_error_context(|| {
-                        format!("Error evaluating build file: `{}`", build_file_path)
-                    });
-                let error = result_with_stats.as_ref().err().map(|e| format!("{e:#}"));
-                let (
-                    starlark_peak_allocated_bytes,
-                    cpu_instruction_count,
-                    starlark_tick_count,
-                    target_count,
-                ) = match &result_with_stats {
-                    Ok((_, rs)) => (
-                        Some(rs.starlark_peak_allocated_bytes),
-                        rs.cpu_instruction_count,
-                        Some(rs.starlark_tick_count),
-                        Some(rs.result.targets().len() as u64),
-                    ),
-                    Err(_) => (None, None, None, None),
+            let (profile_data, eval_result) = loop {
+                let ctx = &mut *self.ctx;
+                let provider = StarlarkEvaluatorProvider::new(ctx, eval_kind.dupe()).await?;
+                let mut buckconfigs = ConfigsOnDiceViewForStarlark::new(
+                    ctx,
+                    buckconfig.dupe(),
+                    root_buckconfig.dupe(),
+                );
+                let start_event = buck2_data::LoadBuildFileStart {
+                    cell: cell_str.clone(),
+                    module_id: module_id.clone(),
                 };
+                let span_module_id = module_id.clone();
+                let span_cell_str = cell_str.clone();
 
-                (
-                    result_with_stats,
-                    buck2_data::LoadBuildFileEnd {
-                        module_id,
-                        cell: cell_str,
-                        target_count,
+                let eval_attempt = span(start_event, || {
+                    let result_with_stats = configs
+                        .eval_build_file(
+                            &build_file_path,
+                            &mut buckconfigs,
+                            listing.dupe(),
+                            listing_strategy.clone(),
+                            super_package.dupe(),
+                            package_boundary_exception,
+                            ast.clone(),
+                            deps.get_loaded_modules(),
+                            provider,
+                            false,
+                            cancellation,
+                        )
+                        .with_buck_error_context(|| {
+                            format!("Error evaluating build file: `{}`", build_file_path)
+                        });
+                    let error = result_with_stats.as_ref().err().map(|e| format!("{e:#}"));
+                    let (
                         starlark_peak_allocated_bytes,
                         cpu_instruction_count,
-                        error,
                         starlark_tick_count,
-                    },
-                )
-            })?;
+                        target_count,
+                    ) = match &result_with_stats {
+                        Ok(BuildFileEvalResult::Complete(_, rs)) => (
+                            Some(rs.starlark_peak_allocated_bytes),
+                            rs.cpu_instruction_count,
+                            Some(rs.starlark_tick_count),
+                            Some(rs.result.targets().len() as u64),
+                        ),
+                        Ok(BuildFileEvalResult::NeedsPackageListing(_)) => (None, None, None, None),
+                        Err(_) => (None, None, None, None),
+                    };
+
+                    (
+                        result_with_stats,
+                        buck2_data::LoadBuildFileEnd {
+                            module_id: span_module_id,
+                            cell: span_cell_str,
+                            target_count,
+                            starlark_peak_allocated_bytes,
+                            cpu_instruction_count,
+                            error,
+                            starlark_tick_count,
+                        },
+                    )
+                })?;
+                drop(buckconfigs);
+
+                match eval_attempt {
+                    BuildFileEvalResult::Complete(profile_data, eval_result) => {
+                        break (profile_data, eval_result);
+                    }
+                    BuildFileEvalResult::NeedsPackageListing(next_strategy) => {
+                        if listing_strategy.covers(&next_strategy) {
+                            return (
+                                now.unwrap().end_now(),
+                                Err(internal_error!(
+                                    "package listing restart did not expand strategy from `{:?}` to `{:?}`",
+                                    listing_strategy,
+                                    next_strategy
+                                )),
+                            );
+                        }
+                        listing_strategy = next_strategy;
+                        listing = Self::resolve_package_listing_with_strategy(
+                            self.ctx,
+                            package.dupe(),
+                            listing_strategy.clone(),
+                        )
+                        .await?;
+                    }
+                }
+            };
 
             let mut eval_result = eval_result.result;
 

@@ -25,6 +25,7 @@ use starlark::values::none::NoneOr;
 
 use crate::actions::impls::copy::CopyMode;
 use crate::actions::impls::copy::UnregisteredCopyAction;
+use crate::actions::impls::copy::UnregisteredSymlinkAction;
 use crate::actions::impls::symlinked_dir::UnregisteredSymlinkedDirAction;
 
 fn create_dir_tree<'v>(
@@ -125,6 +126,88 @@ pub(crate) fn analysis_actions_methods_copy(methods: &mut MethodsBuilder) {
             CopyMode::Symlink,
             OutputType::FileOrDirectory,
             has_content_based_path.into_option(),
+        )?)
+    }
+
+    /// Bazel spelling for creating a symlink output.
+    fn symlink<'v>(
+        this: &AnalysisActions<'v>,
+        #[starlark(require = named)] output: OutputArtifactArg<'v>,
+        #[starlark(require = named, default = NoneOr::None)] target_file: NoneOr<
+            ValueAsInputArtifactLike<'v>,
+        >,
+        #[starlark(require = named, default = NoneOr::None)] target_path: NoneOr<&str>,
+        #[starlark(require = named, default = NoneOr::None)] target_type: NoneOr<&str>,
+        #[starlark(require = named, default = NoneOr::None)] is_executable: NoneOr<bool>,
+        #[starlark(require = named, default = NoneOr::None)] progress_message: NoneOr<&str>,
+        #[starlark(require = named, default = NoneOr::None)] use_exec_root_for_source: NoneOr<bool>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<ValueTyped<'v, StarlarkDeclaredArtifact<'v>>> {
+        let _ = progress_message;
+        let _ = use_exec_root_for_source;
+        let target_file = target_file.into_option();
+        let target_path = target_path.into_option();
+        let target_type = target_type.into_option();
+        let is_executable = is_executable.into_option().unwrap_or(false);
+
+        if target_file.is_some() == target_path.is_some() {
+            return Err(buck2_error::buck2_error!(
+                buck2_error::ErrorTag::Input,
+                "Exactly one of `target_file` or `target_path` is required"
+            )
+            .into());
+        }
+
+        if let Some(target_path) = target_path {
+            if is_executable {
+                return Err(buck2_error::buck2_error!(
+                    buck2_error::ErrorTag::Input,
+                    "`is_executable` cannot be True when using `target_path`"
+                )
+                .into());
+            }
+            if let Some(target_type) = target_type
+                && target_type != "file"
+                && target_type != "directory"
+            {
+                return Err(buck2_error::buck2_error!(
+                    buck2_error::ErrorTag::Input,
+                    "`target_type` must be one of `file` or `directory`"
+                )
+                .into());
+            }
+
+            let mut this = this.state()?;
+            let (declaration, output_artifact) =
+                this.get_or_declare_output(eval, output, OutputType::Symlink, None)?;
+            this.register_action(
+                buck_indexset![output_artifact],
+                UnregisteredSymlinkAction::new(target_path.to_owned()),
+                None,
+                None,
+            )?;
+
+            return Ok(declaration.into_declared_artifact(AssociatedArtifacts::new()));
+        }
+
+        if target_type.is_some() {
+            return Err(buck2_error::buck2_error!(
+                buck2_error::ErrorTag::Input,
+                "`target_type` cannot be used with `target_file`"
+            )
+            .into());
+        }
+        let target_file =
+            target_file.expect("validated exactly one of target_file and target_path");
+
+        Ok(copy_file_impl(
+            eval,
+            this,
+            output,
+            target_file,
+            CopyMode::Symlink,
+            OutputType::FileOrDirectory,
+            None,
         )?)
     }
 

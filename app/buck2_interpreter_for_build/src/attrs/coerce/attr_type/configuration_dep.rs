@@ -16,6 +16,7 @@ use starlark::typing::Ty;
 use starlark::values::Value;
 
 use crate::attrs::coerce::AttrTypeCoerce;
+use crate::attrs::coerce::attr_type::coerce_providers_label_from_value;
 use crate::attrs::coerce::attr_type::ty_maybe_select::TyMaybeSelect;
 
 impl AttrTypeCoerce for ConfigurationDepAttrType {
@@ -25,8 +26,7 @@ impl AttrTypeCoerce for ConfigurationDepAttrType {
         ctx: &dyn AttrCoercionContext,
         value: Value,
     ) -> buck2_error::Result<CoercedAttr> {
-        ctx.coerce_providers_label(value.unpack_str_err()?)
-            .map(CoercedAttr::ConfigurationDep)
+        coerce_providers_label_from_value(ctx, value).map(CoercedAttr::ConfigurationDep)
     }
 
     fn starlark_type(&self) -> TyMaybeSelect {

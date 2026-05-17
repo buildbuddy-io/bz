@@ -18,9 +18,11 @@ use buck2_core::cells::cell_path::CellPath;
 use buck2_core::cells::cell_path::CellPathRef;
 use buck2_core::cells::name::CellName;
 use buck2_core::cells::paths::CellRelativePath;
+use buck2_fs::paths::RelativePath;
 use buck2_fs::paths::file_name::FileNameBuf;
 use cmp_any::PartialEqAny;
 use dice::DiceComputations;
+use dice::DiceTransactionUpdater;
 use dice::testing::DiceBuilder;
 use dupe::Dupe;
 use itertools::Itertools;
@@ -39,16 +41,21 @@ use crate::file_ops::metadata::FileMetadata;
 use crate::file_ops::metadata::FileType;
 use crate::file_ops::metadata::RawDirEntry;
 use crate::file_ops::metadata::RawPathMetadata;
+use crate::file_ops::metadata::RawPathMetadataForNoWatchFs;
 use crate::file_ops::metadata::RawSymlink;
 use crate::file_ops::metadata::ReadDirOutput;
 use crate::file_ops::metadata::SimpleDirEntry;
+use crate::file_ops::metadata::Symlink;
 use crate::file_ops::metadata::TrackedFileDigest;
 use crate::file_ops::trait_::FileOps;
 use crate::ignores::file_ignores::FileIgnoreResult;
+use crate::io::IoProvider;
+use crate::io::NoWatchFsMetadataCache;
 
 enum TestFileOpsEntry {
     File(String /*data*/, FileMetadata),
     ExternalSymlink(Arc<ExternalSymlink>),
+    RelativeSymlink(CellPath, Arc<Symlink>),
     Directory(BTreeSet<SimpleDirEntry>),
 }
 
@@ -65,6 +72,7 @@ impl TestFileOps {
             let mut file_type = match entry {
                 TestFileOpsEntry::Directory(..) => FileType::Directory,
                 TestFileOpsEntry::ExternalSymlink(..) => FileType::Symlink,
+                TestFileOpsEntry::RelativeSymlink(..) => FileType::Symlink,
                 TestFileOpsEntry::File(..) => FileType::File,
             };
             // make sure the test setup is correct and concise
@@ -141,16 +149,42 @@ impl TestFileOps {
         )
     }
 
+    pub fn new_with_files_and_relative_symlinks(
+        files: BTreeMap<CellPath, String>,
+        symlinks: BTreeMap<CellPath, CellPath>,
+    ) -> Self {
+        let cas_digest_config = CasDigestConfig::testing_default();
+
+        Self::new(
+            files
+                .into_iter()
+                .map(|(path, data)| {
+                    (
+                        path,
+                        TestFileOpsEntry::File(
+                            data.clone(),
+                            FileMetadata {
+                                digest: TrackedFileDigest::from_content(
+                                    data.as_bytes(),
+                                    cas_digest_config,
+                                ),
+                                is_executable: false,
+                            },
+                        ),
+                    )
+                })
+                .chain(symlinks.into_iter().map(|(path, target)| {
+                    assert_eq!(path.cell(), target.cell());
+                    let target_path: &RelativePath = target.path().as_ref();
+                    let symlink = Arc::new(Symlink::new(target_path.to_owned()));
+                    (path, TestFileOpsEntry::RelativeSymlink(target, symlink))
+                }))
+                .collect::<BTreeMap<CellPath, TestFileOpsEntry>>(),
+        )
+    }
+
     pub fn mock_in_cell(&self, cell: CellName, builder: DiceBuilder) -> DiceBuilder {
-        let data = Ok(FileOpsValue(FileOpsDelegateWithIgnores::new(
-            None,
-            Arc::new(TestCellFileOps(
-                cell,
-                Self {
-                    entries: Arc::clone(&self.entries),
-                },
-            )),
-        )));
+        let data = self.file_ops_value(cell);
         builder
             .mock_and_return(
                 FileOpsKey {
@@ -167,6 +201,42 @@ impl TestFileOps {
                 data,
             )
     }
+
+    pub fn update_in_cell(
+        &self,
+        cell: CellName,
+        updater: &mut DiceTransactionUpdater,
+    ) -> buck2_error::Result<()> {
+        let data = self.file_ops_value(cell);
+        Ok(updater.changed_to([
+            (
+                FileOpsKey {
+                    cell,
+                    check_ignores: CheckIgnores::Yes,
+                },
+                data.dupe(),
+            ),
+            (
+                FileOpsKey {
+                    cell,
+                    check_ignores: CheckIgnores::No,
+                },
+                data,
+            ),
+        ])?)
+    }
+
+    fn file_ops_value(&self, cell: CellName) -> buck2_error::Result<FileOpsValue> {
+        Ok(FileOpsValue(FileOpsDelegateWithIgnores::new(
+            None,
+            Arc::new(TestCellFileOps(
+                cell,
+                Self {
+                    entries: Arc::clone(&self.entries),
+                },
+            )),
+        )))
+    }
 }
 
 #[async_trait]
@@ -177,6 +247,13 @@ impl FileOps for TestFileOps {
     ) -> buck2_error::Result<Option<String>> {
         Ok(self.entries.get(&path.to_owned()).and_then(|e| match e {
             TestFileOpsEntry::File(data, ..) => Some(data.clone()),
+            TestFileOpsEntry::ExternalSymlink(sym) => {
+                std::fs::read_to_string(sym.to_path_buf()).ok()
+            }
+            TestFileOpsEntry::RelativeSymlink(target, ..) => match self.entries.get(target) {
+                Some(TestFileOpsEntry::File(data, ..)) => Some(data.clone()),
+                _ => None,
+            },
             _ => None,
         }))
     }
@@ -216,6 +293,10 @@ impl FileOps for TestFileOps {
                 TestFileOpsEntry::ExternalSymlink(sym) => Ok(RawPathMetadata::Symlink {
                     at: Arc::new(path.to_owned()),
                     to: RawSymlink::External(sym.dupe()),
+                }),
+                TestFileOpsEntry::RelativeSymlink(target, sym) => Ok(RawPathMetadata::Symlink {
+                    at: Arc::new(path.to_owned()),
+                    to: RawSymlink::Relative(Arc::new(target.to_owned()), sym.dupe()),
                 }),
                 _ => Err(buck2_error::buck2_error!(
                     buck2_error::ErrorTag::Tier0,
@@ -262,15 +343,15 @@ impl FileOpsDelegate for TestCellFileOps {
         _ctx: &mut DiceComputations<'_>,
         path: &'async_trait CellRelativePath,
     ) -> buck2_error::Result<Arc<[RawDirEntry]>> {
-        let path = CellPath::new(self.0, path.to_owned());
-        let simple_entries = FileOps::read_dir(&self.1, path.as_ref()).await?.included;
-        Ok(simple_entries
-            .iter()
-            .map(|e| RawDirEntry {
-                file_name: e.file_name.clone().into_inner(),
-                file_type: e.file_type,
-            })
-            .collect())
+        self.read_dir_without_dice(path).await
+    }
+
+    async fn read_dir_for_no_watchfs_without_dice(
+        &self,
+        _io_provider: Arc<dyn IoProvider>,
+        path: &'async_trait CellRelativePath,
+    ) -> buck2_error::Result<Arc<[RawDirEntry]>> {
+        self.read_dir_without_dice(path).await
     }
 
     async fn read_path_metadata_if_exists(
@@ -282,7 +363,38 @@ impl FileOpsDelegate for TestCellFileOps {
         FileOps::read_path_metadata_if_exists(&self.1, path.as_ref()).await
     }
 
+    async fn read_path_metadata_for_no_watchfs_if_exists_without_dice(
+        &self,
+        _io_provider: Arc<dyn IoProvider>,
+        path: &'async_trait CellRelativePath,
+        _cache: Option<Arc<NoWatchFsMetadataCache>>,
+    ) -> buck2_error::Result<Option<RawPathMetadataForNoWatchFs>> {
+        let path = CellPath::new(self.0, path.to_owned());
+        Ok(
+            FileOps::read_path_metadata_if_exists(&self.1, path.as_ref())
+                .await?
+                .map(RawPathMetadataForNoWatchFs::from),
+        )
+    }
+
     fn eq_token(&self) -> PartialEqAny<'_> {
         PartialEqAny::always_false()
+    }
+}
+
+impl TestCellFileOps {
+    async fn read_dir_without_dice(
+        &self,
+        path: &CellRelativePath,
+    ) -> buck2_error::Result<Arc<[RawDirEntry]>> {
+        let path = CellPath::new(self.0, path.to_owned());
+        let simple_entries = FileOps::read_dir(&self.1, path.as_ref()).await?.included;
+        Ok(simple_entries
+            .iter()
+            .map(|e| RawDirEntry {
+                file_name: e.file_name.clone().into_inner(),
+                file_type: e.file_type,
+            })
+            .collect())
     }
 }

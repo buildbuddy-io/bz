@@ -64,6 +64,11 @@ pub struct Dialect {
     ///
     /// [Starlark spec proposal](https://github.com/bazelbuild/starlark/issues/91).
     pub enable_f_strings: bool,
+    /// Are tabs accepted as ordinary whitespace outside indentation.
+    ///
+    /// Bazel accepts tabs as token-separating whitespace, but still reports tabs used for
+    /// indentation. Keep this disabled for the Starlark spec dialect.
+    pub enable_tabs_as_whitespace: bool,
     /// Like `#[non_exhaustive]`, but allows struct expression.
     ///
     /// [Explanation](https://github.com/rust-lang/rust-clippy/issues/6559).
@@ -93,6 +98,7 @@ impl Dialect {
         enable_load_reexport: true, // But they plan to change it
         enable_top_level_stmt: false,
         enable_f_strings: false,
+        enable_tabs_as_whitespace: false,
         _non_exhaustive: (),
     };
 
@@ -108,6 +114,7 @@ impl Dialect {
         enable_load_reexport: true,
         enable_top_level_stmt: true,
         enable_f_strings: false,
+        enable_tabs_as_whitespace: false,
         _non_exhaustive: (),
     };
 
@@ -123,6 +130,7 @@ impl Dialect {
         enable_load_reexport: true,
         enable_top_level_stmt: true,
         enable_f_strings: true,
+        enable_tabs_as_whitespace: false,
         _non_exhaustive: (),
     };
 }

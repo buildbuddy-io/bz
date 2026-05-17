@@ -12,6 +12,7 @@ use std::sync::Arc;
 
 use buck2_common::legacy_configs::configs::LegacyBuckConfig;
 use buck2_common::legacy_configs::configs::testing::parse_with_config_args;
+use buck2_common::package_listing::PackageListingStrategy;
 use buck2_common::package_listing::listing::PackageListing;
 use buck2_common::package_listing::listing::testing::PackageListingExt;
 use buck2_core::build_file_path::BuildFilePath;
@@ -49,6 +50,7 @@ use crate::interpreter::cell_info::InterpreterCellInfo;
 use crate::interpreter::configuror::AdditionalGlobalsFn;
 use crate::interpreter::configuror::BuildInterpreterConfiguror;
 use crate::interpreter::global_interpreter_state::GlobalInterpreterState;
+use crate::interpreter::interpreter_for_dir::BuildFileEvalResult;
 use crate::interpreter::interpreter_for_dir::InterpreterForDir;
 use crate::interpreter::interpreter_for_dir::ParseData;
 use crate::super_package::package_value::SuperPackageValuesImpl;
@@ -245,8 +247,9 @@ impl Tester {
         loaded_modules: LoadedModules,
     ) -> buck2_error::Result<LoadedModule> {
         let interpreter = self.interpreter()?;
-        let ParseData(ast, _) =
-            interpreter.parse(StarlarkPath::LoadFile(path), content.to_owned())??;
+        let ast = interpreter
+            .parse(StarlarkPath::LoadFile(path), content.to_owned())??
+            .ast;
         let provider =
             StarlarkEvaluatorProvider::passthrough(StarlarkEvalKind::Unknown("testing".into()));
         let mut buckconfigs =
@@ -293,24 +296,32 @@ impl Tester {
         package_listing: PackageListing,
     ) -> buck2_error::Result<EvaluationResult> {
         let interpreter = self.interpreter()?;
-        let ParseData(ast, _) =
-            interpreter.parse(StarlarkPath::BuildFile(path), content.to_owned())??;
+        let ast = interpreter
+            .parse(StarlarkPath::BuildFile(path), content.to_owned())??
+            .ast;
         let provider =
             StarlarkEvaluatorProvider::passthrough(StarlarkEvalKind::Unknown("testing".into()));
         let mut buckconfigs =
             LegacyConfigsViewForStarlark::new(self.root_config.dupe(), self.root_config.dupe());
-        let (_finished_eval, eval_result_with_stats) = interpreter.eval_build_file(
-            path,
-            &mut buckconfigs,
-            package_listing,
-            SuperPackage::empty::<SuperPackageValuesImpl>()?,
-            false,
-            ast,
-            loaded_modules,
-            provider,
-            true,
-            CancellationContext::testing(),
-        )?;
+        let BuildFileEvalResult::Complete(_finished_eval, eval_result_with_stats) = interpreter
+            .eval_build_file(
+                path,
+                &mut buckconfigs,
+                package_listing,
+                PackageListingStrategy::Recursive,
+                SuperPackage::empty::<SuperPackageValuesImpl>()?,
+                false,
+                ast,
+                loaded_modules,
+                provider,
+                true,
+                CancellationContext::testing(),
+            )?
+        else {
+            return Err(buck2_error::internal_error!(
+                "test build file evaluation unexpectedly requested a package listing restart"
+            ));
+        };
         Ok(eval_result_with_stats.result)
     }
 

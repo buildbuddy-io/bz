@@ -14,9 +14,16 @@ use allocative::Allocative;
 use buck2_artifact::artifact::artifact_type::Artifact;
 use buck2_artifact::artifact::artifact_type::BaseArtifactKind;
 use buck2_core::deferred::base_deferred_key::BaseDeferredKey;
+use buck2_core::provider::label::ProvidersLabel;
+use buck2_core::provider::label::ProvidersName;
+use buck2_core::target::label::label::TargetLabel;
+use buck2_core::target::name::TargetNameRef;
+use buck2_error::buck2_error;
+use buck2_execute::execute::request::OutputType;
 use buck2_execute::path::artifact_path::ArtifactPath;
 use buck2_fs::paths::file_name::FileName;
 use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
+use buck2_interpreter::types::provider::callable::ProviderCallableLike;
 use dupe::Dupe;
 use dupe::OptionDupedExt;
 use serde::Serialize;
@@ -26,6 +33,7 @@ use starlark::collections::StarlarkHasher;
 use starlark::environment::Methods;
 use starlark::environment::MethodsStatic;
 use starlark::values::Demand;
+use starlark::values::Heap;
 use starlark::values::StarlarkValue;
 use starlark::values::StringValue;
 use starlark::values::Value;
@@ -42,6 +50,9 @@ use crate::interpreter::rule_defs::artifact::starlark_artifact_like::ArtifactFin
 use crate::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkArtifactLike;
 use crate::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkInputArtifactLike;
 use crate::interpreter::rule_defs::artifact::starlark_artifact_like::ValueAsInputArtifactLike;
+use crate::interpreter::rule_defs::artifact::starlark_artifact_like::bazel_artifact_owner;
+use crate::interpreter::rule_defs::artifact::starlark_artifact_like::bazel_artifact_path;
+use crate::interpreter::rule_defs::artifact::starlark_artifact_like::bazel_artifact_short_path;
 use crate::interpreter::rule_defs::artifact::starlark_output_artifact::StarlarkOutputArtifact;
 use crate::interpreter::rule_defs::cmd_args::ArtifactPathMapper;
 use crate::interpreter::rule_defs::cmd_args::CommandLineArgLike;
@@ -49,7 +60,10 @@ use crate::interpreter::rule_defs::cmd_args::CommandLineArtifactVisitor;
 use crate::interpreter::rule_defs::cmd_args::CommandLineBuilder;
 use crate::interpreter::rule_defs::cmd_args::CommandLineContext;
 use crate::interpreter::rule_defs::cmd_args::WriteToFileMacroVisitor;
+use crate::interpreter::rule_defs::cmd_args::add_artifact_to_command_line_expanding_directories;
 use crate::interpreter::rule_defs::cmd_args::command_line_arg_like_type::command_line_arg_like_impl;
+use crate::interpreter::rule_defs::provider::builtin::default_info::DefaultInfo;
+use crate::interpreter::rule_defs::provider::builtin::default_info::DefaultInfoCallable;
 
 /// A wrapper for an `Artifact` that is guaranteed to be bound, such as outputs
 /// from dependencies, or source files.
@@ -58,6 +72,7 @@ pub struct StarlarkArtifact {
     pub(crate) artifact: Artifact,
     // A set of ArtifactGroups that should be materialized along with the main artifact
     pub(crate) associated_artifacts: AssociatedArtifacts,
+    pub(crate) source_is_directory: bool,
 }
 
 starlark_simple_value!(StarlarkArtifact);
@@ -67,6 +82,15 @@ impl StarlarkArtifact {
         StarlarkArtifact {
             artifact,
             associated_artifacts: AssociatedArtifacts::new(),
+            source_is_directory: false,
+        }
+    }
+
+    pub fn new_source(artifact: Artifact, source_is_directory: bool) -> Self {
+        StarlarkArtifact {
+            artifact,
+            associated_artifacts: AssociatedArtifacts::new(),
+            source_is_directory,
         }
     }
 
@@ -128,8 +152,36 @@ impl<'v> StarlarkArtifactLike<'v> for StarlarkArtifact {
         Ok(self.artifact.is_source())
     }
 
+    fn is_directory(&'v self) -> buck2_error::Result<bool> {
+        Ok(match self.artifact.as_parts().0 {
+            BaseArtifactKind::Source(_) => self.source_is_directory,
+            BaseArtifactKind::Build(build) => build.output_type() == OutputType::Directory,
+        })
+    }
+
+    fn is_symlink(&'v self) -> buck2_error::Result<bool> {
+        Ok(match self.artifact.as_parts().0 {
+            BaseArtifactKind::Source(_) => false,
+            BaseArtifactKind::Build(build) => build.output_type() == OutputType::Symlink,
+        })
+    }
+
     fn owner(&'v self) -> buck2_error::Result<Option<BaseDeferredKey>> {
-        Ok(self.artifact.owner().duped())
+        Ok(
+            bazel_artifact_owner(self.artifact.get_path())
+                .or_else(|| self.artifact.owner().duped()),
+        )
+    }
+
+    fn source_owner(&'v self) -> buck2_error::Result<Option<ProvidersLabel>> {
+        let (BaseArtifactKind::Source(source), projected_path) = self.artifact.as_parts() else {
+            return Ok(None);
+        };
+        let source_path = source.get_path();
+        let owner_path = source_path.path().join(projected_path);
+        let owner_name = TargetNameRef::new(owner_path.as_path().as_str())?;
+        let owner = TargetLabel::new(source_path.package(), owner_name);
+        Ok(Some(ProvidersLabel::new(owner, ProvidersName::Default)))
     }
 
     fn with_short_path(
@@ -137,6 +189,22 @@ impl<'v> StarlarkArtifactLike<'v> for StarlarkArtifact {
         f: &dyn for<'b> Fn(&'b ForwardRelativePath) -> StringValue<'v>,
     ) -> buck2_error::Result<StringValue<'v>> {
         Ok(self.artifact.get_path().with_short_path(f))
+    }
+
+    fn with_bazel_short_path(
+        &self,
+        f: &dyn Fn(&str) -> StringValue<'v>,
+    ) -> buck2_error::Result<StringValue<'v>> {
+        let path = bazel_artifact_short_path(self.artifact.get_path());
+        Ok(f(&path))
+    }
+
+    fn with_bazel_path(
+        &self,
+        f: &dyn Fn(&str) -> StringValue<'v>,
+    ) -> buck2_error::Result<StringValue<'v>> {
+        let path = bazel_artifact_path(self.artifact.get_path());
+        Ok(f(&path))
     }
 
     fn fingerprint<'s>(&'s self) -> ArtifactFingerprint<'s>
@@ -176,6 +244,10 @@ impl<'v> StarlarkInputArtifactLike<'v> for StarlarkArtifact {
         Some(&self.associated_artifacts)
     }
 
+    fn bound_source_is_directory(&self) -> bool {
+        self.source_is_directory
+    }
+
     fn as_command_line_like(&self) -> &dyn CommandLineArgLike<'v> {
         self
     }
@@ -206,6 +278,7 @@ impl<'v> StarlarkInputArtifactLike<'v> for StarlarkArtifact {
         Ok(EitherStarlarkInputArtifact::Artifact(StarlarkArtifact {
             artifact: self.artifact.dupe().project(path, hide_prefix),
             associated_artifacts: self.associated_artifacts.dupe(),
+            source_is_directory: false,
         }))
     }
 
@@ -215,6 +288,7 @@ impl<'v> StarlarkInputArtifactLike<'v> for StarlarkArtifact {
         Ok(EitherStarlarkInputArtifact::Artifact(StarlarkArtifact {
             artifact: self.artifact.dupe(),
             associated_artifacts: AssociatedArtifacts::new(),
+            source_is_directory: self.source_is_directory,
         }))
     }
 
@@ -233,6 +307,7 @@ impl<'v> StarlarkInputArtifactLike<'v> for StarlarkArtifact {
         Ok(EitherStarlarkInputArtifact::Artifact(StarlarkArtifact {
             artifact: self.artifact.dupe(),
             associated_artifacts: self.associated_artifacts.union(artifacts),
+            source_is_directory: self.source_is_directory,
         }))
     }
 }
@@ -250,6 +325,20 @@ impl<'v> CommandLineArgLike<'v> for StarlarkArtifact {
     ) -> buck2_error::Result<()> {
         cli.push_location(ctx.resolve_artifact(&self.artifact, artifact_path_mapping)?);
         Ok(())
+    }
+
+    fn add_to_command_line_expanding_directories(
+        &self,
+        cli: &mut dyn CommandLineBuilder,
+        ctx: &mut dyn CommandLineContext,
+        artifact_path_mapping: &dyn ArtifactPathMapper,
+    ) -> buck2_error::Result<()> {
+        add_artifact_to_command_line_expanding_directories(
+            &self.artifact,
+            cli,
+            ctx,
+            artifact_path_mapping,
+        )
     }
 
     fn visit_artifacts(
@@ -276,7 +365,14 @@ impl<'v> CommandLineArgLike<'v> for StarlarkArtifact {
     }
 }
 
-#[starlark_value(type = "Artifact")]
+fn is_default_info_provider(index: Value<'_>) -> starlark::Result<bool> {
+    let Some(callable) = index.request_value::<&dyn ProviderCallableLike>() else {
+        return Ok(false);
+    };
+    Ok(callable.id()? == DefaultInfoCallable::provider_id())
+}
+
+#[starlark_value(type = "File")]
 impl<'v> StarlarkValue<'v> for StarlarkArtifact {
     fn get_methods() -> Option<&'static Methods> {
         static RES: MethodsStatic = MethodsStatic::new();
@@ -289,6 +385,24 @@ impl<'v> StarlarkValue<'v> for StarlarkArtifact {
 
     fn write_hash(&self, hasher: &mut StarlarkHasher) -> starlark::Result<()> {
         StarlarkArtifactLike::write_hash(self, hasher)
+    }
+
+    fn at(&self, index: Value<'v>, heap: Heap<'v>) -> starlark::Result<Value<'v>> {
+        if is_default_info_provider(index)? {
+            let artifact = heap.alloc(self.clone());
+            return Ok(heap.alloc(DefaultInfo::for_file_target(heap, artifact)));
+        }
+
+        Err(buck2_error!(
+            buck2_error::ErrorTag::Input,
+            "Artifact values only support Bazel provider indexing with DefaultInfo, got `{}`",
+            index.to_repr()
+        )
+        .into())
+    }
+
+    fn is_in(&self, other: Value<'v>) -> starlark::Result<bool> {
+        is_default_info_provider(other)
     }
 
     fn provide(&'v self, demand: &mut Demand<'_, 'v>) {

@@ -53,6 +53,11 @@ pub(crate) enum ProcessingFuture {
     Cleaning(CleaningFuture),
 }
 
+pub(crate) struct InvalidationResult {
+    pub(crate) paths: Vec<ProjectRelativePathBuf>,
+    pub(crate) futures: Vec<(ProjectRelativePathBuf, ProcessingFuture)>,
+}
+
 /// Tree that stores materialization data for each artifact. Used internally by
 /// the `DeferredMaterializer` to keep track of artifacts and how to
 /// materialize them.
@@ -374,7 +379,7 @@ impl ArtifactTree {
         &mut self,
         paths: Vec<ProjectRelativePathBuf>,
         sqlite_db: Option<&mut MaterializerStateSqliteDb>,
-    ) -> buck2_error::Result<Vec<(ProjectRelativePathBuf, ProcessingFuture)>> {
+    ) -> buck2_error::Result<InvalidationResult> {
         let mut invalidated_paths = Vec::new();
         let mut futs = Vec::new();
 
@@ -403,10 +408,13 @@ impl ArtifactTree {
         if let Some(sqlite_db) = sqlite_db {
             sqlite_db
                 .materializer_state_table()
-                .delete(invalidated_paths)
+                .delete(invalidated_paths.clone())
                 .buck_error_context("Error invalidating paths in materializer state")?;
         }
 
-        Ok(futs)
+        Ok(InvalidationResult {
+            paths: invalidated_paths,
+            futures: futs,
+        })
     }
 }

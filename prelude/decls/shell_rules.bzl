@@ -6,10 +6,8 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
-load("@prelude//decls:test_common.bzl", "test_common")
 load("@prelude//transitions:constraint_overrides.bzl", "constraint_overrides")
 load(":common.bzl", "buck", "prelude_rule")
-load(":re_test_common.bzl", "re_test_common")
 
 sh_binary = prelude_rule(
     name = "sh_binary",
@@ -54,9 +52,17 @@ sh_binary = prelude_rule(
     attrs = (
         # @unsorted-dict-items
         {
-            "main": attrs.source(doc = """
+            "main": attrs.option(attrs.source(), default = None, doc = """
                 Either the path to the script (relative to the build file), or a `build target`.
-                 This file must be executable in order to be run.
+                 This file must be executable in order to be run. If omitted, `srcs` must contain
+                 exactly one file and that file is used as the main script.
+            """),
+            "srcs": attrs.list(attrs.source(), default = [], doc = """
+                Bazel-compatible spelling for the main shell script. This must contain exactly one
+                 file when `main` is omitted.
+            """),
+            "data": attrs.list(attrs.source(allow_directory = True), default = [], doc = """
+                Bazel-compatible runtime data files for the shell executable.
             """),
             "resources": attrs.list(attrs.source(allow_directory = True), default = [], doc = """
                 A list of files or build rules that this rule requires in order to run. These could be things such as
@@ -164,6 +170,8 @@ sh_test = prelude_rule(
                 Either the path to the script (relative to the build file), or a `build target`.
                  This file must be executable in order to be run.
             """),
+            "srcs": attrs.list(attrs.one_of(attrs.dep(), attrs.source()), default = []),
+            "data": attrs.list(attrs.one_of(attrs.dep(), attrs.source()), default = []),
             "args": attrs.list(attrs.arg(), default = [], doc = """
                 The list of arguments to invoke this script with. These are literal values, and no shell interpolation is done.
 
@@ -176,6 +184,10 @@ sh_test = prelude_rule(
                  The values can contain `string parameter macros`
                 such as the location of a generated binary to be used by the test script.
             """),
+            "env_inherit": attrs.list(attrs.string(), default = [], doc = """
+                Bazel-compatible list of environment variable names inherited by the test runner.
+            """),
+            "network_access": attrs.option(attrs.enum(["all", "none"]), default = None),
             "type": attrs.option(attrs.string(), default = None, doc = """
                 If provided, this will be sent to any configured `.buckconfig`
             """),
@@ -186,14 +198,13 @@ sh_test = prelude_rule(
             "run_args": attrs.list(attrs.string(), default = []),
             "run_env": attrs.dict(key = attrs.string(), value = attrs.string(), sorted = False, default = {}),
             "run_test_separately": attrs.bool(default = False),
+            "size": attrs.option(attrs.string(), default = None),
+            "timeout": attrs.option(attrs.enum(["short", "moderate", "long", "eternal"]), default = None),
             "test_rule_timeout_ms": attrs.option(attrs.int(), default = None),
         } |
         buck.licenses_arg() |
         buck.labels_arg() |
-        buck.contacts_arg() |
-        test_common.attributes() |
-        re_test_common.test_args() |
-        test_common.attributes()
+        buck.contacts_arg()
     ),
     cfg = constraint_overrides.transition,
 )

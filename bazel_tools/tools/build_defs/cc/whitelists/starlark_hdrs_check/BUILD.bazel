@@ -1,0 +1,19 @@
+licenses(["notice"])
+
+package(default_visibility = ["//visibility:public"])
+
+package_group(
+    name = "loose_header_check_allowed_in_toolchain",
+    packages = [],
+)
+
+filegroup(
+    name = "pkg_sources",
+    srcs = glob(["**"]),
+)
+
+filegroup(
+    name = "srcs",
+    srcs = ["BUILD.bazel"],
+    visibility = ["//tools/build_defs:__pkg__"],
+)

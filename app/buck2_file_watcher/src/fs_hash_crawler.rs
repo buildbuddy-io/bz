@@ -8,16 +8,13 @@
  * above-listed licenses.
  */
 
-use std::fs::File;
-use std::io::Read;
 use std::mem;
-use std::path::Path;
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::time::UNIX_EPOCH;
 
 use allocative::Allocative;
 use async_trait::async_trait;
-use blake3::Hash;
 use buck2_common::file_ops::dice::FileChangeTracker;
 use buck2_common::file_ops::metadata::FileType;
 use buck2_common::ignores::ignore_set::IgnoreSet;
@@ -62,7 +59,7 @@ impl FsHashCrawler {
         cells: CellResolver,
         ignore_specs: StdBuckHashMap<CellName, IgnoreSet>,
     ) -> buck2_error::Result<Self> {
-        let snapshot = Arc::new(Mutex::new(FsSnapshot::build(root, &cells)?));
+        let snapshot = Arc::new(Mutex::new(FsSnapshot::build(root, &cells, &ignore_specs)?));
         Ok(Self {
             root: root.dupe(),
             cells,
@@ -77,8 +74,10 @@ impl FsHashCrawler {
     ) -> buck2_error::Result<(buck2_data::FileWatcherStats, DiceTransactionUpdater)> {
         let root = self.root.dupe();
         let cells = self.cells.dupe();
+        let ignore_specs = self.ignore_specs.clone();
         let new_snapshot =
-            tokio::task::spawn_blocking(move || FsSnapshot::build(&root, &cells)).await??;
+            tokio::task::spawn_blocking(move || FsSnapshot::build(&root, &cells, &ignore_specs))
+                .await??;
         let mut guard = self.snapshot.lock().unwrap();
         let old_snapshot = mem::replace(&mut *guard, new_snapshot);
         let (stats, changes) = old_snapshot.get_updates_for_dice(&guard, &self.ignore_specs)?;
@@ -121,10 +120,32 @@ struct FsEvent {
 
 #[derive(Allocative)]
 enum EntryInfo {
-    #[allocative(skip)]
-    File(Hash),
+    File(FileFingerprint),
     Directory,
     Symlink,
+}
+
+#[derive(Allocative, Eq, PartialEq)]
+struct FileFingerprint {
+    len: u64,
+    modified_secs: u64,
+    modified_nanos: u32,
+}
+
+impl FileFingerprint {
+    fn from_metadata(metadata: &std::fs::Metadata) -> Self {
+        let modified = metadata
+            .modified()
+            .ok()
+            .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok());
+        Self {
+            len: metadata.len(),
+            modified_secs: modified.as_ref().map_or(0, |modified| modified.as_secs()),
+            modified_nanos: modified
+                .as_ref()
+                .map_or(0, |modified| modified.subsec_nanos()),
+        }
+    }
 }
 
 impl EntryInfo {
@@ -141,9 +162,13 @@ impl EntryInfo {
 struct FsSnapshot(StdBuckHashMap<CellPath, EntryInfo>);
 
 impl FsSnapshot {
-    fn build(root: &ProjectRoot, cells: &CellResolver) -> buck2_error::Result<Self> {
+    fn build(
+        root: &ProjectRoot,
+        cells: &CellResolver,
+        ignore_specs: &StdBuckHashMap<CellName, IgnoreSet>,
+    ) -> buck2_error::Result<Self> {
         let mut snapshot = FsSnapshot(StdBuckHashMap::default());
-        snapshot.build_fs_snapshot(root, cells, root.root())?;
+        snapshot.build_fs_snapshot(root, cells, ignore_specs, root.root())?;
         Ok(snapshot)
     }
 
@@ -262,6 +287,7 @@ impl FsSnapshot {
         &mut self,
         root: &ProjectRoot,
         cells: &CellResolver,
+        ignore_specs: &StdBuckHashMap<CellName, IgnoreSet>,
         disk_path: &AbsNormPath,
     ) -> buck2_error::Result<()> {
         for file in fs_util::read_dir(disk_path).categorize_internal()? {
@@ -286,15 +312,24 @@ impl FsSnapshot {
             {
                 continue;
             }
+            if ignore_specs
+                .get(&cell_path.cell())
+                .is_some_and(|ignore| ignore.is_match(cell_path.path()))
+            {
+                continue;
+            }
 
             let filetype = FileType::from(filetype);
             match filetype {
                 FileType::File => {
-                    let hash = file_hash(disk_path.as_maybe_relativized())?;
-                    self.add_entry(cell_path, EntryInfo::File(hash));
+                    let metadata = file.metadata()?;
+                    self.add_entry(
+                        cell_path,
+                        EntryInfo::File(FileFingerprint::from_metadata(&metadata)),
+                    );
                 }
                 FileType::Directory => {
-                    self.build_fs_snapshot(root, cells, &disk_path)?;
+                    self.build_fs_snapshot(root, cells, ignore_specs, &disk_path)?;
                     self.add_entry(cell_path, EntryInfo::Directory);
                 }
                 FileType::Symlink => {
@@ -305,22 +340,6 @@ impl FsSnapshot {
         }
         Ok(())
     }
-}
-
-fn file_hash(path: &Path) -> buck2_error::Result<Hash> {
-    let mut reader = File::open(path)?;
-    let mut hasher = blake3::Hasher::new();
-
-    let mut buffer = [0; 16 * 1024];
-    loop {
-        let count = reader.read(&mut buffer)?;
-        if count == 0 {
-            break;
-        }
-        hasher.update(&buffer[..count]);
-    }
-
-    Ok(hasher.finalize())
 }
 
 #[cfg(test)]
@@ -366,12 +385,13 @@ mod tests {
         fs_util::write(&file1, "old content")?;
         fs_util::create_dir_all(&dir2)?;
         fs_util::write(file2, "old content")?;
+        let ignore_specs = Default::default();
 
-        let old_snapshot = FsSnapshot::build(&proj_root, &cell_resolver)?;
-        fs_util::write(file1, "new content")?;
+        let old_snapshot = FsSnapshot::build(&proj_root, &cell_resolver, &ignore_specs)?;
+        fs_util::write(file1, "newer content")?;
         fs_util::remove_all(dir2)?;
         fs_util::write(file3, "new content")?;
-        let new_snapshot = FsSnapshot::build(&proj_root, &cell_resolver)?;
+        let new_snapshot = FsSnapshot::build(&proj_root, &cell_resolver, &ignore_specs)?;
         let events = old_snapshot.get_updates(&new_snapshot)?;
 
         let expected = [

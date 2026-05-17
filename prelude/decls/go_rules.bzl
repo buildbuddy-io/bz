@@ -75,6 +75,7 @@ go_binary = prelude_rule(
         go_common.external_linker_flags_arg() |
         go_common.embed_srcs_arg() |
         {
+            "embed": attrs.list(attrs.dep(), default = []),
             "build_mode": attrs.option(attrs.enum(BuildMode), doc = """
                 Determines the build mode (equivalent of `-buildmode`). Can be
                  one of the following values: `exe`, `pie`.`
@@ -227,6 +228,9 @@ go_library = prelude_rule(
         go_common.compiler_flags_arg() |
         go_common.assembler_flags_arg() |
         go_common.embed_srcs_arg() |
+        {
+            "embed": attrs.list(attrs.dep(), default = []),
+        } |
         go_common.package_root_arg() |
         go_common.override_cgo_enabled_arg() |
         cxx_common.headers_arg() |

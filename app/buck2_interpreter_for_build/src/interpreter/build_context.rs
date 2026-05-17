@@ -9,6 +9,7 @@
  */
 
 use std::cell::OnceCell;
+use std::cell::RefCell;
 use std::fmt::Debug;
 
 use buck2_core::bxl::BxlFilePath;
@@ -20,6 +21,7 @@ use buck2_core::package::PackageLabel;
 use buck2_interpreter::build_context::STARLARK_PATH_FROM_BUILD_CONTEXT;
 use buck2_interpreter::file_type::StarlarkFileType;
 use buck2_interpreter::paths::path::StarlarkPath;
+use buck2_node::rule_type::StarlarkRuleType;
 use starlark::any::ProvidesStaticType;
 use starlark::eval::Evaluator;
 
@@ -176,6 +178,8 @@ pub struct BuildContext<'a> {
 
     /// Peak allocated bytes limit for starlark.
     pub(crate) starlark_peak_allocated_byte_limit: OnceCell<Option<u64>>,
+
+    pub(crate) bazel_repository_rule_recorder: Option<&'a BazelRepositoryRuleRecorder>,
 }
 
 impl<'a> BuildContext<'a> {
@@ -187,6 +191,43 @@ impl<'a> BuildContext<'a> {
         additional: PerFileTypeContext,
         ignore_attrs_for_profiling: bool,
     ) -> BuildContext<'a> {
+        Self::new_with_options(
+            cell_info,
+            buckconfigs,
+            host_info,
+            additional,
+            ignore_attrs_for_profiling,
+            None,
+        )
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn new_with_bazel_repository_rule_recorder(
+        cell_info: &'a InterpreterCellInfo,
+        buckconfigs: &'a mut dyn BuckConfigsViewForStarlark,
+        host_info: &'a HostInfo,
+        additional: PerFileTypeContext,
+        ignore_attrs_for_profiling: bool,
+        bazel_repository_rule_recorder: &'a BazelRepositoryRuleRecorder,
+    ) -> BuildContext<'a> {
+        Self::new_with_options(
+            cell_info,
+            buckconfigs,
+            host_info,
+            additional,
+            ignore_attrs_for_profiling,
+            Some(bazel_repository_rule_recorder),
+        )
+    }
+
+    fn new_with_options(
+        cell_info: &'a InterpreterCellInfo,
+        buckconfigs: &'a mut dyn BuckConfigsViewForStarlark,
+        host_info: &'a HostInfo,
+        additional: PerFileTypeContext,
+        ignore_attrs_for_profiling: bool,
+        bazel_repository_rule_recorder: Option<&'a BazelRepositoryRuleRecorder>,
+    ) -> BuildContext<'a> {
         let buckconfigs = LegacyBuckConfigsForStarlark::new(buckconfigs);
         BuildContext {
             cell_info,
@@ -195,6 +236,7 @@ impl<'a> BuildContext<'a> {
             additional,
             ignore_attrs_for_profiling,
             starlark_peak_allocated_byte_limit: OnceCell::new(),
+            bazel_repository_rule_recorder,
         }
     }
 
@@ -230,6 +272,36 @@ impl<'a> BuildContext<'a> {
 
     pub(crate) fn base_path(&self) -> buck2_error::Result<CellPath> {
         self.additional.base_path()
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, allocative::Allocative)]
+pub struct BazelRepositoryRuleInvocation {
+    pub rule_id: StarlarkRuleType,
+    pub name: String,
+    pub original_name: String,
+    pub attrs: Vec<(String, String)>,
+}
+
+#[derive(Debug, Default, Eq, PartialEq, allocative::Allocative)]
+pub struct BazelModuleExtensionEvaluationResult {
+    pub repository_rule_invocations: Vec<BazelRepositoryRuleInvocation>,
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct BazelRepositoryRuleRecorder {
+    invocations: RefCell<Vec<BazelRepositoryRuleInvocation>>,
+}
+
+impl BazelRepositoryRuleRecorder {
+    pub(crate) fn record(&self, invocation: BazelRepositoryRuleInvocation) {
+        self.invocations.borrow_mut().push(invocation);
+    }
+
+    pub(crate) fn take_result(&self) -> BazelModuleExtensionEvaluationResult {
+        BazelModuleExtensionEvaluationResult {
+            repository_rule_invocations: std::mem::take(&mut *self.invocations.borrow_mut()),
+        }
     }
 }
 

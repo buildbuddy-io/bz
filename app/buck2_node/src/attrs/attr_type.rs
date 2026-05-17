@@ -22,6 +22,7 @@ use pagable::Pagable;
 
 use crate::attrs::attr_type::any::AnyAttrType;
 use crate::attrs::attr_type::arg::ArgAttrType;
+use crate::attrs::attr_type::bazel_label::BazelLabelAttrType;
 use crate::attrs::attr_type::bool::BoolAttrType;
 use crate::attrs::attr_type::configuration_dep::ConfigurationDepAttrType;
 use crate::attrs::attr_type::configuration_dep::ConfigurationDepKind;
@@ -53,6 +54,7 @@ pub mod any_matches;
 pub mod arg;
 pub mod attr_config;
 pub mod attr_like;
+pub mod bazel_label;
 pub mod bool;
 pub mod configuration_dep;
 pub mod configured_dep;
@@ -96,6 +98,7 @@ pub struct AttrTypeInner2 {
 pub enum AttrTypeInner {
     Any(AnyAttrType),
     Arg(ArgAttrType),
+    BazelLabel(BazelLabelAttrType),
     ConfigurationDep(ConfigurationDepAttrType),
     ConfiguredDep(ExplicitConfiguredDepAttrType),
     Bool(BoolAttrType),
@@ -138,6 +141,7 @@ impl AttrType {
         match &self.0.inner {
             AttrTypeInner::Any(_) => attr("any"),
             AttrTypeInner::Arg(_) => attr("arg"),
+            AttrTypeInner::BazelLabel(_) => attr("label"),
             AttrTypeInner::ConfigurationDep(_) => attr("configuration_dep"),
             AttrTypeInner::ConfiguredDep(_) => attr("configured_dep"),
             AttrTypeInner::PluginDep(_) => attr("plugin_dep"),
@@ -343,6 +347,14 @@ impl AttrType {
         }))
     }
 
+    pub fn bazel_label(dep: AttrType, source: AttrType) -> Self {
+        let may_have_queries = dep.0.may_have_queries || source.0.may_have_queries;
+        Self(Arc::new(AttrTypeInner2 {
+            inner: AttrTypeInner::BazelLabel(BazelLabelAttrType::new(dep, source)),
+            may_have_queries,
+        }))
+    }
+
     pub fn option(value: AttrType) -> Self {
         let may_have_queries = value.0.may_have_queries;
         Self(Arc::new(AttrTypeInner2 {
@@ -424,6 +436,7 @@ impl AttrType {
     pub fn supports_concat(&self) -> bool {
         match &self.0.inner {
             AttrTypeInner::Bool(_)
+            | AttrTypeInner::BazelLabel(_)
             | AttrTypeInner::Query(_)
             | AttrTypeInner::Source(_)
             | AttrTypeInner::ConfigurationDep(_)

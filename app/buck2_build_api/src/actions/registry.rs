@@ -19,10 +19,15 @@ use buck2_artifact::artifact::artifact_type::DeclaredArtifact;
 use buck2_artifact::artifact::artifact_type::OutputArtifact;
 use buck2_artifact::artifact::build_artifact::BuildArtifact;
 use buck2_core::category::Category;
+use buck2_core::cells::external::ExternalCellOrigin;
+use buck2_core::cells::external::external_cell_origin_for_cell;
 use buck2_core::deferred::key::DeferredHolderKey;
 use buck2_core::execution_types::execution::ExecutionPlatformResolution;
+use buck2_core::fs::buck_out_path::BazelOutputPathKind;
+use buck2_core::fs::buck_out_path::BazelOutputRoot;
 use buck2_core::fs::buck_out_path::BuckOutPathKind;
 use buck2_core::fs::buck_out_path::BuildArtifactPath;
+use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
 use buck2_directory::directory;
 use buck2_directory::directory::builder::DirectoryBuilder;
 use buck2_directory::directory::builder::DirectoryInsertError;
@@ -63,10 +68,15 @@ pub struct ActionsRegistry<'v> {
     pending: Vec<ActionToBeRegistered>,
     pub execution_platform: ExecutionPlatformResolution,
     claimed_output_paths: DirectoryBuilder<Option<FileSpan>, NoDigest>,
+    target_rule_type_name: Option<Arc<str>>,
 }
 
 impl<'v> ActionsRegistry<'v> {
-    pub fn new(owner: DeferredHolderKey, execution_platform: ExecutionPlatformResolution) -> Self {
+    pub fn new(
+        owner: DeferredHolderKey,
+        execution_platform: ExecutionPlatformResolution,
+        target_rule_type_name: Option<Arc<str>>,
+    ) -> Self {
         Self {
             owner,
             artifacts: Default::default(),
@@ -74,6 +84,7 @@ impl<'v> ActionsRegistry<'v> {
             pending: Default::default(),
             execution_platform,
             claimed_output_paths: DirectoryBuilder::empty(),
+            target_rule_type_name,
         }
     }
 
@@ -164,6 +175,100 @@ impl<'v> ActionsRegistry<'v> {
         }
     }
 
+    fn bazel_claim_output_path(
+        path: &ForwardRelativePath,
+        bazel_owner: Option<&ConfiguredTargetLabel>,
+        bazel_output_root: BazelOutputRoot,
+        bazel_output_path_kind: BazelOutputPathKind,
+    ) -> buck2_error::Result<ForwardRelativePathBuf> {
+        let Some(label) = bazel_owner else {
+            return Ok(path.to_buf());
+        };
+
+        let mut claim_path = String::from("_bazel/");
+        claim_path.push_str(label.cfg().output_hash().as_str());
+        if let Some(exec_cfg) = label.exec_cfg() {
+            claim_path.push('-');
+            claim_path.push_str(exec_cfg.output_hash().as_str());
+        }
+        claim_path.push('/');
+        claim_path.push_str(bazel_output_root.as_str());
+
+        if bazel_output_path_kind == BazelOutputPathKind::PackageRelative {
+            let package_exec_path = Self::bazel_package_exec_path(label);
+            if !package_exec_path.is_empty() {
+                claim_path.push('/');
+                claim_path.push_str(&package_exec_path);
+            }
+        }
+
+        claim_path.push('/');
+        claim_path.push_str(path.as_str());
+        Ok(ForwardRelativePathBuf::new(claim_path)?)
+    }
+
+    fn bazel_external_repo_name<'a>(cell: &'a str, origin: &'a ExternalCellOrigin) -> &'a str {
+        match origin {
+            ExternalCellOrigin::Bundled(cell) => cell.as_str(),
+            ExternalCellOrigin::Git(_) => cell,
+            ExternalCellOrigin::Bzlmod(setup) => setup.canonical_repo_name.as_ref(),
+            ExternalCellOrigin::BzlmodGenerated(setup) => setup.canonical_repo_name.as_ref(),
+        }
+    }
+
+    fn bazel_push_path_component(path: &mut String, component: &str) {
+        if component.is_empty() {
+            return;
+        }
+        if !path.is_empty() {
+            path.push('/');
+        }
+        path.push_str(component);
+    }
+
+    fn bazel_package_exec_path(label: &ConfiguredTargetLabel) -> String {
+        let package = label.pkg();
+        let cell = package.cell_name();
+        let mut path = String::new();
+        if let Some(origin) = external_cell_origin_for_cell(cell.as_str()) {
+            Self::bazel_push_path_component(&mut path, "external");
+            Self::bazel_push_path_component(
+                &mut path,
+                Self::bazel_external_repo_name(cell.as_str(), &origin),
+            );
+        } else if cell.as_str() != "root" {
+            Self::bazel_push_path_component(&mut path, cell.as_str());
+        }
+        Self::bazel_push_path_component(&mut path, package.cell_relative_path().as_str());
+        path
+    }
+
+    fn bazel_physical_artifact_path(
+        path: ForwardRelativePathBuf,
+        hidden: usize,
+        bazel_owner: Option<&ConfiguredTargetLabel>,
+        buck_owner: Option<&ConfiguredTargetLabel>,
+        bazel_output_path_kind: BazelOutputPathKind,
+    ) -> buck2_error::Result<(ForwardRelativePathBuf, usize)> {
+        if bazel_output_path_kind != BazelOutputPathKind::PackageRelative {
+            return Ok((path, hidden));
+        }
+        let Some(label) = bazel_owner else {
+            return Ok((path, hidden));
+        };
+        if buck_owner == Some(label) {
+            return Ok((path, hidden));
+        }
+
+        let package_exec_path = Self::bazel_package_exec_path(label);
+        if package_exec_path.is_empty() {
+            return Ok((path, hidden));
+        }
+        let package_exec_path = ForwardRelativePathBuf::new(package_exec_path)?;
+        let hidden = hidden + package_exec_path.iter().count();
+        Ok((package_exec_path.join(path), hidden))
+    }
+
     /// Declares a new output file that will be generated by some action.
     pub fn declare_artifact(
         &mut self,
@@ -174,16 +279,104 @@ impl<'v> ActionsRegistry<'v> {
         path_resolution_method: BuckOutPathKind,
         heap: Heap<'v>,
     ) -> buck2_error::Result<DeclaredArtifact<'v>> {
+        self.declare_artifact_with_bazel_owner(
+            prefix,
+            path,
+            output_type,
+            declaration_location,
+            path_resolution_method,
+            None,
+            heap,
+        )
+    }
+
+    pub fn declare_artifact_with_bazel_owner(
+        &mut self,
+        prefix: Option<ForwardRelativePathBuf>,
+        path: ForwardRelativePathBuf,
+        output_type: OutputType,
+        declaration_location: Option<FileSpan>,
+        path_resolution_method: BuckOutPathKind,
+        bazel_owner: Option<ConfiguredTargetLabel>,
+        heap: Heap<'v>,
+    ) -> buck2_error::Result<DeclaredArtifact<'v>> {
+        self.declare_artifact_with_bazel_owner_output_root_and_path_kind(
+            prefix,
+            path,
+            output_type,
+            declaration_location,
+            path_resolution_method,
+            bazel_owner,
+            BazelOutputRoot::Bin,
+            BazelOutputPathKind::PackageRelative,
+            heap,
+        )
+    }
+
+    pub fn declare_artifact_with_bazel_owner_and_output_root(
+        &mut self,
+        prefix: Option<ForwardRelativePathBuf>,
+        path: ForwardRelativePathBuf,
+        output_type: OutputType,
+        declaration_location: Option<FileSpan>,
+        path_resolution_method: BuckOutPathKind,
+        bazel_owner: Option<ConfiguredTargetLabel>,
+        bazel_output_root: BazelOutputRoot,
+        heap: Heap<'v>,
+    ) -> buck2_error::Result<DeclaredArtifact<'v>> {
+        self.declare_artifact_with_bazel_owner_output_root_and_path_kind(
+            prefix,
+            path,
+            output_type,
+            declaration_location,
+            path_resolution_method,
+            bazel_owner,
+            bazel_output_root,
+            BazelOutputPathKind::PackageRelative,
+            heap,
+        )
+    }
+
+    pub fn declare_artifact_with_bazel_owner_output_root_and_path_kind(
+        &mut self,
+        prefix: Option<ForwardRelativePathBuf>,
+        path: ForwardRelativePathBuf,
+        output_type: OutputType,
+        declaration_location: Option<FileSpan>,
+        path_resolution_method: BuckOutPathKind,
+        bazel_owner: Option<ConfiguredTargetLabel>,
+        bazel_output_root: BazelOutputRoot,
+        bazel_output_path_kind: BazelOutputPathKind,
+        heap: Heap<'v>,
+    ) -> buck2_error::Result<DeclaredArtifact<'v>> {
         let (path, hidden) = match prefix {
             None => (path, 0),
             Some(prefix) => (prefix.join(path), prefix.iter().count()),
         };
-        self.claim_output_path(&path, declaration_location)?;
-        let out_path = BuildArtifactPath::with_dynamic_actions_action_key(
-            self.owner.dupe(),
+        let claim_path = Self::bazel_claim_output_path(
+            &path,
+            bazel_owner.as_ref(),
+            bazel_output_root,
+            bazel_output_path_kind,
+        )?;
+        self.claim_output_path(&claim_path, declaration_location)?;
+        let buck_owner = self.owner.owner().configured_label();
+        let (path, hidden) = Self::bazel_physical_artifact_path(
             path,
-            path_resolution_method,
-        );
+            hidden,
+            bazel_owner.as_ref(),
+            buck_owner.as_ref(),
+            bazel_output_path_kind,
+        )?;
+        let out_path =
+            BuildArtifactPath::with_dynamic_actions_action_key_and_bazel_owner_output_root_and_path_kind(
+                self.owner.dupe(),
+                path,
+                path_resolution_method,
+                bazel_owner,
+                bazel_output_root,
+                bazel_output_path_kind,
+            );
         let declared = DeclaredArtifact::new(out_path, output_type, hidden, heap);
         if !self.artifacts.insert(declared.dupe()) {
             panic!("not expected duplicate artifact after output path was successfully claimed");
@@ -239,16 +432,21 @@ impl<'v> ActionsRegistry<'v> {
         Ok(move |analysis_value_fetcher: &AnalysisValueFetcher| {
             // Buck2 has an invariant that pairs of categories and identifiers are unique throughout a build. That
             // invariant is enforced here, using observed_names to keep track of the categories and identifiers that we've seen.
-            let mut observed_names: HashMap<Category, HashSet<String>> = HashMap::new();
+            let mut observed_names: HashMap<
+                (Option<ConfiguredTargetLabel>, Category),
+                HashSet<String>,
+            > = HashMap::new();
             for a in self.pending.into_iter() {
                 let key = a.key().dupe();
                 let (starlark_data, error_handler) =
                     analysis_value_fetcher.get_action_data(&key)?;
                 let action = a.register(starlark_data, error_handler)?;
+                let bazel_owner = action.first_output().get_path().bazel_owner().cloned();
                 match (action.category(), action.identifier()) {
                     (category, Some(identifier)) => {
-                        let existing_identifiers =
-                            observed_names.entry(category.to_owned()).or_default();
+                        let existing_identifiers = observed_names
+                            .entry((bazel_owner, category.to_owned()))
+                            .or_default();
                         // false -> identifier was already present in the set
                         if !existing_identifiers.insert(identifier.to_owned()) {
                             return Err(ActionErrors::ActionCategoryIdentifierNotUnique(
@@ -260,7 +458,7 @@ impl<'v> ActionsRegistry<'v> {
                     }
                     (category, None) => {
                         if observed_names
-                            .insert(category.to_owned(), HashSet::new())
+                            .insert((bazel_owner, category.to_owned()), HashSet::new())
                             .is_some()
                         {
                             return Err(ActionErrors::ActionCategoryDuplicateSingleton(
@@ -277,6 +475,7 @@ impl<'v> ActionsRegistry<'v> {
                         key,
                         action,
                         (*self.execution_platform.executor_config()?).dupe(),
+                        self.target_rule_type_name.dupe(),
                     )),
                 );
             }

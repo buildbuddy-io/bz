@@ -140,7 +140,9 @@ impl CoercedTransitionDep {
     ) -> buck2_error::Result<()> {
         let transition = t.get_transition(self);
         match &**transition {
-            TransitionId::MagicObject { .. } => (),
+            TransitionId::MagicObject { .. }
+            | TransitionId::BazelAttribute(_)
+            | TransitionId::BazelAnalysisTest { .. } => (),
             TransitionId::Target(label) => {
                 traversal.configuration_dep(label, ConfigurationDepKind::Transition)?
             }
@@ -152,7 +154,9 @@ impl CoercedTransitionDep {
     pub fn get_dynamic_transition(&self) -> Option<&ProvidersLabel> {
         match &**self.transition.as_ref()? {
             TransitionId::Target(t) => Some(t),
-            TransitionId::MagicObject { .. } => unreachable!(),
+            TransitionId::MagicObject { .. }
+            | TransitionId::BazelAttribute(_)
+            | TransitionId::BazelAnalysisTest { .. } => unreachable!(),
         }
     }
 }

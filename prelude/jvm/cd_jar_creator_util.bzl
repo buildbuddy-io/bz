@@ -91,16 +91,16 @@ OutputPaths = record(
     annotations = Artifact,
 )
 
-def qualified_name_with_subtarget(label: Label) -> str:
+def qualified_name_with_subtarget(label: ConfiguredProvidersLabel) -> str:
     if label.sub_target:
         return "{}:{}[{}]".format(label.path, label.name, label.sub_target[0])
     return "{}:{}".format(label.path, label.name)
 
 # Converted to str so that we get the right result when written as json.
-def base_qualified_name(label: Label) -> str:
+def base_qualified_name(label: ConfiguredProvidersLabel) -> str:
     return "{}:{}".format(label.path, label.name)
 
-def get_qualified_name(label: Label, target_type: TargetType) -> str:
+def get_qualified_name(label: ConfiguredProvidersLabel, target_type: TargetType) -> str:
     # These should match the names for subtargets in java_library.bzl
     return {
         TargetType("library"): base_qualified_name(label),
@@ -108,7 +108,7 @@ def get_qualified_name(label: Label, target_type: TargetType) -> str:
         TargetType("source_only_abi"): base_qualified_name(label) + "[source-only-abi]",
     }[target_type]
 
-def define_output_paths(actions: AnalysisActions, prefix: [str, None], label: Label, uses_content_based_paths: bool) -> OutputPaths:
+def define_output_paths(actions: AnalysisActions, prefix: [str, None], label: ConfiguredProvidersLabel, uses_content_based_paths: bool) -> OutputPaths:
     # currently, javacd requires that at least some outputs are in the root
     # output dir. so we put all of them there. If javacd is updated we
     # could consolidate some of these into one subdir.
@@ -118,7 +118,7 @@ def define_output_paths(actions: AnalysisActions, prefix: [str, None], label: La
         annotations = declare_prefixed_output(actions, prefix, "__gen__", uses_content_based_paths, dir = True),
     )
 
-def encode_output_paths(label: Label, paths: OutputPaths, target_type: TargetType) -> struct:
+def encode_output_paths(label: ConfiguredProvidersLabel, paths: OutputPaths, target_type: TargetType) -> struct:
     paths = struct(
         classesDir = paths.classes.as_output(),
         outputJarDirPath = cmd_args(paths.jar.as_output(), parent = 1),
@@ -243,7 +243,7 @@ def encode_base_jar_command(
         target_type: TargetType,
         output_paths: OutputPaths,
         remove_classes: list[str],
-        label: Label,
+        label: ConfiguredProvidersLabel,
         compiling_deps_tset: [JavaCompilingDepsTSet, None],
         classpath_jars_tag: ArtifactTag,
         bootclasspath_entries: list[Artifact],
@@ -349,9 +349,9 @@ def prepare_cd_exe(
         remote_worker: WorkerInfo | None,
         target_specified_debug_port: [int, None],
         toolchain_specified_debug_port: [int, None],
-        toolchain_specified_debug_target: [Label, None],
+        toolchain_specified_debug_target: [ConfiguredProvidersLabel, None],
         extra_jvm_args: list[str],
-        extra_jvm_args_target: list[Label]) -> tuple:
+        extra_jvm_args_target: list[ConfiguredProvidersLabel]) -> tuple:
     local_only = False
     jvm_args = ["-XX:-MaxFDLimit"]
 
@@ -485,7 +485,7 @@ def prepare_final_jar(
     return make_output(merged_jar)
 
 def encode_command(
-        label: Label,
+        label: ConfiguredProvidersLabel,
         srcs: list[Artifact],
         remove_classes: list[str],
         annotation_processor_properties: AnnotationProcessorProperties,
@@ -546,7 +546,7 @@ def encode_command(
 def generate_abi_jars(
         actions: AnalysisActions,
         actions_identifier: [str, None],
-        label: Label,
+        label: ConfiguredProvidersLabel,
         abi_generation_mode: [AbiGenerationMode, None],
         additional_compiled_srcs: Artifact | None,
         is_building_android_binary: bool,

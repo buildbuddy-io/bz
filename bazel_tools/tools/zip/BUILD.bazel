@@ -1,0 +1,16 @@
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "pkg_sources",
+    srcs = glob(["**"]),
+)
+
+alias(
+    name = "zipper",
+    actual = "//third_party/ijar:zipper",
+)
+
+alias(
+    name = "unzip_fdo",
+    actual = "//third_party/ijar:zipper",
+)

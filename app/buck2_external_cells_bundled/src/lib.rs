@@ -28,14 +28,30 @@ mod prelude {
     include!("prelude/contents.rs");
 }
 
+#[cfg(buck_build)]
+mod bazel_tools {
+    include!("bazel_tools/contents.rs");
+}
+
 #[cfg(not(buck_build))]
-mod prelude {
+mod generated {
     include!(concat!(env!("OUT_DIR"), "/include.rs"));
 }
+
+#[cfg(not(buck_build))]
+use generated::bazel_tools;
+#[cfg(not(buck_build))]
+use generated::prelude;
 
 const PRELUDE: BundledCell = BundledCell {
     name: "prelude",
     files: prelude::DATA,
+    is_testing: false,
+};
+
+const BAZEL_TOOLS: BundledCell = BundledCell {
+    name: "bazel_tools",
+    files: bazel_tools::DATA,
     is_testing: false,
 };
 
@@ -82,7 +98,7 @@ const TEST_CELL: BundledCell = BundledCell {
 };
 
 pub const fn get_bundled_data() -> &'static [BundledCell] {
-    &[TEST_CELL, PRELUDE]
+    &[TEST_CELL, PRELUDE, BAZEL_TOOLS]
 }
 
 #[cfg(test)]
@@ -116,5 +132,52 @@ mod tests {
                 .count()
                 > 50
         );
+    }
+
+    #[test]
+    fn test_bundled_bazel_tools_data() {
+        let c = super::BAZEL_TOOLS;
+        assert!(c.files.iter().any(|file| {
+            file.path == "tools/cpp/toolchain_utils.bzl"
+                && std::str::from_utf8(file.contents)
+                    .unwrap()
+                    .contains("find_cpp_toolchain")
+        }));
+        assert!(c.files.iter().any(|file| {
+            file.path == "tools/osx/BUILD.bazel"
+                && std::str::from_utf8(file.contents)
+                    .unwrap()
+                    .contains("current_xcode_config")
+        }));
+        assert!(c.files.iter().any(|file| {
+            file.path == "tools/objc/BUILD.bazel"
+                && std::str::from_utf8(file.contents)
+                    .unwrap()
+                    .contains("host_xcodes")
+        }));
+        assert!(c.files.iter().any(|file| {
+            file.path == "tools/test/BUILD.bazel"
+                && std::str::from_utf8(file.contents)
+                    .unwrap()
+                    .contains("collect_cc_coverage")
+        }));
+        assert!(c.files.iter().any(|file| {
+            file.path == "tools/python/BUILD.bazel"
+                && std::str::from_utf8(file.contents)
+                    .unwrap()
+                    .contains("python_bootstrap_template.txt")
+        }));
+        assert!(c.files.iter().any(|file| {
+            file.path == "tools/zip/BUILD.bazel"
+                && std::str::from_utf8(file.contents)
+                    .unwrap()
+                    .contains("unzip_fdo")
+        }));
+        assert!(c.files.iter().any(|file| {
+            file.path == "third_party/ijar/BUILD.bazel"
+                && std::str::from_utf8(file.contents)
+                    .unwrap()
+                    .contains("name = \"zipper\"")
+        }));
     }
 }

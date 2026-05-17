@@ -30,6 +30,7 @@ use crate::impls::value::DiceKeyValue;
 use crate::impls::value::DiceValidValue;
 use crate::impls::value::DiceValidity;
 use crate::impls::value::MaybeValidDiceValue;
+use crate::introspection::graph::AnyKey;
 use crate::versions::VersionNumber;
 
 // TODO fill this more
@@ -89,6 +90,10 @@ impl TransactionUpdater {
         })
     }
 
+    pub(crate) fn pending_change_count(&self) -> usize {
+        self.scheduled_changes.len()
+    }
+
     /// Commit the changes registered via 'changed' and 'changed_to' to the current newest version.
     pub(crate) async fn commit(self) -> BaseComputeCtx {
         let user_data = self.user_data.dupe();
@@ -118,6 +123,41 @@ impl TransactionUpdater {
 
     pub(crate) fn unstable_take(&self) {
         self.dice.state_handle.unstable_drop_everything()
+    }
+
+    pub(crate) fn existing_keys_for_introspection(&self) -> Vec<AnyKey> {
+        self.dice.to_introspectable().keys().collect()
+    }
+
+    pub(crate) fn existing_keys_of_type_for_introspection<K>(&self) -> Vec<K>
+    where
+        K: Key + Clone,
+    {
+        self.dice.existing_keys_of_type_for_introspection::<K>()
+    }
+
+    pub(crate) fn existing_key_values_of_type_for_introspection<K>(
+        &self,
+    ) -> Vec<(K, Option<K::Value>)>
+    where
+        K: Key + Clone,
+        K::Value: Clone,
+    {
+        self.dice
+            .existing_key_values_of_type_for_introspection::<K>()
+    }
+
+    pub(crate) fn existing_key_values_of_two_types_for_introspection<K1, K2>(
+        &self,
+    ) -> (Vec<(K1, Option<K1::Value>)>, Vec<(K2, Option<K2::Value>)>)
+    where
+        K1: Key + Clone,
+        K1::Value: Clone,
+        K2: Key + Clone,
+        K2::Value: Clone,
+    {
+        self.dice
+            .existing_key_values_of_two_types_for_introspection::<K1, K2>()
     }
 
     async fn commit_to_state(self) -> (SharedLiveTransactionCtx, ActiveTransactionGuard) {
@@ -197,6 +237,10 @@ impl Changes {
                 }
             }
         }
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.changes.len()
     }
 }
 

@@ -507,28 +507,20 @@ impl ConcurrencyHandler {
                     // this might cause some churn, but concurrent commands don't happen much and
                     // isn't a big perf bottleneck. Dice should be able to resurrect nodes properly.
 
-                    let transaction = async {
-                        let updater = self.dice.updater();
-
-                        let (transaction, user_data) =
-                            updates.update(updater, early_timings).await?;
-
-                        let transaction = event_dispatcher
-                            .span_async(buck2_data::DiceStateUpdateStart {}, async {
-                                (
-                                    async {
-                                        let transaction =
-                                            transaction.commit_with_data(user_data).await;
-                                        buck2_error::Ok(transaction)
-                                    }
-                                    .await,
-                                    buck2_data::DiceStateUpdateEnd {},
-                                )
-                            })
-                            .await?;
-                        buck2_error::Ok(transaction)
-                    }
-                    .await?;
+                    let transaction = event_dispatcher
+                        .span_async(buck2_data::DiceStateUpdateStart {}, async {
+                            (
+                                async {
+                                    let updater = self.dice.updater();
+                                    let (transaction, user_data) =
+                                        updates.update(updater, early_timings).await?;
+                                    buck2_error::Ok(transaction.commit_with_data(user_data).await)
+                                }
+                                .await,
+                                buck2_data::DiceStateUpdateEnd {},
+                            )
+                        })
+                        .await?;
 
                     if let Some(active) = active {
                         // If the --exit-when=notidle option is set for the current command and there is

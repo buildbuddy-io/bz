@@ -14,9 +14,29 @@ _ExecutionModifierInfo = provider(fields = {
     "execution_modifier": bool,
 })
 
+def _config_setting_values(values):
+    buckconfigs = {}
+    build_settings = {}
+    for key, value in values.items():
+        if "." in key:
+            buckconfigs[key] = value
+        else:
+            build_settings["//command_line_option:" + key] = value
+    return buckconfigs, build_settings
+
 def config_setting_impl(ctx):
+    buckconfig_values, command_line_values = _config_setting_values(ctx.attrs.values)
     subinfos = [util.constraint_values_to_configuration(ctx.attrs.constraint_values)]
-    subinfos.append(ConfigurationInfo(constraints = {}, values = ctx.attrs.values))
+    subinfos.append(ConfigurationInfo(
+        constraints = {},
+        values = buckconfig_values,
+        build_settings = command_line_values,
+    ))
+    subinfos.append(ConfigurationInfo(
+        constraints = {},
+        values = {},
+        build_settings = {_raw_target(label): value for label, value in ctx.attrs.flag_values.items()},
+    ))
     cfg_info = util.configuration_info_union(subinfos)
     providers = [DefaultInfo(), cfg_info]
     if len(ctx.attrs.constraint_values) == 1:
@@ -29,7 +49,10 @@ def config_setting_impl(ctx):
 def constraint_setting_impl(ctx):
     return [
         DefaultInfo(),
-        ConstraintSettingInfo(label = ctx.label.raw_target()),
+        ConstraintSettingInfo(
+            label = ctx.label.raw_target(),
+            default = ctx.attrs.default_constraint_value,
+        ),
         # In order for the constraint_value to access the execution modifier info, we need to provide an additional provider here.
         _ExecutionModifierInfo(execution_modifier = ctx.attrs.execution_modifier),
     ]
@@ -160,8 +183,10 @@ def constraint_impl(ctx):
     ]
 
 def platform_impl(ctx):
+    _ = (ctx.attrs.exec_properties, ctx.attrs.remote_execution_properties)
     subinfos = (
         [dep[PlatformInfo].configuration for dep in ctx.attrs.deps] +
+        [dep[PlatformInfo].configuration for dep in ctx.attrs.parents] +
         [util.constraint_values_to_configuration(ctx.attrs.constraint_values)]
     )
     return [
@@ -175,6 +200,34 @@ def platform_impl(ctx):
             #   If this is intentional, state it explicitly.
             #   Otherwise, fix it.
             configuration = util.configuration_info_union(subinfos),
+        ),
+    ]
+
+def toolchain_type_impl(ctx):
+    _ = ctx.attrs.no_match_error
+    return [DefaultInfo()]
+
+def _raw_target(label):
+    if hasattr(label, "raw_target"):
+        return str(label.raw_target())
+    return str(label)
+
+def _raw_targets(labels):
+    return [_raw_target(label) for label in labels]
+
+def toolchain_impl(ctx):
+    if ctx.attrs.use_target_platform_constraints and (ctx.attrs.exec_compatible_with or ctx.attrs.target_compatible_with):
+        fail("Cannot set use_target_platform_constraints to True and also set exec_compatible_with or target_compatible_with")
+
+    return [
+        DefaultInfo(),
+        DeclaredToolchainInfo(
+            toolchain_type = _raw_target(ctx.attrs.toolchain_type),
+            toolchain = _raw_target(ctx.attrs.toolchain),
+            exec_compatible_with = _raw_targets(ctx.attrs.exec_compatible_with),
+            target_compatible_with = _raw_targets(ctx.attrs.target_compatible_with),
+            target_settings = _raw_targets(ctx.attrs.target_settings),
+            use_target_platform_constraints = ctx.attrs.use_target_platform_constraints,
         ),
     ]
 
@@ -196,4 +249,6 @@ implemented_rules = {
     "constraint_value": constraint_value_impl,
     "exec_platform_marker_constraint": constraint_impl,
     "platform": platform_impl,
+    "toolchain": toolchain_impl,
+    "toolchain_type": toolchain_type_impl,
 }

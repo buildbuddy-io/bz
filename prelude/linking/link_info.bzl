@@ -359,7 +359,7 @@ LinkableFlavor = enum(
 # about debug info (for example, who is going to produce stripped output anyway), it can be significantly
 # cheaper to consume the pre-stripped LinkInfo.
 LinkInfos = record(
-    label = field(Label | None, None),
+    label = field(ConfiguredProvidersLabel | None, None),
     # Link info to use by default.
     default = field(LinkInfo),
     # Link info for objects compiler with extra optimizations (EXPERIMENTAL)
@@ -814,7 +814,7 @@ def map_to_link_infos(links: list[LinkArgs]) -> list[LinkInfo]:
 
 def get_link_args_for_strategy(
         actions: AnalysisActions,
-        label: Label,
+        label: ConfiguredProvidersLabel,
         linker_info: LinkerInfo,
         deps_merged_link_infos: list[MergedLinkInfo],
         link_strategy: LinkStrategy,
@@ -871,7 +871,7 @@ def _get_non_transformed_info(link_infos: LinkInfos, prefer_stripped: bool) -> L
         return link_infos.stripped or link_infos.default
     return link_infos.default
 
-def get_link_info_for_transformation(transformation_spec_context: TransformationSpecContext, link_infos: LinkInfos, label: Label | None, prefer_stripped: bool) -> LinkInfo:
+def get_link_info_for_transformation(transformation_spec_context: TransformationSpecContext, link_infos: LinkInfos, label: ConfiguredProvidersLabel | None, prefer_stripped: bool) -> LinkInfo:
     info = None
 
     if label:

@@ -20,35 +20,56 @@ use syn::TypeParamBound;
 pub(crate) struct InternalProviderArgs {
     creator_func: syn::Ident,
     methods_func: Option<syn::Ident>,
+    at_func: Option<syn::Ident>,
+    is_in_func: Option<syn::Ident>,
+    get_attr_func: Option<syn::Ident>,
 }
 
 impl syn::parse::Parse for InternalProviderArgs {
     fn parse(input: syn::parse::ParseStream) -> syn::parse::Result<Self> {
         let creator_func = syn::Ident::parse(input)?;
 
-        // Parse optional methods parameter
-        let methods_func = if input.peek(syn::Token![,]) {
-            input.parse::<syn::Token![,]>()?;
+        let mut methods_func = None;
+        let mut at_func = None;
+        let mut is_in_func = None;
+        let mut get_attr_func = None;
 
-            // Check if it's methods = ...
-            if input.peek(syn::Ident) {
-                let key = syn::Ident::parse(input)?;
-                if key == "methods" {
-                    input.parse::<syn::Token![=]>()?;
-                    Some(syn::Ident::parse(input)?)
-                } else {
-                    return Err(syn::Error::new_spanned(key, "expected 'methods' parameter"));
-                }
-            } else {
-                None
+        while input.peek(syn::Token![,]) {
+            input.parse::<syn::Token![,]>()?;
+            if input.is_empty() {
+                break;
             }
-        } else {
-            None
-        };
+
+            let key = syn::Ident::parse(input)?;
+            input.parse::<syn::Token![=]>()?;
+            let value = syn::Ident::parse(input)?;
+
+            let target = match key.to_string().as_str() {
+                "methods" => &mut methods_func,
+                "at" => &mut at_func,
+                "is_in" => &mut is_in_func,
+                "get_attr" => &mut get_attr_func,
+                _ => {
+                    return Err(syn::Error::new_spanned(
+                        key,
+                        "expected 'methods', 'at', 'is_in', or 'get_attr' parameter",
+                    ));
+                }
+            };
+            if target.replace(value).is_some() {
+                return Err(syn::Error::new_spanned(
+                    key,
+                    "duplicate internal provider parameter",
+                ));
+            }
+        }
 
         Ok(InternalProviderArgs {
             creator_func,
             methods_func,
+            at_func,
+            is_in_func,
+            get_attr_func,
         })
     }
 }
@@ -367,6 +388,39 @@ impl ProviderCodegen {
             self.provider_methods_func_name()?
         };
         let field_names = self.field_names()?;
+        let mut starlark_value_overrides = Vec::<syn::ImplItemFn>::new();
+        if let Some(ref at_func) = self.args.at_func {
+            starlark_value_overrides.push(syn::parse_quote_spanned! { self.span=>
+                fn at(
+                    &self,
+                    index: starlark::values::Value<'v>,
+                    heap: starlark::values::Heap<'v>,
+                ) -> starlark::Result<starlark::values::Value<'v>> {
+                    #at_func(self, index, heap)
+                }
+            });
+        }
+        if let Some(ref is_in_func) = self.args.is_in_func {
+            starlark_value_overrides.push(syn::parse_quote_spanned! { self.span=>
+                fn is_in(
+                    &self,
+                    other: starlark::values::Value<'v>,
+                ) -> starlark::Result<bool> {
+                    #is_in_func(self, other)
+                }
+            });
+        }
+        if let Some(ref get_attr_func) = self.args.get_attr_func {
+            starlark_value_overrides.push(syn::parse_quote_spanned! { self.span=>
+                fn get_attr(
+                    &self,
+                    attribute: &str,
+                    heap: starlark::values::Heap<'v>,
+                ) -> Option<starlark::values::Value<'v>> {
+                    #get_attr_func(self, attribute, heap)
+                }
+            });
+        }
         Ok(vec![
             syn::parse_quote_spanned! { self.span=>
                 starlark::starlark_complex_value!(#vis #name);
@@ -410,6 +464,8 @@ impl ProviderCodegen {
                     fn get_type_starlark_repr() -> starlark::typing::Ty {
                         BUILTIN_PROVIDER_TY.instance()
                     }
+
+                    #(#starlark_value_overrides)*
 
                     // TODO(cjhopman): UserProvider implements more of the starlark functions. We should probably match them.
                 }
@@ -516,6 +572,23 @@ impl ProviderCodegen {
                     fn provide(&'v self, demand: &mut starlark::values::Demand<'_, 'v>) {
                         demand.provide_value::<
                             &dyn buck2_interpreter::types::provider::callable::ProviderCallableLike>(self);
+                    }
+
+                    fn equals(&self, other: starlark::values::Value<'v>) -> starlark::Result<bool> {
+                        buck2_build_api::interpreter::rule_defs::provider::callable::provider_callable_equals(
+                            self,
+                            other,
+                        )
+                    }
+
+                    fn write_hash(
+                        &self,
+                        hasher: &mut starlark::collections::StarlarkHasher,
+                    ) -> starlark::Result<()> {
+                        buck2_build_api::interpreter::rule_defs::provider::callable::provider_callable_write_hash(
+                            self,
+                            hasher,
+                        )
                     }
 
                     fn eval_type(&self) -> Option<starlark::typing::Ty> {

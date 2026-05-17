@@ -12,7 +12,7 @@ XPluginsManifestInfo = provider(fields = {
 })
 
 XPluginsDebugArtifactsEntry = record(
-    target = field(Label),
+    target = field(ConfiguredProvidersLabel),
     manifest_info = field(XPluginsManifestInfo),
 )
 
@@ -23,12 +23,12 @@ XPluginsDebugArtifactsInfo = provider(fields = {
 })
 
 XPluginsPluginUsageInfo = provider(fields = {
-    "target": provider_field(Label),
+    "target": provider_field(ConfiguredProvidersLabel),
     "usage_info": provider_field(Artifact),
 })
 
 XPluginsSocketUsageInfo = provider(fields = {
-    "target": provider_field(Label),
+    "target": provider_field(ConfiguredProvidersLabel),
     "usage_info": provider_field(Artifact),
 })
 

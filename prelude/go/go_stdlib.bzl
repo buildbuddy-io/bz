@@ -45,7 +45,7 @@ def go_stdlib_impl(ctx: AnalysisContext) -> list[Provider]:
         GoStdlib(dynamic_value = go_stdlib_value),
     ]
 
-def _build_stdlib_impl(actions: AnalysisActions, target_label: Label, go_toolchain: GoToolchainInfo, cgo_build_context: None | CGoBuildContext, go_list_stdlib_out: ArtifactValue, goroot: Artifact, pkgdir: OutputArtifact) -> list[Provider]:
+def _build_stdlib_impl(actions: AnalysisActions, target_label: ConfiguredProvidersLabel, go_toolchain: GoToolchainInfo, cgo_build_context: None | CGoBuildContext, go_list_stdlib_out: ArtifactValue, goroot: Artifact, pkgdir: OutputArtifact) -> list[Provider]:
     # First pass: parse all packages and collect their imports
     parsed_libs = {}  # import_path -> StdGoListOut
     for lib in go_list_stdlib_out.read_json():
@@ -124,13 +124,13 @@ _build_stdlib = dynamic_actions(
         "go_toolchain": dynattrs.value(GoToolchainInfo),
         "goroot": dynattrs.value(Artifact),
         "pkgdir": dynattrs.output(),
-        "target_label": dynattrs.value(Label),
+        "target_label": dynattrs.value(ConfiguredProvidersLabel),
     },
 )
 
 def _declare_stdlib_package_build(
         actions: AnalysisActions,
-        target_label: Label,
+        target_label: ConfiguredProvidersLabel,
         go_toolchain: GoToolchainInfo,
         cgo_build_context: None | CGoBuildContext,
         go_list: BuildPackageGoList,
@@ -163,7 +163,7 @@ def _declare_stdlib_package_build(
 
 def _build_stdlib_package_impl(
         actions: AnalysisActions,
-        target_label: Label,
+        target_label: ConfiguredProvidersLabel,
         go_toolchain: GoToolchainInfo,
         cgo_build_context: None | CGoBuildContext,
         go_list: BuildPackageGoList,
@@ -191,7 +191,7 @@ _build_stdlib_package = dynamic_actions(
     # @unsorted-dict-items
     attrs = {
         # Inputs
-        "target_label": dynattrs.value(Label),
+        "target_label": dynattrs.value(ConfiguredProvidersLabel),
         "go_toolchain": dynattrs.value(GoToolchainInfo),
         "cgo_build_context": dynattrs.value(None | CGoBuildContext),
         "go_list": dynattrs.value(BuildPackageGoList),

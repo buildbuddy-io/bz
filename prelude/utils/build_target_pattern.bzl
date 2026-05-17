@@ -109,7 +109,7 @@ def try_parse_build_target_pattern(pattern: str) -> BuildTargetPatternParseResul
         return BuildTargetPatternParseResult(error = err_msg)
 
     # buildifier: disable=uninitialized - self is initialized
-    def matches(label: [Label, TargetLabel]) -> bool:
+    def matches(label: [ConfiguredProvidersLabel, TargetLabel]) -> bool:
         if self.cell and self.cell != label.cell:
             return False
 

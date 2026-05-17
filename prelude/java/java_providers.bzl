@@ -154,7 +154,7 @@ JavaCompilingDepsTSet = transitive_set(
 )
 
 JavaPackagingDep = record(
-    label = Label,
+    label = ConfiguredProvidersLabel,
     jar = Artifact | None,
     dex = [DexLibraryInfo, None],
     gwt_module = Artifact | None,
@@ -622,7 +622,7 @@ def propagate_global_code_info(
 
     return JavaGlobalCodeInfo(global_code_map = global_code_map)
 
-def create_native_providers(ctx: AnalysisContext, label: Label, packaging_deps: list[Dependency]) -> (SharedLibraryInfo, ResourceInfo, LinkableGraph):
+def create_native_providers(ctx: AnalysisContext, label: ConfiguredProvidersLabel, packaging_deps: list[Dependency]) -> (SharedLibraryInfo, ResourceInfo, LinkableGraph):
     shared_library_info = merge_shared_libraries(
         ctx.actions,
         deps = filter(None, [x.get(SharedLibraryInfo) for x in packaging_deps]),

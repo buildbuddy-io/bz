@@ -134,6 +134,11 @@ impl<'a, 't> CoercedAttrWithType<'a, 't> {
             (attr, AttrTypeInner::Option(t)) => Ok(CoercedAttrWithType::Some(attr, t)),
 
             (a, AttrTypeInner::Any(_)) => Self::pack_any(a),
+            (
+                a @ (CoercedAttr::SourceFile(_) | CoercedAttr::SourceLabel(_)),
+                AttrTypeInner::BazelLabel(t),
+            ) => Self::pack(a, &t.source),
+            (a, AttrTypeInner::BazelLabel(t)) => Self::pack(a, &t.dep),
 
             (CoercedAttr::Bool(b), AttrTypeInner::Bool(t)) => Ok(CoercedAttrWithType::Bool(*b, *t)),
             (CoercedAttr::Int(i), AttrTypeInner::Int(t)) => Ok(CoercedAttrWithType::Int(*i, *t)),

@@ -459,6 +459,7 @@ mod state_machine {
                 true,
                 command_sender.dupe(),
                 tree,
+                Arc::new(BuckDashMap::default()),
                 CancellationContext::testing(),
                 Arc::new(DeferredMaterializerStats::default()),
                 Default::default(),

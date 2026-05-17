@@ -108,7 +108,7 @@ pub(crate) fn register_anon_rule(globals: &mut GlobalsBuilder) {
             BxlAnonCallbackParamSpec,
             ListType<AbstractProvider>,
         >,
-        #[starlark(require = named)] attrs: UnpackDictEntries<&'v str, &'v StarlarkAttribute>,
+        #[starlark(require = named)] attrs: UnpackDictEntries<&'v str, &'v StarlarkAttribute<'v>>,
         #[starlark(require = named, default = "")] doc: &str,
         #[starlark(require = named, default = SmallMap::default())]
         artifact_promise_mappings: SmallMap<

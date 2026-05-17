@@ -11,6 +11,7 @@
 use std::cell::Ref;
 use std::cell::RefCell;
 use std::cell::RefMut;
+use std::collections::HashSet;
 use std::convert::Infallible;
 use std::fmt;
 use std::fmt::Debug;
@@ -39,6 +40,7 @@ use starlark::environment::Methods;
 use starlark::environment::MethodsBuilder;
 use starlark::environment::MethodsStatic;
 use starlark::eval::Arguments;
+use starlark::eval::Evaluator;
 use starlark::static_starlark_value;
 use starlark::typing::Ty;
 use starlark::values::AllocValue;
@@ -57,11 +59,16 @@ use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark::values::ValueLike;
 use starlark::values::ValueOf;
+use starlark::values::list::AllocList;
 use starlark::values::list::ListRef;
 use starlark::values::list::UnpackList;
+use starlark::values::none::NoneOr;
 use starlark::values::starlark_value;
+use starlark::values::structs::StructRef;
+use starlark::values::tuple::TupleRef;
 use starlark::values::tuple::UnpackTuple;
 use starlark::values::type_repr::StarlarkTypeRepr;
+use starlark::values::typing::StarlarkCallable;
 use static_assertions::assert_eq_size;
 
 use crate::artifact_groups::ArtifactGroup;
@@ -75,6 +82,8 @@ use crate::interpreter::rule_defs::cmd_args::options::CommandLineOptions;
 use crate::interpreter::rule_defs::cmd_args::options::CommandLineOptionsRef;
 use crate::interpreter::rule_defs::cmd_args::options::CommandLineOptionsTrait;
 use crate::interpreter::rule_defs::cmd_args::options::FrozenCommandLineOptions;
+use crate::interpreter::rule_defs::cmd_args::options::ParamFileFormat;
+use crate::interpreter::rule_defs::cmd_args::options::ParamFileOptions;
 use crate::interpreter::rule_defs::cmd_args::options::QuoteStyle;
 use crate::interpreter::rule_defs::cmd_args::options::RelativeOrigin;
 use crate::interpreter::rule_defs::cmd_args::regex::CmdArgsRegex;
@@ -86,6 +95,38 @@ use crate::interpreter::rule_defs::cmd_args::traits::SimpleCommandLineArtifactVi
 use crate::interpreter::rule_defs::cmd_args::traits::WriteToFileMacroVisitor;
 use crate::interpreter::rule_defs::cmd_args::value::CommandLineArg;
 use crate::interpreter::rule_defs::cmd_args::value::FrozenCommandLineArg;
+use crate::interpreter::rule_defs::depset::BazelDepset;
+use crate::interpreter::rule_defs::depset::bazel_depset_to_list;
+
+#[derive(Debug, ProvidesStaticType, NoSerialize, Allocative)]
+struct BazelDirectoryExpander;
+
+impl Display for BazelDirectoryExpander {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.write_str("<DirectoryExpander>")
+    }
+}
+
+starlark::starlark_simple_value!(BazelDirectoryExpander);
+
+#[starlark_value(type = "DirectoryExpander")]
+impl<'v> StarlarkValue<'v> for BazelDirectoryExpander {
+    fn get_methods() -> Option<&'static Methods> {
+        static RES: MethodsStatic = MethodsStatic::new();
+        RES.methods(bazel_directory_expander_methods)
+    }
+}
+
+#[starlark_module]
+fn bazel_directory_expander_methods(builder: &mut MethodsBuilder) {
+    fn expand<'v>(
+        #[starlark(this)] _this: &BazelDirectoryExpander,
+        file: Value<'v>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<Value<'v>> {
+        Ok(eval.heap().alloc(AllocList([file])))
+    }
+}
 
 #[derive(Debug, buck2_error::Error)]
 pub enum CommandLineError {
@@ -234,21 +275,99 @@ impl<'v, F: Fields<'v>> CommandLineArgLike<'v> for FieldsRef<'v, F> {
                 }
                 Ok(())
             }
-            Some(options) => options.to_command_line_options().wrap_builder(
-                cli,
-                context,
-                |cli, context| {
-                    for item in self.0.items() {
-                        item.as_command_line_arg().add_to_command_line(
-                            cli,
-                            context,
-                            artifact_path_mapping,
-                        )?;
+            Some(options) => {
+                let mut options = options.to_command_line_options();
+                if let Some(param_file) = options.param_file.and_then(|param_file| {
+                    param_file
+                        .arg_format
+                        .map(|arg_format| (param_file, arg_format))
+                }) {
+                    let (param_file, arg_format) = param_file;
+                    options.param_file = None;
+                    let mut rendered = Vec::new();
+                    let expand_directories = options.expand_directories;
+                    options.wrap_builder(
+                        &mut rendered,
+                        context,
+                        |cli, context| {
+                            for item in self.0.items() {
+                                let item = item.as_command_line_arg();
+                                if expand_directories {
+                                    item.add_to_command_line_expanding_directories(
+                                        cli,
+                                        context,
+                                        artifact_path_mapping,
+                                    )?;
+                                } else {
+                                    item.add_to_command_line(cli, context, artifact_path_mapping)?;
+                                }
+                            }
+                            Ok(())
+                        },
+                        artifact_path_mapping,
+                    )?;
+
+                    if !param_file.use_always && !bazel_param_file_threshold_exceeded(&rendered) {
+                        for arg in rendered {
+                            cli.push_arg(arg);
+                        }
+                        return Ok(());
                     }
-                    Ok(())
-                },
-                artifact_path_mapping,
-            ),
+
+                    let mut retained_args = Vec::new();
+                    let param_file_args = match param_file.format {
+                        ParamFileFormat::Shell
+                        | ParamFileFormat::Multiline
+                        | ParamFileFormat::GccQuoted
+                        | ParamFileFormat::Windows => rendered,
+                        ParamFileFormat::FlagPerLine => {
+                            let mut param_file_args = Vec::new();
+                            for arg in rendered {
+                                if arg.starts_with("--") {
+                                    param_file_args.push(arg);
+                                } else {
+                                    retained_args.push(arg);
+                                }
+                            }
+                            param_file_args
+                        }
+                    };
+                    let param_file_args = param_file_args
+                        .into_iter()
+                        .map(|arg| context.normalize_param_file_arg(arg))
+                        .collect();
+                    let param_file_path = context
+                        .add_param_file_args(param_file_args, param_file.format)?
+                        .into_string();
+                    cli.push_arg(arg_format.as_str().replace("{}", &param_file_path));
+                    for arg in retained_args {
+                        cli.push_arg(arg);
+                    }
+                    return Ok(());
+                }
+
+                let expand_directories = options.expand_directories;
+                options.wrap_builder(
+                    cli,
+                    context,
+                    |cli, context| {
+                        for item in self.0.items() {
+                            let item = item.as_command_line_arg();
+                            if expand_directories {
+                                item.add_to_command_line_expanding_directories(
+                                    cli,
+                                    context,
+                                    artifact_path_mapping,
+                                )?;
+                            } else {
+                                item.add_to_command_line(cli, context, artifact_path_mapping)?;
+                            }
+                        }
+                        Ok(())
+                    },
+                    artifact_path_mapping,
+                )
+            }
         }
     }
 
@@ -498,7 +617,7 @@ impl<'v, A: Fields<'v>, B: Fields<'v>> Fields<'v> for Either<A, B> {
 // These types show up a lot in the frozen heaps, so make sure they don't regress
 assert_eq_size!(StarlarkCmdArgs<'static>, [usize; 8]);
 assert_eq_size!(FrozenStarlarkCmdArgs, [usize; 3]);
-assert_eq_size!(CommandLineOptions<'static>, [usize; 10]);
+assert_eq_size!(CommandLineOptions<'static>, [usize; 11]);
 
 impl<'v> Display for StarlarkCmdArgs<'v> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
@@ -704,6 +823,90 @@ impl<'v> StarlarkCmdArgs<'v> {
         Self::default()
     }
 
+    pub fn from_values(values: impl IntoIterator<Item = Value<'v>>) -> buck2_error::Result<Self> {
+        let mut builder = Self::new();
+        builder.0.get_mut().add_from_iterator(values.into_iter())?;
+        Ok(builder)
+    }
+
+    pub(crate) fn from_values_with_bazel_param_file(
+        values: impl IntoIterator<Item = Value<'v>>,
+        arg_format: StringValue<'v>,
+        parameter_file_type: &str,
+    ) -> buck2_error::Result<Self> {
+        let format = match parameter_file_type {
+            "GCC_QUOTED" => ParamFileFormat::GccQuoted,
+            "UNQUOTED" => ParamFileFormat::Multiline,
+            "WINDOWS" => ParamFileFormat::Windows,
+            parameter_file_type => {
+                return Err(buck2_error::buck2_error!(
+                    buck2_error::ErrorTag::Input,
+                    "Invalid Bazel parameter file type `{parameter_file_type}`"
+                ));
+            }
+        };
+        let mut builder = Self::from_values(values)?;
+        builder.0.get_mut().options_mut().param_file = Some(Box::new(ParamFileOptions {
+            arg_format: Some(arg_format),
+            format,
+            use_always: true,
+            format_set: true,
+        }));
+        Ok(builder)
+    }
+
+    pub fn add_hidden_value(&mut self, value: Value<'v>) -> buck2_error::Result<()> {
+        self.0
+            .get_mut()
+            .add_hidden(StarlarkCommandLineValueUnpack::unpack_value_err(value)?)
+    }
+
+    pub fn add_bazel_hidden_value(
+        &mut self,
+        value: Value<'v>,
+        heap: Heap<'v>,
+    ) -> starlark::Result<()> {
+        if value.is_none() {
+            return Ok(());
+        }
+
+        if let Some(executable) = bazel_files_to_run_executable(value) {
+            self.add_bazel_hidden_value(executable, heap)?;
+            return Ok(());
+        }
+
+        if let Some(values) = ListRef::from_value(value) {
+            for item in values.iter() {
+                self.add_bazel_hidden_value(item, heap)?;
+            }
+            return Ok(());
+        }
+
+        if let Some(values) = TupleRef::from_value(value) {
+            for item in values.iter() {
+                self.add_bazel_hidden_value(item, heap)?;
+            }
+            return Ok(());
+        }
+
+        if let Some(value) = StarlarkCommandLineValueUnpack::unpack_value(value)? {
+            self.0.get_mut().add_hidden(value)?;
+            return Ok(());
+        }
+
+        let values = value.iterate(heap).map_err(|_| {
+            buck2_error::buck2_error!(
+                buck2_error::ErrorTag::Input,
+                "expected hidden action input/tool to be a command-line value, sequence, or depset, got `{}`",
+                value.get_type()
+            )
+        })?;
+        for item in values {
+            self.add_bazel_hidden_value(item, heap)?;
+        }
+        Ok(())
+    }
+
     pub fn try_from_value(value: Value<'v>) -> buck2_error::Result<Self> {
         Self::try_from_value_typed(StarlarkCommandLineValueUnpack::unpack_value_err(value)?)
     }
@@ -715,6 +918,14 @@ impl<'v> StarlarkCmdArgs<'v> {
         builder.0.get_mut().add_value_typed(value)?;
         Ok(builder)
     }
+}
+
+fn bazel_files_to_run_executable<'v>(value: Value<'v>) -> Option<Value<'v>> {
+    StructRef::from_value(value).and_then(|st| {
+        st.iter().find_map(|(name, value)| {
+            (name.as_str() == "executable" && !value.is_none()).then_some(value)
+        })
+    })
 }
 
 #[derive(UnpackValue, StarlarkTypeRepr)]
@@ -779,6 +990,197 @@ impl<'v> StarlarkCommandLineData<'v> {
     }
 }
 
+fn bazel_args_format_string<'v>(
+    value: NoneOr<StringValue<'v>>,
+    heap: Heap<'v>,
+    parameter: &str,
+) -> starlark::Result<Option<StringValue<'v>>> {
+    let Some(value) = value.into_option() else {
+        return Ok(None);
+    };
+    Ok(Some(bazel_args_format_literal(
+        value.as_str(),
+        heap,
+        parameter,
+    )?))
+}
+
+fn bazel_args_format_literal<'v>(
+    format: &str,
+    heap: Heap<'v>,
+    parameter: &str,
+) -> starlark::Result<StringValue<'v>> {
+    let mut converted = String::with_capacity(format.len());
+    let mut idx = 0;
+    let mut found = false;
+    while let Some(next) = format[idx..].find('%') {
+        let next = idx + next;
+        converted.push_str(&format[idx..next]);
+        let Some(escaped) = format[next + 1..].chars().next() else {
+            return Err(buck2_error::buck2_error!(
+                buck2_error::ErrorTag::Input,
+                "Invalid value for parameter `{}`: expected string with a single `%s`, got `{}`",
+                parameter,
+                format
+            )
+            .into());
+        };
+        match escaped {
+            's' if !found => {
+                converted.push_str("{}");
+                found = true;
+            }
+            's' => {
+                return Err(buck2_error::buck2_error!(
+                    buck2_error::ErrorTag::Input,
+                    "Invalid value for parameter `{}`: expected string with a single `%s`, got `{}`",
+                    parameter,
+                    format
+                )
+                .into());
+            }
+            '%' => converted.push('%'),
+            _ => {
+                return Err(buck2_error::buck2_error!(
+                    buck2_error::ErrorTag::Input,
+                    "Invalid value for parameter `{}`: expected string with a single `%s`, got `{}`",
+                    parameter,
+                    format
+                )
+                .into());
+            }
+        }
+        idx = next + 1 + escaped.len_utf8();
+    }
+    converted.push_str(&format[idx..]);
+    if !found {
+        return Err(buck2_error::buck2_error!(
+            buck2_error::ErrorTag::Input,
+            "Invalid value for parameter `{}`: expected string with a single `%s`, got `{}`",
+            parameter,
+            format
+        )
+        .into());
+    }
+    Ok(heap.alloc_str(&converted))
+}
+
+fn bazel_param_file_threshold_exceeded(args: &[String]) -> bool {
+    const BAZEL_DEFAULT_MIN_PARAM_FILE_SIZE: usize = 32 * 1024;
+    args.iter().map(|arg| arg.len() + 1).sum::<usize>() > BAZEL_DEFAULT_MIN_PARAM_FILE_SIZE
+}
+
+fn bazel_args_values<'v>(value: Value<'v>, heap: Heap<'v>) -> starlark::Result<Vec<Value<'v>>> {
+    if BazelDepset::from_value(value).is_some() {
+        return bazel_depset_to_list(value);
+    }
+    Ok(value
+        .iterate(heap)
+        .map_err(|_| {
+            buck2_error::buck2_error!(
+                buck2_error::ErrorTag::Input,
+                "expected value of type `sequence or depset`, got `{}`",
+                value.get_type()
+            )
+        })?
+        .collect())
+}
+
+fn bazel_args_scalar_to_string<'v>(value: Value<'v>, heap: Heap<'v>) -> Value<'v> {
+    if value.is_none() {
+        return heap.alloc_str("None").to_value();
+    }
+    if let Some(value) = value.unpack_i32() {
+        return heap.alloc_str(&value.to_string()).to_value();
+    }
+    if let Some(value) = value.unpack_bool() {
+        return heap
+            .alloc_str(if value { "true" } else { "false" })
+            .to_value();
+    }
+    value
+}
+
+fn bazel_args_stringify_scalars<'v>(values: Vec<Value<'v>>, heap: Heap<'v>) -> Vec<Value<'v>> {
+    values
+        .into_iter()
+        .map(|value| bazel_args_scalar_to_string(value, heap))
+        .collect()
+}
+
+fn bazel_args_extend_mapped_value<'v>(
+    mapped: Value<'v>,
+    values: &mut Vec<Value<'v>>,
+    heap: Heap<'v>,
+) -> starlark::Result<()> {
+    if mapped.is_none() {
+        return Ok(());
+    }
+    let mapped = bazel_args_scalar_to_string(mapped, heap);
+    if mapped.unpack_str().is_some() {
+        values.push(mapped);
+        return Ok(());
+    }
+    match mapped.iterate(heap) {
+        Ok(iter) => values.extend(iter),
+        Err(_) => values.push(mapped),
+    }
+    Ok(())
+}
+
+fn bazel_args_apply_map_each<'v>(
+    values: Vec<Value<'v>>,
+    map_each: NoneOr<StarlarkCallable<'v>>,
+    eval: &mut Evaluator<'v, '_, '_>,
+) -> starlark::Result<Vec<Value<'v>>> {
+    let Some(map_each) = map_each.into_option() else {
+        return Ok(values);
+    };
+    let tree_expander = if map_each
+        .0
+        .parameters_spec()
+        .is_some_and(|parameters| parameters.len() >= 2)
+    {
+        Some(eval.heap().alloc_typed(BazelDirectoryExpander).to_value())
+    } else {
+        None
+    };
+    let mut mapped = Vec::new();
+    for value in values {
+        let result = if let Some(tree_expander) = tree_expander {
+            eval.eval_function(map_each.0, &[value, tree_expander], &[])?
+        } else {
+            eval.eval_function(map_each.0, &[value], &[])?
+        };
+        bazel_args_extend_mapped_value(result, &mut mapped, eval.heap())?;
+    }
+    Ok(mapped)
+}
+
+fn bazel_args_uniquify(values: &mut Vec<Value<'_>>) {
+    let mut seen = HashSet::new();
+    values.retain(|value| seen.insert(value.to_repr()));
+}
+
+fn bazel_args_nested<'v>(
+    values: Vec<Value<'v>>,
+    format_each: Option<StringValue<'v>>,
+    before_each: Option<StringValue<'v>>,
+    join_with: Option<StringValue<'v>>,
+    expand_directories: bool,
+) -> buck2_error::Result<StarlarkCmdArgs<'v>> {
+    let mut nested = StarlarkCommandLineData::default();
+    if format_each.is_some() || before_each.is_some() || join_with.is_some() || expand_directories {
+        let opts = nested.options_mut();
+        opts.format = format_each;
+        opts.prepend = before_each;
+        opts.delimiter = join_with;
+        opts.expand_directories = expand_directories;
+    }
+    nested.add_from_iterator(values.into_iter())?;
+    Ok(StarlarkCmdArgs(RefCell::new(nested)))
+}
+
 struct StarlarkCommandLineMut<'v> {
     value: Value<'v>,
     borrow: RefMut<'v, StarlarkCommandLineData<'v>>,
@@ -835,9 +1237,230 @@ fn cmd_args_methods(builder: &mut MethodsBuilder) {
         heap: Heap<'v>,
         args: &Arguments<'v, '_>,
     ) -> starlark::Result<StarlarkCommandLineMut<'v>> {
-        args.no_named_args()?;
-        let values = args.positions(heap)?;
-        this.borrow.add_from_iterator(values)?;
+        let mut format = None;
+        for (name, value) in args.names_map()? {
+            match name.as_str() {
+                "format" => {
+                    let Some(value) = value.unpack_str() else {
+                        return Err(buck2_error::buck2_error!(
+                            buck2_error::ErrorTag::Input,
+                            "expected `format` to be a string, got `{}`",
+                            value.get_type()
+                        )
+                        .into());
+                    };
+                    format = Some(bazel_args_format_literal(value, heap, "format")?);
+                }
+                _ => {
+                    return Err(buck2_error::buck2_error!(
+                        buck2_error::ErrorTag::Input,
+                        "unexpected named argument `{}` for Args.add",
+                        name.as_str()
+                    )
+                    .into());
+                }
+            }
+        }
+        let positions = args.positions(heap)?.collect::<Vec<_>>();
+        if let Some(format) = format {
+            if let [arg_name, value] = positions.as_slice()
+                && arg_name.unpack_str().is_some()
+            {
+                this.borrow.add_value(*arg_name)?;
+                let values = bazel_args_stringify_scalars(vec![*value], heap);
+                let nested = bazel_args_nested(values, Some(format), None, None, false)?;
+                this.borrow.add_value(heap.alloc_typed(nested).to_value())?;
+                return Ok(this);
+            }
+            let values = bazel_args_stringify_scalars(positions, heap);
+            let nested = bazel_args_nested(values, Some(format), None, None, false)?;
+            this.borrow.add_value(heap.alloc_typed(nested).to_value())?;
+        } else {
+            let values = bazel_args_stringify_scalars(positions, heap);
+            this.borrow.add_from_iterator(values.into_iter())?;
+        }
+        Ok(this)
+    }
+
+    /// Bazel-compatible vector addition.
+    fn add_all<'v>(
+        mut this: StarlarkCommandLineMut<'v>,
+        #[starlark(require = pos)] arg_name_or_values: Value<'v>,
+        #[starlark(require = pos)] values: Option<Value<'v>>,
+        #[starlark(require = named, default = NoneOr::None)] map_each: NoneOr<StarlarkCallable<'v>>,
+        #[starlark(require = named, default = NoneOr::None)] format_each: NoneOr<StringValue<'v>>,
+        #[starlark(require = named, default = NoneOr::None)] before_each: NoneOr<StringValue<'v>>,
+        #[starlark(require = named, default = true)] omit_if_empty: bool,
+        #[starlark(require = named, default = false)] uniquify: bool,
+        #[starlark(require = named, default = true)] expand_directories: bool,
+        #[starlark(require = named, default = NoneOr::None)] terminate_with: NoneOr<
+            StringValue<'v>,
+        >,
+        #[starlark(require = named, default = false)] allow_closure: bool,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<StarlarkCommandLineMut<'v>> {
+        let _unused = allow_closure;
+        let (arg_name, values) = match values {
+            Some(values) => {
+                let Some(arg_name) = arg_name_or_values.unpack_str() else {
+                    return Err(buck2_error::buck2_error!(
+                        buck2_error::ErrorTag::Input,
+                        "expected value of type `string` for arg name, got `{}`",
+                        arg_name_or_values.get_type()
+                    )
+                    .into());
+                };
+                (Some(arg_name), values)
+            }
+            None => (None, arg_name_or_values),
+        };
+        let mut values = bazel_args_values(values, eval.heap())?;
+        values = bazel_args_apply_map_each(values, map_each, eval)?;
+        values = bazel_args_stringify_scalars(values, eval.heap());
+        if values.is_empty() && omit_if_empty {
+            return Ok(this);
+        }
+        if uniquify {
+            bazel_args_uniquify(&mut values);
+        }
+        if let Some(arg_name) = arg_name {
+            this.borrow
+                .add_value(eval.heap().alloc_str(arg_name).to_value())?;
+        }
+        if !values.is_empty() {
+            let nested = bazel_args_nested(
+                values,
+                bazel_args_format_string(format_each, eval.heap(), "format_each")?,
+                before_each.into_option(),
+                None,
+                expand_directories,
+            )?;
+            this.borrow
+                .add_value(eval.heap().alloc_typed(nested).to_value())?;
+        }
+        if let Some(terminate_with) = terminate_with.into_option() {
+            this.borrow.add_value(terminate_with.to_value())?;
+        }
+        Ok(this)
+    }
+
+    /// Bazel-compatible vector addition joined into one argument.
+    fn add_joined<'v>(
+        mut this: StarlarkCommandLineMut<'v>,
+        #[starlark(require = pos)] arg_name_or_values: Value<'v>,
+        #[starlark(require = pos)] values: Option<Value<'v>>,
+        #[starlark(require = named)] join_with: StringValue<'v>,
+        #[starlark(require = named, default = NoneOr::None)] map_each: NoneOr<StarlarkCallable<'v>>,
+        #[starlark(require = named, default = NoneOr::None)] format_each: NoneOr<StringValue<'v>>,
+        #[starlark(require = named, default = NoneOr::None)] format_joined: NoneOr<StringValue<'v>>,
+        #[starlark(require = named, default = true)] omit_if_empty: bool,
+        #[starlark(require = named, default = false)] uniquify: bool,
+        #[starlark(require = named, default = true)] expand_directories: bool,
+        #[starlark(require = named, default = false)] allow_closure: bool,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<StarlarkCommandLineMut<'v>> {
+        let _unused = allow_closure;
+        let (arg_name, values) = match values {
+            Some(values) => {
+                let Some(arg_name) = arg_name_or_values.unpack_str() else {
+                    return Err(buck2_error::buck2_error!(
+                        buck2_error::ErrorTag::Input,
+                        "expected value of type `string` for arg name, got `{}`",
+                        arg_name_or_values.get_type()
+                    )
+                    .into());
+                };
+                (Some(arg_name), values)
+            }
+            None => (None, arg_name_or_values),
+        };
+        let mut values = bazel_args_values(values, eval.heap())?;
+        values = bazel_args_apply_map_each(values, map_each, eval)?;
+        values = bazel_args_stringify_scalars(values, eval.heap());
+        if values.is_empty() && omit_if_empty {
+            return Ok(this);
+        }
+        if uniquify {
+            bazel_args_uniquify(&mut values);
+        }
+        if let Some(arg_name) = arg_name {
+            this.borrow
+                .add_value(eval.heap().alloc_str(arg_name).to_value())?;
+        }
+        if values.is_empty() {
+            this.borrow
+                .add_value(eval.heap().alloc_str("").to_value())?;
+            return Ok(this);
+        }
+        let joined = bazel_args_nested(
+            values,
+            bazel_args_format_string(format_each, eval.heap(), "format_each")?,
+            None,
+            Some(join_with),
+            expand_directories,
+        )?;
+        let joined = eval.heap().alloc_typed(joined);
+        if let Some(format_joined) =
+            bazel_args_format_string(format_joined, eval.heap(), "format_joined")?
+        {
+            let outer = bazel_args_nested(
+                vec![joined.to_value()],
+                Some(format_joined),
+                None,
+                None,
+                false,
+            )?;
+            this.borrow
+                .add_value(eval.heap().alloc_typed(outer).to_value())?;
+        } else {
+            this.borrow.add_value(joined.to_value())?;
+        }
+        Ok(this)
+    }
+
+    /// Records Bazel param-file preferences for command-line lowering.
+    fn use_param_file<'v>(
+        mut this: StarlarkCommandLineMut<'v>,
+        #[starlark(default = "@%s")] param_file_arg: &str,
+        #[starlark(require = named, default = false)] use_always: bool,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<StarlarkCommandLineMut<'v>> {
+        let arg_format = bazel_args_format_literal(param_file_arg, eval.heap(), "param_file_arg")?;
+        let options = this.borrow.options_mut();
+        let param_file = options
+            .param_file
+            .get_or_insert_with(|| Box::new(ParamFileOptions::default()));
+        param_file.arg_format = Some(arg_format);
+        param_file.use_always = use_always;
+        Ok(this)
+    }
+
+    /// Records Bazel param-file formatting preferences.
+    fn set_param_file_format<'v>(
+        mut this: StarlarkCommandLineMut<'v>,
+        #[starlark(require = pos)] format: &str,
+    ) -> starlark::Result<StarlarkCommandLineMut<'v>> {
+        let format = match ParamFileFormat::parse(format) {
+            Ok(format) => format,
+            Err(_) => return Err(buck2_error::buck2_error!(
+                buck2_error::ErrorTag::Input,
+                "Invalid value for parameter `format`: expected one of `shell`, `multiline`, `flag_per_line`"
+            )
+            .into()),
+        };
+        let options = this.borrow.options_mut();
+        let param_file = options
+            .param_file
+            .get_or_insert_with(|| Box::new(ParamFileOptions::default()));
+        if param_file.format_set {
+            return Err(buck2_error::buck2_error!(
+                buck2_error::ErrorTag::Input,
+                "set_param_file_format() may only be called once"
+            )
+            .into());
+        }
+        param_file.format = format;
+        param_file.format_set = true;
         Ok(this)
     }
 

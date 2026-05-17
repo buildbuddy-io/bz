@@ -12,6 +12,7 @@ use buck2_core::fs::project::ProjectRoot;
 use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
 use buck2_directory::directory::directory::Directory;
 use buck2_directory::directory::entry::DirectoryEntry;
+use buck2_error::internal_error;
 use buck2_execute::directory::ActionDirectory;
 use buck2_execute::directory::ActionDirectoryEntry;
 use buck2_execute::directory::ActionDirectoryMember;
@@ -171,6 +172,9 @@ where
             }
             Ok(())
         }
+        DirectoryEntry::Leaf(ActionDirectoryMember::SourceFile(_)) => Err(internal_error!(
+            "source file proxy must be resolved before materialization"
+        )),
         DirectoryEntry::Leaf(ActionDirectoryMember::Symlink(s)) => {
             if materialize_dirs_and_syms
                 && fs_util::symlink_metadata(&dest)

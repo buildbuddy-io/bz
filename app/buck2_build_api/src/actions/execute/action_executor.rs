@@ -50,8 +50,10 @@ use buck2_execute::execute::kind::CommandExecutionKind;
 use buck2_execute::execute::manager::CommandExecutionManager;
 use buck2_execute::execute::prepared::PreparedAction;
 use buck2_execute::execute::prepared::PreparedCommand;
+use buck2_execute::execute::request::CommandExecutionOutput;
 use buck2_execute::execute::request::CommandExecutionRequest;
 use buck2_execute::execute::request::ExecutorPreference;
+use buck2_execute::execute::request::LocalActionCacheKey;
 use buck2_execute::execute::request::OutputType;
 use buck2_execute::execute::result::CommandExecutionReport;
 use buck2_execute::execute::result::CommandExecutionResult;
@@ -500,6 +502,36 @@ impl ActionExecutionCtx for BuckActionExecutionContext<'_> {
             .await
     }
 
+    async fn unprepared_action_cache(
+        &mut self,
+        manager: CommandExecutionManager,
+        local_action_cache_key: &LocalActionCacheKey,
+        outputs: &BuckIndexSet<CommandExecutionOutput>,
+    ) -> ControlFlow<CommandExecutionResult, CommandExecutionManager> {
+        let action = self.target();
+        self.executor
+            .command_executor
+            .unprepared_action_cache(
+                manager,
+                &action as _,
+                local_action_cache_key,
+                outputs,
+                self.digest_config(),
+                self.cancellations,
+            )
+            .await
+    }
+
+    fn insert_unprepared_action_cache_metadata(
+        &mut self,
+        local_action_cache_key: &LocalActionCacheKey,
+        outputs: &BuckIndexMap<CommandExecutionOutput, ArtifactValue>,
+    ) -> buck2_error::Result<()> {
+        self.executor
+            .command_executor
+            .insert_unprepared_action_cache_metadata(local_action_cache_key, outputs)
+    }
+
     async fn remote_dep_file_cache(
         &mut self,
         manager: CommandExecutionManager,
@@ -720,6 +752,10 @@ impl BuckActionExecutor {
 
             let (result, metadata) = action.execute(&mut ctx, waiting_data).await?;
 
+            if action_execution_metadata_is_from_local_action_cache(&metadata) {
+                return Ok((result, metadata));
+            }
+
             // Check that all the outputs are the right output_type
             for x in outputs.iter() {
                 let declared = x.output_type();
@@ -728,10 +764,14 @@ impl BuckActionExecutor {
                     if let Some(t) = result.0.outputs.get(x.get_path()) {
                         let real = if t.is_dir() {
                             OutputType::Directory
+                        } else if t.is_symlink() {
+                            OutputType::Symlink
                         } else {
                             OutputType::File
                         };
-                        if real != declared {
+                        let type_matches = real == declared
+                            || (declared == OutputType::File && real == OutputType::Symlink);
+                        if !type_matches {
                             return Err(ExecuteError::WrongOutputType {
                                 path: self.command_executor.fs().resolve_build(
                                     x.get_path(),
@@ -807,8 +847,53 @@ impl BuckActionExecutor {
         (res, command_reports)
     }
 
+    pub(crate) async fn try_execute_local_action_cache(
+        &self,
+        waiting_data: WaitingData,
+        inputs: BuckIndexMap<ArtifactGroup, ArtifactGroupValues>,
+        action: &RegisteredAction,
+        cancellations: &CancellationContext,
+    ) -> (
+        Result<Option<(ActionOutputs, ActionExecutionMetadata)>, ExecuteError>,
+        Vec<CommandExecutionReport>,
+    ) {
+        let mut command_reports = Vec::new();
+
+        let res = async {
+            let outputs = action.outputs();
+
+            let mut ctx = BuckActionExecutionContext {
+                executor: self,
+                action,
+                inputs,
+                outputs: outputs.as_ref(),
+                command_reports: &mut command_reports,
+                cancellations,
+            };
+
+            action
+                .try_execute_local_action_cache(&mut ctx, waiting_data)
+                .await
+        }
+        .await;
+
+        (res, command_reports)
+    }
+
     pub fn invalidation_tracking_enabled(&self) -> bool {
         self.invalidation_tracking_enabled
+    }
+}
+
+fn action_execution_metadata_is_from_local_action_cache(
+    metadata: &ActionExecutionMetadata,
+) -> bool {
+    match &metadata.execution_kind {
+        ActionExecutionKind::LocalActionCache => true,
+        ActionExecutionKind::Command { kind, .. } => {
+            matches!(kind.as_ref(), CommandExecutionKind::LocalActionCache { .. })
+        }
+        _ => false,
     }
 }
 
@@ -1002,6 +1087,7 @@ mod tests {
                             .map(|b| CommandExecutionOutput::BuildArtifact {
                                 path: b.get_path().dupe(),
                                 output_type: OutputType::FileOrDirectory,
+                                produced_path: None,
                             })
                             .collect(),
                         ctx.fs(),
@@ -1075,6 +1161,7 @@ mod tests {
                 ran: Default::default(),
             }),
             CommandExecutorConfig::testing_local(),
+            None,
         );
         let res = with_dispatcher_async(
             EventDispatcher::null(),

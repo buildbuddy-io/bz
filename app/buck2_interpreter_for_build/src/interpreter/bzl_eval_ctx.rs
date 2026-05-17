@@ -8,9 +8,37 @@
  * above-listed licenses.
  */
 
+use std::cell::RefCell;
+
 use buck2_core::bzl::ImportPath;
 
 #[derive(Debug)]
 pub struct BzlEvalCtx {
     pub(crate) bzl_path: ImportPath,
+    bzl_visibility: RefCell<Option<Vec<String>>>,
+}
+
+impl BzlEvalCtx {
+    pub(crate) fn new(bzl_path: ImportPath) -> Self {
+        Self {
+            bzl_path,
+            bzl_visibility: RefCell::new(None),
+        }
+    }
+
+    pub(crate) fn set_bzl_visibility(&self, visibility: Vec<String>) -> buck2_error::Result<()> {
+        let mut bzl_visibility = self.bzl_visibility.borrow_mut();
+        if bzl_visibility.is_some() {
+            return Err(BzlEvalError::VisibilityAlreadySet.into());
+        }
+        *bzl_visibility = Some(visibility);
+        Ok(())
+    }
+}
+
+#[derive(Debug, buck2_error::Error)]
+#[buck2(tag = Input)]
+enum BzlEvalError {
+    #[error("load visibility may not be set more than once")]
+    VisibilityAlreadySet,
 }

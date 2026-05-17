@@ -16,6 +16,7 @@ use starlark::typing::Ty;
 use starlark::values::Value;
 
 use crate::attrs::coerce::AttrTypeCoerce;
+use crate::attrs::coerce::attr_type::coerce_providers_label_from_value;
 use crate::attrs::coerce::attr_type::ty_maybe_select::TyMaybeSelect;
 
 #[derive(Debug, buck2_error::Error)]
@@ -41,9 +42,16 @@ impl AttrTypeCoerce for SourceAttrType {
         ctx: &dyn AttrCoercionContext,
         value: Value,
     ) -> buck2_error::Result<CoercedAttr> {
+        if value.unpack_str().is_none() {
+            return coerce_providers_label_from_value(ctx, value).map(CoercedAttr::SourceLabel);
+        }
+
         let source_label = value.unpack_str_err()?;
 
-        let label_err = if source_label.contains(':') {
+        let label_err = if source_label.contains(':')
+            || source_label.starts_with('@')
+            || source_label.starts_with("//")
+        {
             match ctx.coerce_providers_label(source_label) {
                 Ok(l) => return Ok(CoercedAttr::SourceLabel(l)),
                 Err(e) => Some(e),
@@ -53,7 +61,17 @@ impl AttrTypeCoerce for SourceAttrType {
             None
         };
 
-        let path_err = match ctx.coerce_path(cleanup_path(source_label), self.allow_directory) {
+        let source_path = cleanup_path(source_label);
+
+        if ctx.is_bazel_compat_cell() {
+            match ctx.coerce_existing_path(source_path, self.allow_directory) {
+                Ok(Some(path)) => return Ok(CoercedAttr::SourceFile(path)),
+                Ok(None) => {}
+                Err(_) => {}
+            }
+        }
+
+        let path_err = match ctx.coerce_path(source_path, self.allow_directory) {
             Ok(path) => return Ok(CoercedAttr::SourceFile(path)),
             Err(path_err) => path_err,
         };

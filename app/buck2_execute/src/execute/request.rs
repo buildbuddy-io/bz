@@ -46,6 +46,7 @@ use starlark_map::sorted_set::SortedSet;
 
 use super::dep_file_digest::DepFileDigest;
 use crate::artifact::group::artifact_group_values_dyn::ArtifactGroupValuesDyn;
+use crate::artifact_value::ArtifactValue;
 use crate::digest_config::DigestConfig;
 use crate::directory::ActionDirectoryEntry;
 use crate::directory::ActionDirectoryMember;
@@ -86,6 +87,12 @@ pub struct ActionMetadataBlob {
 
 pub enum CommandExecutionInput {
     Artifact(Box<dyn ArtifactGroupValuesDyn>),
+    ArtifactPathAlias {
+        source_path: ProjectRelativePathBuf,
+        source_requires_materialization: bool,
+        path: ProjectRelativePathBuf,
+        value: ArtifactValue,
+    },
     ActionMetadata(ActionMetadataBlob),
     ScratchPath(BuckOutScratchPath),
     IncrementalRemoteOutput(
@@ -218,6 +225,14 @@ pub struct CommandExecutionPaths {
     input_files_bytes: u64,
 }
 
+#[derive(Clone, Debug)]
+pub struct LocalActionCacheKey {
+    pub key: String,
+    pub action_key_digest: Vec<u8>,
+    pub input_metadata_digest: Vec<u8>,
+    pub fingerprint: Vec<u8>,
+}
+
 impl CommandExecutionPaths {
     pub fn new(
         inputs: Vec<CommandExecutionInput>,
@@ -231,23 +246,15 @@ impl CommandExecutionPaths {
         // RE spec requires outputs to be sorted:
         // https://github.com/bazelbuild/remote-apis/blob/1f36c310b28d762b258ea577ed08e8203274efae/build/bazel/remote/execution/v2/remote_execution.proto#L667-L669
         // We sort early here and not when we create RE action in order for local and remote actions to be in-sync.
-        let outputs: BuckIndexSet<_> = outputs
-            .into_iter()
-            .sorted_by_key(|e| {
-                let resolved = e
-                    .as_ref()
-                    .resolve(fs, Some(&ContentBasedPathHash::for_output_artifact()))
-                    .expect("Failed to resolve output path");
-                resolved.into_path()
-            })
-            .collect();
+        let outputs = Self::sort_outputs_for_execution(outputs, fs);
 
         let output_paths = outputs
             .iter()
             .map(|o| {
-                let resolved = o
-                    .as_ref()
-                    .resolve(fs, Some(&ContentBasedPathHash::for_output_artifact()))?;
+                let resolved = o.as_ref().resolve_for_execution(
+                    fs,
+                    Some(&ContentBasedPathHash::for_output_artifact()),
+                )?;
                 if let Some(dir) = resolved.path_to_create() {
                     builder.mkdir(dir)?;
                 }
@@ -276,6 +283,22 @@ impl CommandExecutionPaths {
             output_paths,
             input_files_bytes,
         })
+    }
+
+    pub fn sort_outputs_for_execution(
+        outputs: BuckIndexSet<CommandExecutionOutput>,
+        fs: &ArtifactFs,
+    ) -> BuckIndexSet<CommandExecutionOutput> {
+        outputs
+            .into_iter()
+            .sorted_by_key(|e| {
+                let resolved = e
+                    .as_ref()
+                    .resolve_for_execution(fs, Some(&ContentBasedPathHash::for_output_artifact()))
+                    .expect("Failed to resolve output path");
+                resolved.into_path()
+            })
+            .collect()
     }
 
     fn calculate_inputs_size_bytes(input_directory: &ActionImmutableDirectory) -> u64 {
@@ -324,12 +347,20 @@ impl CommandExecutionPaths {
 #[derive(Copy, Clone, Dupe, Debug, Display, Allocative, Hash, PartialEq, Eq)]
 pub struct WorkerId(pub u64);
 
+#[derive(Copy, Clone, Dupe, Debug, Display, Allocative, Hash, PartialEq, Eq)]
+pub enum WorkerProtocol {
+    Buck2,
+    Bazel,
+}
+
 pub struct WorkerSpec {
     pub id: WorkerId,
+    pub protocol: WorkerProtocol,
     pub exe: Vec<String>,
     pub env: SortedVectorMap<String, String>,
     pub concurrency: Option<usize>,
     pub streaming: bool,
+    pub bazel_worker_sandboxing: bool,
     pub remote_key: Option<TrackedFileDigest>,
     pub input_paths: CommandExecutionPaths,
 }
@@ -346,6 +377,12 @@ pub struct RemoteWorkerSpec {
     pub env: SortedVectorMap<String, String>,
     pub input_paths: CommandExecutionPaths,
     pub concurrency: Option<usize>,
+}
+
+impl RemoteWorkerSpec {
+    pub fn inputs(&self) -> &[CommandExecutionInput] {
+        &self.input_paths.inputs
+    }
 }
 
 /// The data contains the information about the command to be executed.
@@ -399,6 +436,7 @@ pub struct CommandExecutionRequest {
     outputs_for_error_handler: Vec<BuildArtifactPath>,
     /// String representation of a key that uniquely identifies a RunAction
     run_action_key: Option<String>,
+    local_action_cache_key: Option<LocalActionCacheKey>,
 
     is_test: bool,
     /// Whether to skip resource control (cgroup) for this command.
@@ -442,6 +480,7 @@ impl CommandExecutionRequest {
             meta_internal_extra_params: MetaInternalExtraParams::default_arc(),
             outputs_for_error_handler: Vec::new(),
             run_action_key: None,
+            local_action_cache_key: None,
             is_test: false,
             skip_resource_control: false,
             network_access: None,
@@ -464,6 +503,7 @@ impl CommandExecutionRequest {
                 .add_outputs_as_inputs(output_paths, fs, digest_config, interner)?;
         Ok(Self {
             paths: override_paths,
+            local_action_cache_key: None,
             ..self
         })
     }
@@ -717,6 +757,18 @@ impl CommandExecutionRequest {
         &self.run_action_key
     }
 
+    pub fn with_local_action_cache_key(
+        mut self,
+        local_action_cache_key: Option<LocalActionCacheKey>,
+    ) -> Self {
+        self.local_action_cache_key = local_action_cache_key;
+        self
+    }
+
+    pub fn local_action_cache_key(&self) -> Option<&LocalActionCacheKey> {
+        self.local_action_cache_key.as_ref()
+    }
+
     pub fn with_is_test(mut self) -> Self {
         self.is_test = true;
         self
@@ -766,6 +818,7 @@ pub enum OutputType {
     FileOrDirectory,
     File,
     Directory,
+    Symlink,
 }
 
 #[derive(Debug, buck2_error::Error)]
@@ -800,7 +853,7 @@ impl OutputType {
             Ok(())
         } else if self == output_type
             || self == OutputType::FileOrDirectory
-            || output_type == OutputType::FileOrDirectory
+            || (output_type == OutputType::FileOrDirectory && self != OutputType::Symlink)
         {
             Ok(())
         } else {
@@ -817,6 +870,7 @@ pub enum CommandExecutionOutputRef<'a> {
     BuildArtifact {
         path: &'a BuildArtifactPath,
         output_type: OutputType,
+        produced_path: Option<&'a ProjectRelativePath>,
     },
     TestPath {
         path: &'a BuckOutTestPath,
@@ -833,7 +887,9 @@ impl CommandExecutionOutputRef<'_> {
         content_hash: Option<&ContentBasedPathHash>,
     ) -> buck2_error::Result<ResolvedCommandExecutionOutput> {
         match self {
-            Self::BuildArtifact { path, output_type } => Ok(ResolvedCommandExecutionOutput {
+            Self::BuildArtifact {
+                path, output_type, ..
+            } => Ok(ResolvedCommandExecutionOutput {
                 path: fs.resolve_build(path, content_hash)?,
                 create: OutputCreationBehavior::Parent,
                 output_type: *output_type,
@@ -846,6 +902,34 @@ impl CommandExecutionOutputRef<'_> {
         }
     }
 
+    /// Resolve the path where the command is expected to produce this output.
+    ///
+    /// For native Buck actions this is the same as `resolve`. Bazel-compatible actions may use a
+    /// Bazel exec path on the command line while still declaring the canonical Buck artifact path.
+    pub fn resolve_for_execution(
+        &self,
+        fs: &ArtifactFs,
+        content_hash: Option<&ContentBasedPathHash>,
+    ) -> buck2_error::Result<ResolvedCommandExecutionOutput> {
+        match self {
+            Self::BuildArtifact {
+                produced_path: Some(path),
+                output_type,
+                ..
+            } => Ok(ResolvedCommandExecutionOutput {
+                path: path.to_buf(),
+                create: match output_type {
+                    OutputType::Directory => OutputCreationBehavior::Create,
+                    OutputType::File | OutputType::FileOrDirectory | OutputType::Symlink => {
+                        OutputCreationBehavior::Parent
+                    }
+                },
+                output_type: *output_type,
+            }),
+            _ => self.resolve(fs, content_hash),
+        }
+    }
+
     /// Same as `resolve`, but the underlying output path that is returned uses the
     /// configuration hash regardless of whether the output is content-based or not.
     pub fn resolve_configuration_hash_path(
@@ -853,7 +937,9 @@ impl CommandExecutionOutputRef<'_> {
         fs: &ArtifactFs,
     ) -> buck2_error::Result<ResolvedCommandExecutionOutput> {
         match self {
-            Self::BuildArtifact { path, output_type } => Ok(ResolvedCommandExecutionOutput {
+            Self::BuildArtifact {
+                path, output_type, ..
+            } => Ok(ResolvedCommandExecutionOutput {
                 path: fs.resolve_build_configuration_hash_path(path)?,
                 create: OutputCreationBehavior::Parent,
                 output_type: *output_type,
@@ -868,9 +954,14 @@ impl CommandExecutionOutputRef<'_> {
 
     pub fn cloned(&self) -> CommandExecutionOutput {
         match self {
-            Self::BuildArtifact { path, output_type } => CommandExecutionOutput::BuildArtifact {
+            Self::BuildArtifact {
+                path,
+                output_type,
+                produced_path,
+            } => CommandExecutionOutput::BuildArtifact {
                 path: (*path).dupe(),
                 output_type: *output_type,
+                produced_path: produced_path.map(|path| path.to_buf()),
             },
             Self::TestPath { path, create } => CommandExecutionOutput::TestPath {
                 path: (*path).clone(),
@@ -887,11 +978,12 @@ impl CommandExecutionOutputRef<'_> {
     }
 }
 
-#[derive(UnpackVariants, PartialEq, Eq, Hash, Debug)]
+#[derive(UnpackVariants, PartialEq, Eq, Hash, Debug, Clone)]
 pub enum CommandExecutionOutput {
     BuildArtifact {
         path: BuildArtifactPath,
         output_type: OutputType,
+        produced_path: Option<ProjectRelativePathBuf>,
     },
     TestPath {
         path: BuckOutTestPath,
@@ -902,9 +994,14 @@ pub enum CommandExecutionOutput {
 impl CommandExecutionOutput {
     pub fn as_ref(&self) -> CommandExecutionOutputRef<'_> {
         match self {
-            Self::BuildArtifact { path, output_type } => CommandExecutionOutputRef::BuildArtifact {
+            Self::BuildArtifact {
+                path,
+                output_type,
+                produced_path,
+            } => CommandExecutionOutputRef::BuildArtifact {
                 path,
                 output_type: *output_type,
+                produced_path: produced_path.as_ref().map(|path| path.as_ref()),
             },
             Self::TestPath { path, create } => CommandExecutionOutputRef::TestPath {
                 path,

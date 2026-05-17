@@ -90,6 +90,8 @@ asserts.eq(x10.get("a"), 1)
 asserts.eq(x10.get("b"), None)
 asserts.eq(x10.get("a", 2), 1)
 asserts.eq(x10.get("b", 2), 2)
+asserts.eq(x10.get("b", default = 2), 2)
+asserts.eq(x10.get("b", default = None), None)
 
 # dict.clear
 x11 = {"a": 1}

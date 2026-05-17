@@ -112,7 +112,7 @@ def create_manifest_for_source_dir(
 
 def create_manifest_for_extensions(
         ctx: AnalysisContext,
-        extensions: dict[str, (typing.Any, Label)],
+        extensions: dict[str, (typing.Any, ConfiguredProvidersLabel)],
         # Whether to include DWP files.
         dwp: bool = False) -> ManifestInfo:
     entries = []

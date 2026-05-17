@@ -17,6 +17,7 @@ use buck2_cli_proto::client_context::HostArchOverride as GrpcHostArchOverride;
 use buck2_cli_proto::client_context::HostPlatformOverride as GrpcHostPlatformOverride;
 use buck2_cli_proto::client_context::PreemptibleWhen as GrpcPreemptibleWhen;
 use buck2_common::argv::Argv;
+use buck2_common::init::DaemonStartupConfig;
 use buck2_common::init::LogDownloadMethod;
 use buck2_common::invocation_paths::InvocationPaths;
 use buck2_common::invocation_paths_result::InvocationPathsResult;
@@ -69,6 +70,7 @@ pub struct ClientCommandContext<'a> {
     pub(crate) client_metadata: Vec<ClientMetadata>,
     pub(crate) isolation: FileNameBuf,
     pub(crate) agent_context: Vec<AgentContextEntry>,
+    pub(crate) watchfs_override: Option<bool>,
 }
 
 impl<'a> ClientCommandContext<'a> {
@@ -89,6 +91,7 @@ impl<'a> ClientCommandContext<'a> {
         client_metadata: Vec<ClientMetadata>,
         isolation: FileNameBuf,
         agent_context: Vec<AgentContextEntry>,
+        watchfs_override: Option<bool>,
     ) -> Self {
         ClientCommandContext {
             init,
@@ -107,6 +110,7 @@ impl<'a> ClientCommandContext<'a> {
             client_metadata,
             isolation,
             agent_context,
+            watchfs_override,
         }
     }
 
@@ -306,11 +310,15 @@ impl<'a> ClientCommandContext<'a> {
     }
 
     pub fn log_download_method(&self) -> buck2_error::Result<LogDownloadMethod> {
-        Ok(self
-            .immediate_config
-            .daemon_startup_config()?
-            .log_download_method
-            .clone())
+        Ok(self.daemon_startup_config()?.log_download_method)
+    }
+
+    pub fn daemon_startup_config(&self) -> buck2_error::Result<DaemonStartupConfig> {
+        let mut daemon_startup_config = self.immediate_config.daemon_startup_config()?.clone();
+        if let Some(watchfs) = self.watchfs_override {
+            daemon_startup_config.watchfs = watchfs;
+        }
+        Ok(daemon_startup_config)
     }
 }
 

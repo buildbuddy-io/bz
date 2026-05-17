@@ -47,7 +47,7 @@ AppleSelectiveDebuggingFilteredDebugInfo = record(
     infos = field(list[ArtifactInfo]),
     # Contains only artifacts for _selected_ targets, excluding any others
     selected_target_infos = field(list[ArtifactInfo]),
-    swift_modules_labels = field(list[Label]),
+    swift_modules_labels = field(list[ConfiguredProvidersLabel]),
     metadata = field(Artifact),
 )
 
@@ -174,7 +174,7 @@ def apple_selective_debugging_impl(ctx: AnalysisContext) -> list[Provider]:
             executable: Artifact,
             executable_link_execution_preference: LinkExecutionPreference,
             adhoc_codesign_tool: [RunInfo, None],
-            focused_targets_labels: list[Label],
+            focused_targets_labels: list[ConfiguredProvidersLabel],
             identifier: None | str = None) -> Artifact:
         inner_cmd = cmd_args(cmd)
         subdir = "{}/".format(identifier) if identifier else ""
@@ -243,7 +243,7 @@ def apple_selective_debugging_impl(ctx: AnalysisContext) -> list[Provider]:
                     # not anything included in addition to support the debugger (e.g., `.swiftmodule` files)
                     selected_target_infos.append(info)
                 if is_label_included or (selected_targets_contain_swift and is_swift_debug_info):
-                    # There might be a few ArtifactInfo corresponding to the same Label,
+                    # There might be a few ArtifactInfo corresponding to the same ConfiguredProvidersLabel,
                     # so to avoid overwriting, we need to preserve all artifacts.
                     artifact_infos.append(info)
                     selected_targets_contain_swift = selected_targets_contain_swift or ArtifactInfoTag("swift_debug_info") in info.tags
@@ -290,7 +290,7 @@ def apple_selective_debugging_impl(ctx: AnalysisContext) -> list[Provider]:
             metadata = metadata_output,
         )
 
-    def preference_for_links(links: list[Label], deps_preferences: list[LinkExecutionPreferenceInfo]) -> LinkExecutionPreference:
+    def preference_for_links(links: list[ConfiguredProvidersLabel], deps_preferences: list[LinkExecutionPreferenceInfo]) -> LinkExecutionPreference:
         # If any dependent links were run locally, prefer that the current link is also performed locally,
         # to avoid needing to upload the previous link.
         dep_prefered_local = lazy.is_any(lambda info: info.preference == LinkExecutionPreference("local"), deps_preferences)
@@ -320,7 +320,7 @@ def apple_selective_debugging_impl(ctx: AnalysisContext) -> list[Provider]:
         LinkExecutionPreferenceDeterminatorInfo(preference_for_links = preference_for_links),
     ]
 
-def _is_label_included(label: Label, selection_criteria: _SelectionCriteria) -> bool:
+def _is_label_included(label: ConfiguredProvidersLabel, selection_criteria: _SelectionCriteria) -> bool:
     # If no include criteria are provided, we then include everything, as long as it is not excluded.
     if selection_criteria.include_build_target_patterns or selection_criteria.include_regular_expressions:
         if not _check_if_label_matches_patterns_or_expressions(label, selection_criteria.include_build_target_patterns, selection_criteria.include_regular_expressions):
@@ -329,7 +329,7 @@ def _is_label_included(label: Label, selection_criteria: _SelectionCriteria) -> 
     # If included (above snippet), ensure that this target is not excluded.
     return not _check_if_label_matches_patterns_or_expressions(label, selection_criteria.exclude_build_target_patterns, selection_criteria.exclude_regular_expressions)
 
-def _check_if_label_matches_patterns_or_expressions(label: Label, patterns: list[BuildTargetPattern], expressions: list[regex]) -> bool:
+def _check_if_label_matches_patterns_or_expressions(label: ConfiguredProvidersLabel, patterns: list[BuildTargetPattern], expressions: list[regex]) -> bool:
     for pattern in patterns:
         if pattern.matches(label):
             return True

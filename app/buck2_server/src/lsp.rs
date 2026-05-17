@@ -46,7 +46,6 @@ use buck2_interpreter::paths::path::OwnedStarlarkPath;
 use buck2_interpreter::prelude_path::prelude_path;
 use buck2_interpreter_for_build::interpreter::dice_calculation_delegate::HasCalculationDelegate;
 use buck2_interpreter_for_build::interpreter::global_interpreter_state::HasGlobalInterpreterState;
-use buck2_interpreter_for_build::interpreter::interpreter_for_dir::ParseData;
 use buck2_server_ctx::commands::command_end;
 use buck2_server_ctx::ctx::ServerCommandContextTrait;
 use buck2_server_ctx::ctx::ServerCommandDiceContext;
@@ -448,9 +447,9 @@ impl<'a> BuckLspContext<'a> {
             let path = module_path.starlark_path();
             let parse_result = calculator.prepare_eval_with_content(path, content)?;
             match parse_result {
-                Ok(ParseData(ast, _)) => Ok(LspEvalResult {
+                Ok(parse_data) => Ok(LspEvalResult {
                     diagnostics: Vec::new(),
-                    ast: Some(ast),
+                    ast: Some(parse_data.ast),
                 }),
                 Err(e) => {
                     let message = EvalMessage::from_error(uri.path(), &e.into());

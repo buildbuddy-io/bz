@@ -176,6 +176,7 @@ mod tests {
                     Some(format!("id-{idx}")),
                 )),
                 CommandExecutorConfig::testing_local(),
+                None,
             );
             self.actions
                 .push((key.dupe(), ActionState::Action(Arc::new(action))));

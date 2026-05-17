@@ -18,6 +18,8 @@ use buck2_core::cells::CellAliasResolver;
 use buck2_core::cells::CellResolver;
 use buck2_core::cells::cell_path::CellPath;
 use buck2_core::cells::cell_path_with_allowed_relative_dir::CellPathWithAllowedRelativeDir;
+use buck2_core::cells::external::bzlmod_cell_name;
+use buck2_core::cells::external::register_bzlmod_cell_canonical_repo_name_for_cell;
 use buck2_core::cells::name::CellName;
 use buck2_core::cells::paths::CellRelativePathBuf;
 use buck2_core::package::PackageLabel;
@@ -29,8 +31,11 @@ use buck2_core::pattern::pattern_type::PatternType;
 use buck2_core::pattern::pattern_type::ProvidersPatternExtra;
 use buck2_core::pattern::pattern_type::TargetPatternExtra;
 use buck2_core::provider::label::ProvidersLabel;
+use buck2_core::provider::label::ProvidersName;
 use buck2_core::soft_error;
 use buck2_core::target::label::interner::ConcurrentTargetLabelInterner;
+use buck2_core::target::name::TargetName;
+use buck2_core::target::name::TargetNameRef;
 use buck2_node::attrs::coerced_attr::CoercedAttr;
 use buck2_node::attrs::coerced_path::CoercedDirectory;
 use buck2_node::attrs::coerced_path::CoercedPath;
@@ -53,6 +58,8 @@ use tracing::info;
 use super::interner::AttrCoercionInterner;
 use crate::attrs::coerce::arc_str_interner::ArcStrInterner;
 use crate::attrs::coerce::str_hash::str_hash;
+use crate::bazel_label::bazel_absolute_label_parts;
+use crate::bazel_label::parse_bazel_canonical_providers_label;
 
 #[derive(Debug, buck2_error::Error)]
 #[buck2(input)]
@@ -113,6 +120,11 @@ impl Debug for BuildAttrCoercionContext {
 }
 
 impl BuildAttrCoercionContext {
+    fn is_bazel_compat_cell(&self) -> bool {
+        let cell = self.cell_name.as_str();
+        cell == "root" || cell == "bazel_tools" || cell.starts_with("bzlmod_")
+    }
+
     fn new(
         cell_resolver: CellResolver,
         cell_name: CellName,
@@ -208,12 +220,285 @@ impl BuildAttrCoercionContext {
 
     fn coerce_label_no_cache(&self, value: &str) -> buck2_error::Result<ProvidersLabel> {
         // TODO(nmj): Make this take an import path / package
-        match self.parse_pattern::<ProvidersPatternExtra>(value)? {
+        let normalized_value;
+        let value = if let Some(root_label) = value.strip_prefix("@@root//") {
+            normalized_value = format!("root//{root_label}");
+            normalized_value.as_str()
+        } else {
+            value
+        };
+        if let Some(label) = parse_bazel_canonical_providers_label(value)? {
+            return Ok(label);
+        }
+        let pattern = match self.parse_pattern::<ProvidersPatternExtra>(value) {
+            Ok(pattern) => pattern,
+            Err(_)
+                if self.enclosing_package.is_some()
+                    && is_bazel_relative_target_shorthand(value) =>
+            {
+                match self.parse_pattern::<ProvidersPatternExtra>(&format!(":{value}")) {
+                    Ok(pattern) => pattern,
+                    Err(e) => {
+                        if let Some(label) = self.coerce_bazel_compat_label(value)? {
+                            return Ok(label);
+                        }
+                        return Err(e);
+                    }
+                }
+            }
+            Err(_)
+                if self.enclosing_package.is_some()
+                    && self.is_bazel_compat_cell()
+                    && is_bazel_package_relative_target(value) =>
+            {
+                match self.parse_pattern::<ProvidersPatternExtra>(&format!(":{value}")) {
+                    Ok(pattern) => pattern,
+                    Err(e) => {
+                        if let Some(label) = self.coerce_bazel_compat_label(value)? {
+                            return Ok(label);
+                        }
+                        return Err(e);
+                    }
+                }
+            }
+            Err(e) => {
+                if let Some(label) = self.coerce_bazel_compat_label(value)? {
+                    return Ok(label);
+                }
+                if let Some(label) = self.coerce_bazel_repo_shorthand_label(value)? {
+                    return Ok(label);
+                }
+                if let Some(label) = self.coerce_bazel_non_visible_repo_label(value)? {
+                    return Ok(label);
+                }
+                return Err(e);
+            }
+        };
+        match pattern {
             ParsedPattern::Target(package, target_name, providers) => {
                 Ok(providers.into_providers_label(package, target_name.as_ref()))
             }
+            ParsedPattern::Package(package) => {
+                let Some(target_name) = package.cell_relative_path().file_name() else {
+                    return Err(
+                        BuildAttrCoercionContextError::RequiredLabel(value.to_owned()).into(),
+                    );
+                };
+                let target_name = TargetNameRef::new(target_name.as_str())?;
+                Ok(ProvidersLabel::new(
+                    buck2_core::target::label::label::TargetLabel::new(package, target_name),
+                    ProvidersName::Default,
+                ))
+            }
             _ => Err(BuildAttrCoercionContextError::RequiredLabel(value.to_owned()).into()),
         }
+    }
+
+    fn coerce_bazel_repo_shorthand_label(
+        &self,
+        value: &str,
+    ) -> buck2_error::Result<Option<ProvidersLabel>> {
+        if !self.is_bazel_compat_cell() {
+            return Ok(None);
+        }
+
+        let (repo, cell_name) = if let Some(repo) = value.strip_prefix("@@") {
+            if repo.is_empty() || repo.contains(['/', ':', '[', ']']) {
+                return Ok(None);
+            }
+            let cell_name = if repo == "bazel_tools" {
+                CellName::unchecked_new("bazel_tools")?
+            } else {
+                CellName::unchecked_new(&bzlmod_cell_name(repo))?
+            };
+            (repo, cell_name)
+        } else if let Some(repo) = value.strip_prefix('@') {
+            if repo.is_empty() || repo.contains(['/', ':', '[', ']']) {
+                return Ok(None);
+            }
+            (repo, self.cell_alias_resolver.resolve(repo)?)
+        } else {
+            return Ok(None);
+        };
+
+        let package = PackageLabel::new(
+            cell_name,
+            CellRelativePathBuf::try_from(String::new())?.as_ref(),
+        )?;
+        let target = TargetNameRef::new(repo)?;
+        Ok(Some(ProvidersLabel::new(
+            buck2_core::target::label::label::TargetLabel::new(package, target),
+            ProvidersName::Default,
+        )))
+    }
+
+    fn coerce_bazel_non_visible_repo_label(
+        &self,
+        value: &str,
+    ) -> buck2_error::Result<Option<ProvidersLabel>> {
+        if !self.is_bazel_compat_cell() {
+            return Ok(None);
+        }
+
+        let Some(value) = value.strip_prefix('@') else {
+            return Ok(None);
+        };
+        if value.starts_with('@') {
+            return Ok(None);
+        }
+
+        let Some((repo, label)) = value.split_once("//") else {
+            return Ok(None);
+        };
+        if repo.is_empty() || self.cell_alias_resolver.resolve(repo).is_ok() {
+            return Ok(None);
+        }
+
+        let Some((package, target)) = bazel_absolute_label_parts(label) else {
+            return Ok(None);
+        };
+
+        // Bazel keeps labels with repos that are not visible from the current repo as
+        // non-visible RepositoryName values and reports the repo-mapping error only if
+        // analysis actually reaches that label.
+        let cell_name = self.bazel_non_visible_repo_cell_name(repo)?;
+        let package =
+            PackageLabel::new(cell_name, CellRelativePathBuf::try_from(package)?.as_ref())?;
+        let target = TargetNameRef::new_bazel(&target)?;
+        Ok(Some(ProvidersLabel::new(
+            buck2_core::target::label::label::TargetLabel::new(package, target),
+            ProvidersName::Default,
+        )))
+    }
+
+    fn coerce_bazel_compat_label(
+        &self,
+        value: &str,
+    ) -> buck2_error::Result<Option<ProvidersLabel>> {
+        if !self.is_bazel_compat_cell() {
+            return Ok(None);
+        }
+
+        if let Some(target) = value.strip_prefix(':') {
+            return self.coerce_bazel_package_label(target, value).map(Some);
+        }
+
+        if let Some(package_and_target) = value.strip_prefix("//") {
+            return self
+                .coerce_bazel_absolute_label(self.cell_name, package_and_target)
+                .map(Some);
+        }
+
+        if let Some(value) = value.strip_prefix('@') {
+            if value.starts_with('@') {
+                return Ok(None);
+            }
+            let Some((repo, package_and_target)) = value.split_once("//") else {
+                return Ok(None);
+            };
+            let cell_name = if repo.is_empty() {
+                CellName::unchecked_new("root")?
+            } else {
+                match self.cell_alias_resolver.resolve(repo) {
+                    Ok(cell_name) => cell_name,
+                    Err(_) => return Ok(None),
+                }
+            };
+            return self
+                .coerce_bazel_absolute_label(cell_name, package_and_target)
+                .map(Some);
+        }
+
+        if let Some((cell, package_and_target)) = value.split_once("//") {
+            if !cell.is_empty()
+                && !cell.contains(['@', '/', ':', '[', ']'])
+                && let Ok(cell_name) = if cell == "root" {
+                    CellName::unchecked_new("root")
+                } else if cell == "bazel_tools" {
+                    CellName::unchecked_new("bazel_tools")
+                } else {
+                    self.cell_alias_resolver.resolve(cell)
+                }
+            {
+                return self
+                    .coerce_bazel_absolute_label(cell_name, package_and_target)
+                    .map(Some);
+            }
+        }
+
+        if self.enclosing_package.is_some() && is_bazel_package_relative_target(value) {
+            return self.coerce_bazel_package_label(value, value).map(Some);
+        }
+
+        Ok(None)
+    }
+
+    fn coerce_bazel_package_label(
+        &self,
+        target: &str,
+        original: &str,
+    ) -> buck2_error::Result<ProvidersLabel> {
+        let package = self.require_enclosing_package(original)?.0.dupe();
+        let target = TargetName::new_bazel(target)?;
+        Ok(ProvidersLabel::new(
+            buck2_core::target::label::label::TargetLabel::new(package, target.as_ref()),
+            ProvidersName::Default,
+        ))
+    }
+
+    fn coerce_bazel_absolute_label(
+        &self,
+        cell_name: CellName,
+        package_and_target: &str,
+    ) -> buck2_error::Result<ProvidersLabel> {
+        let Some((package, target)) = bazel_absolute_label_parts(package_and_target) else {
+            return Err(BuildAttrCoercionContextError::RequiredLabel(
+                package_and_target.to_owned(),
+            )
+            .into());
+        };
+        let package =
+            PackageLabel::new(cell_name, CellRelativePathBuf::try_from(package)?.as_ref())?;
+        let target = TargetName::new_bazel(&target)?;
+        Ok(ProvidersLabel::new(
+            buck2_core::target::label::label::TargetLabel::new(package, target.as_ref()),
+            ProvidersName::Default,
+        ))
+    }
+
+    fn coerce_bazel_non_visible_repo_visibility_pattern(
+        &self,
+        value: &str,
+    ) -> buck2_error::Result<Option<ParsedPattern<TargetPatternExtra>>> {
+        if !self.is_bazel_compat_cell() {
+            return Ok(None);
+        }
+
+        let Some(value) = value.strip_prefix('@') else {
+            return Ok(None);
+        };
+        if value.starts_with('@') {
+            return Ok(None);
+        }
+
+        let Some((repo, pattern)) = value.split_once("//") else {
+            return Ok(None);
+        };
+        if repo.is_empty() || self.cell_alias_resolver.resolve(repo).is_ok() {
+            return Ok(None);
+        }
+
+        let cell_name = self.bazel_non_visible_repo_cell_name(repo)?;
+        Ok(Some(parse_non_visible_repo_target_pattern(
+            cell_name, pattern,
+        )?))
+    }
+
+    fn bazel_non_visible_repo_cell_name(&self, repo: &str) -> buck2_error::Result<CellName> {
+        let canonical_repo_name = format!("unknown+{}+{}", self.cell_name.as_str(), repo);
+        let cell_name = bzlmod_cell_name(&canonical_repo_name);
+        register_bzlmod_cell_canonical_repo_name_for_cell(&cell_name, &canonical_repo_name);
+        CellName::unchecked_new(&cell_name)
     }
 
     fn require_enclosing_package(
@@ -224,6 +509,60 @@ impl BuildAttrCoercionContext {
             BuildAttrCoercionContextError::NotBuildFileContext(msg.to_owned()).into()
         })
     }
+}
+
+fn is_bazel_relative_target_shorthand(value: &str) -> bool {
+    !value.is_empty()
+        && !value.starts_with(['@', ':', '/', '.'])
+        && !value.contains('/')
+        && !value.contains(':')
+        && !value.contains('[')
+        && !value.contains(']')
+}
+
+fn is_bazel_package_relative_target(value: &str) -> bool {
+    !value.is_empty()
+        && !value.starts_with(['@', ':', '/'])
+        && !value.contains(':')
+        && !value.contains('[')
+        && !value.contains(']')
+}
+
+fn parse_non_visible_repo_target_pattern(
+    cell_name: CellName,
+    pattern: &str,
+) -> buck2_error::Result<ParsedPattern<TargetPatternExtra>> {
+    if pattern == "..." {
+        return Ok(ParsedPattern::Recursive(CellPath::new(
+            cell_name,
+            CellRelativePathBuf::try_from(String::new())?,
+        )));
+    }
+
+    if let Some(package) = pattern.strip_suffix("/...") {
+        return Ok(ParsedPattern::Recursive(CellPath::new(
+            cell_name,
+            CellRelativePathBuf::try_from(package.to_owned())?,
+        )));
+    }
+
+    let (package, target) = if let Some((package, target)) = pattern.rsplit_once(':') {
+        if target.is_empty() {
+            let package = PackageLabel::new(
+                cell_name,
+                CellRelativePathBuf::try_from(package.to_owned())?.as_ref(),
+            )?;
+            return Ok(ParsedPattern::Package(package));
+        }
+        (package.to_owned(), target.to_owned())
+    } else {
+        let target = pattern.rsplit('/').next().unwrap_or(pattern);
+        (pattern.to_owned(), target.to_owned())
+    };
+
+    let package = PackageLabel::new(cell_name, CellRelativePathBuf::try_from(package)?.as_ref())?;
+    let target = TargetName::new_bazel(&target)?;
+    Ok(ParsedPattern::Target(package, target, TargetPatternExtra))
 }
 
 impl AttrCoercionContext for BuildAttrCoercionContext {
@@ -311,11 +650,57 @@ impl AttrCoercionContext for BuildAttrCoercionContext {
             if self.package_boundary_exception {
                 info!("{} (could be due to a package boundary violation)", e);
             } else {
-                soft_error!("source_file_missing", e.into(), quiet: true, error_on_oss: true)?;
+                soft_error!(
+                    "source_file_missing",
+                    e.into(),
+                    quiet: true,
+                    error_on_oss: !self.is_bazel_compat_cell()
+                )?;
             }
 
             Ok(CoercedPath::File(path.to_arc()))
         }
+    }
+
+    fn coerce_existing_path(
+        &self,
+        value: &str,
+        allow_directory: bool,
+    ) -> buck2_error::Result<Option<CoercedPath>> {
+        let path = <&PackageRelativePath>::try_from(value)?;
+        let (package, listing) = self.require_enclosing_package(value)?;
+
+        if let Some(path) = listing.get_file(path) {
+            return Ok(Some(CoercedPath::File(path)));
+        }
+
+        if let Some(path) = listing.get_dir(path) {
+            if !allow_directory {
+                return Ok(None);
+            } else if let Some(subpackage) = listing.subpackages_within(&path).next() {
+                let e = BuildAttrCoercionContextError::SourceDirectoryIncludesSubPackage(
+                    package.dupe(),
+                    value.to_owned(),
+                    subpackage.to_owned(),
+                );
+                if self.package_boundary_exception {
+                    info!("{} (could be due to a package boundary violation)", e);
+                } else {
+                    soft_error!(
+                        "source_directory_includes_subpackage",
+                        e.into(),
+                        error_on_oss: true
+                    )?;
+                }
+            }
+            let files = listing.files_within(&path).duped().collect();
+            return Ok(Some(CoercedPath::Directory(Box::new(CoercedDirectory {
+                dir: path,
+                files,
+            }))));
+        }
+
+        Ok(None)
     }
 
     fn coerce_target_pattern(
@@ -323,6 +708,33 @@ impl AttrCoercionContext for BuildAttrCoercionContext {
         pattern: &str,
     ) -> buck2_error::Result<ParsedPattern<TargetPatternExtra>> {
         self.parse_pattern(pattern)
+    }
+
+    fn coerce_visibility_pattern(
+        &self,
+        pattern: &str,
+    ) -> buck2_error::Result<Option<ParsedPattern<TargetPatternExtra>>> {
+        match self.parse_pattern(pattern) {
+            Ok(pattern) => Ok(Some(pattern)),
+            Err(e) => {
+                if let Some(pattern) =
+                    self.coerce_bazel_non_visible_repo_visibility_pattern(pattern)?
+                {
+                    return Ok(Some(pattern));
+                }
+                Err(e)
+            }
+        }
+    }
+
+    fn enclosing_package(&self) -> Option<PackageLabel> {
+        self.enclosing_package
+            .as_ref()
+            .map(|(package, _)| package.dupe())
+    }
+
+    fn is_bazel_compat_cell(&self) -> bool {
+        BuildAttrCoercionContext::is_bazel_compat_cell(self)
     }
 
     fn visit_query_function_literals<'q>(
@@ -335,6 +747,40 @@ impl AttrCoercionContext for BuildAttrCoercionContext {
             .get()?
             .visit_literals(visitor, expr)
             .map_err(|e| QueryError::convert_error(e, query))?;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use buck2_node::attrs::coercion_context::AttrCoercionContext;
+
+    use crate::attrs::coerce::testing::coercion_ctx;
+
+    #[test]
+    fn bazel_compat_accepts_package_relative_label_with_slashes() -> buck2_error::Result<()> {
+        let ctx = coercion_ctx();
+        let label = ctx.coerce_providers_label("bin/nodejs/bin/node")?;
+        assert_eq!(
+            "root//package/subdir:bin/nodejs/bin/node",
+            label.to_string()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn bazel_compat_accepts_bazel_target_name_characters() -> buck2_error::Result<()> {
+        let ctx = coercion_ctx();
+        let label = ctx.coerce_providers_label(
+            "lib/python3.11/site-packages/setuptools/_vendor/jaraco/text/Lorem ipsum.txt",
+        )?;
+        assert_eq!(
+            "root//package/subdir:lib/python3.11/site-packages/setuptools/_vendor/jaraco/text/Lorem ipsum.txt",
+            label.to_string()
+        );
+
+        let label = ctx.coerce_providers_label("//:b$() ar")?;
+        assert_eq!("root//:b$() ar", label.to_string());
         Ok(())
     }
 }

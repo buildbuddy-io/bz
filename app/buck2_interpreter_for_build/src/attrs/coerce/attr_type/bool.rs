@@ -14,7 +14,6 @@ use buck2_node::attrs::coerced_attr::CoercedAttr;
 use buck2_node::attrs::coercion_context::AttrCoercionContext;
 use buck2_node::attrs::configurable::AttrIsConfigurable;
 use starlark::typing::Ty;
-use starlark::values::UnpackValue;
 use starlark::values::Value;
 
 use crate::attrs::coerce::AttrTypeCoerce;
@@ -27,9 +26,29 @@ impl AttrTypeCoerce for BoolAttrType {
         _ctx: &dyn AttrCoercionContext,
         value: Value,
     ) -> buck2_error::Result<CoercedAttr> {
-        Ok(CoercedAttr::Bool(BoolLiteral(
-            UnpackValue::unpack_value_err(value)?,
-        )))
+        let value = if let Some(value) = value.unpack_bool() {
+            value
+        } else if let Some(value) = value.unpack_i32() {
+            match value {
+                0 => false,
+                1 => true,
+                _ => {
+                    return Err(buck2_error::buck2_error!(
+                        buck2_error::ErrorTag::Input,
+                        "Expected one of [False, True, 0, 1], but got `{}`",
+                        value,
+                    ));
+                }
+            }
+        } else {
+            return Err(buck2_error::buck2_error!(
+                buck2_error::ErrorTag::Input,
+                "Expected one of [False, True, 0, 1], but got `{}`",
+                value.to_repr(),
+            ));
+        };
+
+        Ok(CoercedAttr::Bool(BoolLiteral(value)))
     }
 
     fn starlark_type(&self) -> TyMaybeSelect {

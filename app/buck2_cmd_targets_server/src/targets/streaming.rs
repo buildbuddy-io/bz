@@ -42,7 +42,6 @@ use futures::Stream;
 use futures::StreamExt;
 use futures::future::FutureExt;
 use gazebo::prelude::VecExt;
-use itertools::Either;
 use itertools::Itertools;
 use starlark_map::small_set::SmallSet;
 use tokio::sync::Semaphore;
@@ -385,24 +384,23 @@ async fn load_targets(
     match spec {
         PackageSpec::Targets(targets) => {
             if keep_going {
-                let (miss, targets): (Vec<_>, Vec<_>) =
-                    targets
-                        .into_iter()
-                        .partition_map(|(target, TargetPatternExtra)| {
-                            match result.targets().get(target.as_ref()) {
-                                None => Either::Left(target),
-                                Some(x) => Either::Right(x.to_owned()),
-                            }
-                        });
+                let mut miss = Vec::new();
+                let mut targets_out = Vec::new();
+                for (target, TargetPatternExtra) in targets {
+                    match result.resolve_target_node(target.as_ref()) {
+                        Ok(node) => targets_out.push(node),
+                        Err(_) => miss.push(target),
+                    }
+                }
                 let err = if miss.is_empty() {
                     None
                 } else {
                     Some(TargetsError::MissingTargets(package.dupe(), miss).into())
                 };
-                Ok((result, targets, err))
+                Ok((result, targets_out, err))
             } else {
                 let targets = targets.into_try_map(|(target, TargetPatternExtra)| {
-                    buck2_error::Ok(result.resolve_target(target.as_ref())?.to_owned())
+                    result.resolve_target_node(target.as_ref())
                 })?;
                 Ok((result, targets, None))
             }

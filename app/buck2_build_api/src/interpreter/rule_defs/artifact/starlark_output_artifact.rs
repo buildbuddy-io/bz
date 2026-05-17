@@ -17,6 +17,7 @@ use buck2_artifact::artifact::artifact_type::BaseArtifactKind;
 use buck2_artifact::artifact::artifact_type::OutputArtifact;
 use buck2_artifact::artifact::build_artifact::BuildArtifact;
 use buck2_core::deferred::base_deferred_key::BaseDeferredKey;
+use buck2_execute::execute::request::OutputType;
 use buck2_execute::path::artifact_path::ArtifactPath;
 use buck2_fs::paths::file_name::FileName;
 use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
@@ -51,6 +52,9 @@ use crate::interpreter::rule_defs::artifact::methods::any_artifact_methods;
 use crate::interpreter::rule_defs::artifact::starlark_artifact::StarlarkArtifact;
 use crate::interpreter::rule_defs::artifact::starlark_artifact_like::ArtifactFingerprint;
 use crate::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkArtifactLike;
+use crate::interpreter::rule_defs::artifact::starlark_artifact_like::bazel_artifact_owner;
+use crate::interpreter::rule_defs::artifact::starlark_artifact_like::bazel_artifact_path;
+use crate::interpreter::rule_defs::artifact::starlark_artifact_like::bazel_artifact_short_path;
 use crate::interpreter::rule_defs::artifact::starlark_declared_artifact::StarlarkDeclaredArtifact;
 use crate::interpreter::rule_defs::cmd_args::ArtifactPathMapper;
 use crate::interpreter::rule_defs::cmd_args::CommandLineArgLike;
@@ -191,11 +195,27 @@ impl<'v, V: ValueLike<'v>> StarlarkArtifactLike<'v> for StarlarkOutputArtifactGe
         Ok(false)
     }
 
-    fn owner(&'v self) -> buck2_error::Result<Option<BaseDeferredKey>> {
+    fn is_directory(&'v self) -> buck2_error::Result<bool> {
         Ok(match self.unpack() {
-            Either::Left(v) => v.artifact.owner(),
-            Either::Right(v) => v.artifact.owner().cloned(),
+            Either::Left(v) => v.artifact.output_type() == OutputType::Directory,
+            Either::Right(v) => v.is_directory()?,
         })
+    }
+
+    fn is_symlink(&'v self) -> buck2_error::Result<bool> {
+        Ok(match self.unpack() {
+            Either::Left(v) => v.artifact.output_type() == OutputType::Symlink,
+            Either::Right(v) => v.is_symlink()?,
+        })
+    }
+
+    fn owner(&'v self) -> buck2_error::Result<Option<BaseDeferredKey>> {
+        Ok(
+            bazel_artifact_owner(self.get_path()).or_else(|| match self.unpack() {
+                Either::Left(v) => v.artifact.owner(),
+                Either::Right(v) => v.artifact.owner().cloned(),
+            }),
+        )
     }
 
     fn with_short_path(
@@ -203,6 +223,22 @@ impl<'v, V: ValueLike<'v>> StarlarkArtifactLike<'v> for StarlarkOutputArtifactGe
         f: &dyn for<'b> Fn(&'b ForwardRelativePath) -> StringValue<'v>,
     ) -> buck2_error::Result<StringValue<'v>> {
         Ok(self.get_path().with_short_path(f))
+    }
+
+    fn with_bazel_short_path(
+        &self,
+        f: &dyn Fn(&str) -> StringValue<'v>,
+    ) -> buck2_error::Result<StringValue<'v>> {
+        let path = bazel_artifact_short_path(self.get_path());
+        Ok(f(&path))
+    }
+
+    fn with_bazel_path(
+        &self,
+        f: &dyn Fn(&str) -> StringValue<'v>,
+    ) -> buck2_error::Result<StringValue<'v>> {
+        let path = bazel_artifact_path(self.get_path());
+        Ok(f(&path))
     }
 
     fn fingerprint<'s>(&'s self) -> ArtifactFingerprint<'s>
@@ -236,6 +272,10 @@ where
 
     fn write_hash(&self, hasher: &mut StarlarkHasher) -> starlark::Result<()> {
         StarlarkArtifactLike::write_hash(self, hasher)
+    }
+
+    fn is_in(&self, _other: Value<'v>) -> starlark::Result<bool> {
+        Ok(false)
     }
 
     fn provide(&'v self, demand: &mut Demand<'_, 'v>) {

@@ -25,7 +25,7 @@ def link_cxx_binary_locally(ctx: AnalysisContext, cxx_toolchain: [CxxToolchainIn
 
 def get_resolved_cxx_binary_link_execution_preference(
         ctx: AnalysisContext,
-        links: list[Label],
+        links: list[ConfiguredProvidersLabel],
         force_full_hybrid_if_capable: bool,
         cxx_toolchain: [CxxToolchainInfo, None] = None) -> LinkExecutionPreference:
     if force_full_hybrid_if_capable:

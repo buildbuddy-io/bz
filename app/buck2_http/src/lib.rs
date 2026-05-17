@@ -22,6 +22,7 @@ mod x2p;
 
 pub use client::HttpClient;
 pub use client::HttpClientBuilder;
+pub use client::ResponseFinalUri;
 pub use client::to_bytes;
 
 fn http_error_label(status: StatusCode) -> &'static str {

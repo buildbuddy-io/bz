@@ -17,11 +17,11 @@ load(":toolchain.bzl", "PythonToolchainInfo")
 NativeDepsInfoTSet = transitive_set()
 
 NativeDepsInfo = record(
-    native_deps = field(dict[Label, Dependency], dict()),
+    native_deps = field(dict[ConfiguredProvidersLabel, Dependency], dict()),
 )
 
 PythonLibraryManifests = record(
-    label = field(Label),
+    label = field(ConfiguredProvidersLabel),
     srcs = field([ManifestInfo, None]),
     src_types = field([ManifestInfo, None], None),
     default_resources = field([(ManifestInfo, list[ArgLike]), None]),

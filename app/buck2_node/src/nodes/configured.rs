@@ -25,6 +25,7 @@ use buck2_core::configuration::transition::applied::TransitionApplied;
 use buck2_core::configuration::transition::id::TransitionId;
 use buck2_core::execution_types::execution::ExecutionPlatform;
 use buck2_core::execution_types::execution::ExecutionPlatformResolution;
+use buck2_core::package::PackageLabel;
 use buck2_core::package::source_path::SourcePathRef;
 use buck2_core::plugins::PluginKind;
 use buck2_core::plugins::PluginKindSet;
@@ -87,6 +88,12 @@ pub struct ConfiguredTargetNode(triomphe::Arc<Hashed<ConfiguredTargetNodeData>>)
 
 impl Dupe for ConfiguredTargetNode {}
 
+#[derive(Debug, Clone, Eq, PartialEq, Hash, Allocative, Pagable)]
+pub struct BazelResolvedToolchain {
+    pub toolchain_type: String,
+    pub toolchain: ConfiguredProvidersLabel,
+}
+
 #[derive(Debug, Eq, PartialEq, Hash, Allocative, Pagable)]
 enum TargetNodeOrForward {
     TargetNode(TargetNode),
@@ -146,6 +153,13 @@ impl TargetNodeOrForward {
         }
     }
 
+    fn is_visible_to_package(&self, package: &PackageLabel) -> buck2_error::Result<bool> {
+        match self {
+            TargetNodeOrForward::TargetNode(node) => node.is_visible_to_package(package),
+            TargetNodeOrForward::Forward(_, forward) => forward.is_visible_to_package(package),
+        }
+    }
+
     fn oncall(&self) -> Option<&str> {
         match self {
             TargetNodeOrForward::TargetNode(node) => node.oncall(),
@@ -191,6 +205,7 @@ struct ConfiguredTargetNodeData {
     // TODO(cjhopman): Should this be a diff against the node's deps?
     all_deps: ConfiguredTargetNodeDeps,
     platform_cfgs: OrderedMap<TargetLabel, ConfigurationData>,
+    bazel_resolved_toolchains: Arc<[BazelResolvedToolchain]>,
     // TODO(JakobDegen): Consider saving some memory by using a more tset like representation of
     // the plugin lists
     plugin_lists: PluginLists,
@@ -232,6 +247,7 @@ impl ConfiguredTargetNode {
             Vec::new(),
             Vec::new(),
             OrderedMap::new(),
+            Vec::new(),
             PluginLists::new(),
         )
     }
@@ -245,6 +261,7 @@ impl ConfiguredTargetNode {
         deps: Vec<ConfiguredTargetNode>,
         exec_deps: Vec<ConfiguredTargetNode>,
         platform_cfgs: OrderedMap<TargetLabel, ConfigurationData>,
+        bazel_resolved_toolchains: Vec<BazelResolvedToolchain>,
         plugin_lists: PluginLists,
     ) -> Self {
         Self(triomphe::Arc::new(Hashed::new(ConfiguredTargetNodeData {
@@ -255,6 +272,7 @@ impl ConfiguredTargetNode {
             execution_platform_resolution,
             all_deps: ConfiguredTargetNodeDeps::new(deps, exec_deps),
             platform_cfgs,
+            bazel_resolved_toolchains: Arc::from(bazel_resolved_toolchains),
             plugin_lists,
         })))
     }
@@ -311,6 +329,7 @@ impl ConfiguredTargetNode {
                 plugin_lists: transitioned_node.plugin_lists().clone(),
                 all_deps: ConfiguredTargetNodeDeps::new(vec![transitioned_node], vec![]),
                 platform_cfgs: OrderedMap::new(),
+                bazel_resolved_toolchains: Arc::from([]),
             },
         ))))
     }
@@ -455,6 +474,10 @@ impl ConfiguredTargetNode {
         self.0.target_node.is_visible_to(target)
     }
 
+    pub fn is_visible_to_package(&self, package: &PackageLabel) -> buck2_error::Result<bool> {
+        self.0.target_node.is_visible_to_package(package)
+    }
+
     #[inline]
     pub fn special_attr_or_none(&self, key: &str) -> Option<ConfiguredAttr> {
         self.as_ref().special_attr_or_none(key)
@@ -542,6 +565,31 @@ impl ConfiguredTargetNode {
     #[inline]
     pub fn uses_plugins(&self) -> &[PluginKind] {
         self.as_ref().uses_plugins()
+    }
+
+    #[inline]
+    pub fn bazel_toolchains(&self) -> &[String] {
+        self.as_ref().bazel_toolchains()
+    }
+
+    #[inline]
+    pub fn bazel_resolved_toolchains(&self) -> &[BazelResolvedToolchain] {
+        self.as_ref().bazel_resolved_toolchains()
+    }
+
+    #[inline]
+    pub fn is_bazel_rule(&self) -> bool {
+        self.as_ref().is_bazel_rule()
+    }
+
+    #[inline]
+    pub fn bazel_output_to_genfiles(&self) -> bool {
+        self.as_ref().bazel_output_to_genfiles()
+    }
+
+    #[inline]
+    pub fn is_bazel_build_setting(&self) -> bool {
+        self.as_ref().is_bazel_build_setting()
     }
 
     pub fn plugin_lists(&self) -> &PluginLists {
@@ -828,6 +876,38 @@ impl<'a> ConfiguredTargetNodeRef<'a> {
         match &self.0.get().target_node {
             TargetNodeOrForward::TargetNode(target_node) => target_node.uses_plugins(),
             TargetNodeOrForward::Forward(_, _) => &[],
+        }
+    }
+
+    pub fn bazel_toolchains(self) -> &'a [String] {
+        match &self.0.get().target_node {
+            TargetNodeOrForward::TargetNode(target_node) => target_node.bazel_toolchains(),
+            TargetNodeOrForward::Forward(_, _) => &[],
+        }
+    }
+
+    pub fn bazel_resolved_toolchains(self) -> &'a [BazelResolvedToolchain] {
+        &self.0.get().bazel_resolved_toolchains
+    }
+
+    pub fn is_bazel_rule(self) -> bool {
+        match &self.0.get().target_node {
+            TargetNodeOrForward::TargetNode(target_node) => target_node.is_bazel_rule(),
+            TargetNodeOrForward::Forward(_, _) => false,
+        }
+    }
+
+    pub fn bazel_output_to_genfiles(self) -> bool {
+        match &self.0.get().target_node {
+            TargetNodeOrForward::TargetNode(target_node) => target_node.bazel_output_to_genfiles(),
+            TargetNodeOrForward::Forward(_, _) => false,
+        }
+    }
+
+    pub fn is_bazel_build_setting(self) -> bool {
+        match &self.0.get().target_node {
+            TargetNodeOrForward::TargetNode(target_node) => target_node.is_bazel_build_setting(),
+            TargetNodeOrForward::Forward(_, _) => false,
         }
     }
 

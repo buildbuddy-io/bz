@@ -130,6 +130,16 @@ impl DaemonConstraintsRequest {
         immediate_config: &ImmediateConfigContext<'_>,
         desired_trace_io_state: DesiredTraceIoState,
     ) -> buck2_error::Result<Self> {
+        Self::new_with_startup_config(
+            immediate_config.daemon_startup_config()?.clone(),
+            desired_trace_io_state,
+        )
+    }
+
+    pub fn new_with_startup_config(
+        daemon_startup_config: DaemonStartupConfig,
+        desired_trace_io_state: DesiredTraceIoState,
+    ) -> buck2_error::Result<Self> {
         Ok(Self {
             version: daemon_constraints::version()?,
             user_version: daemon_constraints::user_version()?,
@@ -137,7 +147,7 @@ impl DaemonConstraintsRequest {
             nested_invocation_daemon_uuid: get_possibly_nested_invocation_daemon_uuid(),
             reject_daemon: None,
             reject_materializer_state: None,
-            daemon_startup_config: immediate_config.daemon_startup_config()?.clone(),
+            daemon_startup_config,
         })
     }
 

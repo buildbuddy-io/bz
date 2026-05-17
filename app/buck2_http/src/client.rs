@@ -43,6 +43,15 @@ pub use builder::HttpClientBuilder;
 
 const DEFAULT_USER_AGENT: &str = "Buck2";
 
+#[derive(Clone, Debug)]
+pub struct ResponseFinalUri(Uri);
+
+impl ResponseFinalUri {
+    pub fn as_str(&self) -> &str {
+        self.0.path_and_query().map_or("", |path| path.as_str())
+    }
+}
+
 #[derive(Allocative, Clone, Dupe)]
 pub struct HttpClient {
     // hyper::Client doesn't impl Allocative.
@@ -58,10 +67,27 @@ pub struct HttpClient {
 }
 
 impl HttpClient {
+    fn request_builder_with_headers<'a>(
+        &self,
+        uri: &str,
+        headers: impl IntoIterator<Item = (&'a str, &'a str)>,
+    ) -> Builder {
+        let mut builder = Request::builder().uri(uri);
+        let mut has_user_agent = false;
+        for (name, value) in headers {
+            if name.eq_ignore_ascii_case(http::header::USER_AGENT.as_str()) {
+                has_user_agent = true;
+            }
+            builder = builder.header(name, value);
+        }
+        if !has_user_agent {
+            builder = builder.header(http::header::USER_AGENT, DEFAULT_USER_AGENT);
+        }
+        builder
+    }
+
     fn request_builder(&self, uri: &str) -> Builder {
-        Request::builder()
-            .uri(uri)
-            .header(http::header::USER_AGENT, DEFAULT_USER_AGENT)
+        self.request_builder_with_headers(uri, std::iter::empty())
     }
 
     /// Send a HEAD request. Assumes no body will be returned. If one is returned, it will be ignored.
@@ -81,6 +107,21 @@ impl HttpClient {
     ) -> Result<Response<BoxStream<'_, hyper::Result<Bytes>>>, HttpError> {
         let req = self
             .request_builder(uri)
+            .method(Method::GET)
+            .body(Bytes::new())
+            .map_err(HttpError::BuildRequest)?;
+        self.request(req).await
+    }
+
+    /// Send a GET request with caller-provided headers. If no User-Agent is
+    /// provided, Buck2's default User-Agent is used.
+    pub async fn get_with_headers<'a>(
+        &self,
+        uri: &str,
+        headers: impl IntoIterator<Item = (&'a str, &'a str)>,
+    ) -> Result<Response<BoxStream<'_, hyper::Result<Bytes>>>, HttpError> {
+        let req = self
+            .request_builder_with_headers(uri, headers)
             .method(Method::GET)
             .body(Bytes::new())
             .map_err(HttpError::BuildRequest)?;
@@ -120,6 +161,7 @@ impl HttpClient {
         mut request: Request<Bytes>,
     ) -> Result<Response<BoxStream<'_, hyper::Result<Bytes>>>, HttpError> {
         let uri = request.uri().to_string();
+        let response_uri = request.uri().clone();
         let now = tokio::time::Instant::now();
 
         // x2p requires scheme to be http since it handles all TLS.
@@ -139,7 +181,7 @@ impl HttpClient {
             None => None,
         };
 
-        let resp = self.inner.request(request).await.map_err(|e| {
+        let mut resp = self.inner.request(request).await.map_err(|e| {
             if is_hyper_error_due_to_timeout(&e) {
                 HttpError::Timeout {
                     uri,
@@ -149,6 +191,7 @@ impl HttpClient {
                 HttpError::SendRequest { uri, source: e }
             }
         })?;
+        resp.extensions_mut().insert(ResponseFinalUri(response_uri));
         Ok(resp.map(move |body| {
             CountingStream::new(
                 body.into_data_stream(),

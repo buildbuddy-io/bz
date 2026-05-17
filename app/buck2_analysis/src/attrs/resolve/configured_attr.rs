@@ -16,7 +16,9 @@ use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact::Starla
 use buck2_core::package::PackageLabel;
 use buck2_core::package::package_relative_path::PackageRelativePath;
 use buck2_core::package::source_path::SourcePath;
+use buck2_core::provider::label::ConfiguredProvidersLabel;
 use buck2_interpreter::types::configured_providers_label::StarlarkConfiguredProvidersLabel;
+use buck2_interpreter::types::configured_providers_label::StarlarkProvidersLabel;
 use buck2_interpreter::types::opaque_metadata::OpaqueMetadata;
 use buck2_interpreter::types::target_label::StarlarkTargetLabel;
 use buck2_node::attrs::attr_type::configuration_dep::ConfigurationDepAttrType;
@@ -26,6 +28,7 @@ use buck2_node::attrs::attr_type::source::SourceAttrType;
 use buck2_node::attrs::attr_type::split_transition_dep::SplitTransitionDepAttrType;
 use buck2_node::attrs::attr_type::transition_dep::TransitionDepAttrType;
 use buck2_node::attrs::configured_attr::ConfiguredAttr;
+use buck2_node::provider_id_set::ProviderIdSet;
 use buck2_node::visibility::VisibilityPatternList;
 use buck2_node::visibility::VisibilitySpecification;
 use buck2_node::visibility::WithinViewSpecification;
@@ -64,6 +67,12 @@ pub trait ConfiguredAttrExt {
     ) -> buck2_error::Result<Vec<Value<'v>>>;
 
     fn resolve_single<'v>(
+        &self,
+        pkg: PackageLabel,
+        ctx: &mut dyn AttrResolutionContext<'v>,
+    ) -> buck2_error::Result<Value<'v>>;
+
+    fn resolve_bazel<'v>(
         &self,
         pkg: PackageLabel,
         ctx: &mut dyn AttrResolutionContext<'v>,
@@ -165,9 +174,39 @@ impl ConfiguredAttrExt for ConfiguredAttr {
             ConfiguredAttr::SourceFile(s) => Ok(SourceAttrType::resolve_single_file(
                 ctx,
                 SourcePath::new(pkg, s.path().dupe()),
+                SourceAttrType::source_is_directory(s),
             )),
             ConfiguredAttr::Metadata(..) => Ok(ctx.heap().alloc(OpaqueMetadata)),
             ConfiguredAttr::TargetModifiers(..) => Ok(ctx.heap().alloc(OpaqueMetadata)),
+        }
+    }
+
+    fn resolve_bazel<'v>(
+        &self,
+        pkg: PackageLabel,
+        ctx: &mut dyn AttrResolutionContext<'v>,
+    ) -> buck2_error::Result<Value<'v>> {
+        match self {
+            ConfiguredAttr::SplitTransitionDep(d) => {
+                Ok(ctx
+                    .heap()
+                    .alloc(AllocList(SplitTransitionDepAttrType::resolve_values(
+                        ctx,
+                        d.as_ref(),
+                    )?)))
+            }
+            ConfiguredAttr::SourceLabel(s) => {
+                DepAttrType::resolve_single_impl(ctx, s, &ProviderIdSet::EMPTY, false)
+            }
+            ConfiguredAttr::List(list) => {
+                let mut values = Vec::with_capacity(list.len());
+                for v in list.iter() {
+                    values.append(&mut resolve_bazel_list_items(v, pkg, ctx)?);
+                }
+                Ok(ctx.heap().alloc(values))
+            }
+            ConfiguredAttr::OneOf(box l, _) => l.resolve_bazel(pkg, ctx),
+            _ => self.resolve_single(pkg, ctx),
         }
     }
 
@@ -178,6 +217,26 @@ impl ConfiguredAttrExt for ConfiguredAttr {
         heap: Heap<'v>,
     ) -> buck2_error::Result<Value<'v>> {
         configured_attr_to_value(self, pkg, heap)
+    }
+}
+
+fn resolve_bazel_list_items<'v>(
+    attr: &ConfiguredAttr,
+    pkg: PackageLabel,
+    ctx: &mut dyn AttrResolutionContext<'v>,
+) -> buck2_error::Result<Vec<Value<'v>>> {
+    match attr {
+        ConfiguredAttr::SplitTransitionDep(d) => {
+            SplitTransitionDepAttrType::resolve_values(ctx, d.as_ref())
+        }
+        ConfiguredAttr::SourceLabel(s) => Ok(vec![DepAttrType::resolve_single_impl(
+            ctx,
+            s,
+            &ProviderIdSet::EMPTY,
+            false,
+        )?]),
+        ConfiguredAttr::OneOf(box l, _) => resolve_bazel_list_items(l, pkg, ctx),
+        _ => attr.resolve(pkg, ctx),
     }
 }
 
@@ -217,12 +276,10 @@ fn configured_attr_to_value<'v>(
                 heap.alloc(AllocList(specs.iter().map(|s| s.to_string())))
             }
         },
-        ConfiguredAttr::ExplicitConfiguredDep(d) => heap.alloc(
-            StarlarkConfiguredProvidersLabel::new(d.as_ref().label.dupe()),
-        ),
-        ConfiguredAttr::TransitionDep(t) => {
-            heap.alloc(StarlarkConfiguredProvidersLabel::new(t.dep.dupe()))
+        ConfiguredAttr::ExplicitConfiguredDep(d) => {
+            configured_providers_label_to_value(&d.as_ref().label, pkg, heap)
         }
+        ConfiguredAttr::TransitionDep(t) => configured_providers_label_to_value(&t.dep, pkg, heap),
         ConfiguredAttr::SplitTransitionDep(t) => {
             let mut map = SmallMap::with_capacity(t.deps.len());
 
@@ -240,19 +297,19 @@ fn configured_attr_to_value<'v>(
             heap.alloc(StarlarkTargetLabel::new(c.target().dupe()))
         }
         ConfiguredAttr::PluginDep(d, _) => heap.alloc(StarlarkTargetLabel::new(d.dupe())),
-        ConfiguredAttr::Dep(d) => heap.alloc(StarlarkConfiguredProvidersLabel::new(d.label.dupe())),
-        ConfiguredAttr::SourceLabel(s) => {
-            heap.alloc(StarlarkConfiguredProvidersLabel::new(s.dupe()))
-        }
-        ConfiguredAttr::Label(l) => heap.alloc(StarlarkConfiguredProvidersLabel::new(l.dupe())),
+        ConfiguredAttr::Dep(d) => configured_providers_label_to_value(&d.label, pkg, heap),
+        ConfiguredAttr::SourceLabel(s) => configured_providers_label_to_value(s, pkg, heap),
+        ConfiguredAttr::Label(l) => configured_providers_label_to_value(l, pkg, heap),
         ConfiguredAttr::Arg(arg) => heap.alloc(arg.to_string()),
         ConfiguredAttr::Query(query) => heap.alloc(&query.query.query),
         ConfiguredAttr::SourceFile(f) => match pkg {
-            PackageLabelOption::PackageLabel(pkg) => {
-                heap.alloc(StarlarkArtifact::new(Artifact::from(SourceArtifact::new(
-                    SourcePath::new(pkg.to_owned(), f.path().dupe()),
-                ))))
-            }
+            PackageLabelOption::PackageLabel(pkg) => heap.alloc(StarlarkArtifact::new_source(
+                Artifact::from(SourceArtifact::new(SourcePath::new(
+                    pkg.to_owned(),
+                    f.path().dupe(),
+                ))),
+                SourceAttrType::source_is_directory(f),
+            )),
             // We don't store package label in transition key for better caching of transition between packages.
             // (This is not inherent requirement,
             // but it was easier to implement this ways,
@@ -266,6 +323,21 @@ fn configured_attr_to_value<'v>(
         ConfiguredAttr::Metadata(data) => heap.alloc(data.to_value()),
         ConfiguredAttr::TargetModifiers(data) => heap.alloc(data.to_value()),
     })
+}
+
+fn configured_providers_label_to_value<'v>(
+    label: &ConfiguredProvidersLabel,
+    pkg: PackageLabelOption,
+    heap: Heap<'v>,
+) -> Value<'v> {
+    match pkg {
+        PackageLabelOption::PackageLabel(_) => {
+            heap.alloc(StarlarkConfiguredProvidersLabel::new(label.dupe()))
+        }
+        PackageLabelOption::TransitionAttr => {
+            heap.alloc(StarlarkProvidersLabel::new(label.unconfigured()))
+        }
+    }
 }
 
 pub(crate) fn init_configured_attr_to_value() {

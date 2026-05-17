@@ -63,14 +63,16 @@ use pagable::Pagable;
 use pagable::pagable_typetag;
 use starlark_map::ordered_map::OrderedMap;
 
-use crate::configuration::get_matched_cfg_keys;
+use crate::bazel_command_line_options::apply_bazel_command_line_build_settings;
 use crate::configuration::compute_platform_cfgs;
+use crate::configuration::get_matched_cfg_keys;
 use crate::configuration::get_matched_cfg_keys_for_node;
-use crate::nodes::gather_deps;
+use crate::configuration::get_platform_configuration;
 use crate::nodes::GatheredDeps;
 use crate::nodes::LookingUpConfiguredNodeContext;
-use buck2_node::cfg_constructor::CFG_CONSTRUCTOR_CALCULATION_IMPL;
+use crate::nodes::gather_deps;
 use buck2_core::configuration::pair::Configuration;
+use buck2_node::cfg_constructor::CFG_CONSTRUCTOR_CALCULATION_IMPL;
 
 #[derive(Debug, buck2_error::Error)]
 #[buck2(input)]
@@ -97,6 +99,28 @@ async fn legacy_execution_platform(
     )
 }
 
+async fn legacy_execution_platform_for_node(
+    ctx: &mut DiceComputations<'_>,
+    node: TargetNodeRef<'_>,
+    cfg: &ConfigurationNoExec,
+) -> buck2_error::Result<ExecutionPlatform> {
+    let cfg = if node.is_bazel_rule() {
+        let cell_resolver = ctx.get_cell_resolver().await?;
+        let root_cell = cell_resolver.root_cell();
+        let alias_resolver = ctx.get_cell_alias_resolver(root_cell).await?;
+        let host_platform = TargetLabel::parse(
+            "platforms//host:host",
+            root_cell,
+            &cell_resolver,
+            &alias_resolver,
+        )?;
+        ConfigurationNoExec::new(get_platform_configuration(ctx, &host_platform).await?)
+    } else {
+        cfg.dupe()
+    };
+    Ok(legacy_execution_platform(ctx, &cfg).await)
+}
+
 pub async fn find_execution_platform_by_configuration(
     ctx: &mut DiceComputations<'_>,
     exec_cfg: &ConfigurationData,
@@ -113,7 +137,14 @@ pub async fn find_execution_platform_by_configuration(
                 ExecutionPlatformComputationError::ToolchainDepMissingPlatform(exec_cfg.dupe()),
             ))
         }
-        _ => Ok(legacy_execution_platform(ctx, &ConfigurationNoExec::new(cfg.dupe())).await),
+        _ => {
+            let cfg = if exec_cfg == &ConfigurationData::unbound_exec() {
+                cfg.dupe()
+            } else {
+                exec_cfg.dupe()
+            };
+            Ok(legacy_execution_platform(ctx, &ConfigurationNoExec::new(cfg)).await)
+        }
     }
 }
 
@@ -379,7 +410,7 @@ pub(crate) async fn resolve_execution_platform(
     // case can't be handled there because we don't pass the full configuration into it.
     if ctx.get_execution_platforms().await?.is_none() {
         return Ok(ExecutionPlatformResolutionPartial::new(
-            Some(legacy_execution_platform(ctx, matched_cfg_keys.cfg()).await),
+            Some(legacy_execution_platform_for_node(ctx, node, matched_cfg_keys.cfg()).await?),
             Vec::new(),
         ));
     };
@@ -517,6 +548,7 @@ pub(crate) async fn configure_exec_dep_with_modifiers(
         .with_buck_error_context(|| {
             format!("Resolving modifiers for exec dep target `{}`", exec_dep)
         })?;
+    let cfg_config = apply_bazel_command_line_build_settings(ctx, cfg_config).await?;
 
     // Create configuration pair with modifiers applied
     let cfg_pair = Configuration::new(cfg_config, None);

@@ -8,14 +8,14 @@
 
 load("@prelude//linking:types.bzl", "Linkage")
 
-# Label for special group mapping which makes every target associated with it to be included in all groups
+# ConfiguredProvidersLabel for special group mapping which makes every target associated with it to be included in all groups
 MATCH_ALL_LABEL = "MATCH_ALL"
 
-# Label for special group mapping which makes every target associated with it to be linked directly
+# ConfiguredProvidersLabel for special group mapping which makes every target associated with it to be linked directly
 # against the final binary
 NO_MATCH_LABEL = "NO_MATCH"
 
-# Label for special group mapping which causes every target associated with it to be included
+# ConfiguredProvidersLabel for special group mapping which causes every target associated with it to be included
 # in any groups that contain any targets with direct dependencies on it.
 # Sample use case: Vendor-supplied shared libraries that are used from multiple link-groups.
 MATCH_DIRECT_DEPS_LABEL = "MATCH_DIRECT_DEPS"
@@ -38,7 +38,7 @@ GroupFilterInfo = provider(
         "info": provider_field(dict[str, typing.Any]),
         # A function which is given an optional root label, a target label and
         # a list of its labels returns if the target label matches.
-        "matches": provider_field(typing.Callable[[[Label, None], Label, list[str]], bool]),
+        "matches": provider_field(typing.Callable[[[ConfiguredProvidersLabel, None], ConfiguredProvidersLabel, list[str]], bool]),
         # If the matching should stop once the filter no longer matches.
         "stop_at_first_non_match": provider_field(bool, default = False),
     },
@@ -47,7 +47,7 @@ GroupFilterInfo = provider(
 # Representation of a parsed group mapping
 GroupMapping = record(
     # The root to apply this mapping to.
-    roots = field(list[Label], []),
+    roots = field(list[ConfiguredProvidersLabel], []),
     # The type of traversal to use.
     traversal = field(Traversal, Traversal("tree")),
     # Optional filter type to apply to the traversal.

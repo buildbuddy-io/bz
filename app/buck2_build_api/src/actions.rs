@@ -38,12 +38,18 @@ use buck2_build_signals::env::WaitingData;
 use buck2_common::io::IoProvider;
 use buck2_core::category::Category;
 use buck2_core::category::CategoryRef;
+use buck2_core::cells::external::ExternalCellOrigin;
+use buck2_core::cells::external::external_cell_origin_for_cell;
 use buck2_core::content_hash::ContentBasedPathHash;
 use buck2_core::deferred::base_deferred_key::BaseDeferredKey;
 use buck2_core::execution_types::executor_config::CommandExecutorConfig;
 use buck2_core::fs::artifact_path_resolver::ArtifactFs;
+use buck2_core::fs::buck_out_path::BazelOutputPathKind;
+use buck2_core::fs::buck_out_path::BuildArtifactPath;
+use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
 use buck2_events::dispatch::EventDispatcher;
 use buck2_execute::artifact::fs::ExecutorFs;
+use buck2_execute::artifact_value::ArtifactValue;
 use buck2_execute::digest_config::DigestConfig;
 use buck2_execute::execute::action_digest_and_blobs::ActionDigestAndBlobs;
 use buck2_execute::execute::blocking::BlockingExecutor;
@@ -51,8 +57,10 @@ use buck2_execute::execute::cache_uploader::CacheUploadResults;
 use buck2_execute::execute::cache_uploader::IntoRemoteDepFile;
 use buck2_execute::execute::manager::CommandExecutionManager;
 use buck2_execute::execute::prepared::PreparedAction;
+use buck2_execute::execute::request::CommandExecutionOutput;
 use buck2_execute::execute::request::CommandExecutionRequest;
 use buck2_execute::execute::request::ExecutorPreference;
+use buck2_execute::execute::request::LocalActionCacheKey;
 use buck2_execute::execute::result::CommandExecutionResult;
 use buck2_execute::materialize::materializer::Materializer;
 use buck2_execute::re::manager::UnconfiguredRemoteExecutionClient;
@@ -137,6 +145,26 @@ pub trait Action: Allocative + Debug + Send + Sync + 'static {
         ctx: &mut dyn ActionExecutionCtx,
         waiting_data: WaitingData,
     ) -> Result<(ActionOutputs, ActionExecutionMetadata), ExecuteError>;
+
+    /// Inputs needed to prove a persistent local action-cache hit before preparing the full action.
+    ///
+    /// Bazel checks the persistent action cache once metadata for the action-cache inputs is ready,
+    /// and only prepares/executes the full action on a miss. Returning `None` preserves the existing
+    /// behavior of ensuring every execution input before calling `execute`.
+    fn local_action_cache_inputs(&self) -> buck2_error::Result<Option<Cow<'_, [ArtifactGroup]>>> {
+        Ok(None)
+    }
+
+    /// Try the persistent local action-cache path using `local_action_cache_inputs`.
+    ///
+    /// Implementations must return `Ok(None)` on a cache miss or when the fast path is unavailable.
+    async fn try_execute_local_action_cache(
+        &self,
+        _ctx: &mut dyn ActionExecutionCtx,
+        _waiting_data: WaitingData,
+    ) -> Result<Option<(ActionOutputs, ActionExecutionMetadata)>, ExecuteError> {
+        Ok(None)
+    }
 
     /// A machine-readable category for this action, intended to be used when analyzing actions outside of buck2 itself.
     ///
@@ -275,6 +303,23 @@ pub trait ActionExecutionCtx: Send + Sync {
         prepared_action: &PreparedAction,
     ) -> ControlFlow<CommandExecutionResult, CommandExecutionManager>;
 
+    async fn unprepared_action_cache(
+        &mut self,
+        manager: CommandExecutionManager,
+        _local_action_cache_key: &LocalActionCacheKey,
+        _outputs: &BuckIndexSet<CommandExecutionOutput>,
+    ) -> ControlFlow<CommandExecutionResult, CommandExecutionManager> {
+        ControlFlow::Continue(manager)
+    }
+
+    fn insert_unprepared_action_cache_metadata(
+        &mut self,
+        _local_action_cache_key: &LocalActionCacheKey,
+        _outputs: &BuckIndexMap<CommandExecutionOutput, ArtifactValue>,
+    ) -> buck2_error::Result<()> {
+        Ok(())
+    }
+
     async fn remote_dep_file_cache(
         &mut self,
         manager: CommandExecutionManager,
@@ -380,6 +425,88 @@ pub struct RegisteredAction {
     action: Box<dyn Action>,
     #[derivative(Hash = "ignore", PartialEq = "ignore")]
     executor_config: Arc<CommandExecutorConfig>,
+    #[derivative(Hash = "ignore", PartialEq = "ignore")]
+    target_rule_type_name: Option<Arc<str>>,
+}
+
+fn bazel_external_repo_name<'a>(cell: &'a str, origin: &'a ExternalCellOrigin) -> &'a str {
+    match origin {
+        ExternalCellOrigin::Bundled(cell) => cell.as_str(),
+        ExternalCellOrigin::Git(_) => cell,
+        ExternalCellOrigin::Bzlmod(setup) => setup.canonical_repo_name.as_ref(),
+        ExternalCellOrigin::BzlmodGenerated(setup) => setup.canonical_repo_name.as_ref(),
+    }
+}
+
+fn push_bazel_path_component(path: &mut String, component: &str) {
+    if component.is_empty() {
+        return;
+    }
+    if !path.is_empty() {
+        path.push('/');
+    }
+    path.push_str(component);
+}
+
+fn bazel_package_exec_path(label: &ConfiguredTargetLabel) -> String {
+    let package = label.pkg();
+    let cell = package.cell_name();
+    let mut path = String::new();
+    if let Some(origin) = external_cell_origin_for_cell(cell.as_str()) {
+        push_bazel_path_component(&mut path, "external");
+        push_bazel_path_component(&mut path, bazel_external_repo_name(cell.as_str(), &origin));
+    } else if cell.as_str() != "root" {
+        push_bazel_path_component(&mut path, cell.as_str());
+    }
+    push_bazel_path_component(&mut path, package.cell_relative_path().as_str());
+    path
+}
+
+fn bazel_logical_output_path<'a>(
+    output_path: &'a BuildArtifactPath,
+    label: &ConfiguredTargetLabel,
+) -> &'a str {
+    let path = output_path.path().as_str();
+    if output_path.bazel_output_path_kind() != BazelOutputPathKind::PackageRelative {
+        return path;
+    }
+
+    let package_exec_path = bazel_package_exec_path(label);
+    if package_exec_path.is_empty() {
+        return path;
+    }
+    if path == package_exec_path {
+        return "";
+    }
+    path.strip_prefix(&format!("{package_exec_path}/"))
+        .unwrap_or(path)
+}
+
+fn action_key_output_path(output_path: &BuildArtifactPath) -> ForwardRelativePathBuf {
+    let Some(label) = output_path.bazel_owner() else {
+        return output_path.path().to_buf();
+    };
+
+    let mut path = String::from("_bazel/");
+    path.push_str(label.cfg().output_hash().as_str());
+    if let Some(exec_cfg) = label.exec_cfg() {
+        path.push('-');
+        path.push_str(exec_cfg.output_hash().as_str());
+    }
+    path.push('/');
+    path.push_str(output_path.bazel_output_root().as_str());
+
+    if output_path.bazel_output_path_kind() == BazelOutputPathKind::PackageRelative {
+        let package_exec_path = bazel_package_exec_path(label);
+        if !package_exec_path.is_empty() {
+            path.push('/');
+            path.push_str(&package_exec_path);
+        }
+    }
+
+    path.push('/');
+    path.push_str(bazel_logical_output_path(output_path, label));
+    ForwardRelativePathBuf::new(path).expect("Bazel action key path should be normalized")
 }
 
 impl RegisteredAction {
@@ -387,11 +514,13 @@ impl RegisteredAction {
         key: ActionKey,
         action: Box<dyn Action>,
         executor_config: Arc<CommandExecutorConfig>,
+        target_rule_type_name: Option<Arc<str>>,
     ) -> Self {
         Self {
             key,
             action,
             executor_config,
+            target_rule_type_name,
         }
     }
 
@@ -410,12 +539,13 @@ impl RegisteredAction {
         // As an artifact can only be bound as an output to one action, we know it uniquely identifies the action and we can
         // derive the scratch path from that and that will be no unstable than the artifact already is.
         let output_path = self.action.first_output().get_path();
+        let output_key_path = action_key_output_path(output_path);
         match output_path.dynamic_actions_action_key() {
             Some(k) => k
                 .as_file_name()
                 .as_forward_rel_path()
-                .join(output_path.path()),
-            None => output_path.path().to_buf(),
+                .join(&output_key_path),
+            None => output_key_path,
         }
     }
 
@@ -437,6 +567,10 @@ impl RegisteredAction {
 
     pub fn is_expected_eligible_for_dedupe(&self) -> Option<bool> {
         self.action.is_expected_eligible_for_dedupe()
+    }
+
+    pub fn target_rule_type_name(&self) -> Option<&str> {
+        self.target_rule_type_name.as_deref()
     }
 }
 

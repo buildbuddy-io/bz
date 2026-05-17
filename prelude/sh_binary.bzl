@@ -23,6 +23,7 @@ def _generate_script(
         name: str,
         main: Artifact,
         resources: list[Artifact],
+        runfiles_resources: dict[str, Artifact],
         append_script_extension: bool,
         actions: AnalysisActions,
         is_windows: bool,
@@ -36,6 +37,7 @@ def _generate_script(
     else:
         main_link = main_path if main_path.endswith(".sh") else main_path + ".sh"
     resources = {_derive_link(src): src for src in resources}
+    resources.update(runfiles_resources)
     resources[main_link] = main
 
     # windows isn't stable with resources passed in as symbolic links for
@@ -83,6 +85,8 @@ def _generate_script(
             # would need to hardcode buck-out paths into their scripts. For repo
             # sources, the paths are the same for both.
             "export BUCK_DEFAULT_RUNTIME_RESOURCES=\"$BUCK_PROJECT_ROOT\"",
+            "export RUNFILES_DIR=\"$BUCK_PROJECT_ROOT\"",
+            "export TEST_SRCDIR=\"$RUNFILES_DIR\"",
             "exec \"$BUCK_PROJECT_ROOT/{}\" \"$@\"".format(main_link),
             relative_to = (script, 1),
         )
@@ -100,6 +104,8 @@ def _generate_script(
             "set BUCK_SH_BINARY_VERSION_UNSTABLE=2",
             cmd_args("set BUCK_PROJECT_ROOT=%__SCRIPT_DIR%\\", resources_dir, delimiter = ""),
             "set BUCK_DEFAULT_RUNTIME_RESOURCES=%BUCK_PROJECT_ROOT%",
+            "set RUNFILES_DIR=%BUCK_PROJECT_ROOT%",
+            "set TEST_SRCDIR=%RUNFILES_DIR%",
             "%BUCK_PROJECT_ROOT%\\{} %*".format(main_link),
             relative_to = (script, 1),
         )
@@ -111,21 +117,38 @@ def _generate_script(
 
     return (script, resources_dir)
 
+def _add_bazel_runfiles(resources: dict[str, Artifact], runfiles):
+    for file in runfiles.files.to_list():
+        resources[file.short_path] = file
+    for symlink in runfiles.symlinks.to_list():
+        resources[symlink.path] = symlink.target_file
+    for symlink in runfiles.root_symlinks.to_list():
+        resources[symlink.path] = symlink.target_file
+
 # Attrs:
 # "deps": attrs.list(attrs.dep(), default = []),
-# "main": attrs.source(),
+# "main": attrs.option(attrs.source(), default = None),
+# "srcs": attrs.list(attrs.source(), default = []),
+# "data": attrs.list(attrs.source(), default = []),
 # "resources": attrs.list(attrs.source(), default = []),
 # "copy_resources": attrs.bool(default = False),
 def sh_binary_impl(ctx):
-    # TODO: implement deps (not sure what those even do, though)
-    if len(ctx.attrs.deps) > 0:
-        fail("sh_binary deps unsupported. Got `{}`".format(repr(ctx.attrs)))
+    main = ctx.attrs.main
+    if main == None:
+        if len(ctx.attrs.srcs) != 1:
+            fail("sh_binary expected exactly one item in `srcs` when `main` is omitted, got {}".format(len(ctx.attrs.srcs)))
+        main = ctx.attrs.srcs[0]
+    resources = ctx.attrs.resources + ctx.attrs.data
+    runfiles_resources = {}
+    for dep in ctx.attrs.deps:
+        _add_bazel_runfiles(runfiles_resources, dep.default_runfiles)
 
     is_windows = ctx.attrs._target_os_type[OsLookup].os == Os("windows")
     (script, resources_dir) = _generate_script(
         ctx.label.name,
-        ctx.attrs.main,
-        ctx.attrs.resources,
+        main,
+        resources,
+        runfiles_resources,
         ctx.attrs.append_script_extension,
         ctx.actions,
         is_windows,

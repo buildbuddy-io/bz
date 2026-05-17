@@ -205,7 +205,7 @@ def _build_haskell_omnibus_so(ctx: AnalysisContext) -> HaskellOmnibusData:
 
     # Helper to get body nodes and prebuilt dependencies of the
     # omnibus SO (which should dynamically linked) during BFS traversal
-    def find_deps_for_body(node_label: Label):
+    def find_deps_for_body(node_label: ConfiguredProvidersLabel):
         deps = dep_graph[node_label]
 
         final_deps = []

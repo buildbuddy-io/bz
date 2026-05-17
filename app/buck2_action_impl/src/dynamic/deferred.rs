@@ -30,6 +30,7 @@ use buck2_build_api::interpreter::rule_defs::artifact::starlark_output_artifact:
 use buck2_build_api::interpreter::rule_defs::artifact::starlark_output_artifact::StarlarkOutputArtifact;
 use buck2_build_api::interpreter::rule_defs::context::AnalysisActions;
 use buck2_build_api::interpreter::rule_defs::context::AnalysisContext;
+use buck2_build_api::interpreter::rule_defs::context::BazelCppOptions;
 use buck2_build_api::interpreter::rule_defs::provider::collection::FrozenProviderCollectionValue;
 use buck2_build_api::interpreter::rule_defs::provider::collection::ProviderCollection;
 use buck2_build_signals::env::WaitingCategory;
@@ -38,6 +39,7 @@ use buck2_core::deferred::base_deferred_key::BaseDeferredKey;
 use buck2_core::deferred::dynamic::DynamicLambdaResultsKey;
 use buck2_core::deferred::key::DeferredHolderKey;
 use buck2_core::fs::artifact_path_resolver::ArtifactFs;
+use buck2_core::fs::buck_out_path::BazelOutputRoot;
 use buck2_error::buck2_error;
 use buck2_error::internal_error;
 use buck2_events::dispatch::get_dispatcher;
@@ -201,8 +203,17 @@ fn execute_lambda_inner<'v>(
         let ctx = AnalysisContext::prepare(
             heap,
             dynamic_lambda_ctx_data.lambda.attributes()?,
+            None,
+            None,
             self_key.owner().configured_label(),
             dynamic_lambda_ctx_data.lambda.plugins()?,
+            Vec::new(),
+            SmallMap::new(),
+            BazelCppOptions::default(),
+            BazelOutputRoot::Bin,
+            false,
+            None,
+            None,
             dynamic_lambda_ctx_data.registry,
             dynamic_lambda_ctx_data.digest_config,
         );
@@ -768,6 +779,7 @@ pub fn dynamic_lambda_ctx_data<'v>(
     let mut registry = AnalysisRegistry::new_from_owner_and_deferred(
         dynamic_lambda.static_fields.execution_platform.dupe(),
         DeferredHolderKey::DynamicLambda(self_key),
+        None,
     )?;
 
     let spec = match &dynamic_lambda.attr_values {

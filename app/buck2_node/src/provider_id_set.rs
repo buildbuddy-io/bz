@@ -17,37 +17,64 @@ use dupe::Dupe;
 use pagable::Pagable;
 use strong_hash::StrongHash;
 
+pub type ProviderIdGroup = Arc<Vec<Arc<ProviderId>>>;
+
 #[derive(
     Debug, Eq, PartialEq, Hash, StrongHash, Clone, Dupe, Allocative, Pagable
 )]
-pub struct ProviderIdSet(Option<Arc<Vec<Arc<ProviderId>>>>);
+pub struct ProviderIdSet(Option<Arc<Vec<ProviderIdGroup>>>);
 
 impl ProviderIdSet {
     pub const EMPTY: ProviderIdSet = ProviderIdSet(None);
 
     #[inline]
     pub fn is_empty(&self) -> bool {
-        self.providers().is_empty()
+        self.provider_groups().is_empty()
+    }
+
+    #[inline]
+    pub fn provider_groups(&self) -> &[ProviderIdGroup] {
+        match &self.0 {
+            None => &[],
+            Some(groups) => groups,
+        }
     }
 
     #[inline]
     pub fn providers(&self) -> &[Arc<ProviderId>] {
         match &self.0 {
             None => &[],
-            Some(providers) => providers,
+            Some(groups) if groups.len() == 1 => &groups[0],
+            Some(_) => &[],
+        }
+    }
+
+    pub fn any_of(groups: Vec<Vec<Arc<ProviderId>>>) -> Self {
+        let mut groups = groups
+            .into_iter()
+            .map(|mut group| {
+                group.sort_unstable();
+                group.dedup();
+                group
+            })
+            .collect::<Vec<_>>();
+        if groups.iter().any(Vec::is_empty) {
+            return ProviderIdSet::EMPTY;
+        }
+        groups.sort_unstable();
+        groups.dedup();
+        if groups.is_empty() {
+            ProviderIdSet::EMPTY
+        } else {
+            ProviderIdSet(Some(Arc::new(groups.into_iter().map(Arc::new).collect())))
         }
     }
 }
 
 impl From<Vec<Arc<ProviderId>>> for ProviderIdSet {
     #[inline]
-    fn from(mut v: Vec<Arc<ProviderId>>) -> Self {
-        if v.is_empty() {
-            ProviderIdSet::EMPTY
-        } else {
-            v.sort_unstable();
-            ProviderIdSet(Some(Arc::new(v)))
-        }
+    fn from(v: Vec<Arc<ProviderId>>) -> Self {
+        ProviderIdSet::any_of(vec![v])
     }
 }
 

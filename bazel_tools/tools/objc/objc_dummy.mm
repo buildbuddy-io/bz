@@ -1,0 +1,1 @@
+int buck2_bazel_tools_objc_dummy_mm;

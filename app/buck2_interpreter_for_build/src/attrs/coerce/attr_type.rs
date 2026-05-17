@@ -8,11 +8,14 @@
  * above-listed licenses.
  */
 
+use buck2_core::provider::label::ProvidersLabel;
+use buck2_interpreter::types::configured_providers_label::StarlarkProvidersLabel;
 use buck2_node::attrs::attr_type::AttrType;
 use buck2_node::attrs::attr_type::AttrTypeInner;
 use buck2_node::attrs::coerced_attr::CoercedAttr;
 use buck2_node::attrs::coercion_context::AttrCoercionContext;
 use buck2_node::attrs::configurable::AttrIsConfigurable;
+use dupe::Dupe;
 use starlark::values::Value;
 
 use crate::attrs::coerce::AttrTypeCoerce;
@@ -21,6 +24,7 @@ use crate::attrs::coerce::coerced_attr::CoercedAttrExr;
 
 pub mod any;
 pub mod arg;
+pub mod bazel_label;
 pub mod bool;
 pub mod configuration_dep;
 pub mod dep;
@@ -43,6 +47,17 @@ mod tuple;
 pub(crate) mod ty_maybe_select;
 mod visibility;
 mod within_view;
+
+pub(crate) fn coerce_providers_label_from_value(
+    ctx: &dyn AttrCoercionContext,
+    value: Value,
+) -> buck2_error::Result<ProvidersLabel> {
+    if let Some(label) = StarlarkProvidersLabel::from_value(value) {
+        Ok(label.label().dupe())
+    } else {
+        ctx.coerce_providers_label(value.unpack_str_err()?)
+    }
+}
 
 pub trait AttrTypeExt {
     fn this(&self) -> &AttrType;
@@ -107,6 +122,7 @@ impl AttrTypeInnerExt for AttrTypeInner {
         match self {
             Self::Any(x) => x.coerce_item(configurable, ctx, value),
             Self::Arg(x) => x.coerce_item(configurable, ctx, value),
+            Self::BazelLabel(x) => x.coerce_item(configurable, ctx, value),
             Self::Bool(x) => x.coerce_item(configurable, ctx, value),
             Self::Int(x) => x.coerce_item(configurable, ctx, value),
             Self::Dep(x) => x.coerce_item(configurable, ctx, value),
@@ -138,6 +154,7 @@ impl AttrTypeInnerExt for AttrTypeInner {
         match self {
             AttrTypeInner::Any(x) => x.starlark_type(),
             AttrTypeInner::Arg(x) => x.starlark_type(),
+            AttrTypeInner::BazelLabel(x) => x.starlark_type(),
             AttrTypeInner::ConfigurationDep(x) => x.starlark_type(),
             AttrTypeInner::ConfiguredDep(x) => x.starlark_type(),
             AttrTypeInner::Bool(x) => x.starlark_type(),

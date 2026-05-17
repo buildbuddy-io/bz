@@ -14,6 +14,7 @@ use std::sync::Arc;
 
 use allocative::Allocative;
 use buck2_artifact::artifact::artifact_type::Artifact;
+use buck2_common::file_ops::metadata::TrackedFileDigest;
 use buck2_core::fs::artifact_path_resolver::ArtifactFs;
 use buck2_error::BuckErrorContext;
 use buck2_error::internal_error;
@@ -43,6 +44,24 @@ impl ArtifactGroupValues {
         artifact_fs: &ArtifactFs,
         digest_config: DigestConfig,
     ) -> buck2_error::Result<Self> {
+        if values
+            .iter()
+            .any(|(_, value)| value.has_source_file_proxy())
+            || children.iter().any(|child| child.0.directory.is_none())
+        {
+            return Ok(Self(Arc::new(ArtifactGroupValuesData {
+                action_cache_fingerprint: Some(compute_action_cache_fingerprint(
+                    &values,
+                    &children,
+                    None,
+                    artifact_fs,
+                )?),
+                values,
+                children,
+                directory: None,
+            })));
+        }
+
         let mut builder = LazyActionDirectoryBuilder::empty();
 
         for (artifact, value) in values.iter() {
@@ -79,6 +98,12 @@ impl ArtifactGroupValues {
             .shared(&*INTERNER);
 
         Ok(Self(Arc::new(ArtifactGroupValuesData {
+            action_cache_fingerprint: Some(compute_action_cache_fingerprint(
+                &values,
+                &children,
+                Some(&directory),
+                artifact_fs,
+            )?),
             values,
             children,
             directory: Some(directory),
@@ -87,10 +112,30 @@ impl ArtifactGroupValues {
 
     pub fn from_artifact(artifact: Artifact, value: ArtifactValue) -> Self {
         Self(Arc::new(ArtifactGroupValuesData {
+            action_cache_fingerprint: None,
             values: smallvec![(artifact, value)],
             children: Vec::new(),
             directory: None,
         }))
+    }
+
+    pub fn from_artifact_with_fs(
+        artifact: Artifact,
+        value: ArtifactValue,
+        artifact_fs: &ArtifactFs,
+    ) -> buck2_error::Result<Self> {
+        let values = smallvec![(artifact, value)];
+        Ok(Self(Arc::new(ArtifactGroupValuesData {
+            action_cache_fingerprint: Some(compute_action_cache_fingerprint(
+                &values,
+                &[],
+                None,
+                artifact_fs,
+            )?),
+            values,
+            children: Vec::new(),
+            directory: None,
+        })))
     }
 
     pub fn add_to_directory(
@@ -114,6 +159,35 @@ impl ArtifactGroupValues {
                 .as_ref(),
             )?;
             insert_artifact_lazy(builder, projrel_path, value)?;
+        }
+
+        Ok(())
+    }
+
+    pub fn add_to_directory_for_execution(
+        &self,
+        builder: &mut LazyActionDirectoryBuilder,
+        artifact_fs: &ArtifactFs,
+        digest_config: DigestConfig,
+    ) -> buck2_error::Result<()> {
+        if let Some(d) = self.0.directory.as_ref() {
+            builder.merge(d.dupe())?;
+            return Ok(());
+        }
+
+        for (artifact, value) in self.iter() {
+            let projrel_path = artifact.resolve_path(
+                artifact_fs,
+                if artifact.path_resolution_requires_artifact_value() {
+                    Some(value.content_based_path_hash())
+                } else {
+                    None
+                }
+                .as_ref(),
+            )?;
+            let abs_path = artifact_fs.fs().resolve(&projrel_path);
+            let value = value.resolve_source_file_proxy(abs_path.as_abs_path(), digest_config)?;
+            insert_artifact_lazy(builder, projrel_path, &value)?;
         }
 
         Ok(())
@@ -143,6 +217,8 @@ impl ArtifactGroupValues {
 
 #[derive(Allocative)]
 pub struct ArtifactGroupValuesData {
+    #[allocative(skip)]
+    action_cache_fingerprint: Option<Box<[u8]>>,
     pub(super) values: SmallVec<[(Artifact, ArtifactValue); 1]>,
     pub(super) children: Vec<ArtifactGroupValues>,
     /// If set, a precomputed directory represented the union of all values in this
@@ -170,6 +246,83 @@ impl TransitiveSetContainer for ArtifactGroupValues {
     fn identity(&self) -> Self::Identity {
         ArtifactValueIdentity(Arc::as_ptr(&self.0) as usize)
     }
+}
+
+fn action_cache_write_bytes(bytes: &mut Vec<u8>, value: &[u8]) {
+    bytes.extend((value.len() as u64).to_le_bytes());
+    bytes.extend(value);
+}
+
+fn action_cache_write_str(bytes: &mut Vec<u8>, value: &str) {
+    action_cache_write_bytes(bytes, value.as_bytes());
+}
+
+fn action_cache_write_u64(bytes: &mut Vec<u8>, value: u64) {
+    bytes.extend(value.to_le_bytes());
+}
+
+fn action_cache_write_tracked_file_digest(bytes: &mut Vec<u8>, digest: &TrackedFileDigest) {
+    let raw_digest = digest.raw_digest();
+    bytes.push(raw_digest.algorithm() as u8);
+    action_cache_write_bytes(bytes, raw_digest.as_bytes());
+    action_cache_write_u64(bytes, digest.size());
+}
+
+fn compute_action_cache_fingerprint(
+    values: &[(Artifact, ArtifactValue)],
+    children: &[ArtifactGroupValues],
+    directory: Option<&ActionSharedDirectory>,
+    artifact_fs: &ArtifactFs,
+) -> buck2_error::Result<Box<[u8]>> {
+    let mut bytes = Vec::new();
+    action_cache_write_str(&mut bytes, "artifact_group");
+    if let Some(directory) = directory {
+        action_cache_write_str(&mut bytes, "directory");
+        action_cache_write_tracked_file_digest(&mut bytes, directory.fingerprint());
+        action_cache_write_u64(&mut bytes, directory.size());
+        return Ok(bytes.into_boxed_slice());
+    }
+
+    write_action_cache_values(&mut bytes, artifact_fs, values)?;
+
+    let mut queue = Vec::new();
+    let mut seen = HashSet::new();
+    for child in children.iter().rev() {
+        if seen.insert(ArtifactValueIdentity(Arc::as_ptr(&child.0) as usize)) {
+            queue.push(child);
+        }
+    }
+    while let Some(child) = queue.pop() {
+        write_action_cache_values(&mut bytes, artifact_fs, &child.0.values)?;
+        for grandchild in child.0.children.iter().rev() {
+            if seen.insert(ArtifactValueIdentity(Arc::as_ptr(&grandchild.0) as usize)) {
+                queue.push(grandchild);
+            }
+        }
+    }
+
+    Ok(bytes.into_boxed_slice())
+}
+
+fn write_action_cache_values(
+    bytes: &mut Vec<u8>,
+    artifact_fs: &ArtifactFs,
+    values: &[(Artifact, ArtifactValue)],
+) -> buck2_error::Result<()> {
+    for (artifact, value) in values {
+        let path = artifact.resolve_path(
+            artifact_fs,
+            if artifact.path_resolution_requires_artifact_value() {
+                Some(value.content_based_path_hash())
+            } else {
+                None
+            }
+            .as_ref(),
+        )?;
+        action_cache_write_str(bytes, path.as_str());
+        value.write_action_cache_fingerprint_bytes(bytes);
+    }
+    Ok(())
 }
 
 trait TransitiveSetContainer: Sized {
@@ -271,12 +424,34 @@ impl ArtifactGroupValuesDyn for ArtifactGroupValues {
         )
     }
 
+    fn action_cache_fingerprint(&self) -> Option<&[u8]> {
+        self.0.action_cache_fingerprint.as_deref()
+    }
+
+    fn directory_fingerprint_for_action_cache(
+        &self,
+    ) -> Option<(&buck2_common::file_ops::metadata::TrackedFileDigest, u64)> {
+        self.0
+            .directory
+            .as_ref()
+            .map(|directory| (directory.fingerprint(), directory.size()))
+    }
+
     fn add_to_directory(
         &self,
         builder: &mut LazyActionDirectoryBuilder,
         artifact_fs: &ArtifactFs,
     ) -> buck2_error::Result<()> {
         self.add_to_directory(builder, artifact_fs)
+    }
+
+    fn add_to_directory_for_execution(
+        &self,
+        builder: &mut LazyActionDirectoryBuilder,
+        artifact_fs: &ArtifactFs,
+        digest_config: DigestConfig,
+    ) -> buck2_error::Result<()> {
+        self.add_to_directory_for_execution(builder, artifact_fs, digest_config)
     }
 }
 
@@ -319,6 +494,7 @@ mod tests {
 
     fn builder() -> ArtifactGroupValuesData {
         ArtifactGroupValuesData {
+            action_cache_fingerprint: None,
             values: Default::default(),
             children: Default::default(),
             directory: None,

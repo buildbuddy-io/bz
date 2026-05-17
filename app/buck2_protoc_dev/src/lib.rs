@@ -26,13 +26,13 @@ fn get_env(key: &str) -> Option<OsString> {
 unsafe fn set_var(
     var: &str,
     override_var: &str,
-    path: Result<PathBuf, protoc_bin_vendored::Error>,
+    path: impl FnOnce() -> Result<PathBuf, protoc_bin_vendored::Error>,
 ) {
     let path = if let Some(override_var_value) = env::var_os(override_var) {
         eprintln!("INFO: Variable ${var} is overridden by ${override_var}");
         PathBuf::from(override_var_value)
     } else {
-        match path {
+        match path() {
             Err(e) => {
                 panic!("{var} not available for platform {e:?}, set ${override_var} to override")
             }
@@ -44,6 +44,15 @@ unsafe fn set_var(
     };
 
     let path = dunce::canonicalize(path).expect("Failed to canonicalize path");
+    let path = if var == "PROTOC_INCLUDE" && path.is_file() {
+        path.parent()
+            .and_then(Path::parent)
+            .and_then(Path::parent)
+            .map(Path::to_path_buf)
+            .unwrap_or(path)
+    } else {
+        path
+    };
     eprintln!("INFO: Variable ${var} set to {path:?}");
     unsafe { env::set_var(var, path) };
 }
@@ -64,7 +73,7 @@ unsafe fn maybe_set_protoc() {
             set_var(
                 "PROTOC",
                 "BUCK2_BUILD_PROTOC",
-                protoc_bin_vendored::protoc_bin_path(),
+                protoc_bin_vendored::protoc_bin_path,
             );
         }
     }
@@ -78,7 +87,7 @@ unsafe fn maybe_set_protoc_include() {
             set_var(
                 "PROTOC_INCLUDE",
                 "BUCK2_BUILD_PROTOC_INCLUDE",
-                protoc_bin_vendored::include_path(),
+                protoc_bin_vendored::include_path,
             );
         }
     }

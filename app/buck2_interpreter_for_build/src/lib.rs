@@ -16,6 +16,17 @@
 use std::sync::Once;
 
 pub mod attrs;
+pub(crate) mod bazel_apple;
+pub(crate) mod bazel_aspect;
+pub(crate) mod bazel_config;
+pub(crate) mod bazel_configuration_field;
+pub(crate) mod bazel_label;
+pub(crate) mod bazel_native;
+pub(crate) mod bazel_package;
+pub(crate) mod bazel_proto;
+pub(crate) mod bazel_python;
+pub mod bazel_repository;
+pub(crate) mod bazel_visibility;
 pub mod call_stack;
 pub mod interpreter;
 pub mod label;
@@ -34,5 +45,6 @@ pub fn init_late_bindings() {
         plugins::init_plugin_kind_from_value_impl();
         rule::init_frozen_rule_get_impl();
         rule::init_frozen_promise_artifact_mappings_get_impl();
+        rule::init_frozen_bazel_aspects_get_impl();
     });
 }

@@ -18,12 +18,15 @@ use buck2_common::legacy_configs::configs::parse_config_section_and_key;
 use buck2_common::legacy_configs::dice::HasLegacyConfigs;
 use buck2_common::legacy_configs::key::BuckconfigKeyRef;
 use buck2_core::configuration::config_setting::ConfigSettingData;
+use buck2_core::configuration::data::BazelBuildSettingValue;
 use buck2_core::configuration::data::ConfigurationData;
 use buck2_core::configuration::pair::ConfigurationNoExec;
 use buck2_core::provider::label::ProvidersLabel;
 use buck2_core::target::label::label::TargetLabel;
 use buck2_error::BuckErrorContext;
 use buck2_node::attrs::attr_type::configuration_dep::ConfigurationDepKind;
+use buck2_node::attrs::coerced_attr::CoercedAttr;
+use buck2_node::attrs::inspect_options::AttrInspectOptions;
 use buck2_node::configuration::calculation::CONFIGURATION_CALCULATION;
 use buck2_node::configuration::calculation::CellNameForConfigurationResolution;
 use buck2_node::configuration::calculation::ConfigurationCalculationDyn;
@@ -31,6 +34,7 @@ use buck2_node::configuration::resolved::ConfigurationNode;
 use buck2_node::configuration::resolved::ConfigurationSettingKey;
 use buck2_node::configuration::resolved::MatchedConfigurationSettingKeys;
 use buck2_node::configuration::resolved::MatchedConfigurationSettingKeysWithCfg;
+use buck2_node::nodes::frontend::TargetGraphCalculation;
 use buck2_node::nodes::unconfigured::TargetNodeRef;
 use derive_more::Display;
 use dice::DiceComputations;
@@ -114,7 +118,120 @@ async fn configuration_matches(
         }
     }
 
+    let build_settings = &cfg.data()?.build_settings;
+    for (setting, expected) in &constraints_and_configs.build_settings {
+        match build_settings.get(setting) {
+            Some(actual) if actual.as_config_setting_value() == *expected => {}
+            None if bazel_command_line_option_default(setting) == Some(expected.as_str()) => {}
+            None if expected == "False" => {}
+            None => match bazel_build_setting_default(ctx, setting).await? {
+                Some(default) if default.as_config_setting_value() == *expected => {}
+                _ => return Ok(false),
+            },
+            _ => return Ok(false),
+        }
+    }
+
     Ok(true)
+}
+
+fn bazel_build_setting_list_value(
+    values: impl IntoIterator<Item = BazelBuildSettingValue>,
+) -> Option<BazelBuildSettingValue> {
+    let values = values.into_iter().collect::<Vec<_>>();
+    if values
+        .iter()
+        .all(|value| matches!(value, BazelBuildSettingValue::Label(_)))
+    {
+        return Some(BazelBuildSettingValue::LabelList(
+            values
+                .into_iter()
+                .map(|value| match value {
+                    BazelBuildSettingValue::Label(label) => label,
+                    _ => unreachable!("validated above"),
+                })
+                .collect(),
+        ));
+    }
+
+    let strings = values
+        .into_iter()
+        .map(|value| match value {
+            BazelBuildSettingValue::Bool(value) => Some(value.to_string()),
+            BazelBuildSettingValue::Int(value) => Some(value.to_string()),
+            BazelBuildSettingValue::Label(value) => Some(value.to_string()),
+            BazelBuildSettingValue::String(value) => Some(value),
+            BazelBuildSettingValue::StringList(_) | BazelBuildSettingValue::LabelList(_) => None,
+        })
+        .collect::<Option<Vec<_>>>()?;
+    Some(BazelBuildSettingValue::StringList(strings))
+}
+
+fn bazel_build_setting_value_from_attr(value: &CoercedAttr) -> Option<BazelBuildSettingValue> {
+    match value {
+        CoercedAttr::OneOf(value, _) => bazel_build_setting_value_from_attr(value),
+        CoercedAttr::Bool(value) => Some(BazelBuildSettingValue::Bool(value.0)),
+        CoercedAttr::Int(value) => Some(BazelBuildSettingValue::Int(*value)),
+        CoercedAttr::String(value) | CoercedAttr::EnumVariant(value) => {
+            Some(BazelBuildSettingValue::String(value.0.to_string()))
+        }
+        CoercedAttr::Label(value) | CoercedAttr::Dep(value) | CoercedAttr::SourceLabel(value) => {
+            Some(BazelBuildSettingValue::Label(value.dupe()))
+        }
+        CoercedAttr::List(values) => bazel_build_setting_list_value(
+            values
+                .iter()
+                .map(bazel_build_setting_value_from_attr)
+                .collect::<Option<Vec<_>>>()?,
+        ),
+        CoercedAttr::None => None,
+        _ => None,
+    }
+}
+
+async fn bazel_build_setting_default(
+    ctx: &mut DiceComputations<'_>,
+    setting: &str,
+) -> buck2_error::Result<Option<BazelBuildSettingValue>> {
+    if setting.starts_with("//command_line_option:") {
+        return Ok(None);
+    }
+
+    let cell_resolver = ctx.get_cell_resolver().await?;
+    let cell_alias_resolver = ctx
+        .get_cell_alias_resolver(cell_resolver.root_cell())
+        .await?;
+    let target = TargetLabel::parse(
+        setting,
+        cell_resolver.root_cell(),
+        &cell_resolver,
+        &cell_alias_resolver,
+    )?;
+    let node = ctx.get_target_node(&target).await?;
+    let Some(default_attr) = node
+        .attr_or_none("build_setting_default", AttrInspectOptions::All)
+        .or_else(|| node.attr_or_none("actual", AttrInspectOptions::All))
+    else {
+        return Ok(None);
+    };
+
+    Ok(bazel_build_setting_value_from_attr(default_attr.value))
+}
+
+fn bazel_command_line_option_default(setting: &str) -> Option<&'static str> {
+    match setting.strip_prefix("//command_line_option:")? {
+        "compilation_mode" => Some("fastbuild"),
+        "experimental_proto_descriptor_sets_include_source_info" => Some("false"),
+        "host_compilation_mode" => Some("opt"),
+        "java_language_version" | "tool_java_language_version" => Some(""),
+        "java_runtime_version" => Some("local_jdk"),
+        "stamp" => Some("false"),
+        "strict_proto_deps" => Some("error"),
+        "strict_public_imports" => Some("off"),
+        "strip" => Some("sometimes"),
+        "tool_java_runtime_version" => Some("remotejdk_11"),
+        _ => None,
+    }
 }
 
 #[derive(Clone, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable)]
@@ -269,9 +386,18 @@ impl Key for ConfigurationNodeKey {
         ctx: &mut DiceComputations,
         _cancellation: &CancellationContext,
     ) -> Self::Value {
+        // A selectable key may be a Starlark/native alias over configuration rules
+        // (for example bazel_skylib's config_setting_group). Those aliases can use
+        // select() in their own attrs, so evaluate the key in the candidate target
+        // configuration being matched rather than forcing <unbound>.
+        let configured_target = self
+            .cfg_target
+            .0
+            .configure_pair_no_exec(ConfigurationNoExec::new(self.target_cfg.dupe()));
         let providers = ctx
-            .get_configuration_analysis_result(&self.cfg_target.0)
-            .await?;
+            .get_providers(&configured_target)
+            .await?
+            .require_compatible()?;
 
         // capture the result so the temporaries get dropped before providers
         let result = match providers

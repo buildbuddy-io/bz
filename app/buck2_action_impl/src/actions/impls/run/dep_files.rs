@@ -281,6 +281,10 @@ impl RunActionDepFiles {
             labels: OrderedMap::new(),
         }
     }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.labels.is_empty()
+    }
 }
 
 fn get_output_path_digest(
@@ -1741,6 +1745,7 @@ impl DirectoryDigester<ActionDirectoryMember, TrackedFileDigest>
     fn leaf_size(&self, leaf: &ActionDirectoryMember) -> u64 {
         match leaf {
             ActionDirectoryMember::File(f) => f.digest.size(),
+            ActionDirectoryMember::SourceFile(f) => f.contents_proxy.size,
             ActionDirectoryMember::Symlink(_) => 0,
             ActionDirectoryMember::ExternalSymlink(_) => 0,
         }

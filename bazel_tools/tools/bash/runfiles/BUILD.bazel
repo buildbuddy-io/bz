@@ -1,0 +1,12 @@
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "pkg_sources",
+    srcs = glob(["**"]),
+)
+
+alias(
+    name = "runfiles",
+    actual = "@rules_shell//shell/runfiles",
+    visibility = ["//visibility:public"],
+)

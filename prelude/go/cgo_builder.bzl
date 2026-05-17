@@ -173,7 +173,7 @@ def _own_pre(actions: AnalysisActions, cgo_build_context: CGoBuildContext, packa
 
 def build_cgo(
         actions: AnalysisActions,
-        target_label: Label,
+        target_label: ConfiguredProvidersLabel,
         go_toolchain_info: GoToolchainInfo,
         cgo_build_context: CGoBuildContext | None,
         pkg_import_path: str,

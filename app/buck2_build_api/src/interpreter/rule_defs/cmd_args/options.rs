@@ -81,6 +81,8 @@ impl Display for QuoteStyle {
 enum CommandLineArgError {
     #[error("Unknown quoting style `{0}`")]
     UnknownQuotingStyle(String),
+    #[error("Unknown param-file format `{0}`")]
+    UnknownParamFileFormat(String),
     #[error("too many .parent() calls")]
     TooManyParentCalls,
 }
@@ -90,6 +92,89 @@ impl QuoteStyle {
         match s {
             "shell" => Ok(QuoteStyle::Shell),
             _ => Err(CommandLineArgError::UnknownQuotingStyle(s.to_owned()).into()),
+        }
+    }
+}
+
+#[derive(
+    Debug, Clone, Copy, Dupe, Trace, Freeze, Serialize, Allocative, PartialEq, Eq
+)]
+pub enum ParamFileFormat {
+    Shell,
+    Multiline,
+    FlagPerLine,
+    GccQuoted,
+    Windows,
+}
+
+impl ParamFileFormat {
+    pub(crate) fn parse(s: &str) -> buck2_error::Result<Self> {
+        match s {
+            "shell" => Ok(Self::Shell),
+            "multiline" => Ok(Self::Multiline),
+            "flag_per_line" => Ok(Self::FlagPerLine),
+            _ => Err(CommandLineArgError::UnknownParamFileFormat(s.to_owned()).into()),
+        }
+    }
+}
+
+impl Display for ParamFileFormat {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Shell => write!(f, "shell"),
+            Self::Multiline => write!(f, "multiline"),
+            Self::FlagPerLine => write!(f, "flag_per_line"),
+            Self::GccQuoted => write!(f, "gcc_quoted"),
+            Self::Windows => write!(f, "windows"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Trace, Allocative)]
+pub(crate) struct ParamFileOptions<'v> {
+    pub(crate) arg_format: Option<StringValue<'v>>,
+    pub(crate) format: ParamFileFormat,
+    pub(crate) use_always: bool,
+    pub(crate) format_set: bool,
+}
+
+impl<'v> Default for ParamFileOptions<'v> {
+    fn default() -> Self {
+        Self {
+            arg_format: None,
+            format: ParamFileFormat::Shell,
+            use_always: false,
+            format_set: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Dupe, Serialize)]
+pub(crate) struct ParamFileOptionsRef<'v> {
+    pub(crate) arg_format: Option<StringValue<'v>>,
+    pub(crate) format: ParamFileFormat,
+    pub(crate) use_always: bool,
+    pub(crate) format_set: bool,
+}
+
+impl<'v> Default for ParamFileOptionsRef<'v> {
+    fn default() -> Self {
+        Self {
+            arg_format: None,
+            format: ParamFileFormat::Shell,
+            use_always: false,
+            format_set: false,
+        }
+    }
+}
+
+impl<'v> ParamFileOptionsRef<'v> {
+    pub(crate) fn to_owned(self) -> ParamFileOptions<'v> {
+        ParamFileOptions {
+            arg_format: self.arg_format,
+            format: self.format,
+            use_always: self.use_always,
+            format_set: self.format_set,
         }
     }
 }
@@ -115,9 +200,13 @@ pub(crate) struct CommandLineOptions<'v> {
     pub(crate) delimiter: Option<StringValue<'v>>,
     pub(crate) format: Option<StringValue<'v>>,
     pub(crate) prepend: Option<StringValue<'v>>,
+    pub(crate) expand_directories: bool,
     pub(crate) quote: Option<QuoteStyle>,
     #[allow(clippy::box_collection)]
     pub(crate) replacements: Option<Box<Vec<(CmdArgsRegex<'v>, StringValue<'v>)>>>,
+
+    #[allow(clippy::box_collection)]
+    pub(crate) param_file: Option<Box<ParamFileOptions<'v>>>,
 }
 
 #[derive(Clone, Copy, Dupe)]
@@ -202,8 +291,11 @@ pub(crate) struct CommandLineOptionsRef<'v, 'a> {
     pub(crate) delimiter: Option<StringValue<'v>>,
     pub(crate) format: Option<StringValue<'v>>,
     pub(crate) prepend: Option<StringValue<'v>>,
+    pub(crate) expand_directories: bool,
     pub(crate) quote: Option<QuoteStyle>,
     pub(crate) replacements: OptionsReplacementsRef<'v, 'a>,
+
+    pub(crate) param_file: Option<ParamFileOptionsRef<'v>>,
 }
 
 impl<'v, 'a> CommandLineOptionsRef<'v, 'a> {
@@ -217,12 +309,16 @@ impl<'v, 'a> CommandLineOptionsRef<'v, 'a> {
             delimiter: self.delimiter,
             format: self.format,
             prepend: self.prepend,
+            expand_directories: self.expand_directories,
             quote: self.quote.dupe(),
             replacements: if self.replacements.is_empty() {
                 None
             } else {
                 Some(Box::new(self.replacements.iter().collect()))
             },
+            param_file: self
+                .param_file
+                .map(|param_file| Box::new(param_file.to_owned())),
         }
     }
 }
@@ -246,11 +342,21 @@ impl<'v> CommandLineOptionsTrait<'v> for CommandLineOptions<'v> {
             delimiter: self.delimiter,
             format: self.format,
             prepend: self.prepend,
+            expand_directories: self.expand_directories,
             quote: self.quote.dupe(),
             replacements: match &self.replacements {
                 None => OptionsReplacementsRef::default(),
                 Some(v) => OptionsReplacementsRef::Unfrozen(v.as_slice()),
             },
+            param_file: self
+                .param_file
+                .as_ref()
+                .map(|param_file| ParamFileOptionsRef {
+                    arg_format: param_file.arg_format,
+                    format: param_file.format,
+                    use_always: param_file.use_always,
+                    format_set: param_file.format_set,
+                }),
         }
     }
 }
@@ -268,9 +374,11 @@ enum FrozenCommandLineOption {
     Delimiter(FrozenStringValue),
     Format(FrozenStringValue),
     Prepend(FrozenStringValue),
+    ExpandDirectories,
     Quote(QuoteStyle),
     #[allow(clippy::box_collection)]
     Replacements(ThinBoxSlice<(FrozenCmdArgsRegex, FrozenStringValue)>),
+    ParamFile(FrozenStringValue, ParamFileFormat, bool),
 }
 
 assert_eq_size!(FrozenCommandLineOption, [usize; 2]);
@@ -340,11 +448,22 @@ impl<'v> CommandLineOptionsTrait<'v> for FrozenCommandLineOptions {
                 FrozenCommandLineOption::Prepend(value) => {
                     options.prepend = Some(value.to_string_value());
                 }
+                FrozenCommandLineOption::ExpandDirectories => {
+                    options.expand_directories = true;
+                }
                 FrozenCommandLineOption::Quote(value) => {
                     options.quote = Some(value.dupe());
                 }
                 FrozenCommandLineOption::Replacements(value) => {
                     options.replacements = OptionsReplacementsRef::Frozen(value);
+                }
+                FrozenCommandLineOption::ParamFile(arg_format, format, use_always) => {
+                    options.param_file = Some(ParamFileOptionsRef {
+                        arg_format: Some(arg_format.to_string_value()),
+                        format: *format,
+                        use_always: *use_always,
+                        format_set: true,
+                    });
                 }
             }
         }
@@ -383,8 +502,10 @@ impl<'v> Freeze for CommandLineOptions<'v> {
             delimiter,
             format,
             prepend,
+            expand_directories,
             quote,
             replacements,
+            param_file,
         } = self;
 
         let mut options = Vec::new();
@@ -421,6 +542,9 @@ impl<'v> Freeze for CommandLineOptions<'v> {
             let prepend = prepend.freeze(freezer)?;
             options.push(FrozenCommandLineOption::Prepend(prepend));
         }
+        if expand_directories {
+            options.push(FrozenCommandLineOption::ExpandDirectories);
+        }
         if let Some(quote) = quote {
             options.push(FrozenCommandLineOption::Quote(quote));
         }
@@ -428,6 +552,16 @@ impl<'v> Freeze for CommandLineOptions<'v> {
             if !replacements.is_empty() {
                 let replacements = ThinBoxSlice::from_iter((*replacements).freeze(freezer)?);
                 options.push(FrozenCommandLineOption::Replacements(replacements));
+            }
+        }
+        if let Some(param_file) = param_file {
+            if let Some(arg_format) = param_file.arg_format {
+                let arg_format = arg_format.freeze(freezer)?;
+                options.push(FrozenCommandLineOption::ParamFile(
+                    arg_format,
+                    param_file.format,
+                    param_file.use_always,
+                ));
             }
         }
 
@@ -488,6 +622,13 @@ impl ArtifactPathMapper for RelativeOriginArtifactPathMapper<'_> {
             Some(&self.relative_path_resolution)
         }
     }
+
+    fn artifact_value(
+        &self,
+        artifact: &Artifact,
+    ) -> Option<&buck2_execute::artifact_value::ArtifactValue> {
+        self.artifact_path_mapping.artifact_value(artifact)
+    }
 }
 
 impl<'v> RelativeOrigin<'v> {
@@ -542,8 +683,10 @@ impl<'v, 'x> CommandLineOptionsRef<'v, 'x> {
                 delimiter: None,
                 format: None,
                 prepend: None,
+                expand_directories: _,
                 quote: None,
                 replacements,
+                param_file: _,
                 ignore_artifacts: _, // Doesn't impact the builder
             } if replacements.is_empty() => false,
             _ => true,
@@ -576,50 +719,29 @@ impl<'v, 'x> CommandLineOptionsRef<'v, 'x> {
         }
 
         impl<'a, 'v> CommandLineContext for ExtrasContext<'a, 'v> {
+            fn resolve_artifact(
+                &self,
+                artifact: &Artifact,
+                artifact_path_mapping: &dyn ArtifactPathMapper,
+            ) -> buck2_error::Result<CommandLineLocation<'_>> {
+                let resolved = self.ctx.resolve_artifact(artifact, artifact_path_mapping)?;
+                self.apply_path_options(resolved)
+            }
+
+            fn resolve_output_artifact(
+                &self,
+                artifact: &Artifact,
+            ) -> buck2_error::Result<CommandLineLocation<'_>> {
+                let resolved = self.ctx.resolve_output_artifact(artifact)?;
+                self.apply_path_options(resolved)
+            }
+
             fn resolve_project_path(
                 &self,
                 path: ProjectRelativePathBuf,
             ) -> buck2_error::Result<CommandLineLocation<'_>> {
-                let Self {
-                    ctx,
-                    relative_to,
-                    opts,
-                } = self;
-
-                let resolved = ctx.resolve_project_path(path)?;
-
-                if opts.parent == 0
-                    && opts.absolute_prefix.is_none()
-                    && opts.absolute_suffix.is_none()
-                    && relative_to.is_none()
-                {
-                    return Ok(resolved);
-                }
-
-                let mut x = resolved.into_relative();
-                if let Some(relative_to) = relative_to {
-                    x = relative_to.relative(x);
-                }
-                let mut parent_ref = x.as_relative_path();
-                for _ in 0..opts.parent {
-                    parent_ref = parent_ref
-                        .parent()
-                        .ok_or(CommandLineArgError::TooManyParentCalls)?;
-                }
-                x = parent_ref.to_owned();
-                if opts.absolute_prefix.is_some() || opts.absolute_suffix.is_some() {
-                    x = RelativePath::new(&format!(
-                        "{}{}{}",
-                        opts.absolute_prefix.unwrap_or_default().as_str(),
-                        x,
-                        opts.absolute_suffix.unwrap_or_default().as_str(),
-                    ))
-                    .to_owned();
-                }
-                Ok(CommandLineLocation::from_relative_path(
-                    x,
-                    self.fs().path_separator(),
-                ))
+                let resolved = self.ctx.resolve_project_path(path)?;
+                self.apply_path_options(resolved)
             }
 
             fn fs(&self) -> &ExecutorFs<'_> {
@@ -633,6 +755,71 @@ impl<'v, 'x> CommandLineOptionsRef<'v, 'x> {
                 } else {
                     Ok(macro_path)
                 }
+            }
+
+            fn add_param_file(
+                &mut self,
+                content: Vec<u8>,
+            ) -> buck2_error::Result<CommandLineLocation<'_>> {
+                let path_separator = self.fs().path_separator();
+                let location = self.ctx.add_param_file(content)?;
+                if let Some(relative_to_path) = &self.relative_to {
+                    let path = relative_to_path.relative(location.into_relative());
+                    Ok(CommandLineLocation::from_relative_path(
+                        path,
+                        path_separator,
+                    ))
+                } else {
+                    Ok(location)
+                }
+            }
+
+            fn normalize_param_file_arg(&self, arg: String) -> String {
+                self.ctx.normalize_param_file_arg(arg)
+            }
+        }
+
+        impl<'a, 'v> ExtrasContext<'a, 'v> {
+            fn apply_path_options<'b>(
+                &self,
+                resolved: CommandLineLocation<'b>,
+            ) -> buck2_error::Result<CommandLineLocation<'b>> {
+                let Self {
+                    relative_to, opts, ..
+                } = self;
+
+                if opts.parent == 0
+                    && opts.absolute_prefix.is_none()
+                    && opts.absolute_suffix.is_none()
+                    && relative_to.is_none()
+                {
+                    return Ok(resolved);
+                }
+
+                let mut path = resolved.into_relative();
+                if let Some(relative_to) = relative_to {
+                    path = relative_to.relative(path);
+                }
+                let mut parent_ref = path.as_relative_path();
+                for _ in 0..opts.parent {
+                    parent_ref = parent_ref
+                        .parent()
+                        .ok_or(CommandLineArgError::TooManyParentCalls)?;
+                }
+                path = parent_ref.to_owned();
+                if opts.absolute_prefix.is_some() || opts.absolute_suffix.is_some() {
+                    path = RelativePath::new(&format!(
+                        "{}{}{}",
+                        opts.absolute_prefix.unwrap_or_default().as_str(),
+                        path,
+                        opts.absolute_suffix.unwrap_or_default().as_str(),
+                    ))
+                    .to_owned();
+                }
+                Ok(CommandLineLocation::from_relative_path(
+                    path,
+                    self.fs().path_separator(),
+                ))
             }
         }
 
@@ -773,8 +960,10 @@ impl<'v, 'x> CommandLineOptionsRef<'v, 'x> {
             delimiter,
             format,
             prepend,
+            expand_directories,
             quote,
             replacements,
+            param_file,
         } = self;
 
         // This can be implemented without allocation,
@@ -823,6 +1012,12 @@ impl<'v, 'x> CommandLineOptionsRef<'v, 'x> {
         if let Some(value) = prepend {
             iter.push(("prepend", CommandLineOptionsIterItem::StringValue(*value)));
         }
+        if *expand_directories {
+            iter.push((
+                "expand_directories",
+                CommandLineOptionsIterItem::Str("True"),
+            ));
+        }
         if let Some(value) = quote {
             iter.push(("quote", CommandLineOptionsIterItem::QuoteStyle(*value)));
         }
@@ -831,6 +1026,24 @@ impl<'v, 'x> CommandLineOptionsRef<'v, 'x> {
                 "replacements",
                 CommandLineOptionsIterItem::Replacements(*replacements),
             ));
+        }
+        if let Some(param_file) = param_file {
+            if let Some(arg_format) = param_file.arg_format {
+                iter.push((
+                    "param_file_arg",
+                    CommandLineOptionsIterItem::StringValue(arg_format),
+                ));
+                iter.push((
+                    "param_file_format",
+                    CommandLineOptionsIterItem::ParamFileFormat(param_file.format),
+                ));
+                if param_file.use_always {
+                    iter.push((
+                        "param_file_use_always",
+                        CommandLineOptionsIterItem::Str("True"),
+                    ));
+                }
+            }
         }
 
         iter.into_iter()
@@ -846,4 +1059,6 @@ pub(crate) enum CommandLineOptionsIterItem<'v, 'a> {
     Replacements(OptionsReplacementsRef<'v, 'a>),
     #[display("\"{}\"", _0)]
     QuoteStyle(QuoteStyle),
+    #[display("\"{}\"", _0)]
+    ParamFileFormat(ParamFileFormat),
 }

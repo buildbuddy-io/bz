@@ -418,6 +418,17 @@ impl<V> ParametersSpec<V> {
 
     /// Function parameter as they would appear in `def`
     /// (excluding types, default values and formatting).
+    pub fn parameter_names(&self) -> impl Iterator<Item = &str> {
+        self.param_names
+            .iter()
+            .filter_map(|name| match name.as_str() {
+                "*args" | "**kwargs" => None,
+                name => Some(name),
+            })
+    }
+
+    /// Function parameter as they would appear in `def`
+    /// (excluding types, default values and formatting).
     pub fn parameters_str(&self) -> String {
         #[cold]
         fn err(args: fmt::Arguments) -> String {

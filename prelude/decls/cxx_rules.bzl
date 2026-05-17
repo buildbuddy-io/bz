@@ -1326,11 +1326,129 @@ llvm_link_bitcode = prelude_rule(
     ),
 )
 
+def _bazel_cc_rule_attrs():
+    return {
+        "srcs": attrs.list(attrs.source(allow_directory = True), default = []),
+        "hdrs": attrs.list(attrs.source(allow_directory = True), default = []),
+        "textual_hdrs": attrs.list(attrs.source(allow_directory = True), default = []),
+        "deps": attrs.list(attrs.dep(), default = []),
+        "implementation_deps": attrs.list(attrs.dep(), default = []),
+        "data": attrs.list(attrs.dep(), default = []),
+        "includes": attrs.list(attrs.string(), default = []),
+        "copts": attrs.list(attrs.string(), default = []),
+        "defines": attrs.list(attrs.string(), default = []),
+        "local_defines": attrs.list(attrs.string(), default = []),
+        "linkopts": attrs.list(attrs.string(), default = []),
+        "linkstatic": attrs.option(attrs.bool(), default = None),
+        "alwayslink": attrs.bool(default = False),
+        "strip_include_prefix": attrs.option(attrs.string(), default = None),
+        "include_prefix": attrs.option(attrs.string(), default = None),
+        "features": attrs.list(attrs.string(), default = []),
+        "tags": attrs.list(attrs.string(), default = []),
+        "testonly": attrs.bool(default = False),
+    } | buck.licenses_arg() | buck.labels_arg() | buck.contacts_arg()
+
+cc_library = prelude_rule(
+    name = "cc_library",
+    docs = "Declares a Bazel C/C++ library target.",
+    examples = None,
+    further = None,
+    attrs = _bazel_cc_rule_attrs(),
+)
+
+cc_binary = prelude_rule(
+    name = "cc_binary",
+    docs = "Declares a Bazel C/C++ binary target.",
+    examples = None,
+    further = None,
+    attrs = _bazel_cc_rule_attrs() | {
+        "args": attrs.list(attrs.arg(), default = []),
+        "env": attrs.dict(key = attrs.string(), value = attrs.string(), sorted = False, default = {}),
+    },
+)
+
+cc_test = prelude_rule(
+    name = "cc_test",
+    docs = "Declares a Bazel C/C++ test target.",
+    examples = None,
+    further = None,
+    attrs = cc_binary.attrs,
+)
+
+cc_import = prelude_rule(
+    name = "cc_import",
+    docs = "Declares a Bazel prebuilt C/C++ library target.",
+    examples = None,
+    further = None,
+    attrs = {
+        "hdrs": attrs.list(attrs.source(allow_directory = True), default = []),
+        "deps": attrs.list(attrs.dep(), default = []),
+        "static_library": attrs.option(attrs.source(), default = None),
+        "shared_library": attrs.option(attrs.source(), default = None),
+        "interface_library": attrs.option(attrs.source(), default = None),
+        "system_provided": attrs.bool(default = False),
+        "alwayslink": attrs.bool(default = False),
+        "features": attrs.list(attrs.string(), default = []),
+        "tags": attrs.list(attrs.string(), default = []),
+    } | buck.licenses_arg() | buck.labels_arg() | buck.contacts_arg(),
+)
+
+cc_shared_library = prelude_rule(
+    name = "cc_shared_library",
+    docs = "Declares a Bazel C/C++ shared library target.",
+    examples = None,
+    further = None,
+    attrs = {
+        "deps": attrs.list(attrs.dep(), default = []),
+        "roots": attrs.list(attrs.dep(), default = []),
+        "dynamic_deps": attrs.list(attrs.dep(), default = []),
+        "exports_filter": attrs.list(attrs.string(), default = []),
+        "features": attrs.list(attrs.string(), default = []),
+        "tags": attrs.list(attrs.string(), default = []),
+    } | buck.licenses_arg() | buck.labels_arg() | buck.contacts_arg(),
+)
+
+cc_toolchain = prelude_rule(
+    name = "cc_toolchain",
+    docs = "Declares a Bazel C/C++ toolchain target.",
+    examples = None,
+    further = None,
+    attrs = {
+        "all_files": attrs.option(attrs.dep(), default = None),
+        "compiler_files": attrs.option(attrs.dep(), default = None),
+        "dwp_files": attrs.option(attrs.dep(), default = None),
+        "linker_files": attrs.option(attrs.dep(), default = None),
+        "objcopy_files": attrs.option(attrs.dep(), default = None),
+        "strip_files": attrs.option(attrs.dep(), default = None),
+        "as_files": attrs.option(attrs.dep(), default = None),
+        "ar_files": attrs.option(attrs.dep(), default = None),
+        "module_map": attrs.option(attrs.source(), default = None),
+        "supports_header_parsing": attrs.bool(default = False),
+        "supports_param_files": attrs.bool(default = True),
+        "toolchain_config": attrs.option(attrs.dep(), default = None),
+        "toolchain_identifier": attrs.option(attrs.string(), default = None),
+        "cpu": attrs.option(attrs.string(), default = None),
+        "compiler": attrs.option(attrs.string(), default = None),
+        "tags": attrs.list(attrs.string(), default = []),
+    } | buck.licenses_arg() | buck.labels_arg() | buck.contacts_arg(),
+)
+
+cc_toolchain_suite = prelude_rule(
+    name = "cc_toolchain_suite",
+    docs = "Declares a Bazel C/C++ toolchain suite target.",
+    examples = None,
+    further = None,
+    attrs = {
+        "toolchains": attrs.dict(key = attrs.string(), value = attrs.dep(), sorted = False, default = {}),
+        "tags": attrs.list(attrs.string(), default = []),
+    } | buck.licenses_arg() | buck.labels_arg() | buck.contacts_arg(),
+)
+
 transformation_spec = prelude_rule(
     name = "transformation_spec",
     docs = """
         A `transformation_spec()` rule declares a list of transformation
-        rules that map targets (by `Label`, by build target pattern, or
+        rules that map targets (by `ConfiguredProvidersLabel`, by build target pattern, or
         by build graph pattern) to a `TransformationKind`
         (`debug` or `optimized`). Other rules can reference a
         `transformation_spec()` via a `transformation_spec` attribute to
@@ -1343,6 +1461,13 @@ transformation_spec = prelude_rule(
 )
 
 cxx_rules = struct(
+    cc_binary = cc_binary,
+    cc_import = cc_import,
+    cc_library = cc_library,
+    cc_shared_library = cc_shared_library,
+    cc_test = cc_test,
+    cc_toolchain = cc_toolchain,
+    cc_toolchain_suite = cc_toolchain_suite,
     cxx_binary = cxx_binary,
     cxx_genrule = cxx_genrule,
     cxx_library = cxx_library,

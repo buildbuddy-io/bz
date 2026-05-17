@@ -8,6 +8,7 @@
  * above-listed licenses.
  */
 
+use buck2_core::package::PackageLabel;
 use buck2_core::pattern::pattern::ParsedPattern;
 use buck2_core::pattern::pattern_type::TargetPatternExtra;
 use buck2_core::provider::label::NonDefaultProvidersName;
@@ -70,10 +71,33 @@ pub trait AttrCoercionContext {
     /// Attempt to convert a string into a BuckPath
     fn coerce_path(&self, value: &str, allow_directory: bool) -> buck2_error::Result<CoercedPath>;
 
+    /// Attempt to convert a string into a BuckPath only if the path is present in
+    /// the package listing.
+    fn coerce_existing_path(
+        &self,
+        value: &str,
+        allow_directory: bool,
+    ) -> buck2_error::Result<Option<CoercedPath>>;
+
     fn coerce_target_pattern(
         &self,
         pattern: &str,
     ) -> buck2_error::Result<ParsedPattern<TargetPatternExtra>>;
+
+    fn coerce_visibility_pattern(
+        &self,
+        pattern: &str,
+    ) -> buck2_error::Result<Option<ParsedPattern<TargetPatternExtra>>> {
+        Ok(Some(self.coerce_target_pattern(pattern)?))
+    }
+
+    fn enclosing_package(&self) -> Option<PackageLabel> {
+        None
+    }
+
+    fn is_bazel_compat_cell(&self) -> bool {
+        false
+    }
 
     fn visit_query_function_literals<'q>(
         &self,

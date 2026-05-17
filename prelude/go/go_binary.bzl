@@ -34,12 +34,22 @@ def go_binary_impl(ctx: AnalysisContext) -> list[Provider]:
     coverage_mode = GoCoverageMode(ctx.attrs._coverage_mode) if ctx.attrs._coverage_mode else None
     cgo_build_context = get_cgo_build_context(ctx)
 
+    srcs = list(ctx.attrs.srcs)
+    deps = list(ctx.attrs.deps)
+    if ctx.attrs.embed:
+        if len(ctx.attrs.embed) == 1 and ctx.attrs.package_name == None:
+            pkg_import_path = ctx.attrs.embed[0][GoTestInfo].pkg_import_path
+        for embedded in ctx.attrs.embed:
+            info = embedded[GoTestInfo]
+            srcs += info.srcs
+            deps += info.deps
+
     lib, pkg_info, _ = declare_package_build(
         ctx = ctx,
         pkg_import_path = pkg_import_path,
         main = True,
         sources = GoSourceInputs(
-            srcs = ctx.attrs.srcs + ctx.attrs.headers,
+            srcs = srcs + ctx.attrs.headers,
             embed_srcs = from_named_set(ctx.attrs.embed_srcs),
             package_root = ctx.attrs.package_root,
         ),
@@ -51,13 +61,13 @@ def go_binary_impl(ctx: AnalysisContext) -> list[Provider]:
             coverage_enabled = ctx.attrs.coverage_enabled,
             coverage_mode = coverage_mode,
         ),
-        deps = ctx.attrs.deps,
+        deps = deps,
     )
     (bin, runtime_files, external_debug_info) = link(
         ctx,
         lib,
         cgo_enabled = cgo_enabled,
-        deps = ctx.attrs.deps,
+        deps = deps,
         link_style = value_or(map_val(LinkStyle, ctx.attrs.link_style), LinkStyle("static")),
         build_mode = GoBuildMode(value_or(ctx.attrs.build_mode, "exe")),
         linker_flags = ctx.attrs.linker_flags,
@@ -92,8 +102,8 @@ def go_binary_impl(ctx: AnalysisContext) -> list[Provider]:
         RunInfo(args = cmd_args(bin, hidden = other_outputs)),
         DistInfo(nondebug_runtime_files = runtime_files),
         GoTestInfo(
-            deps = ctx.attrs.deps,
-            srcs = ctx.attrs.srcs,
+            deps = deps,
+            srcs = srcs,
             pkg_import_path = pkg_import_path,
             coverage_enabled = ctx.attrs.coverage_enabled,
         ),

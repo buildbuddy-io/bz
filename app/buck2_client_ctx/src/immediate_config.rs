@@ -49,13 +49,12 @@ impl ImmediateConfig {
     /// an empty mapping if the root `.buckconfig` does not contain the cell definitions.
     fn parse(roots: &InvocationRoots) -> buck2_error::Result<ImmediateConfig> {
         // This function is non-reentrant, and blocking for a bit should be ok
-        let cells = futures::executor::block_on(BuckConfigBasedCells::parse_with_config_args(
+        let cells = futures::executor::block_on(BuckConfigBasedCells::parse_for_immediate_config(
             &roots.project_root,
-            &[],
         ))?;
 
         let cwd_cell_alias_resolver = futures::executor::block_on(
-            cells.get_cell_alias_resolver_for_cwd_fast(&roots.project_root, &roots.cwd),
+            cells.get_cell_alias_resolver_for_cwd_immediate_config(&roots.project_root, &roots.cwd),
         )?;
 
         Ok(ImmediateConfig {

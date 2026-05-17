@@ -49,6 +49,8 @@ use crate::interpreter::rule_defs::artifact::starlark_artifact_like::ArtifactFin
 use crate::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkArtifactLike;
 use crate::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkInputArtifactLike;
 use crate::interpreter::rule_defs::artifact::starlark_artifact_like::ValueAsInputArtifactLike;
+use crate::interpreter::rule_defs::artifact::starlark_artifact_like::bazel_artifact_path;
+use crate::interpreter::rule_defs::artifact::starlark_artifact_like::bazel_artifact_short_path;
 use crate::interpreter::rule_defs::artifact::starlark_output_artifact::StarlarkOutputArtifact;
 use crate::interpreter::rule_defs::cmd_args::ArtifactPathMapper;
 use crate::interpreter::rule_defs::cmd_args::CommandLineArgLike;
@@ -56,6 +58,7 @@ use crate::interpreter::rule_defs::cmd_args::CommandLineArtifactVisitor;
 use crate::interpreter::rule_defs::cmd_args::CommandLineBuilder;
 use crate::interpreter::rule_defs::cmd_args::CommandLineContext;
 use crate::interpreter::rule_defs::cmd_args::WriteToFileMacroVisitor;
+use crate::interpreter::rule_defs::cmd_args::add_artifact_to_command_line_expanding_directories;
 use crate::interpreter::rule_defs::cmd_args::command_line_arg_like_type::command_line_arg_like_impl;
 
 #[derive(Debug, buck2_error::Error)]
@@ -190,6 +193,32 @@ impl<'v> StarlarkArtifactLike<'v> for StarlarkPromiseArtifact {
         }
     }
 
+    fn with_bazel_short_path(
+        &self,
+        f: &dyn Fn(&str) -> StringValue<'v>,
+    ) -> buck2_error::Result<StringValue<'v>> {
+        match self.artifact.get() {
+            Some(v) => {
+                let path = bazel_artifact_short_path(v.get_path());
+                Ok(f(&path))
+            }
+            None => Ok(f(self.short_path_err()?.as_str())),
+        }
+    }
+
+    fn with_bazel_path(
+        &self,
+        f: &dyn Fn(&str) -> StringValue<'v>,
+    ) -> buck2_error::Result<StringValue<'v>> {
+        match self.artifact.get() {
+            Some(v) => {
+                let path = bazel_artifact_path(v.get_path());
+                Ok(f(&path))
+            }
+            None => Ok(f(self.short_path_err()?.as_str())),
+        }
+    }
+
     fn fingerprint<'s>(&'s self) -> ArtifactFingerprint<'s>
     where
         'v: 's,
@@ -279,6 +308,23 @@ impl<'v> CommandLineArgLike<'v> for StarlarkPromiseArtifact {
         }
     }
 
+    fn add_to_command_line_expanding_directories(
+        &self,
+        cli: &mut dyn CommandLineBuilder,
+        ctx: &mut dyn CommandLineContext,
+        artifact_path_mapping: &dyn ArtifactPathMapper,
+    ) -> buck2_error::Result<()> {
+        match self.artifact.get() {
+            Some(v) => add_artifact_to_command_line_expanding_directories(
+                v,
+                cli,
+                ctx,
+                artifact_path_mapping,
+            ),
+            None => Err(PromiseArtifactError::UnresolvedAddedToCommandLine(self.clone()).into()),
+        }
+    }
+
     fn visit_artifacts(
         &self,
         visitor: &mut dyn CommandLineArtifactVisitor<'v>,
@@ -315,6 +361,10 @@ impl<'v> StarlarkValue<'v> for StarlarkPromiseArtifact {
 
     fn write_hash(&self, hasher: &mut StarlarkHasher) -> starlark::Result<()> {
         StarlarkArtifactLike::write_hash(self, hasher)
+    }
+
+    fn is_in(&self, _other: Value<'v>) -> starlark::Result<bool> {
+        Ok(false)
     }
 
     fn provide(&'v self, demand: &mut Demand<'_, 'v>) {

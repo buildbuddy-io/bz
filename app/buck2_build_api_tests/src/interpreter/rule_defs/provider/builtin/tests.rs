@@ -38,3 +38,74 @@ fn test_equals() -> buck2_error::Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn test_builtin_provider_callables_are_hashable() -> buck2_error::Result<()> {
+    let mut tester = Tester::new()?;
+
+    tester.additional_globals(register_builtin_providers);
+
+    tester.run_starlark_bzl_test(indoc!(
+        r#"
+            providers = {
+                DefaultInfo: "default",
+                ToolchainInfo: "toolchain",
+            }
+
+            def test():
+                assert_eq("default", providers[DefaultInfo])
+                assert_eq("toolchain", providers[ToolchainInfo])
+        "#
+    ))?;
+
+    Ok(())
+}
+
+#[test]
+fn test_output_group_info_supports_group_indexing() -> buck2_error::Result<()> {
+    let mut tester = Tester::new()?;
+
+    tester.additional_globals(register_builtin_providers);
+
+    tester.run_starlark_bzl_test(indoc!(
+        r#"
+            def test():
+                groups = OutputGroupInfo(
+                    _hidden_top_level_INTERNAL_ = ["force"],
+                    files = ["out"],
+                )
+
+                assert_eq(True, "_hidden_top_level_INTERNAL_" in groups)
+                assert_eq(False, "missing" in groups)
+                assert_eq(["force"], groups["_hidden_top_level_INTERNAL_"])
+                assert_eq(["out"], groups["files"])
+        "#
+    ))?;
+
+    Ok(())
+}
+
+#[test]
+fn test_run_environment_info() -> buck2_error::Result<()> {
+    let mut tester = Tester::new()?;
+
+    tester.additional_globals(register_builtin_providers);
+
+    tester.run_starlark_bzl_test(indoc!(
+        r#"
+            def test():
+                default = RunEnvironmentInfo()
+                assert_eq({}, default.environment)
+                assert_eq([], default.inherited_environment)
+
+                env = RunEnvironmentInfo(
+                    environment = {"GOOS": "darwin"},
+                    inherited_environment = ("PATH", "HOME"),
+                )
+                assert_eq({"GOOS": "darwin"}, env.environment)
+                assert_eq(["PATH", "HOME"], env.inherited_environment)
+        "#
+    ))?;
+
+    Ok(())
+}

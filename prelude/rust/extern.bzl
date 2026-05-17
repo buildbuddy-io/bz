@@ -43,7 +43,7 @@ def extern_arg(flags: list[str], crate: CrateName, lib: Artifact) -> cmd_args:
 #
 #     --crate-map=$(cat path/to/REALNAME)=//path/to:target
 #
-def crate_map_arg(crate: CrateName, label: Label) -> cmd_args:
+def crate_map_arg(crate: CrateName, label: ConfiguredProvidersLabel) -> cmd_args:
     return cmd_args(
         "--crate-map=",
         crate_name_as_cmd_arg(crate),

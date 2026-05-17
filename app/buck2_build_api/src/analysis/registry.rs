@@ -24,7 +24,10 @@ use buck2_artifact::artifact::build_artifact::BuildArtifact;
 use buck2_core::deferred::base_deferred_key::BaseDeferredKey;
 use buck2_core::deferred::key::DeferredHolderKey;
 use buck2_core::execution_types::execution::ExecutionPlatformResolution;
+use buck2_core::fs::buck_out_path::BazelOutputPathKind;
+use buck2_core::fs::buck_out_path::BazelOutputRoot;
 use buck2_core::fs::buck_out_path::BuckOutPathKind;
+use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
 use buck2_error::internal_error;
 use buck2_execute::execute::request::OutputType;
 use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
@@ -98,6 +101,7 @@ pub struct AnalysisRegistry<'v> {
     pub actions: ActionsRegistry<'v>,
     pub anon_targets: Box<DynStarlark<'v, dyn AnonTargetsRegistryDyn<'v>>>,
     pub analysis_value_storage: AnalysisValueStorage<'v>,
+    bazel_predeclared_outputs: SmallMap<String, DeclaredArtifact<'v>>,
     pub short_path_assertions: HashMap<PromiseArtifactId, ForwardRelativePathBuf>,
     pub content_based_path_assertions: HashSet<PromiseArtifactId>,
 }
@@ -118,17 +122,23 @@ impl<'v> AnalysisRegistry<'v> {
         owner: BaseDeferredKey,
         execution_platform: ExecutionPlatformResolution,
     ) -> buck2_error::Result<AnalysisRegistry<'v>> {
-        Self::new_from_owner_and_deferred(execution_platform, DeferredHolderKey::Base(owner))
+        Self::new_from_owner_and_deferred(execution_platform, DeferredHolderKey::Base(owner), None)
     }
 
     pub fn new_from_owner_and_deferred(
         execution_platform: ExecutionPlatformResolution,
         self_key: DeferredHolderKey,
+        target_rule_type_name: Option<Arc<str>>,
     ) -> buck2_error::Result<Self> {
         Ok(AnalysisRegistry {
-            actions: ActionsRegistry::new(self_key.dupe(), execution_platform.dupe()),
+            actions: ActionsRegistry::new(
+                self_key.dupe(),
+                execution_platform.dupe(),
+                target_rule_type_name,
+            ),
             anon_targets: (ANON_TARGET_REGISTRY_NEW.get()?)(PhantomData, execution_platform),
             analysis_value_storage: AnalysisValueStorage::new(self_key),
+            bazel_predeclared_outputs: SmallMap::new(),
             short_path_assertions: HashMap::new(),
             content_based_path_assertions: HashSet::new(),
         })
@@ -163,6 +173,75 @@ impl<'v> AnalysisRegistry<'v> {
         path_resolution_method: BuckOutPathKind,
         heap: Heap<'v>,
     ) -> buck2_error::Result<DeclaredArtifact<'v>> {
+        self.declare_output_with_bazel_owner(
+            prefix,
+            filename,
+            output_type,
+            declaration_location,
+            path_resolution_method,
+            None,
+            heap,
+        )
+    }
+
+    pub fn declare_output_with_bazel_owner(
+        &mut self,
+        prefix: Option<&str>,
+        filename: &str,
+        output_type: OutputType,
+        declaration_location: Option<FileSpan>,
+        path_resolution_method: BuckOutPathKind,
+        bazel_owner: Option<ConfiguredTargetLabel>,
+        heap: Heap<'v>,
+    ) -> buck2_error::Result<DeclaredArtifact<'v>> {
+        self.declare_output_with_bazel_owner_and_output_root(
+            prefix,
+            filename,
+            output_type,
+            declaration_location,
+            path_resolution_method,
+            bazel_owner,
+            BazelOutputRoot::Bin,
+            heap,
+        )
+    }
+
+    pub fn declare_output_with_bazel_owner_and_output_root(
+        &mut self,
+        prefix: Option<&str>,
+        filename: &str,
+        output_type: OutputType,
+        declaration_location: Option<FileSpan>,
+        path_resolution_method: BuckOutPathKind,
+        bazel_owner: Option<ConfiguredTargetLabel>,
+        bazel_output_root: BazelOutputRoot,
+        heap: Heap<'v>,
+    ) -> buck2_error::Result<DeclaredArtifact<'v>> {
+        self.declare_output_with_bazel_owner_output_root_and_path_kind(
+            prefix,
+            filename,
+            output_type,
+            declaration_location,
+            path_resolution_method,
+            bazel_owner,
+            bazel_output_root,
+            BazelOutputPathKind::PackageRelative,
+            heap,
+        )
+    }
+
+    pub fn declare_output_with_bazel_owner_output_root_and_path_kind(
+        &mut self,
+        prefix: Option<&str>,
+        filename: &str,
+        output_type: OutputType,
+        declaration_location: Option<FileSpan>,
+        path_resolution_method: BuckOutPathKind,
+        bazel_owner: Option<ConfiguredTargetLabel>,
+        bazel_output_root: BazelOutputRoot,
+        bazel_output_path_kind: BazelOutputPathKind,
+        heap: Heap<'v>,
+    ) -> buck2_error::Result<DeclaredArtifact<'v>> {
         // We don't allow declaring `` as an output, although technically there's nothing preventing
         // that
         if filename.is_empty() {
@@ -174,14 +253,78 @@ impl<'v> AnalysisRegistry<'v> {
             None => None,
             Some(x) => Some(ForwardRelativePath::new(x)?.to_owned()),
         };
-        self.actions.declare_artifact(
-            prefix,
-            path,
+        let full_path = match &prefix {
+            Some(prefix) => prefix.join(&path),
+            None => path.clone(),
+        };
+        let predeclared_key = Self::bazel_predeclared_output_key(
+            full_path.as_str(),
+            bazel_output_root,
+            bazel_output_path_kind,
+        );
+        if let Some(artifact) = self.bazel_predeclared_outputs.get(&predeclared_key) {
+            if artifact.output_type() == output_type {
+                return Ok(artifact.dupe());
+            }
+        }
+        self.actions
+            .declare_artifact_with_bazel_owner_output_root_and_path_kind(
+                prefix,
+                path,
+                output_type,
+                declaration_location,
+                path_resolution_method,
+                bazel_owner,
+                bazel_output_root,
+                bazel_output_path_kind,
+                heap,
+            )
+    }
+
+    fn bazel_predeclared_output_key(
+        path: &str,
+        bazel_output_root: BazelOutputRoot,
+        bazel_output_path_kind: BazelOutputPathKind,
+    ) -> String {
+        format!(
+            "{}/{:?}/{}",
+            bazel_output_root.as_str(),
+            bazel_output_path_kind,
+            path
+        )
+    }
+
+    pub fn declare_bazel_predeclared_output(
+        &mut self,
+        filename: &str,
+        output_type: OutputType,
+        declaration_location: Option<FileSpan>,
+        path_resolution_method: BuckOutPathKind,
+        bazel_output_root: BazelOutputRoot,
+        heap: Heap<'v>,
+    ) -> buck2_error::Result<DeclaredArtifact<'v>> {
+        let artifact = self.declare_output_with_bazel_owner_and_output_root(
+            None,
+            filename,
             output_type,
             declaration_location,
             path_resolution_method,
+            self.analysis_value_storage
+                .self_key
+                .owner()
+                .configured_label(),
+            bazel_output_root,
             heap,
-        )
+        )?;
+        self.bazel_predeclared_outputs.insert(
+            Self::bazel_predeclared_output_key(
+                ForwardRelativePath::new(filename)?.as_str(),
+                bazel_output_root,
+                BazelOutputPathKind::PackageRelative,
+            ),
+            artifact.dupe(),
+        );
+        Ok(artifact)
     }
 
     /// Takes a string or artifact/output artifact and converts it into an output artifact
@@ -346,6 +489,7 @@ impl<'v> AnalysisRegistry<'v> {
             actions,
             anon_targets: _,
             analysis_value_storage,
+            bazel_predeclared_outputs: _,
             short_path_assertions: _,
             content_based_path_assertions: _,
         } = self;

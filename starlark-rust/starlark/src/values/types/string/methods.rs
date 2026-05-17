@@ -1329,6 +1329,21 @@ mod tests {
     }
 
     #[test]
+    fn test_string_iterables_are_sequences() {
+        assert::all_true(
+            r#"
+"abc".elems()[0] == "a"
+"abc".elems()[-1] == "c"
+"abc".elems()[1:] == ["b", "c"]
+"abc".elems()[::-1] == ["c", "b", "a"]
+len("abc".elems()) == 3
+"abc".codepoints()[1:] == [98, 99]
+len("abc".codepoints()) == 3
+"#,
+        );
+    }
+
+    #[test]
     fn test_startswith_with_start_end() {
         assert::all_true(
             r#"

@@ -19,6 +19,7 @@ use std::sync::Arc;
 use allocative::Allocative;
 use buck2_common::legacy_configs::configs::LegacyBuckConfig;
 use buck2_common::legacy_configs::key::BuckconfigKeyRef;
+use buck2_common::package_listing::PackageListingStrategy;
 use buck2_common::package_listing::listing::PackageListing;
 use buck2_core::build_file_path::BuildFilePath;
 use buck2_core::bxl::BxlFilePath;
@@ -26,6 +27,8 @@ use buck2_core::bzl::ImportPath;
 use buck2_core::cells::build_file_cell::BuildFileCell;
 use buck2_core::cells::cell_path::CellPath;
 use buck2_core::cells::cell_path_with_allowed_relative_dir::CellPathWithAllowedRelativeDir;
+use buck2_core::cells::paths::CellRelativePathBuf;
+use buck2_core::package::package_relative_path::PackageRelativePathBuf;
 use buck2_error::BuckErrorContext;
 use buck2_error::conversion::from_any_with_tag;
 use buck2_error::internal_error;
@@ -40,8 +43,9 @@ use buck2_interpreter::file_loader::LoadedModules;
 use buck2_interpreter::file_type::StarlarkFileType;
 use buck2_interpreter::import_paths::ImplicitImportPaths;
 use buck2_interpreter::package_imports::ImplicitImport;
+use buck2_interpreter::parse_import::ParseImportOptions;
 use buck2_interpreter::parse_import::RelativeImports;
-use buck2_interpreter::parse_import::parse_import;
+use buck2_interpreter::parse_import::parse_import_with_config_and_package_root;
 use buck2_interpreter::paths::module::OwnedStarlarkModulePath;
 use buck2_interpreter::paths::module::StarlarkModulePath;
 use buck2_interpreter::paths::package::PackageFilePath;
@@ -62,9 +66,15 @@ use pagable::PagablePanic;
 use starlark::codemap::FileSpan;
 use starlark::environment::FrozenModule;
 use starlark::syntax::AstModule;
+use starlark::syntax::ast::Argument;
+use starlark::syntax::ast::AstExpr;
+use starlark::syntax::ast::AstLiteral;
+use starlark::syntax::ast::Expr;
 use starlark::values::any_complex::StarlarkAnyComplex;
 
 use crate::interpreter::buckconfig::BuckConfigsViewForStarlark;
+use crate::interpreter::build_context::BazelRepositoryRuleInvocation;
+use crate::interpreter::build_context::BazelRepositoryRuleRecorder;
 use crate::interpreter::build_context::BuildContext;
 use crate::interpreter::build_context::PerFileTypeContext;
 use crate::interpreter::bzl_eval_ctx::BzlEvalCtx;
@@ -95,10 +105,11 @@ enum StarlarkPeakMemoryError {
 ///
 /// The imports are under a separate Arc so that that can be shared with
 /// the evaluation result (which needs the imports but no longer needs the AST).
-pub struct ParseData(
-    pub AstModule,
-    pub Arc<Vec<(Option<FileSpan>, OwnedStarlarkModulePath)>>,
-);
+pub struct ParseData {
+    pub ast: AstModule,
+    pub imports: Arc<Vec<(Option<FileSpan>, OwnedStarlarkModulePath)>>,
+    pub bazel_package_listing_strategy: Option<PackageListingStrategy>,
+}
 
 pub type ParseResult = Result<ParseData, buck2_error::Error>;
 
@@ -107,6 +118,7 @@ impl ParseData {
         ast: AstModule,
         implicit_imports: Vec<OwnedStarlarkModulePath>,
         resolver: &dyn LoadResolver,
+        is_build_file: bool,
     ) -> buck2_error::Result<Self> {
         let mut loads = implicit_imports.into_map(|x| (None, x));
         for x in ast.loads() {
@@ -120,15 +132,256 @@ impl ParseData {
                 })?;
             loads.push((Some(x.span), path));
         }
-        Ok(Self(ast, Arc::new(loads)))
+        let bazel_package_listing_strategy =
+            is_build_file.then(|| bazel_package_listing_strategy_from_ast(&ast));
+        Ok(Self {
+            ast,
+            imports: Arc::new(loads),
+            bazel_package_listing_strategy,
+        })
     }
 
     pub fn ast(&self) -> &AstModule {
-        &self.0
+        &self.ast
     }
 
     pub fn imports(&self) -> &Arc<Vec<(Option<FileSpan>, OwnedStarlarkModulePath)>> {
-        &self.1
+        &self.imports
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn strategy(source: &str) -> PackageListingStrategy {
+        let ast = AstModule::parse(
+            "BUILD.bazel",
+            source.to_owned(),
+            &StarlarkFileType::Buck.dialect(true),
+        )
+        .unwrap();
+        bazel_package_listing_strategy_from_ast(&ast)
+    }
+
+    fn prefix(path: &str) -> PackageRelativePathBuf {
+        PackageRelativePathBuf::try_from(path.to_owned()).unwrap()
+    }
+
+    #[test]
+    fn test_bazel_package_listing_strategy_does_not_recurse_for_load() {
+        assert_eq!(
+            strategy(
+                r#"
+load("//:defs.bzl", "go_library")
+go_library(name = "demo")
+"#
+            ),
+            PackageListingStrategy::Shallow
+        );
+    }
+
+    #[test]
+    fn test_bazel_package_listing_strategy_selective_glob_prefix() {
+        assert_eq!(
+            strategy(r#"cc_library(name = "demo", srcs = glob(["src/**/*.cc"]))"#),
+            PackageListingStrategy::Selective(vec![prefix("src")])
+        );
+    }
+
+    #[test]
+    fn test_bazel_package_listing_strategy_recursive_glob() {
+        assert_eq!(
+            strategy(r#"cc_library(name = "demo", srcs = glob(["**/*.cc"]))"#),
+            PackageListingStrategy::Recursive
+        );
+    }
+
+    #[test]
+    fn test_bazel_package_listing_strategy_subpackages() {
+        assert_eq!(
+            strategy(r#"subpackages(include = ["tools/**"])"#),
+            PackageListingStrategy::Selective(vec![prefix("tools")])
+        );
+        assert_eq!(
+            strategy(r#"sub_packages()"#),
+            PackageListingStrategy::Recursive
+        );
+    }
+}
+
+fn bazel_package_listing_strategy_from_ast(ast: &AstModule) -> PackageListingStrategy {
+    // Match Bazel's PackageFactory.checkBuildSyntax prefetch heuristic for BUILD
+    // files: direct glob/subpackages calls drive package traversal. Loaded
+    // macros request expanded package listings during evaluation if needed.
+    struct Visitor {
+        unknown_glob_use: bool,
+        prefixes: Vec<PackageRelativePathBuf>,
+    }
+
+    impl Visitor {
+        fn visit_expr(&mut self, node: &AstExpr) {
+            match &node.node {
+                Expr::Call(callee, arguments) if is_direct_package_listing_callee(callee) => {
+                    match literal_glob_include_patterns(arguments.args.as_slice()) {
+                        Some(patterns) => {
+                            for pattern in patterns {
+                                match glob_listing_prefix(&pattern) {
+                                    GlobListingPrefix::Shallow => {}
+                                    GlobListingPrefix::Prefix(prefix) => self.prefixes.push(prefix),
+                                    GlobListingPrefix::Recursive => {
+                                        self.unknown_glob_use = true;
+                                    }
+                                }
+                            }
+                        }
+                        None => self.unknown_glob_use = true,
+                    }
+                    for argument in &arguments.args {
+                        visit_argument_exprs(argument, |expr| self.visit_expr(expr));
+                    }
+                }
+                Expr::Identifier(ident)
+                    if ident.node.ident == "glob"
+                        || ident.node.ident == "subpackages"
+                        || ident.node.ident == "sub_packages" =>
+                {
+                    self.unknown_glob_use = true;
+                }
+                Expr::Dot(_, field)
+                    if field.node == "glob"
+                        || field.node == "subpackages"
+                        || field.node == "sub_packages" =>
+                {
+                    self.unknown_glob_use = true;
+                }
+                _ => node.visit_expr(|expr| self.visit_expr(expr)),
+            }
+        }
+    }
+
+    let mut visitor = Visitor {
+        unknown_glob_use: false,
+        prefixes: Vec::new(),
+    };
+    ast.statement().visit_expr(|expr| visitor.visit_expr(expr));
+    if visitor.unknown_glob_use {
+        PackageListingStrategy::Recursive
+    } else {
+        PackageListingStrategy::selective(visitor.prefixes)
+    }
+}
+
+pub(crate) fn package_listing_strategy_from_glob_patterns(
+    patterns: &[String],
+) -> PackageListingStrategy {
+    let mut prefixes = Vec::new();
+    for pattern in patterns {
+        match glob_listing_prefix(pattern) {
+            GlobListingPrefix::Shallow => {}
+            GlobListingPrefix::Prefix(prefix) => prefixes.push(prefix),
+            GlobListingPrefix::Recursive => return PackageListingStrategy::Recursive,
+        }
+    }
+    PackageListingStrategy::selective(prefixes)
+}
+
+fn is_direct_package_listing_callee(callee: &AstExpr) -> bool {
+    match &callee.node {
+        Expr::Identifier(ident) => {
+            ident.node.ident == "glob"
+                || ident.node.ident == "subpackages"
+                || ident.node.ident == "sub_packages"
+        }
+        Expr::Dot(_, field) => {
+            field.node == "glob" || field.node == "subpackages" || field.node == "sub_packages"
+        }
+        _ => false,
+    }
+}
+
+fn visit_argument_exprs(
+    argument: &starlark::syntax::ast::AstArgument,
+    mut f: impl FnMut(&AstExpr),
+) {
+    match &argument.node {
+        Argument::Positional(expr)
+        | Argument::Named(_, expr)
+        | Argument::Args(expr)
+        | Argument::KwArgs(expr) => f(expr),
+    }
+}
+
+fn literal_glob_include_patterns(
+    arguments: &[starlark::syntax::ast::AstArgument],
+) -> Option<Vec<String>> {
+    let mut positional = arguments
+        .iter()
+        .filter_map(|argument| match &argument.node {
+            Argument::Positional(expr) => Some(expr),
+            _ => None,
+        });
+    if let Some(include) = positional.next() {
+        return literal_string_list(include);
+    }
+
+    arguments.iter().find_map(|argument| match &argument.node {
+        Argument::Named(name, expr) if name.node == "include" => literal_string_list(expr),
+        _ => None,
+    })
+}
+
+fn literal_string_list(expr: &AstExpr) -> Option<Vec<String>> {
+    match &expr.node {
+        Expr::List(items) | Expr::Tuple(items) => items
+            .iter()
+            .map(|item| match &item.node {
+                Expr::Literal(AstLiteral::String(value)) => Some(value.node.clone()),
+                _ => None,
+            })
+            .collect(),
+        _ => None,
+    }
+}
+
+enum GlobListingPrefix {
+    Shallow,
+    Prefix(PackageRelativePathBuf),
+    Recursive,
+}
+
+fn glob_listing_prefix(pattern: &str) -> GlobListingPrefix {
+    let Some(wildcard) = pattern.find(['*', '[', '?']) else {
+        return match pattern.rsplit_once('/') {
+            Some((parent, _)) if !parent.is_empty() => parse_glob_prefix(parent),
+            _ => GlobListingPrefix::Shallow,
+        };
+    };
+
+    let wildcard_suffix = &pattern[wildcard..];
+    let before_wildcard = &pattern[..wildcard];
+    let literal_prefix = before_wildcard.trim_end_matches('/');
+    if before_wildcard.ends_with('/') && !literal_prefix.is_empty() {
+        return parse_glob_prefix(literal_prefix);
+    }
+    let Some((parent, _)) = literal_prefix.rsplit_once('/') else {
+        return if wildcard_suffix.contains('/') {
+            GlobListingPrefix::Recursive
+        } else {
+            GlobListingPrefix::Shallow
+        };
+    };
+    if parent.is_empty() {
+        GlobListingPrefix::Shallow
+    } else {
+        parse_glob_prefix(parent)
+    }
+}
+
+fn parse_glob_prefix(prefix: &str) -> GlobListingPrefix {
+    match PackageRelativePathBuf::try_from(prefix.to_owned()) {
+        Ok(prefix) => GlobListingPrefix::Prefix(prefix),
+        Err(_) => GlobListingPrefix::Recursive,
     }
 }
 
@@ -192,11 +445,17 @@ impl LoadResolver for InterpreterLoadResolver {
         let relative_import_option = RelativeImports::Allow {
             current_dir_with_allowed_relative: &self.config.current_dir_with_allowed_relative_dirs,
         };
-        let path = parse_import(
-            self.config.cell_info.cell_alias_resolver(),
+        let opts = ParseImportOptions {
+            allow_missing_at_symbol: false,
             relative_import_option,
+        };
+        let parsed_import = parse_import_with_config_and_package_root(
+            self.config.cell_info.cell_alias_resolver(),
             path,
+            &opts,
         )?;
+        let package_root = parsed_import.package_root;
+        let path = parsed_import.path;
 
         // check for bxl files first before checking for prelude.
         // All bxl imports are parsed the same regardless of prelude or not.
@@ -249,16 +508,32 @@ impl LoadResolver for InterpreterLoadResolver {
             if prelude_import.is_prelude_path(&path) {
                 if path.path().extension() == Some("json") {
                     return Ok(OwnedStarlarkModulePath::JsonFile(
-                        ImportPath::new_same_cell(path)?,
+                        ImportPath::new_same_cell_with_package_root(path, package_root)?,
                     ));
                 } else {
                     return Ok(OwnedStarlarkModulePath::LoadFile(
-                        ImportPath::new_same_cell(path)?,
+                        ImportPath::new_same_cell_with_package_root(path, package_root)?,
                     ));
                 }
             }
         }
-        let import_path = ImportPath::new_with_build_file_cells(path, self.build_file_cell)?;
+
+        // Bazel module repos carry their own repository mappings. A .bzl file loaded from a
+        // bzlmod repo must therefore resolve its own label literals and transitive loads in that
+        // repo's context, not in the context of the BUILD or .bzl file that imported it.
+        if path.cell().as_str().starts_with("bzlmod_") || path.cell().as_str() == "bazel_tools" {
+            let import_path = ImportPath::new_same_cell_with_package_root(path, package_root)?;
+            return Ok(match import_path.path().path().extension() {
+                Some("json") => OwnedStarlarkModulePath::JsonFile(import_path),
+                Some("toml") => OwnedStarlarkModulePath::TomlFile(import_path),
+                _ => OwnedStarlarkModulePath::LoadFile(import_path),
+            });
+        }
+        let import_path = ImportPath::new_with_build_file_cells_and_package_root(
+            path,
+            self.build_file_cell,
+            package_root,
+        )?;
         Ok(match import_path.path().path().extension() {
             Some("json") => OwnedStarlarkModulePath::JsonFile(import_path),
             Some("toml") => OwnedStarlarkModulePath::TomlFile(import_path),
@@ -275,7 +550,36 @@ struct EvalResult {
     starlark_tick_count: u64,
 }
 
+pub(crate) enum BuildFileEvalResult {
+    Complete(
+        Option<Arc<StarlarkProfileDataAndStats>>,
+        EvaluationResultWithStats,
+    ),
+    NeedsPackageListing(PackageListingStrategy),
+}
+
+enum BuildFileEvalControl {
+    Error(buck2_error::Error),
+    NeedsPackageListing(PackageListingStrategy),
+}
+
+impl From<buck2_error::Error> for BuildFileEvalControl {
+    fn from(error: buck2_error::Error) -> Self {
+        Self::Error(error)
+    }
+}
+
 impl InterpreterForDir {
+    pub(crate) fn equivalent(&self, other: &Self) -> bool {
+        self.global_state.equivalent(&other.global_state)
+            && self.cell_info == other.cell_info
+            && self.verbose_gc == other.verbose_gc
+            && self.ignore_attrs_for_profiling == other.ignore_attrs_for_profiling
+            && self.implicit_import_paths == other.implicit_import_paths
+            && self.current_dir_with_allowed_relative_dirs
+                == other.current_dir_with_allowed_relative_dirs
+    }
+
     fn verbose_gc() -> buck2_error::Result<bool> {
         match std::env::var_os("BUCK2_STARLARK_VERBOSE_GC") {
             Some(val) => Ok(!val.is_empty()),
@@ -316,16 +620,46 @@ impl InterpreterForDir {
         })
     }
 
+    fn bazel_compat_prelude_enabled(&self) -> bool {
+        match self.global_state.configuror.prelude_import() {
+            Some(prelude_import) => {
+                prelude_import.import_path().path().path().as_str() == "bazel/prelude.bzl"
+            }
+            None => false,
+        }
+    }
+
+    fn is_bazel_compat_path(&self, import: StarlarkPath<'_>) -> bool {
+        let import_cell = import.cell();
+        let import_cell_name = import_cell.as_str();
+        if import_cell_name == "bazel_tools" || import_cell_name.starts_with("bzlmod_") {
+            return true;
+        }
+        if import_cell_name == "root" && self.bazel_compat_prelude_enabled() {
+            return true;
+        }
+        match self.global_state.configuror.prelude_import() {
+            Some(prelude_import) if prelude_import.prelude_cell() == import_cell => {
+                if self.bazel_compat_prelude_enabled() {
+                    return true;
+                }
+
+                import.path().path().as_str().starts_with("bazel/")
+            }
+            _ => false,
+        }
+    }
+
     fn create_env<'v>(
         &self,
         env: BuckStarlarkModule<'v>,
         starlark_path: StarlarkPath<'_>,
         loaded_modules: &LoadedModules,
     ) -> buck2_error::Result<BuckStarlarkModule<'v>> {
-        if let Some(prelude_import) = self.prelude_import(starlark_path) {
+        if let Some(prelude_import) = self.prelude_import(starlark_path)? {
             let prelude_env = loaded_modules
                 .map
-                .get(&StarlarkModulePath::LoadFile(prelude_import.import_path()))
+                .get(&StarlarkModulePath::LoadFile(&prelude_import))
                 .ok_or_else(|| {
                     internal_error!(
                         "Should've had an env for the prelude import `{prelude_import}`"
@@ -357,6 +691,8 @@ impl InterpreterForDir {
         env: BuckStarlarkModule<'v>,
         build_file: &BuildFilePath,
         package_listing: &PackageListing,
+        package_listing_strategy: PackageListingStrategy,
+        package_listing_restart: Arc<RefCell<Option<PackageListingStrategy>>>,
         super_package: SuperPackage,
         package_boundary_exception: bool,
         loaded_modules: &LoadedModules,
@@ -365,6 +701,8 @@ impl InterpreterForDir {
             &self.cell_info,
             build_file.clone(),
             package_listing.dupe(),
+            package_listing_strategy,
+            package_listing_restart,
             super_package,
             package_boundary_exception,
             loaded_modules,
@@ -410,7 +748,14 @@ impl InterpreterForDir {
         self.implicit_import_paths.root_import.clone()
     }
 
-    fn prelude_import(&self, import: StarlarkPath) -> Option<&PreludePath> {
+    fn cell_default_prelude_import(
+        prelude_import: &PreludePath,
+    ) -> buck2_error::Result<ImportPath> {
+        let prelude_file = CellRelativePathBuf::unchecked_new("prelude.bzl".to_owned());
+        ImportPath::new_same_cell(CellPath::new(prelude_import.prelude_cell(), prelude_file))
+    }
+
+    fn prelude_import(&self, import: StarlarkPath) -> buck2_error::Result<Option<ImportPath>> {
         let prelude_import = self.global_state.configuror.prelude_import();
         if let Some(prelude_import) = prelude_import {
             let import_path = import.path();
@@ -418,17 +763,22 @@ impl InterpreterForDir {
             match import {
                 StarlarkPath::BuildFile(_)
                 | StarlarkPath::PackageFile(_)
-                | StarlarkPath::BxlFile(_) => return Some(prelude_import),
+                | StarlarkPath::BxlFile(_) => {
+                    if import_path.cell() == prelude_import.prelude_cell() {
+                        return Ok(Some(Self::cell_default_prelude_import(prelude_import)?));
+                    }
+                    return Ok(Some(prelude_import.import_path().clone()));
+                }
                 StarlarkPath::LoadFile(_) => {
                     if !prelude_import.is_prelude_path(&import_path) {
-                        return Some(prelude_import);
+                        return Ok(Some(prelude_import.import_path().clone()));
                     }
                 }
-                StarlarkPath::JsonFile(_) | StarlarkPath::TomlFile(_) => return None,
+                StarlarkPath::JsonFile(_) | StarlarkPath::TomlFile(_) => return Ok(None),
             }
         }
 
-        None
+        Ok(None)
     }
 
     /// Parses skylark code to an AST.
@@ -441,7 +791,8 @@ impl InterpreterForDir {
         // This check also prohibits tabs even where spaces are not significant,
         // for example inside parentheses in function call arguments,
         // which restricts what the spec allows.
-        if content.contains('\t') {
+        let is_bazel_compat_path = self.is_bazel_compat_path(import);
+        if content.contains('\t') && !is_bazel_compat_path {
             return Err(StarlarkTabsError(OwnedStarlarkPath::new(import)).into());
         }
 
@@ -450,12 +801,13 @@ impl InterpreterForDir {
             .cell_resolver
             .resolve_path(import.path().as_ref().as_ref())?;
 
-        let disable_starlark_types = self.global_state.disable_starlark_types;
-        let ast = match AstModule::parse(
-            project_relative_path.as_str(),
-            content,
-            &import.file_type().dialect(disable_starlark_types),
-        ) {
+        let disable_starlark_types =
+            self.global_state.disable_starlark_types || is_bazel_compat_path;
+        let mut dialect = import.file_type().dialect(disable_starlark_types);
+        if is_bazel_compat_path {
+            dialect.enable_tabs_as_whitespace = true;
+        }
+        let ast = match AstModule::parse(project_relative_path.as_str(), content, &dialect) {
             Ok(ast) => ast,
             Err(e) => {
                 return Ok(Err(buck2_error::Error::from(e).context(format!(
@@ -465,8 +817,8 @@ impl InterpreterForDir {
             }
         };
         let mut implicit_imports = Vec::new();
-        if let Some(i) = self.prelude_import(import) {
-            implicit_imports.push(OwnedStarlarkModulePath::LoadFile(i.import_path().clone()));
+        if let Some(i) = self.prelude_import(import)? {
+            implicit_imports.push(OwnedStarlarkModulePath::LoadFile(i));
         }
         if let StarlarkPath::BuildFile(build_file) = import {
             if let Some(i) = self.package_import(build_file) {
@@ -476,7 +828,13 @@ impl InterpreterForDir {
                 implicit_imports.push(OwnedStarlarkModulePath::LoadFile(i));
             }
         }
-        ParseData::new(ast, implicit_imports, &self.load_resolver(import)).map(Ok)
+        ParseData::new(
+            ast,
+            implicit_imports,
+            &self.load_resolver(import),
+            matches!(import, StarlarkPath::BuildFile(_)),
+        )
+        .map(Ok)
     }
 
     pub(crate) fn resolve_path(
@@ -572,22 +930,23 @@ impl InterpreterForDir {
         BuckStarlarkModule::with_profiling(|env| {
             let env = self.create_env(env, starlark_path.into(), &loaded_modules)?;
             let extra_context = match starlark_path {
-                StarlarkModulePath::LoadFile(bzl) => PerFileTypeContext::Bzl(BzlEvalCtx {
-                    bzl_path: bzl.clone(),
-                }),
+                StarlarkModulePath::LoadFile(bzl) => {
+                    PerFileTypeContext::Bzl(BzlEvalCtx::new(bzl.clone()))
+                }
                 StarlarkModulePath::BxlFile(bxl) => PerFileTypeContext::Bxl(bxl.clone()),
                 StarlarkModulePath::JsonFile(j) => PerFileTypeContext::Json(j.clone()),
                 StarlarkModulePath::TomlFile(t) => PerFileTypeContext::Toml(t.clone()),
             };
-            let typecheck = self.global_state.unstable_typecheck
-                || matches!(starlark_path, StarlarkModulePath::BxlFile(..))
-                || match self.global_state.configuror.prelude_import() {
-                    Some(prelude_import) => {
-                        prelude_import.prelude_cell()
-                            == self.cell_info.cell_alias_resolver().resolve_self()
-                    }
-                    None => false,
-                };
+            let typecheck = !self.is_bazel_compat_path(starlark_path.starlark_path())
+                && (self.global_state.unstable_typecheck
+                    || matches!(starlark_path, StarlarkModulePath::BxlFile(..))
+                    || match self.global_state.configuror.prelude_import() {
+                        Some(prelude_import) => {
+                            prelude_import.prelude_cell()
+                                == self.cell_info.cell_alias_resolver().resolve_self()
+                        }
+                        None => false,
+                    });
             let (finished_eval, _) = self.eval(
                 &env,
                 ast,
@@ -601,6 +960,166 @@ impl InterpreterForDir {
             let (token, frozen, _) = finished_eval.freeze_and_finish(env)?;
 
             Ok((token, frozen))
+        })
+    }
+
+    pub(crate) fn eval_bzlmod_module_extension(
+        self: &Arc<Self>,
+        extension_path: &ImportPath,
+        extension_module: &FrozenModule,
+        extension_name: &str,
+        extension_usages_json: &str,
+        module_ctx_working_dir: &str,
+        buckconfigs: &mut dyn BuckConfigsViewForStarlark,
+        eval_provider: StarlarkEvaluatorProvider,
+        cancellation: &CancellationContext,
+    ) -> buck2_error::Result<crate::bazel_repository::BazelModuleExtensionEvaluation> {
+        BuckStarlarkModule::with_profiling(|env| {
+            let extension_value = extension_module
+                .get_option(extension_name)
+                .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::Input))?
+                .ok_or_else(|| {
+                    buck2_error::Error::from(
+                        crate::bazel_repository::BazelRepositoryError::ModuleExtensionSymbolMissing {
+                            path: extension_path.to_string(),
+                            extension: extension_name.to_owned(),
+                        },
+                    )
+                })?;
+            let extension = crate::bazel_repository::module_extension_from_loaded_module(
+                extension_path,
+                extension_name,
+                extension_value,
+            )?;
+            let recorder = BazelRepositoryRuleRecorder::default();
+            let extra_context = PerFileTypeContext::Bzl(BzlEvalCtx::new(extension_path.clone()));
+            let extra = BuildContext::new_with_bazel_repository_rule_recorder(
+                &self.cell_info,
+                buckconfigs,
+                self.global_state.configuror.host_info(),
+                extra_context,
+                self.ignore_attrs_for_profiling,
+                &recorder,
+            );
+
+            let print = EventDispatcherPrintHandler(get_dispatcher());
+            let globals = self.global_state.globals();
+            let (finished_eval, evaluation) =
+                eval_provider.with_evaluator(&env, cancellation.into(), |eval, _| {
+                    eval.set_print_handler(&print);
+                    eval.set_soft_error_handler(&Buck2StarlarkSoftErrorHandler);
+                    eval.extra = Some(&extra);
+
+                    let module_ctx =
+                        crate::bazel_repository::alloc_bzlmod_module_extension_context(
+                            &extension,
+                            extension_usages_json,
+                            module_ctx_working_dir,
+                            globals,
+                            eval,
+                        )?;
+                    match extension.invoke_implementation(module_ctx, eval) {
+                        Ok(_) => Ok(crate::bazel_repository::BazelModuleExtensionEvaluation::Success(
+                            recorder.take_result(),
+                        )),
+                        Err(error) => {
+                            let label_deps =
+                                crate::bazel_repository::take_module_ctx_path_label_deps(
+                                    module_ctx,
+                                )?;
+                            if label_deps.is_empty() {
+                                Err(error.into())
+                            } else {
+                                Ok(crate::bazel_repository::BazelModuleExtensionEvaluation::NeedsPathLabelDeps {
+                                    label_deps,
+                                    error: error.to_string(),
+                                })
+                            }
+                        }
+                    }
+                })?;
+            let (token, _) = finished_eval.finish()?;
+            Ok((token, evaluation))
+        })
+    }
+
+    pub(crate) fn eval_bzlmod_repository_rule(
+        self: &Arc<Self>,
+        rule_path: &ImportPath,
+        rule_module: &FrozenModule,
+        invocation: &BazelRepositoryRuleInvocation,
+        repository_ctx_working_dir: &str,
+        buckconfigs: &mut dyn BuckConfigsViewForStarlark,
+        eval_provider: StarlarkEvaluatorProvider,
+        cancellation: &CancellationContext,
+    ) -> buck2_error::Result<crate::bazel_repository::BazelRepositoryRuleEvaluation> {
+        BuckStarlarkModule::with_profiling(|env| {
+            let rule_value = rule_module
+                .get_any_visibility(&invocation.rule_id.name)
+                .map(|(value, _)| value)
+                .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::Input))
+                .or_else(|_| {
+                    Err(buck2_error::Error::from(
+                        crate::bazel_repository::BazelRepositoryError::RepositoryRuleSymbolMissing {
+                            path: rule_path.to_string(),
+                            rule: invocation.rule_id.name.clone(),
+                        },
+                    ))
+                })?;
+            let repository_rule = crate::bazel_repository::repository_rule_from_loaded_module(
+                rule_path,
+                &invocation.rule_id.name,
+                rule_value,
+            )?;
+            let extra_context = PerFileTypeContext::Bzl(BzlEvalCtx::new(rule_path.clone()));
+            let extra = BuildContext::new(
+                &self.cell_info,
+                buckconfigs,
+                self.global_state.configuror.host_info(),
+                extra_context,
+                self.ignore_attrs_for_profiling,
+            );
+
+            let print = EventDispatcherPrintHandler(get_dispatcher());
+            let globals = self.global_state.globals();
+            let (finished_eval, evaluation) =
+                eval_provider.with_evaluator(&env, cancellation.into(), |eval, _| {
+                    eval.set_print_handler(&print);
+                    eval.set_soft_error_handler(&Buck2StarlarkSoftErrorHandler);
+                    eval.extra = Some(&extra);
+
+                    let repository_ctx = crate::bazel_repository::alloc_bzlmod_repository_context(
+                        repository_rule.as_ref(),
+                        invocation,
+                        repository_ctx_working_dir,
+                        globals,
+                        eval,
+                    )?;
+                    match repository_rule
+                        .as_ref()
+                        .invoke_implementation(repository_ctx, eval)
+                    {
+                        Ok(_) => Ok(crate::bazel_repository::BazelRepositoryRuleEvaluation::Success(
+                            crate::bazel_repository::take_repository_ctx_files(repository_ctx)?,
+                        )),
+                        Err(error) => {
+                            let label_deps =
+                                crate::bazel_repository::take_repository_ctx_path_label_deps(
+                                    repository_ctx,
+                                )?;
+                            if label_deps.is_empty() {
+                                Err(error.into())
+                            } else {
+                                Ok(crate::bazel_repository::BazelRepositoryRuleEvaluation::NeedsPathLabelDeps {
+                                    label_deps,
+                                    error: error.to_string(),
+                                })
+                            }
+                        }
+                    }
+                })?;
+            let (token, _) = finished_eval.finish()?;
+            Ok((token, evaluation))
         })
     }
 
@@ -669,6 +1188,7 @@ impl InterpreterForDir {
         build_file: &BuildFilePath,
         buckconfigs: &mut dyn BuckConfigsViewForStarlark,
         listing: PackageListing,
+        listing_strategy: PackageListingStrategy,
         super_package: SuperPackage,
         package_boundary_exception: bool,
         ast: AstModule,
@@ -676,15 +1196,15 @@ impl InterpreterForDir {
         eval_provider: StarlarkEvaluatorProvider,
         unstable_typecheck: bool,
         cancellation: &CancellationContext,
-    ) -> buck2_error::Result<(
-        Option<Arc<StarlarkProfileDataAndStats>>,
-        EvaluationResultWithStats,
-    )> {
-        BuckStarlarkModule::with_profiling(|env| {
+    ) -> buck2_error::Result<BuildFileEvalResult> {
+        match BuckStarlarkModule::with_profiling(|env| {
+            let package_listing_restart = Arc::new(RefCell::new(None));
             let (env, internals) = self.create_build_env(
                 env,
                 build_file,
                 &listing,
+                listing_strategy,
+                package_listing_restart.dupe(),
                 super_package,
                 package_boundary_exception,
                 &loaded_modules,
@@ -701,7 +1221,7 @@ impl InterpreterForDir {
             )?
             .unwrap_or(false);
 
-            let (finished_eval, eval_result) = self.eval(
+            let (finished_eval, eval_result) = match self.eval(
                 &env,
                 ast,
                 buckconfigs,
@@ -710,9 +1230,21 @@ impl InterpreterForDir {
                 eval_provider,
                 unstable_typecheck,
                 cancellation,
-            )?;
+            ) {
+                Ok(result) => result,
+                Err(e) => {
+                    if let Some(strategy) = package_listing_restart.borrow_mut().take() {
+                        return Err(BuildFileEvalControl::NeedsPackageListing(strategy));
+                    }
+                    return Err(e.into());
+                }
+            };
 
             let internals = eval_result.additional.into_build()?;
+            if let Some(strategy) = internals.take_package_listing_restart() {
+                let (token, _profile_data) = finished_eval.finish()?;
+                return Ok((token, BuildFileEvalResult::NeedsPackageListing(strategy)));
+            }
             let starlark_peak_allocated_bytes = env.heap().peak_allocated_bytes() as u64;
             let starlark_peak_mem_check_enabled =
                 !eval_result.is_profiling_enabled && starlark_peak_mem_config_enabled;
@@ -724,19 +1256,21 @@ impl InterpreterForDir {
 
             if starlark_peak_mem_check_enabled && starlark_peak_allocated_bytes > starlark_mem_limit
             {
-                Err(StarlarkPeakMemoryError::ExceedsThreshold(
-                    build_file.to_owned(),
-                    HumanizedBytes::fixed_width(starlark_peak_allocated_bytes),
-                    HumanizedBytes::fixed_width(starlark_mem_limit),
-                    get_starlark_warning_link().to_owned(),
+                Err(
+                    buck2_error::Error::from(StarlarkPeakMemoryError::ExceedsThreshold(
+                        build_file.to_owned(),
+                        HumanizedBytes::fixed_width(starlark_peak_allocated_bytes),
+                        HumanizedBytes::fixed_width(starlark_mem_limit),
+                        get_starlark_warning_link().to_owned(),
+                    ))
+                    .into(),
                 )
-                .into())
             } else {
                 let (token, profile_data) = finished_eval.finish()?;
 
                 Ok((
                     token,
-                    (
+                    BuildFileEvalResult::Complete(
                         profile_data,
                         EvaluationResultWithStats {
                             result: EvaluationResult::from(internals),
@@ -747,6 +1281,12 @@ impl InterpreterForDir {
                     ),
                 ))
             }
-        })
+        }) {
+            Ok(result) => Ok(result),
+            Err(BuildFileEvalControl::Error(error)) => Err(error),
+            Err(BuildFileEvalControl::NeedsPackageListing(strategy)) => {
+                Ok(BuildFileEvalResult::NeedsPackageListing(strategy))
+            }
+        }
     }
 }

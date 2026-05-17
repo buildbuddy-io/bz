@@ -14,7 +14,7 @@ use buck2_core::cells::CellResolver;
 use buck2_core::cells::build_file_cell::BuildFileCell;
 use pagable::Pagable;
 
-#[derive(Clone, Debug, Allocative, Pagable)]
+#[derive(Clone, Debug, PartialEq, Eq, Allocative, Pagable)]
 pub struct InterpreterCellInfo {
     cell_name: BuildFileCell,
     cell_resolver: CellResolver,

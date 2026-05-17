@@ -59,6 +59,9 @@ pub enum CommandExecutionKind {
     RemoteDepFileCache {
         details: RemoteCommandExecutionDetails,
     },
+    /// This action was served by Buck's persistent local action cache and not executed.
+    #[display("local_action_cache")]
+    LocalActionCache { digest: ActionDigest },
     /// This action would have executed via a local worker but failed during worker initialization.
     #[display("worker_init")]
     LocalWorkerInit {
@@ -88,6 +91,7 @@ impl CommandExecutionKind {
             },
             Self::ActionCache { .. } => buck2_data::ActionExecutionKind::ActionCache,
             Self::RemoteDepFileCache { .. } => buck2_data::ActionExecutionKind::RemoteDepFileCache,
+            Self::LocalActionCache { .. } => buck2_data::ActionExecutionKind::LocalActionCache,
         }
     }
 
@@ -97,6 +101,7 @@ impl CommandExecutionKind {
             Self::Remote { details, .. }
             | Self::ActionCache { details }
             | Self::RemoteDepFileCache { details } => details,
+            Self::LocalActionCache { .. } => return None,
             _ => return None,
         };
         details
@@ -179,6 +184,12 @@ impl CommandExecutionKind {
                         .map(|k| k.to_string()),
                     materialized_inputs_for_failed: Vec::new(),
                     materialized_outputs_for_failed_actions: Vec::new(),
+                })
+            }
+
+            Self::LocalActionCache { digest } => {
+                Command::OmittedLocalCommand(buck2_data::OmittedLocalCommand {
+                    action_digest: digest.to_string(),
                 })
             }
 

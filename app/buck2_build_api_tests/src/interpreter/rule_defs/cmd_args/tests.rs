@@ -463,6 +463,7 @@ fn test_format() -> buck2_error::Result<()> {
             args3.add(cmd_args(["foo", "bar"], delimiter=",", format="format-{}-{}-string"))
             args3.add(cmd_args("foo", format="format-{}-{}-string1"))
             args3.add(cmd_args("bar", format="format-{}-{}-string2"))
+            args3.add("--label", "@repo//pkg:target", format="Target-Label:%s")
 
             assert_eq(["format-foo-foo-stringformat-,bar-,bar-string"], get_args(args1))
             assert_eq(
@@ -478,6 +479,8 @@ fn test_format() -> buck2_error::Result<()> {
                     "format-foo-foo-string,format-bar-bar-string",
                     "format-foo-foo-string1",
                     "format-bar-bar-string2",
+                    "--label",
+                    "Target-Label:@repo//pkg:target",
                 ],
                 get_args(args3),
             )

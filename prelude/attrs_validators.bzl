@@ -10,7 +10,7 @@ _ATTRS_VALIDATORS_NAME = "attrs_validators"
 
 AttrsValidatorsInfo = provider(
     fields = {
-        "func": typing.Callable[[AnalysisActions, Label, struct], dict[str, Artifact]],
+        "func": typing.Callable[[AnalysisActions, ConfiguredProvidersLabel, struct], dict[str, Artifact]],
     },
 )
 

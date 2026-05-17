@@ -275,6 +275,14 @@ impl<'a, 'v, S: ArgSymbol> ArgumentsImpl<'v, 'a> for ArgumentsPos<'v, 'a, S> {
 pub struct Arguments<'v, 'a>(pub(crate) ArgumentsFull<'v, 'a, Symbol>);
 
 impl<'v, 'a> Arguments<'v, 'a> {
+    /// Construct arguments from positional values.
+    pub fn new_positional(pos: &'a [Value<'v>]) -> Self {
+        Arguments(ArgumentsFull {
+            pos,
+            ..ArgumentsFull::default()
+        })
+    }
+
     /// Unwrap all named arguments (both explicit and in `**kwargs`) into a map.
     ///
     /// This operation fails if named argument names are not unique.

@@ -63,7 +63,9 @@ impl<'a> ArtifactValueBuilder<'a> {
         path: ProjectRelativePathBuf,
         value: &ArtifactValue,
     ) -> buck2_error::Result<()> {
-        insert_artifact(&mut self.builder, path, value)
+        let abs_path = self.project_fs.resolve(&path);
+        let value = value.resolve_source_file_proxy(abs_path.as_abs_path(), self.digest_config)?;
+        insert_artifact(&mut self.builder, path, &value)
     }
 
     /// Takes an input `src_value`, adds it to the builder at `src`. Then
@@ -76,7 +78,10 @@ impl<'a> ArtifactValueBuilder<'a> {
         dest: &ProjectRelativePath,
     ) -> buck2_error::Result<()> {
         let symlink = new_symlink(self.project_fs.relative_path(&src, dest))?;
-        insert_artifact(&mut self.builder, src, src_value)?;
+        let abs_path = self.project_fs.resolve(&src);
+        let src_value =
+            src_value.resolve_source_file_proxy(abs_path.as_abs_path(), self.digest_config)?;
+        insert_artifact(&mut self.builder, src, &src_value)?;
         let entry = DirectoryEntry::Leaf(symlink);
         self.builder.insert(dest, entry)?;
         Ok(())
@@ -93,7 +98,10 @@ impl<'a> ArtifactValueBuilder<'a> {
         dest: &ProjectRelativePath,
         executable_bit_override: Option<bool>,
     ) -> buck2_error::Result<ActionDirectoryEntry<ActionSharedDirectory>> {
-        insert_artifact(&mut self.builder, src.to_buf(), src_value)?;
+        let abs_path = self.project_fs.resolve(src);
+        let src_value =
+            src_value.resolve_source_file_proxy(abs_path.as_abs_path(), self.digest_config)?;
+        insert_artifact(&mut self.builder, src.to_buf(), &src_value)?;
 
         let entry = match src_value.entry() {
             DirectoryEntry::Dir(directory) => {
@@ -130,6 +138,11 @@ impl<'a> ArtifactValueBuilder<'a> {
                     f.dupe()
                 };
                 DirectoryEntry::Leaf(ActionDirectoryMember::File(file_metadata))
+            }
+            DirectoryEntry::Leaf(ActionDirectoryMember::SourceFile(_)) => {
+                return Err(internal_error!(
+                    "source file proxy was not resolved before copying"
+                ));
             }
         };
 

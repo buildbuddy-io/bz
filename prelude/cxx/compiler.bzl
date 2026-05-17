@@ -15,7 +15,7 @@ load(":cxx_toolchain_types.bzl", "DepTrackingMode")
 
 # TODO(T110378132): Added here for compat with v1, but this might make more
 # sense on the toolchain definition.
-def get_flags_for_reproducible_build(target_label: Label, compiler_type: str) -> list[[str, cmd_args]]:
+def get_flags_for_reproducible_build(target_label: ConfiguredProvidersLabel, compiler_type: str) -> list[[str, cmd_args]]:
     """
     Return flags needed to make compilations reproducible (e.g. avoiding
     embedding the working directory into debug info.

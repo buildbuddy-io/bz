@@ -19,6 +19,8 @@ use allocative::Allocative;
 use buck2_build_api::actions::artifact::get_artifact_fs::GetArtifactFs;
 use buck2_build_api::analysis::registry::AnalysisRegistry;
 use buck2_build_api::interpreter::rule_defs::context::AnalysisActions;
+use buck2_build_api::interpreter::rule_defs::context::AnalysisToolchains;
+use buck2_build_api::interpreter::rule_defs::context::BazelCppOptions;
 use buck2_common::dice::cells::HasCellResolver;
 use buck2_common::dice::data::HasIoProvider;
 use buck2_common::target_aliases::BuckConfigTargetAliasResolver;
@@ -29,6 +31,7 @@ use buck2_core::cells::cell_path::CellPath;
 use buck2_core::cells::name::CellName;
 use buck2_core::execution_types::execution::ExecutionPlatformResolution;
 use buck2_core::fs::artifact_path_resolver::ArtifactFs;
+use buck2_core::fs::buck_out_path::BazelOutputRoot;
 use buck2_core::fs::project::ProjectRoot;
 use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
 use buck2_core::global_cfg_options::GlobalCfgOptions;
@@ -357,8 +360,15 @@ impl<'v> BxlContext<'v> {
         Ok(Self {
             state: heap.alloc_typed(AnalysisActions {
                 state: RefCell::new(None),
-                attributes: None,
+                label: None,
+                toolchains: AnalysisToolchains::empty(heap),
+                bazel_cpp_options: BazelCppOptions::default(),
+                bazel_output_root: BazelOutputRoot::Bin,
+                attributes: RefCell::new(None),
+                bazel_context_override: RefCell::new(None),
                 plugins: None,
+                build_file_path: None,
+                rule_kind_name: None,
                 digest_config,
             }),
             context_type,
@@ -376,8 +386,15 @@ impl<'v> BxlContext<'v> {
         Ok(Self {
             state: heap.alloc_typed(AnalysisActions {
                 state: RefCell::new(Some(analysis_registry)),
-                attributes: None,
+                label: None,
+                toolchains: AnalysisToolchains::empty(heap),
+                bazel_cpp_options: BazelCppOptions::default(),
+                bazel_output_root: BazelOutputRoot::Bin,
+                attributes: RefCell::new(None),
+                bazel_context_override: RefCell::new(None),
                 plugins: None,
+                build_file_path: None,
+                rule_kind_name: None,
                 digest_config,
             }),
             context_type: BxlContextType::Dynamic(dynamic_data),
@@ -395,8 +412,15 @@ impl<'v> BxlContext<'v> {
         Ok(Self {
             state: heap.alloc_typed(AnalysisActions {
                 state: RefCell::new(Some(analysis_registry)),
-                attributes: Some(attributes),
+                label: None,
+                toolchains: AnalysisToolchains::empty(heap),
+                bazel_cpp_options: BazelCppOptions::default(),
+                bazel_output_root: BazelOutputRoot::Bin,
+                attributes: RefCell::new(Some(attributes)),
+                bazel_context_override: RefCell::new(None),
                 plugins: None,
+                build_file_path: None,
+                rule_kind_name: None,
                 digest_config,
             }),
             context_type: BxlContextType::AnonTarget,

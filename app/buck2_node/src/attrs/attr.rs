@@ -27,6 +27,13 @@ use crate::attrs::coerced_attr::CoercedAttr;
 use crate::attrs::display::AttrDisplayWithContextExt;
 use crate::attrs::traversal::CoercedAttrTraversal;
 
+#[derive(Debug, buck2_error::Error)]
+#[buck2(tag = Input)]
+enum AttributeAllowedValuesError {
+    #[error("value `{value}` is not one of the allowed values: {}", .allowed.join(", "))]
+    InvalidValue { value: String, allowed: Vec<String> },
+}
+
 #[derive(Clone, Debug, Hash, Eq, PartialEq, Pagable, Allocative)]
 enum AttributeDefault {
     No,
@@ -49,6 +56,59 @@ pub struct Attribute {
     /// The coercer to take this parameter's value from Starlark value -> an
     /// internal representation
     coercer: AttrType,
+    /// Bazel `values` restrictions validate explicit target values without changing attr type.
+    allowed_values: Option<AttributeAllowedValues>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Pagable, Allocative)]
+pub struct AttributeAllowedValues {
+    values: Box<[CoercedAttr]>,
+}
+
+impl AttributeAllowedValues {
+    pub fn new(values: Vec<CoercedAttr>) -> Option<Self> {
+        if values.is_empty() {
+            None
+        } else {
+            Some(Self {
+                values: values.into_boxed_slice(),
+            })
+        }
+    }
+
+    pub fn validate(&self, value: &CoercedAttr) -> buck2_error::Result<()> {
+        match value {
+            CoercedAttr::Selector(selector) => {
+                for (_, value) in selector.all_entries() {
+                    self.validate(value)?;
+                }
+                Ok(())
+            }
+            CoercedAttr::Concat(concat) => {
+                for value in concat.iter() {
+                    self.validate(value)?;
+                }
+                Ok(())
+            }
+            CoercedAttr::SelectFail(_) | CoercedAttr::SelectIncompatible(_) => Ok(()),
+            CoercedAttr::OneOf(value, _) => self.validate(value),
+            value => {
+                if self.values.iter().any(|allowed| allowed == value) {
+                    Ok(())
+                } else {
+                    Err(AttributeAllowedValuesError::InvalidValue {
+                        value: value.as_display_no_ctx().to_string(),
+                        allowed: self
+                            .values
+                            .iter()
+                            .map(|value| value.as_display_no_ctx().to_string())
+                            .collect(),
+                    }
+                    .into())
+                }
+            }
+        }
+    }
 }
 
 impl Attribute {
@@ -60,6 +120,15 @@ impl Attribute {
         default: Option<Arc<CoercedAttr>>,
         doc: &str,
         coercer: AttrType,
+    ) -> buck2_error::Result<Self> {
+        Self::new_with_allowed_values(default, doc, coercer, None)
+    }
+
+    pub fn new_with_allowed_values(
+        default: Option<Arc<CoercedAttr>>,
+        doc: &str,
+        coercer: AttrType,
+        allowed_values: Option<AttributeAllowedValues>,
     ) -> buck2_error::Result<Self> {
         Ok(Attribute {
             default: match default {
@@ -78,6 +147,7 @@ impl Attribute {
             },
             doc: doc.to_owned(),
             coercer,
+            allowed_values,
         })
     }
 
@@ -86,6 +156,7 @@ impl Attribute {
             default: AttributeDefault::DefaultOnly(default),
             doc: doc.to_owned(),
             coercer,
+            allowed_values: None,
         }
     }
 
@@ -118,6 +189,13 @@ impl Attribute {
 
     pub fn doc(&self) -> &str {
         &self.doc
+    }
+
+    pub fn validate_allowed_values(&self, value: &CoercedAttr) -> buck2_error::Result<()> {
+        match &self.allowed_values {
+            Some(allowed_values) => allowed_values.validate(value),
+            None => Ok(()),
+        }
     }
 }
 
@@ -174,6 +252,10 @@ fn collect_default_deps(
         fn input(&mut self, _input: SourcePathRef) -> buck2_error::Result<()> {
             Ok(())
         }
+
+        fn inputs_require_package(&self) -> bool {
+            false
+        }
     }
 
     let mut default_deps = SmallSet::new();
@@ -185,4 +267,30 @@ fn collect_default_deps(
         },
     )?;
     Ok(default_deps)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use buck2_core::package::package_relative_path::PackageRelativePathBuf;
+
+    use crate::attrs::attr::Attribute;
+    use crate::attrs::attr_type::AttrType;
+    use crate::attrs::coerced_attr::CoercedAttr;
+    use crate::attrs::coerced_path::CoercedPath;
+
+    #[test]
+    fn source_file_defaults_do_not_need_package_to_collect_default_deps() -> buck2_error::Result<()>
+    {
+        let path = PackageRelativePathBuf::unchecked_new("LICENSE".to_owned());
+        let default = Arc::new(CoercedAttr::SourceFile(CoercedPath::File(
+            path.as_path().to_arc(),
+        )));
+
+        let attr = Attribute::new(Some(default), "", AttrType::source(false))?;
+
+        assert!(attr.default_allowed_deps().is_none());
+        Ok(())
+    }
 }

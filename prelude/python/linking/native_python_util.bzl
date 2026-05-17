@@ -44,8 +44,8 @@ CxxExtensionLinkInfoMember = record(
     artifacts = field([dict[str, Artifact], None], None),
     python_module_names = field([dict[str, str], None], None),
     unembeddable_extensions = field([dict[str, LinkableProviders], None], None),
-    dlopen_deps = field([dict[Label, LinkableProviders], None], None),
-    shared_only_libs = field([dict[Label, LinkableProviders], None], None),
+    dlopen_deps = field([dict[ConfiguredProvidersLabel, LinkableProviders], None], None),
+    shared_only_libs = field([dict[ConfiguredProvidersLabel, LinkableProviders], None], None),
 )
 CxxExtensionLinkInfoReduced = record(
     linkable_providers = field(list[LinkableProviders], []),

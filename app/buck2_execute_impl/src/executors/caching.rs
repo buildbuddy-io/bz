@@ -400,7 +400,9 @@ impl CacheUploader {
                     tree_digests.push(tree_digest);
                 }
                 DirectoryEntry::Leaf(
-                    ActionDirectoryMember::Symlink(..) | ActionDirectoryMember::ExternalSymlink(..),
+                    ActionDirectoryMember::SourceFile(_)
+                    | ActionDirectoryMember::Symlink(..)
+                    | ActionDirectoryMember::ExternalSymlink(..),
                 ) => {
                     // Bail, there is something that is not a file here and we don't handle this.
                     // This will happen if the value is a symlink. The primary output of a command

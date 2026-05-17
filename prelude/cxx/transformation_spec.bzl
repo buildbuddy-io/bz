@@ -28,12 +28,12 @@ TransformationKind = enum(
 )
 
 TransformationResultProvider = provider(fields = {
-    "determine_transformation": provider_field(typing.Callable[[Label, BuildGraphInfo], TransformationKind | None]),
+    "determine_transformation": provider_field(typing.Callable[[ConfiguredProvidersLabel, BuildGraphInfo], TransformationKind | None]),
     "is_empty": provider_field(bool),
 })
 
 TransformationTest = record(
-    matcher = Label | BuildTargetPattern | BuildGraphPattern,
+    matcher = ConfiguredProvidersLabel | BuildTargetPattern | BuildGraphPattern,
     result = TransformationKind,
 )
 
@@ -95,12 +95,12 @@ def _build_transformations(transformations: list[(str | Dependency, str)]) -> li
     return parsed_transformations
 
 def build_determine_transformation(
-        transformations: list[TransformationTest]) -> typing.Callable[[Label, BuildGraphInfo], TransformationKind | None]:
-    def callable(label: Label, graph_info: BuildGraphInfo) -> TransformationKind | None:
+        transformations: list[TransformationTest]) -> typing.Callable[[ConfiguredProvidersLabel, BuildGraphInfo], TransformationKind | None]:
+    def callable(label: ConfiguredProvidersLabel, graph_info: BuildGraphInfo) -> TransformationKind | None:
         for transform in transformations:
             if isinstance(transform.matcher, BuildTargetPattern) and transform.matcher.matches(label):
                 return transform.result
-            elif isinstance(transform.matcher, Label) and transform.matcher == label:
+            elif isinstance(transform.matcher, ConfiguredProvidersLabel) and transform.matcher == label:
                 return transform.result
             elif isinstance(transform.matcher, BuildGraphPattern) and transform.matcher.matches(label, graph_info):
                 return transform.result

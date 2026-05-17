@@ -187,7 +187,7 @@ pub(crate) async fn targets_resolve_aliases(
                     .with_buck_error_context(|| {
                         format!("Package cannot be evaluated: `{package}`")
                     })?
-                    .resolve_target(target_name)
+                    .resolve_target_node(target_name)
                     .with_buck_error_context(|| {
                         format!("Target does not exist in package `{package}`: `{target_name}`",)
                     })

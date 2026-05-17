@@ -44,7 +44,7 @@ CommonArgsInfo = record(
     crate_type = field(CrateType),
     params = field(BuildParams),
     emit = field(Emit),
-    crate_map = field(list[(CrateName, Label)]),
+    crate_map = field(list[(CrateName, ConfiguredProvidersLabel)]),
 )
 
 # Compile info which is reusable between multiple compilation command performed

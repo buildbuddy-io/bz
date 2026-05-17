@@ -9,11 +9,15 @@
  */
 
 use buck2_build_api::interpreter::rule_defs::context::ANALYSIS_ACTIONS_METHODS_ACTIONS;
+use buck2_build_api::interpreter::rule_defs::provider::builtin::cc_info::BAZEL_CC_CREATE_COMPILE_ACTION;
+use buck2_build_api::interpreter::rule_defs::provider::builtin::java_info::BAZEL_JAVA_RUN_ACTION;
 
 use crate::context::copy::analysis_actions_methods_copy;
 use crate::context::download::analysis_actions_methods_download;
 use crate::context::dynamic_output::analysis_actions_methods_dynamic_output;
 use crate::context::run::analysis_actions_methods_run;
+use crate::context::run::register_bazel_cc_compile_action;
+use crate::context::run::register_bazel_java_run_action;
 use crate::context::unsorted::analysis_actions_methods_unsorted;
 use crate::context::write::analysis_actions_methods_write;
 
@@ -31,6 +35,8 @@ mod write;
 /// can either be artifacts created with `declare_output` or strings that are implicitly converted
 /// to output artifacts.
 pub(crate) fn init_analysis_action_methods_actions() {
+    BAZEL_CC_CREATE_COMPILE_ACTION.init(register_bazel_cc_compile_action);
+    BAZEL_JAVA_RUN_ACTION.init(register_bazel_java_run_action);
     ANALYSIS_ACTIONS_METHODS_ACTIONS.init(|methods| {
         analysis_actions_methods_copy(methods);
         analysis_actions_methods_download(methods);

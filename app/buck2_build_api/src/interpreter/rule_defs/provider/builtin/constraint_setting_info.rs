@@ -21,12 +21,14 @@ use buck2_build_api_derive::internal_provider;
 use buck2_core::configuration::constraints::ConstraintKey;
 use buck2_core::configuration::constraints::ConstraintValue;
 use buck2_interpreter::types::configured_providers_label::StarlarkProvidersLabel;
+use buck2_interpreter::types::target_label::LabelArg;
 use buck2_interpreter::types::target_label::StarlarkTargetLabel;
 use dupe::Dupe;
 use starlark::any::ProvidesStaticType;
 use starlark::coerce::Coerce;
 use starlark::environment::GlobalsBuilder;
 use starlark::values::Freeze;
+use starlark::values::Heap;
 use starlark::values::Trace;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
@@ -98,10 +100,15 @@ fn constraint_info_creator(globals: &mut GlobalsBuilder) {
     #[starlark(as_type = FrozenConstraintSettingInfo)]
     fn ConstraintSettingInfo<'v>(
         #[starlark(require = named)] label: ValueOf<'v, &'v StarlarkTargetLabel>,
-        #[starlark(require = named, default = NoneOr::None)] default: NoneOr<
-            ValueOf<'v, &'v StarlarkProvidersLabel>,
-        >,
+        #[starlark(require = named, default = NoneOr::None)] default: NoneOr<LabelArg<'v>>,
+        heap: Heap<'v>,
     ) -> starlark::Result<ConstraintSettingInfo<'v>> {
+        let default = match default {
+            NoneOr::None => NoneOr::None,
+            NoneOr::Other(default) => {
+                NoneOr::Other(heap.alloc_value_of(default.to_provider_label()))
+            }
+        };
         Ok(ConstraintSettingInfo::new(label, default))
     }
 }

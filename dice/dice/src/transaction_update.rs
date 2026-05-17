@@ -18,6 +18,7 @@ use crate::DiceTransaction;
 use crate::api::key::Key;
 use crate::api::user_data::UserComputationData;
 use crate::impls::transaction::TransactionUpdater;
+use crate::introspection::graph::AnyKey;
 use crate::transaction::DiceTransactionImpl;
 
 /// The struct for which we build transactions. This is where changes are recorded, and committed
@@ -57,6 +58,10 @@ impl DiceTransactionUpdaterImpl {
         self.0.changed_to(changed)
     }
 
+    pub(crate) fn pending_change_count(&self) -> usize {
+        self.0.pending_change_count()
+    }
+
     /// Commit the changes registered via 'changed' and 'changed_to' to the current newest version.
     pub(crate) fn commit(self) -> impl Future<Output = DiceTransaction> {
         self.0
@@ -83,5 +88,39 @@ impl DiceTransactionUpdaterImpl {
     pub fn unstable_take(self) -> Self {
         self.0.unstable_take();
         self
+    }
+
+    pub(crate) fn existing_keys_for_introspection(&self) -> Vec<AnyKey> {
+        self.0.existing_keys_for_introspection()
+    }
+
+    pub(crate) fn existing_keys_of_type_for_introspection<K>(&self) -> Vec<K>
+    where
+        K: Key + Clone,
+    {
+        self.0.existing_keys_of_type_for_introspection::<K>()
+    }
+
+    pub(crate) fn existing_key_values_of_type_for_introspection<K>(
+        &self,
+    ) -> Vec<(K, Option<K::Value>)>
+    where
+        K: Key + Clone,
+        K::Value: Clone,
+    {
+        self.0.existing_key_values_of_type_for_introspection::<K>()
+    }
+
+    pub(crate) fn existing_key_values_of_two_types_for_introspection<K1, K2>(
+        &self,
+    ) -> (Vec<(K1, Option<K1::Value>)>, Vec<(K2, Option<K2::Value>)>)
+    where
+        K1: Key + Clone,
+        K1::Value: Clone,
+        K2: Key + Clone,
+        K2::Value: Clone,
+    {
+        self.0
+            .existing_key_values_of_two_types_for_introspection::<K1, K2>()
     }
 }

@@ -52,6 +52,10 @@ pub enum RuleType {
     Starlark(Arc<StarlarkRuleType>),
     #[display("forward")]
     Forward,
+    #[display("bazel_output_file")]
+    BazelOutputFile,
+    #[display("bazel_input_file")]
+    BazelInputFile,
 }
 
 impl RuleType {
@@ -59,6 +63,8 @@ impl RuleType {
         match self {
             RuleType::Starlark(rule_type) => rule_type.name.as_str(),
             RuleType::Forward => "forward",
+            RuleType::BazelOutputFile => "bazel_output_file",
+            RuleType::BazelInputFile => "bazel_input_file",
         }
     }
 }

@@ -104,7 +104,11 @@ pub(super) fn extended_ignore_error<'a>(
                         Some(file_name) if !v.contains(file_name) => {
                             let mut cell_suggestion = vec![];
                             if let Ok(cell_resolver) = ctx.get_cell_resolver().await {
-                                for (cell_name, _) in cell_resolver.cells() {
+                                for (cell_name, cell) in cell_resolver.cells() {
+                                    if cell.external().is_some() {
+                                        continue;
+                                    }
+
                                     let cell_path = CellPathRef::new(cell_name, path.path());
 
                                     if DiceFileComputations::read_path_metadata_if_exists(

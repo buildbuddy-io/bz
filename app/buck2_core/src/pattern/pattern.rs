@@ -31,6 +31,7 @@ use crate::cells::cell_path::CellPathCow;
 use crate::cells::cell_path::CellPathRef;
 use crate::cells::cell_path_with_allowed_relative_dir::CellPathWithAllowedRelativeDir;
 use crate::cells::cell_root_path::CellRootPathBuf;
+use crate::cells::external::bzlmod_cell_name;
 use crate::cells::name::CellName;
 use crate::cells::paths::CellRelativePath;
 use crate::configuration::bound_label::BoundConfigurationLabel;
@@ -1091,6 +1092,20 @@ fn parse_target_pattern_no_validate<T>(
 where
     T: PatternType,
 {
+    let canonical_pattern;
+    let canonical_cell;
+    let pattern = match bazel_canonical_label_pattern(pattern, cell_resolver)? {
+        Some((cell, pattern)) => {
+            canonical_cell = Some(cell);
+            canonical_pattern = pattern;
+            canonical_pattern.as_str()
+        }
+        None => {
+            canonical_cell = None;
+            pattern
+        }
+    };
+
     let TargetParsingOptions {
         relative,
         infer_target,
@@ -1099,7 +1114,9 @@ where
 
     let lex = lex_target_pattern(pattern, strip_package_trailing_slash)?;
 
-    if let Some(target_alias_resolver) = relative.target_alias_resolver() {
+    if canonical_cell.is_none()
+        && let Some(target_alias_resolver) = relative.target_alias_resolver()
+    {
         if let Some(aliased) = resolve_target_alias(
             relative.cell(),
             cell_resolver,
@@ -1116,7 +1133,10 @@ where
         pattern,
     } = lex;
 
-    let pattern = if infer_target {
+    // Bazel treats `//some/package` as shorthand for `//some/package:package`.
+    // Keep relative Buck patterns precise, but accept that shorthand when the
+    // pattern explicitly names a cell via `//` or `@cell//`.
+    let pattern = if infer_target || cell_alias.is_some() {
         pattern.infer_target()?
     } else {
         pattern.reject_ambiguity()?
@@ -1136,7 +1156,10 @@ where
     }
 
     // We ask for the cell, but if the pattern is relative we might not use it
-    let cell = cell_alias_resolver.resolve(cell_alias.unwrap_or_default())?;
+    let cell = match canonical_cell {
+        Some(cell) => cell,
+        None => cell_alias_resolver.resolve(cell_alias.unwrap_or_default())?,
+    };
 
     let package_path = pattern.package_path();
 
@@ -1170,6 +1193,33 @@ where
         parsed_pattern,
         modifiers,
     })
+}
+
+fn bazel_canonical_label_pattern(
+    pattern: &str,
+    cell_resolver: &CellResolver,
+) -> buck2_error::Result<Option<(CellName, String)>> {
+    let Some(rest) = pattern.strip_prefix("@@") else {
+        return Ok(None);
+    };
+    let Some((canonical_repo_name, package_and_target)) =
+        split1_opt_ascii(rest, AsciiStr2::new("//"))
+    else {
+        return Ok(None);
+    };
+
+    let cell = if canonical_repo_name.is_empty() {
+        cell_resolver.root_cell()
+    } else if canonical_repo_name == "bazel_tools" {
+        CellName::unchecked_new("bazel_tools")?
+    } else {
+        CellName::unchecked_new(&bzlmod_cell_name(canonical_repo_name))?
+    };
+
+    Ok(Some((
+        cell,
+        format!("{}//{}", cell.as_str(), package_and_target),
+    )))
 }
 
 #[derive(buck2_error::Error, Debug)]
@@ -1427,6 +1477,16 @@ mod tests {
                 (
                     CellName::testing_new("cell2"),
                     CellRootPathBuf::testing_new("cell2"),
+                ),
+                (
+                    CellName::testing_new("bazel_tools"),
+                    CellRootPathBuf::testing_new("bazel_tools"),
+                ),
+                (
+                    CellName::testing_new("bzlmod_rules_go_0_57_0"),
+                    CellRootPathBuf::testing_new(
+                        "buck-out/v2/external_cells/bzlmod/rules_go+0.57.0",
+                    ),
                 ),
             ],
             StdBuckHashMap::from_iter([
@@ -2013,6 +2073,64 @@ mod tests {
             )?
         );
         Ok(())
+    }
+
+    #[test]
+    fn parse_bazel_package_shorthand_as_target() {
+        assert_eq!(
+            mk_target("root", "package/path", "path"),
+            ParsedPattern::<TargetPatternExtra>::parse_precise(
+                "//package/path",
+                CellName::testing_new("root"),
+                &resolver(),
+                &alias_resolver(),
+            )
+            .unwrap()
+        );
+        assert_eq!(
+            mk_providers("cell2", "package/path", "path", None),
+            ParsedPattern::<ProvidersPatternExtra>::parse_precise(
+                "@alias2//package/path",
+                CellName::testing_new("root"),
+                &resolver(),
+                &alias_resolver(),
+            )
+            .unwrap()
+        );
+    }
+
+    #[test]
+    fn parse_bazel_canonical_label_patterns() {
+        assert_eq!(
+            mk_package::<TargetPatternExtra>("root", ""),
+            ParsedPattern::<TargetPatternExtra>::parse_precise(
+                "@@//:",
+                CellName::testing_new("root"),
+                &resolver(),
+                &alias_resolver(),
+            )
+            .unwrap()
+        );
+        assert_eq!(
+            mk_target("bazel_tools", "tools/build_defs/repo", "http.bzl"),
+            ParsedPattern::<TargetPatternExtra>::parse_precise(
+                "@@bazel_tools//tools/build_defs/repo:http.bzl",
+                CellName::testing_new("root"),
+                &resolver(),
+                &alias_resolver(),
+            )
+            .unwrap()
+        );
+        assert_eq!(
+            mk_providers("bzlmod_rules_go_0_57_0", "go", "sdk", None),
+            ParsedPattern::<ProvidersPatternExtra>::parse_precise(
+                "@@rules_go+0.57.0//go:sdk",
+                CellName::testing_new("root"),
+                &resolver(),
+                &alias_resolver(),
+            )
+            .unwrap()
+        );
     }
 
     #[test_case(PhantomData::< TargetPatternExtra >; "parsing TargetPattern")]

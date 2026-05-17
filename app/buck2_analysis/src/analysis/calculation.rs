@@ -69,6 +69,8 @@ use smallvec::SmallVec;
 use crate::analysis::env::RuleSpec;
 use crate::analysis::env::get_user_defined_rule_spec;
 use crate::analysis::env::run_analysis;
+use crate::analysis::env::run_bazel_input_file_analysis;
+use crate::analysis::env::run_bazel_output_file_analysis;
 use crate::attrs::resolve::ctx::AnalysisQueryResult;
 
 struct RuleAnalysisCalculationInstance;
@@ -280,6 +282,7 @@ async fn get_analysis_result_inner(
 
     // For precision, grab the *actual* rule type and not the *underlying* rule type.
     let target_rule_type_name = configured_node.rule_type().name().to_owned();
+    let action_owner_rule_type_name: Arc<str> = Arc::from(configured_node.underlying_rule_type().name());
 
     let configured_node = configured_node.as_ref();
 
@@ -322,6 +325,7 @@ async fn get_analysis_result_inner(
                                     configured_node.execution_platform_resolution(),
                                     &rule_spec,
                                     configured_node,
+                                    action_owner_rule_type_name.dupe(),
                                     cancellation,
                                 ),
                                 buck2_data::AnalysisStageEnd {},
@@ -375,6 +379,41 @@ async fn get_analysis_result_inner(
 
                 ((res, now, None), spans)
             }
+            RuleType::BazelOutputFile => {
+                let dep_analysis = get_dep_analysis(configured_node, ctx).await?;
+                let now = std::time::Instant::now();
+                let (res, spans) = async_record_root_spans(async {
+                    run_bazel_output_file_analysis(
+                        ctx,
+                        target,
+                        dep_analysis,
+                        configured_node.execution_platform_resolution(),
+                        configured_node,
+                        cancellation,
+                    )
+                    .await
+                    .map(MaybeCompatible::Compatible)
+                })
+                .await;
+
+                ((res, now, None), spans)
+            }
+            RuleType::BazelInputFile => {
+                let now = std::time::Instant::now();
+                let (res, spans) = async_record_root_spans(async {
+                    run_bazel_input_file_analysis(
+                        ctx,
+                        target,
+                        configured_node.execution_platform_resolution(),
+                        cancellation,
+                    )
+                    .await
+                    .map(MaybeCompatible::Compatible)
+                })
+                .await;
+
+                ((res, now, None), spans)
+            }
         };
 
     let analysis_end = std::time::Instant::now();
@@ -422,6 +461,12 @@ fn all_deps(nodes: &[ConfiguredTargetNode]) -> LabelIndexedSet<ConfiguredTargetN
                 }
                 RuleType::Forward => {
                     // No starlark code ran on forward node.
+                }
+                RuleType::BazelOutputFile => {
+                    // No user Starlark code ran on Bazel output-file node.
+                }
+                RuleType::BazelInputFile => {
+                    // No user Starlark code ran on Bazel input-file node.
                 }
             }
 

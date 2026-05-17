@@ -11,6 +11,7 @@
 use std::hash::Hash;
 
 use allocative::Allocative;
+use buck2_core::cells::external::bzlmod_canonical_repo_name_for_cell;
 use buck2_core::provider::label::ConfiguredProvidersLabel;
 use buck2_core::provider::label::NonDefaultProvidersName;
 use buck2_core::provider::label::ProviderName;
@@ -47,7 +48,15 @@ use crate::types::cell_path::StarlarkCellPath;
 use crate::types::configuration::StarlarkConfiguration;
 use crate::types::configured_providers_label::StarlarkConfiguredProvidersLabel;
 use crate::types::configured_providers_label::StarlarkProvidersLabel;
+use crate::types::label_display::bazel_label_string_for_target;
 use crate::types::package_path::StarlarkPackagePath;
+
+fn bazel_repo_name_for_cell(cell: &str) -> String {
+    if cell == "root" {
+        return String::new();
+    }
+    bzlmod_canonical_repo_name_for_cell(cell).unwrap_or_else(|| cell.to_owned())
+}
 
 #[derive(
     Clone,
@@ -108,6 +117,12 @@ impl<'v> StarlarkValue<'v> for StarlarkTargetLabel {
             ValueError::unsupported_with(self, "compare", other)
         }
     }
+
+    fn collect_repr(&self, collector: &mut String) {
+        collector.push_str(
+            &bazel_label_string_for_target(&self.label).unwrap_or_else(|| self.label.to_string()),
+        );
+    }
 }
 
 #[starlark_module]
@@ -128,6 +143,20 @@ fn label_methods(builder: &mut MethodsBuilder) {
     #[starlark(attribute)]
     fn cell<'v>(this: &'v StarlarkTargetLabel) -> starlark::Result<&'v str> {
         Ok(this.label.pkg().cell_name().as_str())
+    }
+
+    #[starlark(attribute)]
+    fn repo_name(this: &StarlarkTargetLabel) -> starlark::Result<String> {
+        Ok(bazel_repo_name_for_cell(
+            this.label.pkg().cell_name().as_str(),
+        ))
+    }
+
+    #[starlark(attribute)]
+    fn workspace_name(this: &StarlarkTargetLabel) -> starlark::Result<String> {
+        Ok(bazel_repo_name_for_cell(
+            this.label.pkg().cell_name().as_str(),
+        ))
     }
 
     #[starlark(attribute)]
@@ -251,6 +280,20 @@ fn configured_label_methods(builder: &mut MethodsBuilder) {
     }
 
     #[starlark(attribute)]
+    fn repo_name(this: &StarlarkConfiguredTargetLabel) -> starlark::Result<String> {
+        Ok(bazel_repo_name_for_cell(
+            this.label.pkg().cell_name().as_str(),
+        ))
+    }
+
+    #[starlark(attribute)]
+    fn workspace_name(this: &StarlarkConfiguredTargetLabel) -> starlark::Result<String> {
+        Ok(bazel_repo_name_for_cell(
+            this.label.pkg().cell_name().as_str(),
+        ))
+    }
+
+    #[starlark(attribute)]
     fn path<'v>(this: &StarlarkConfiguredTargetLabel) -> starlark::Result<StarlarkCellPath> {
         Ok(StarlarkCellPath(this.label.pkg().to_cell_path()))
     }
@@ -337,6 +380,7 @@ fn value_to_providers_name(subtarget_name: SubtargetNameArg) -> buck2_error::Res
 pub enum LabelArg<'v> {
     Target(&'v StarlarkTargetLabel),
     Providers(&'v StarlarkProvidersLabel),
+    ConfiguredProviders(&'v StarlarkConfiguredProvidersLabel),
 }
 
 impl<'v> LabelArg<'v> {
@@ -347,6 +391,9 @@ impl<'v> LabelArg<'v> {
                 ProvidersName::Default,
             )),
             LabelArg::Providers(t) => StarlarkProvidersLabel::new(t.label().dupe()),
+            LabelArg::ConfiguredProviders(t) => {
+                StarlarkProvidersLabel::new(t.label().unconfigured())
+            }
         }
     }
 }

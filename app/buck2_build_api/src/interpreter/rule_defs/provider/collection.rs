@@ -61,6 +61,7 @@ use starlark::values::ValueOfUnchecked;
 use starlark::values::list::ListRef;
 use starlark::values::none::NoneOr;
 use starlark::values::starlark_value;
+use starlark::values::tuple::TupleRef;
 use starlark::values::type_repr::StarlarkTypeRepr;
 
 use crate::interpreter::rule_defs::provider::DefaultInfo;
@@ -68,6 +69,8 @@ use crate::interpreter::rule_defs::provider::DefaultInfoCallable;
 use crate::interpreter::rule_defs::provider::FrozenBuiltinProviderLike;
 use crate::interpreter::rule_defs::provider::FrozenDefaultInfo;
 use crate::interpreter::rule_defs::provider::ValueAsProviderLike;
+use crate::interpreter::rule_defs::provider::builtin::output_group_info::OutputGroupInfoCallable;
+use crate::interpreter::rule_defs::provider::builtin::output_group_info::merge_output_group_info_values;
 use crate::interpreter::rule_defs::provider::ty::abstract_provider::AbstractProvider;
 
 fn format_provider_keys_for_error(keys: &[String]) -> String {
@@ -135,7 +138,8 @@ static_starlark_value!(EMPTY_PROVIDER_COLLECTION: FrozenProviderCollection = Fro
     providers: SmallMap::new(),
 });
 
-fn empty_provider_collection_value() -> FrozenValueTyped<'static, FrozenProviderCollection> {
+pub(crate) fn empty_provider_collection_value()
+-> FrozenValueTyped<'static, FrozenProviderCollection> {
     EMPTY_PROVIDER_COLLECTION.unpack()
 }
 
@@ -219,6 +223,42 @@ enum GetOp {
 }
 
 impl<'v, V: ValueLike<'v>> ProviderCollectionGen<V> {
+    pub fn default_info_value(&self) -> buck2_error::Result<Value<'v>> {
+        self.providers
+            .get(DefaultInfoCallable::provider_id())
+            .map(|value| value.to_value())
+            .ok_or_else(|| {
+                internal_error!(
+                    "DefaultInfo should always be set for providers returned from rule function"
+                )
+            })
+    }
+
+    fn insert_provider_value(
+        providers: &mut SmallMap<Arc<ProviderId>, Value<'v>>,
+        value: Value<'v>,
+    ) -> buck2_error::Result<()> {
+        match ValueAsProviderLike::unpack_value(value)? {
+            Some(provider) => {
+                if let Some(existing_value) = providers.insert(provider.0.id().dupe(), value) {
+                    return Err(ProviderCollectionError::CollectionSpecifiedProviderTwice {
+                        provider_name: provider.0.id().name.clone(),
+                        original_repr: existing_value.to_repr(),
+                        new_repr: value.to_repr(),
+                    }
+                    .into());
+                };
+            }
+            None => {
+                return Err(ProviderCollectionError::CollectionElementNotAProvider {
+                    repr: value.to_repr(),
+                }
+                .into());
+            }
+        }
+        Ok(())
+    }
+
     /// Create most of the collection but don't do final assembly, or validate DefaultInfo here.
     /// This is an internal detail
     fn try_from_value_impl(
@@ -239,27 +279,45 @@ impl<'v, V: ValueLike<'v>> ProviderCollectionGen<V> {
 
         let mut providers = SmallMap::with_capacity(list.len());
         for value in list.iter() {
-            match ValueAsProviderLike::unpack_value(value)? {
-                Some(provider) => {
-                    if let Some(existing_value) = providers.insert(provider.0.id().dupe(), value) {
-                        return Err(ProviderCollectionError::CollectionSpecifiedProviderTwice {
-                            provider_name: provider.0.id().name.clone(),
-                            original_repr: existing_value.to_repr(),
-                            new_repr: value.to_repr(),
-                        }
-                        .into());
-                    };
-                }
-                None => {
-                    return Err(ProviderCollectionError::CollectionElementNotAProvider {
-                        repr: value.to_repr(),
-                    }
-                    .into());
-                }
-            }
+            Self::insert_provider_value(&mut providers, value)?;
         }
 
         Ok(providers)
+    }
+
+    fn try_from_bazel_value_impl(
+        mut value: Value<'v>,
+    ) -> buck2_error::Result<SmallMap<Arc<ProviderId>, Value<'v>>> {
+        value = StarlarkPromise::get_recursive(value);
+
+        let mut providers = SmallMap::new();
+        if value.is_none() {
+            return Ok(providers);
+        }
+
+        if ValueAsProviderLike::unpack_value(value)?.is_some() {
+            Self::insert_provider_value(&mut providers, value)?;
+            return Ok(providers);
+        }
+
+        if let Some(list) = ListRef::from_value(value) {
+            for value in list.iter() {
+                Self::insert_provider_value(&mut providers, value)?;
+            }
+            return Ok(providers);
+        }
+
+        if let Some(tuple) = TupleRef::from_value(value) {
+            for value in tuple.content() {
+                Self::insert_provider_value(&mut providers, *value)?;
+            }
+            return Ok(providers);
+        }
+
+        Err(ProviderCollectionError::CollectionNotAList {
+            repr: value.to_repr(),
+        }
+        .into())
     }
 
     /// Takes a value, e.g. a return from a `rule()` implementation function, and builds a `ProviderCollection` from it.
@@ -277,6 +335,35 @@ impl<'v, V: ValueLike<'v>> ProviderCollectionGen<V> {
             .into());
         }
 
+        Ok(ProviderCollection::<'v> { providers })
+    }
+
+    /// Takes a value returned from a Bazel Starlark rule implementation and builds a provider
+    /// collection. Bazel accepts `None`, a single provider, or a sequence of providers, and injects
+    /// a `DefaultInfo` containing the rule's predeclared outputs when the implementation did not
+    /// return one.
+    pub fn try_from_value_bazel_rule(
+        value: Value<'v>,
+        heap: Heap<'v>,
+        default_outputs: Vec<Value<'v>>,
+    ) -> buck2_error::Result<ProviderCollection<'v>> {
+        let mut providers = Self::try_from_bazel_value_impl(value)?;
+        if !providers.contains_key(DefaultInfoCallable::provider_id()) {
+            providers.insert(
+                DefaultInfoCallable::provider_id().dupe(),
+                heap.alloc(DefaultInfo::with_default_outputs(heap, default_outputs)),
+            );
+        }
+
+        Ok(ProviderCollection::<'v> { providers })
+    }
+
+    /// Takes a value returned from a Bazel Starlark aspect implementation and builds a provider
+    /// collection without requiring or injecting `DefaultInfo`.
+    pub fn try_from_value_bazel_aspect(
+        value: Value<'v>,
+    ) -> buck2_error::Result<ProviderCollection<'v>> {
+        let providers = Self::try_from_bazel_value_impl(value)?;
         Ok(ProviderCollection::<'v> { providers })
     }
 
@@ -342,6 +429,43 @@ impl<'v, V: ValueLike<'v>> ProviderCollectionGen<V> {
             Either::Left(v) => Ok(NoneOr::Other(ValueOfUnchecked::new(v))),
             Either::Right(_) => Ok(NoneOr::None),
         }
+    }
+}
+
+impl<'v> ProviderCollection<'v> {
+    pub fn shallow_clone(&self) -> ProviderCollection<'v> {
+        ProviderCollection {
+            providers: self.providers.clone(),
+        }
+    }
+
+    pub fn insert_provider(&mut self, value: Value<'v>) -> buck2_error::Result<()> {
+        ProviderCollectionGen::<Value<'v>>::insert_provider_value(&mut self.providers, value)
+    }
+
+    pub fn extend_from(
+        &mut self,
+        heap: Heap<'v>,
+        other: ProviderCollection<'v>,
+    ) -> buck2_error::Result<()> {
+        for (_, value) in other.providers {
+            let Some(provider) = ValueAsProviderLike::unpack(value) else {
+                return Err(ProviderCollectionError::CollectionElementNotAProvider {
+                    repr: value.to_repr(),
+                }
+                .into());
+            };
+            let provider_id = provider.0.id().dupe();
+            if provider_id == OutputGroupInfoCallable::provider_id().dupe() {
+                if let Some(existing) = self.providers.get(&provider_id).copied() {
+                    let merged = merge_output_group_info_values(heap, existing, value)?;
+                    self.providers.insert(provider_id, merged);
+                    continue;
+                }
+            }
+            self.insert_provider(value)?;
+        }
+        Ok(())
     }
 }
 

@@ -21,13 +21,17 @@ use buck2_artifact::artifact::build_artifact::BuildArtifact;
 use buck2_artifact::artifact::source_artifact::SourceArtifact;
 use buck2_common::dice::cells::HasCellResolver;
 use buck2_common::file_ops::dice::DiceFileComputations;
+use buck2_common::file_ops::metadata::FileChangeMetadata;
 use buck2_common::file_ops::metadata::RawPathMetadata;
+use buck2_common::file_ops::metadata::RawPathMetadataForNoWatchFs;
 use buck2_common::file_ops::metadata::RawSymlink;
+use buck2_common::file_ops::metadata::SourceFileMetadata;
 use buck2_common::legacy_configs::dice::HasLegacyConfigs;
 use buck2_common::legacy_configs::key::BuckconfigKeyRef;
 use buck2_common::package_listing::dice::DicePackageListingResolver;
 use buck2_core::build_file_path::BuildFilePath;
 use buck2_core::cells::cell_path::CellPath;
+use buck2_core::fs::artifact_path_resolver::ArtifactFs;
 use buck2_core::package::PackageLabel;
 use buck2_directory::directory::directory_data::DirectoryData;
 use buck2_error::BuckErrorContext;
@@ -84,11 +88,19 @@ impl ArtifactGroupCalculation for DiceComputations<'_> {
         &mut self,
         input: &ArtifactGroup,
     ) -> buck2_error::Result<ArtifactGroupValues> {
-        // TODO consider if we need to cache this
         let resolved_artifacts = input.resolved_artifact(self).await?;
-        ensure_artifact_group_staged(self, resolved_artifacts.clone())
-            .await?
-            .into_group_values(&resolved_artifacts)
+        match &resolved_artifacts {
+            ResolvedArtifactGroup::Artifact(artifact) => {
+                self.compute(&EnsureArtifactGroupValuesKey(artifact.dupe()))
+                    .await?
+            }
+            ResolvedArtifactGroup::TransitiveSetProjection(..) => {
+                let artifact_fs = self.get_artifact_fs().await?;
+                ensure_artifact_group_staged(self, resolved_artifacts.clone())
+                    .await?
+                    .into_group_values(&resolved_artifacts, &artifact_fs)
+            }
+        }
     }
 }
 
@@ -225,12 +237,13 @@ impl EnsureArtifactGroupReady {
     pub(crate) fn into_group_values<'v>(
         self,
         resolved_artifact_group: &ResolvedArtifactGroup<'v>,
+        artifact_fs: &ArtifactFs,
     ) -> buck2_error::Result<ArtifactGroupValues> {
         match self {
             EnsureArtifactGroupReady::TransitiveSet(values) => Ok(values),
             EnsureArtifactGroupReady::Single(value) => match resolved_artifact_group {
                 ResolvedArtifactGroup::Artifact(artifact) => {
-                    Ok(ArtifactGroupValues::from_artifact(artifact.clone(), value))
+                    ArtifactGroupValues::from_artifact_with_fs(artifact.clone(), value, artifact_fs)
                 }
                 ResolvedArtifactGroup::TransitiveSetProjection(_) => {
                     Err(EnsureArtifactStagedError::ExpectedTransitiveSet.into())
@@ -246,6 +259,42 @@ impl EnsureArtifactGroupReady {
                 Err(EnsureArtifactStagedError::UnpackSingleTransitiveSet.into())
             }
         }
+    }
+}
+
+#[derive(
+    Clone, Dupe, Eq, PartialEq, Hash, Display, Debug, Allocative, RefCast, Pagable
+)]
+#[display("ensure_artifact_group_values({})", _0)]
+#[repr(transparent)]
+#[pagable_typetag(dice::DiceKeyDyn)]
+struct EnsureArtifactGroupValuesKey(Artifact);
+
+#[async_trait]
+impl Key for EnsureArtifactGroupValuesKey {
+    type Value = buck2_error::Result<ArtifactGroupValues>;
+
+    async fn compute(
+        &self,
+        ctx: &mut DiceComputations,
+        _cancellation: &CancellationContext,
+    ) -> Self::Value {
+        let artifact_fs = ctx.get_artifact_fs().await?;
+        let value = ensure_artifact_staged(ctx, self.0.dupe())
+            .await?
+            .unpack_single()?;
+        ArtifactGroupValues::from_artifact_with_fs(self.0.dupe(), value, &artifact_fs)
+    }
+
+    fn equality(x: &Self::Value, y: &Self::Value) -> bool {
+        match (x, y) {
+            (Ok(x), Ok(y)) => x.shallow_equals(y),
+            _ => false,
+        }
+    }
+
+    fn value_serialize() -> impl ValueSerialize<Value = Self::Value> {
+        OkPagableValueSerialize::<Self::Value>::new()
     }
 }
 
@@ -323,7 +372,7 @@ async fn dir_artifact_value(
                         // TODO(scottcao): This current creates a `DirArtifactValueKey` for each subdir of a source directory.
                         // Instead, this should be 1 key for the entire top-level directory since there's almost
                         // no chance of getting cache hit with a sub-directory.
-                        let value = path_artifact_value(
+                        let value = path_artifact_value_digest(
                             ctx,
                             Arc::new(self.0.as_ref().join(&x.file_name)),
                             None,
@@ -401,6 +450,51 @@ async fn path_artifact_value(
     cell_path: Arc<CellPath>,
     label: Option<PackageLabel>,
 ) -> buck2_error::Result<ArtifactValue> {
+    let raw = match DiceFileComputations::read_path_metadata_for_no_watchfs(
+        ctx,
+        cell_path.as_ref().as_ref(),
+    )
+    .await
+    {
+        Ok(raw) => Ok(raw),
+        Err(e) => {
+            if let Some(label) = label.dupe() {
+                if let Ok(listing) = DicePackageListingResolver(ctx)
+                    .resolve_package_listing(label.dupe())
+                    .await
+                {
+                    return Err(e.with_package_context_information(
+                        BuildFilePath::new(label, listing.buildfile().to_owned())
+                            .path()
+                            .path()
+                            .to_string(),
+                    ));
+                }
+            }
+
+            Err(e.without_package_context_information())
+        }
+    }?;
+
+    match raw {
+        RawPathMetadataForNoWatchFs::File(FileChangeMetadata::Digest(metadata)) => {
+            Ok(ArtifactValue::file(metadata))
+        }
+        RawPathMetadataForNoWatchFs::File(FileChangeMetadata::ContentsProxy(contents_proxy)) => Ok(
+            ArtifactValue::source_file(SourceFileMetadata::new(contents_proxy)),
+        ),
+        RawPathMetadataForNoWatchFs::Directory | RawPathMetadataForNoWatchFs::Symlink { .. } => {
+            path_artifact_value_digest(ctx, cell_path, label).await
+        }
+    }
+}
+
+#[async_recursion]
+async fn path_artifact_value_digest(
+    ctx: &mut DiceComputations<'_>,
+    cell_path: Arc<CellPath>,
+    label: Option<PackageLabel>,
+) -> buck2_error::Result<ArtifactValue> {
     let raw = match DiceFileComputations::read_path_metadata(ctx, cell_path.as_ref().as_ref()).await
     {
         Ok(raw) => Ok(raw),
@@ -442,7 +536,8 @@ async fn path_artifact_value(
             to: RawSymlink::Relative(target, target_rel),
         } => {
             // TODO (T126181780): This should have a limit on recursion.
-            let target_artifact_value = path_artifact_value(ctx, target.dupe(), label).await?;
+            let target_artifact_value =
+                path_artifact_value_digest(ctx, target.dupe(), label).await?;
             let root_cell = ctx.get_cell_resolver().await?.root_cell();
             let use_correct_source_symlink_reading = ctx
                 .parse_legacy_config_property(
@@ -623,7 +718,7 @@ impl Key for EnsureTransitiveSetProjectionKey {
                         values.push((artifact.dupe(), ready.unpack_single()?))
                     }
                     ResolvedArtifactGroup::TransitiveSetProjection(..) => {
-                        children.push(ready.into_group_values(group)?)
+                        children.push(ready.into_group_values(group, &artifact_fs)?)
                     }
                 }
             }
