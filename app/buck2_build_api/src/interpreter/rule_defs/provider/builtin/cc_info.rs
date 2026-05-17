@@ -3127,6 +3127,18 @@ fn bazel_cc_collect_attr_input_values<'v>(
     bazel_cc_collect_input_values(value, values)
 }
 
+fn bazel_cc_optional_bool_arg(value: Value<'_>, name: &str) -> starlark::Result<Option<bool>> {
+    if value.is_none() {
+        return Ok(None);
+    }
+    value.unpack_bool().map(Some).ok_or_else(|| {
+        bazel_cc_error(format!(
+            "Expected `{name}` to be a bool, got `{}`",
+            value.get_type()
+        ))
+    })
+}
+
 fn bazel_cc_collect_output<'v>(
     value: Value<'v>,
     outputs: &mut Vec<ValueTyped<'v, StarlarkDeclaredArtifact<'v>>>,
@@ -4278,6 +4290,11 @@ fn bazel_cc_internal_methods(builder: &mut MethodsBuilder) {
         #[starlark(require = named, default = NoneType)] copts_filter: Value<'v>,
         #[starlark(require = named, default = false)] use_pic: bool,
         #[starlark(require = named, default = NoneType)] needs_include_validation: Value<'v>,
+        #[starlark(require = named, default = NoneType)] cache_key_inputs: Value<'v>,
+        #[starlark(require = named, default = NoneType)] build_info_header_files: Value<'v>,
+        #[starlark(require = named, default = NoneType)] additional_prunable_headers: Value<'v>,
+        #[starlark(require = named, default = NoneType)] should_scan_includes: Value<'v>,
+        #[starlark(require = named, default = NoneType)] shareable: Value<'v>,
         #[starlark(require = named, default = NoneType)] toolchain_type: Value<'v>,
         #[starlark(kwargs)] _kwargs: SmallMap<String, Value<'v>>,
         eval: &mut Evaluator<'v, '_, '_>,
@@ -4290,6 +4307,10 @@ fn bazel_cc_internal_methods(builder: &mut MethodsBuilder) {
             .selected_tool(&action_name)?
             .tool_path(&feature_configuration.data.tools_directory);
         let executable = heap.alloc_str(&tool_path).to_value();
+        let should_scan_includes =
+            bazel_cc_optional_bool_arg(should_scan_includes, "should_scan_includes")?
+                .unwrap_or(false);
+        let _shareable = bazel_cc_optional_bool_arg(shareable, "shareable")?;
         let command_line = heap.alloc_typed(BazelCcCompileCommandLine {
             feature_configuration: Arc::clone(&feature_configuration.data),
             action_name: action_name.clone(),
@@ -4301,8 +4322,13 @@ fn bazel_cc_internal_methods(builder: &mut MethodsBuilder) {
         bazel_cc_collect_input_values(additional_compilation_inputs, &mut inputs)?;
         bazel_cc_collect_input_values(additional_compilation_inputs_set, &mut inputs)?;
         bazel_cc_collect_input_values(additional_include_scanning_roots, &mut inputs)?;
+        bazel_cc_collect_input_values(cache_key_inputs, &mut inputs)?;
+        bazel_cc_collect_input_values(build_info_header_files, &mut inputs)?;
         for attr in ["headers", "_non_code_inputs"] {
             bazel_cc_collect_attr_input_values(cc_compilation_context, attr, &mut inputs, heap)?;
+        }
+        if !should_scan_includes && dotd_file.is_none() {
+            bazel_cc_collect_input_values(additional_prunable_headers, &mut inputs)?;
         }
         if let Some(module_map) = cc_compilation_context.get_attr("_module_map", heap)? {
             bazel_cc_collect_attr_input_values(module_map, "file", &mut inputs, heap)?;
@@ -4314,13 +4340,25 @@ fn bazel_cc_internal_methods(builder: &mut MethodsBuilder) {
                 bazel_cc_collect_attr_values(module_map, "file", &mut inputs, heap)?;
             }
         }
-        for attr in [
-            "_compiler_files",
-            "_builtin_include_files",
-            "_compiler_files_without_includes",
-        ] {
-            bazel_cc_collect_attr_input_values(cc_toolchain, attr, &mut inputs, heap)?;
+        let toolchain_files = if should_scan_includes {
+            "_compiler_files_without_includes"
+        } else if action_name == "assemble" {
+            "_as_files"
+        } else {
+            "_compiler_files"
+        };
+        bazel_cc_collect_attr_input_values(cc_toolchain, toolchain_files, &mut inputs, heap)?;
+        if should_scan_includes {
+            // Bazel falls back to compiler_files when compiler_files_without_includes is empty.
+            // Keeping both here is a safe over-approximation for the rare include-scanning case.
+            bazel_cc_collect_attr_input_values(cc_toolchain, "_compiler_files", &mut inputs, heap)?;
         }
+        bazel_cc_collect_attr_input_values(
+            cc_toolchain,
+            "_builtin_include_files",
+            &mut inputs,
+            heap,
+        )?;
         for variable in [
             "module_map_file",
             "dependent_module_map_files",
@@ -4354,6 +4392,7 @@ fn bazel_cc_internal_methods(builder: &mut MethodsBuilder) {
             copts_filter,
             use_pic,
             needs_include_validation,
+            additional_prunable_headers,
             toolchain_type,
         );
 
