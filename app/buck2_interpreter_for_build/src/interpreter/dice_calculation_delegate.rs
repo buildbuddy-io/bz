@@ -987,6 +987,84 @@ fn rewrite_bazel_rules_java_helper(
     const NATIVE_RESOURCE_MAPPER_STUB: &str = r#"def _resource_mapper(file):
     return java_common.internal_DO_NOT_USE().resource_mapper(file)
 "#;
+    const CREATE_SINGLE_JAR_STUB: &str = r#"def _create_single_jar(
+        actions,
+        toolchain,
+        output,
+        sources = depset(),
+        resources = depset(),
+        mnemonic = "JavaSingleJar",
+        progress_message = "Building singlejar jar %{output}",
+        build_target = None,
+        output_creator = None):
+    """Register singlejar action for the output jar.
+
+    Args:
+      actions: (actions) ctx.actions
+      toolchain: (JavaToolchainInfo) The java toolchain
+      output: (File) Output file of the action.
+      sources: (depset[File]) The jar files to merge into the output jar.
+      resources: (depset[File]) The files to add to the output jar.
+      mnemonic: (str) The action identifier
+      progress_message: (str) The action progress message
+      build_target: (Label) The target label to stamp in the manifest. Optional.
+      output_creator: (str) The name of the tool to stamp in the manifest. Optional,
+          defaults to 'singlejar'
+    Returns:
+      (File) Output file which was used for registering the action.
+    """
+    args = actions.args()
+    args.set_param_file_format("shell").use_param_file("@%s", use_always = True)
+    args.add("--output", output)
+    args.add_all(
+        [
+            "--compression",
+            "--normalize",
+            "--exclude_build_data",
+            "--warn_duplicate_resources",
+        ],
+    )
+    args.add_all("--sources", sources)
+    args.add_all("--resources", resources, map_each = _resource_mapper)
+
+    args.add("--build_target", build_target)
+    args.add("--output_jar_creator", output_creator)
+
+    actions.run(
+        mnemonic = mnemonic,
+        progress_message = progress_message,
+        executable = toolchain.single_jar,
+        toolchain = semantics.JAVA_TOOLCHAIN_TYPE,
+        inputs = depset(transitive = [resources, sources]),
+        tools = [toolchain.single_jar],
+        outputs = [output],
+        arguments = [args],
+        use_default_shell_env = True,
+    )
+    return output
+"#;
+    const NATIVE_CREATE_SINGLE_JAR_STUB: &str = r#"def _create_single_jar(
+        actions,
+        toolchain,
+        output,
+        sources = depset(),
+        resources = depset(),
+        mnemonic = "JavaSingleJar",
+        progress_message = "Building singlejar jar %{output}",
+        build_target = None,
+        output_creator = None):
+    return java_common.internal_DO_NOT_USE().create_single_jar(
+        actions,
+        toolchain = toolchain,
+        output = output,
+        sources = sources,
+        resources = resources,
+        mnemonic = mnemonic,
+        progress_message = progress_message,
+        build_target = build_target,
+        output_creator = output_creator,
+    )
+"#;
 
     let rewritten = contents.replacen(RESOURCE_MAPPER_STUB, NATIVE_RESOURCE_MAPPER_STUB, 1);
     if rewritten == contents {
@@ -994,7 +1072,14 @@ fn rewrite_bazel_rules_java_helper(
             "rules_java java_helper.bzl hash matched, but _resource_mapper stub did not"
         ));
     }
-    Ok(rewritten)
+    let rewritten_single_jar =
+        rewritten.replacen(CREATE_SINGLE_JAR_STUB, NATIVE_CREATE_SINGLE_JAR_STUB, 1);
+    if rewritten_single_jar == rewritten {
+        return Err(internal_error!(
+            "rules_java java_helper.bzl hash matched, but _create_single_jar stub did not"
+        ));
+    }
+    Ok(rewritten_single_jar)
 }
 
 #[async_trait]

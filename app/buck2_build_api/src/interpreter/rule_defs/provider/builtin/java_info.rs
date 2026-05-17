@@ -113,6 +113,7 @@ pub static BAZEL_JAVA_RUN_ACTION: LateBinding<
 pub struct BazelJavaCommandLineGen<V: ValueLifetimeless> {
     arguments: Box<[V]>,
     param_file_start: usize,
+    param_file_format: ParamFileFormat,
 }
 
 starlark::starlark_complex_value!(pub BazelJavaCommandLine);
@@ -203,7 +204,7 @@ impl<'v, V: ValueLike<'v>> CommandLineArgLike<'v> for BazelJavaCommandLineGen<V>
             .map(|arg| context.normalize_param_file_arg(arg))
             .collect();
         let param_file_path = context
-            .add_param_file_args(param_file_args, ParamFileFormat::Multiline)?
+            .add_param_file_args(param_file_args, self.param_file_format)?
             .into_string();
         cli.push_arg(format!("@{param_file_path}"));
         Ok(())
@@ -1018,6 +1019,7 @@ fn java_call_run_action<'v>(
     let arguments = heap.alloc_typed(BazelJavaCommandLine {
         arguments: arguments.into_boxed_slice(),
         param_file_start,
+        param_file_format: ParamFileFormat::Multiline,
     });
     (BAZEL_JAVA_RUN_ACTION.get()?)(
         BazelJavaRunAction {
@@ -1032,6 +1034,81 @@ fn java_call_run_action<'v>(
         eval,
     )?;
     Ok(NoneType)
+}
+
+fn java_add_bazel_args_flag_value<'v>(
+    argv: &mut Vec<Value<'v>>,
+    heap: Heap<'v>,
+    flag: &str,
+    value: Value<'v>,
+) {
+    java_add_flag(argv, heap, flag);
+    if value.is_none() {
+        argv.push(heap.alloc_str("None").to_value());
+    } else if let Some(value) = value.unpack_i32() {
+        argv.push(heap.alloc_str(&value.to_string()).to_value());
+    } else if let Some(value) = value.unpack_bool() {
+        argv.push(
+            heap.alloc_str(if value { "true" } else { "false" })
+                .to_value(),
+        );
+    } else {
+        argv.push(value);
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn java_create_single_jar<'v>(
+    actions: ValueTyped<'v, AnalysisActions<'v>>,
+    toolchain: Value<'v>,
+    output: Value<'v>,
+    sources: Value<'v>,
+    resources: Value<'v>,
+    mnemonic: &str,
+    _progress_message: &str,
+    build_target: Value<'v>,
+    output_creator: Value<'v>,
+    eval: &mut Evaluator<'v, '_, '_>,
+) -> starlark::Result<Value<'v>> {
+    let heap = eval.heap();
+    let executable = java_attr(toolchain, "single_jar", heap)?;
+    let mut argv = Vec::new();
+    java_add_flag_value(&mut argv, heap, "--output", output);
+    argv.extend([
+        heap.alloc_str("--compression").to_value(),
+        heap.alloc_str("--normalize").to_value(),
+        heap.alloc_str("--exclude_build_data").to_value(),
+        heap.alloc_str("--warn_duplicate_resources").to_value(),
+    ]);
+    java_add_flag_collection(&mut argv, heap, "--sources", sources)?;
+    let resource_args = java_collection_values(resources, heap)?
+        .into_iter()
+        .map(|file| {
+            java_resource_mapper(file, heap).map(|mapped| heap.alloc_str(&mapped).to_value())
+        })
+        .collect::<starlark::Result<Vec<_>>>()?;
+    java_add_flag_values(&mut argv, heap, "--resources", resource_args);
+    java_add_bazel_args_flag_value(&mut argv, heap, "--build_target", build_target);
+    java_add_bazel_args_flag_value(&mut argv, heap, "--output_jar_creator", output_creator);
+
+    let arguments = heap.alloc_typed(BazelJavaCommandLine {
+        arguments: argv.into_boxed_slice(),
+        param_file_start: 0,
+        param_file_format: ParamFileFormat::Shell,
+    });
+    (BAZEL_JAVA_RUN_ACTION.get()?)(
+        BazelJavaRunAction {
+            actions,
+            executable,
+            arguments,
+            inputs: vec![resources, sources, executable],
+            outputs: vec![output],
+            mnemonic: heap.alloc_str(mnemonic),
+            worker_executable: None,
+        },
+        eval,
+    )?;
+    Ok(output)
 }
 
 fn java_bool_attr<'v>(value: Value<'v>, attr: &str, heap: Heap<'v>) -> starlark::Result<bool> {
@@ -2005,6 +2082,34 @@ fn java_common_internal_methods(builder: &mut MethodsBuilder) {
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {
         java_library_proxy(ctx, bazel_java_library_rule, eval)
+    }
+
+    fn create_single_jar<'v>(
+        #[starlark(this)] _this: &JavaCommonInternal,
+        #[starlark(require = pos)] actions: ValueTyped<'v, AnalysisActions<'v>>,
+        #[starlark(require = named)] toolchain: Value<'v>,
+        #[starlark(require = named)] output: Value<'v>,
+        #[starlark(require = named)] sources: Value<'v>,
+        #[starlark(require = named)] resources: Value<'v>,
+        #[starlark(require = named, default = "JavaSingleJar")] mnemonic: &str,
+        #[starlark(require = named, default = "Building singlejar jar %{output}")]
+        progress_message: &str,
+        #[starlark(require = named, default = NoneType)] build_target: Value<'v>,
+        #[starlark(require = named, default = NoneType)] output_creator: Value<'v>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<Value<'v>> {
+        java_create_single_jar(
+            actions,
+            toolchain,
+            output,
+            sources,
+            resources,
+            mnemonic,
+            progress_message,
+            build_target,
+            output_creator,
+            eval,
+        )
     }
 
     fn javainfo_init_base<'v>(
