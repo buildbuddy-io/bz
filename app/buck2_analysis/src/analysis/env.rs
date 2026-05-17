@@ -41,7 +41,6 @@ use buck2_build_api::validation::transitive_validations::TransitiveValidationsDa
 use buck2_common::legacy_configs::dice::HasLegacyConfigs;
 use buck2_common::legacy_configs::key::BuckconfigKeyRef;
 use buck2_common::legacy_configs::view::LegacyBuckConfigView;
-use buck2_common::package_listing::dice::DicePackageListingResolver;
 use buck2_core::deferred::base_deferred_key::BaseDeferredKey;
 use buck2_core::execution_types::execution::ExecutionPlatformResolution;
 use buck2_core::fs::buck_out_path::BazelOutputRoot;
@@ -338,10 +337,6 @@ async fn run_bazel_input_file_analysis_underlying(
             execution_platform.dupe(),
         )?;
         let path = PackageRelativePath::new(label.unconfigured().name().as_str())?.to_arc();
-        let package_listing = DicePackageListingResolver(dice)
-            .resolve_package_listing(label.unconfigured().pkg().dupe())
-            .await?;
-        let source_is_directory = package_listing.get_dir(&path).is_some();
 
         let eval_kind = StarlarkEvalKind::Analysis(label.dupe());
         let eval_provider = StarlarkEvaluatorProvider::new(dice, eval_kind).await?;
@@ -354,10 +349,9 @@ async fn run_bazel_input_file_analysis_underlying(
 
             let source =
                 SourceArtifact::new(SourcePath::new(label.unconfigured().pkg().dupe(), path));
-            let source = eval.heap().alloc(StarlarkArtifact::new_source(
-                source.into(),
-                source_is_directory,
-            ));
+            let source = eval
+                .heap()
+                .alloc(StarlarkArtifact::new_source(source.into(), false));
             let default_info = eval
                 .heap()
                 .alloc(DefaultInfo::for_file_target(eval.heap(), source));

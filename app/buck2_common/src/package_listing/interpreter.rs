@@ -709,10 +709,8 @@ async fn gather_package_listing_with_buildfiles(
     strategy: PackageListingStrategy,
 ) -> Result<PackageListing, GatherPackageListingError> {
     let cell_path = root.as_cell_path();
-    if strategy == PackageListingStrategy::Recursive
-        && should_use_fast_bzlmod_recursive_listing(ctx, cell_path).await?
-    {
-        return gather_bzlmod_recursive_package_listing_fast(ctx, root, buildfile_candidates).await;
+    if should_use_fast_bzlmod_listing(ctx, cell_path).await? {
+        return gather_bzlmod_package_listing_fast(ctx, root, buildfile_candidates, strategy).await;
     }
 
     Ok(Directory::gather(
@@ -728,7 +726,7 @@ async fn gather_package_listing_with_buildfiles(
     .flatten())
 }
 
-async fn should_use_fast_bzlmod_recursive_listing(
+async fn should_use_fast_bzlmod_listing(
     ctx: &mut DiceComputations<'_>,
     root: CellPathRef<'_>,
 ) -> Result<bool, GatherPackageListingError> {
@@ -745,10 +743,11 @@ async fn should_use_fast_bzlmod_recursive_listing(
     ))
 }
 
-async fn gather_bzlmod_recursive_package_listing_fast(
+async fn gather_bzlmod_package_listing_fast(
     ctx: &mut DiceComputations<'_>,
     root: PackageLabel,
     buildfile_candidates: &[FileNameBuf],
+    strategy: PackageListingStrategy,
 ) -> Result<PackageListing, GatherPackageListingError> {
     let root_cell_path = root.as_cell_path();
     let file_ops = get_delegated_file_ops(ctx, root_cell_path.cell(), CheckIgnores::Yes)
@@ -780,24 +779,26 @@ async fn gather_bzlmod_recursive_package_listing_fast(
     let buildfile_candidates = buildfile_candidates.to_vec();
 
     tokio::task::spawn_blocking(move || {
-        gather_bzlmod_recursive_package_listing_fast_blocking(
+        gather_bzlmod_package_listing_fast_blocking(
             project_root,
             root_project_path,
             root_cell_path,
             file_ops,
             buildfile_candidates,
+            strategy,
         )
     })
     .await
     .map_err(|e| GatherPackageListingError::error(root.as_cell_path(), e))?
 }
 
-fn gather_bzlmod_recursive_package_listing_fast_blocking(
+fn gather_bzlmod_package_listing_fast_blocking(
     project_root: ProjectRoot,
     root_project_path: ProjectRelativePathBuf,
     root_cell_path: CellPath,
     file_ops: FileOpsDelegateWithIgnores,
     buildfile_candidates: Vec<FileNameBuf>,
+    strategy: PackageListingStrategy,
 ) -> Result<PackageListing, GatherPackageListingError> {
     let mut stack = vec![PackageRelativePathBuf::unchecked_new(String::new())];
     let mut files = Vec::new();
@@ -839,7 +840,17 @@ fn gather_bzlmod_recursive_package_listing_fast_blocking(
         for entry in entries.iter().rev() {
             let child_path = package_path.join(&entry.file_name);
             if entry.file_type.is_dir() {
-                stack.push(child_path);
+                match &strategy {
+                    PackageListingStrategy::Recursive => stack.push(child_path),
+                    PackageListingStrategy::Shallow => dirs.push(child_path.as_path().to_arc()),
+                    PackageListingStrategy::Selective(_) => {
+                        if strategy.should_recurse_into(&child_path) {
+                            stack.push(child_path);
+                        } else {
+                            dirs.push(child_path.as_path().to_arc());
+                        }
+                    }
+                }
             } else {
                 files.push(child_path.as_path().to_arc());
             }
