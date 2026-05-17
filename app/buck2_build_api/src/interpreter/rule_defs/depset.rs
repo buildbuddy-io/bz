@@ -750,6 +750,17 @@ pub(crate) fn bazel_depset_from_direct_and_transitive<'v>(
     )?))
 }
 
+pub(crate) fn bazel_depset_from_direct_and_transitive_with_order<'v>(
+    heap: Heap<'v>,
+    direct: Vec<Value<'v>>,
+    transitive: Vec<Value<'v>>,
+    order: BazelDepsetOrder,
+) -> starlark::Result<Value<'v>> {
+    Ok(heap.alloc(bazel_depset_from_direct_and_transitive_values(
+        direct, transitive, order,
+    )?))
+}
+
 pub(crate) fn bazel_depset_from_transitive<'v>(
     heap: Heap<'v>,
     transitive: Vec<Value<'v>>,

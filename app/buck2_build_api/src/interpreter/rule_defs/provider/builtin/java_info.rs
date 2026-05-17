@@ -46,7 +46,9 @@ use starlark::values::list::ListRef;
 use starlark::values::none::NoneOr;
 use starlark::values::none::NoneType;
 use starlark::values::starlark_value;
+use starlark::values::structs::AllocStruct;
 use starlark::values::structs::StructRef;
+use starlark::values::tuple::AllocTuple;
 use starlark::values::tuple::TupleRef;
 use starlark_map::StarlarkHasher;
 
@@ -56,6 +58,8 @@ use crate::interpreter::rule_defs::context::AnalysisActions;
 use crate::interpreter::rule_defs::context::bazel_analysis_context_declare_file_with_path_kind;
 use crate::interpreter::rule_defs::context::bazel_shell_tokenize;
 use crate::interpreter::rule_defs::depset::BazelDepset;
+use crate::interpreter::rule_defs::depset::BazelDepsetOrder;
+use crate::interpreter::rule_defs::depset::bazel_depset_from_direct_and_transitive_with_order;
 use crate::interpreter::rule_defs::depset::bazel_depset_from_transitive;
 use crate::interpreter::rule_defs::depset::bazel_depset_from_values;
 use crate::interpreter::rule_defs::depset::bazel_depset_is_empty;
@@ -802,6 +806,388 @@ fn java_push_output<'v>(outputs: &mut Vec<Value<'v>>, output: Value<'v>) {
     }
 }
 
+fn java_depset_preorder<'v>(
+    heap: Heap<'v>,
+    direct: Vec<Value<'v>>,
+    transitive: Vec<Value<'v>>,
+) -> starlark::Result<Value<'v>> {
+    bazel_depset_from_direct_and_transitive_with_order(
+        heap,
+        direct,
+        transitive,
+        BazelDepsetOrder::Preorder,
+    )
+}
+
+fn java_depset_topological<'v>(
+    heap: Heap<'v>,
+    direct: Vec<Value<'v>>,
+    transitive: Vec<Value<'v>>,
+) -> starlark::Result<Value<'v>> {
+    bazel_depset_from_direct_and_transitive_with_order(
+        heap,
+        direct,
+        transitive,
+        BazelDepsetOrder::Topological,
+    )
+}
+
+fn java_attr_values<'v>(
+    values: &[Value<'v>],
+    attr: &str,
+    heap: Heap<'v>,
+) -> starlark::Result<Vec<Value<'v>>> {
+    values
+        .iter()
+        .map(|value| java_attr(*value, attr, heap))
+        .collect()
+}
+
+fn java_annotation_processing_values<'v>(
+    values: &[Value<'v>],
+    attr: &str,
+    heap: Heap<'v>,
+) -> starlark::Result<Vec<Value<'v>>> {
+    let mut result = Vec::new();
+    for value in values {
+        let annotation_processing = java_attr(*value, "annotation_processing", heap)?;
+        if annotation_processing.to_bool() {
+            result.push(java_attr(annotation_processing, attr, heap)?);
+        }
+    }
+    Ok(result)
+}
+
+fn java_has_plugin_data_value<'v>(
+    plugin_data: Value<'v>,
+    heap: Heap<'v>,
+) -> starlark::Result<bool> {
+    if !plugin_data.to_bool() {
+        return Ok(false);
+    }
+    Ok(java_attr(plugin_data, "processor_classes", heap)?.to_bool()
+        || java_attr(plugin_data, "processor_jars", heap)?.to_bool()
+        || java_attr(plugin_data, "processor_data", heap)?.to_bool())
+}
+
+fn java_merge_plugin_data<'v>(
+    plugin_data_provider: Value<'v>,
+    empty_plugin_data: Value<'v>,
+    datas: Vec<Value<'v>>,
+    eval: &mut Evaluator<'v, '_, '_>,
+) -> starlark::Result<Value<'v>> {
+    let heap = eval.heap();
+    let mut processor_classes = Vec::with_capacity(datas.len());
+    let mut processor_jars = Vec::with_capacity(datas.len());
+    let mut processor_data = Vec::with_capacity(datas.len());
+    for data in datas {
+        processor_classes.push(java_attr(data, "processor_classes", heap)?);
+        processor_jars.push(java_attr(data, "processor_jars", heap)?);
+        processor_data.push(java_attr(data, "processor_data", heap)?);
+    }
+
+    let processor_classes = bazel_depset_from_transitive(heap, processor_classes)?;
+    let processor_jars = bazel_depset_from_transitive(heap, processor_jars)?;
+    let processor_data = bazel_depset_from_transitive(heap, processor_data)?;
+    if !processor_classes.to_bool() && !processor_jars.to_bool() && !processor_data.to_bool() {
+        return Ok(empty_plugin_data);
+    }
+
+    eval.eval_function(
+        plugin_data_provider,
+        &[],
+        &[
+            ("processor_classes", processor_classes),
+            ("processor_jars", processor_jars),
+            ("processor_data", processor_data),
+        ],
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn java_javainfo_init_base<'v>(
+    java_output_info_provider: Value<'v>,
+    java_rule_output_jars_info_provider: Value<'v>,
+    java_gen_jars_info_provider: Value<'v>,
+    java_plugin_data_provider: Value<'v>,
+    empty_plugin_data: Value<'v>,
+    output_jar: Value<'v>,
+    compile_jar: Value<'v>,
+    source_jar: Value<'v>,
+    deps: Value<'v>,
+    runtime_deps: Value<'v>,
+    exports: Value<'v>,
+    exported_plugins: Value<'v>,
+    jdeps: Value<'v>,
+    compile_jdeps: Value<'v>,
+    native_headers_jar: Value<'v>,
+    manifest_proto: Value<'v>,
+    generated_class_jar: Value<'v>,
+    generated_source_jar: Value<'v>,
+    native_libraries: Value<'v>,
+    neverlink: Value<'v>,
+    header_compilation_jar: Value<'v>,
+    eval: &mut Evaluator<'v, '_, '_>,
+) -> starlark::Result<Value<'v>> {
+    let heap = eval.heap();
+    let deps = java_collection_values(deps, heap)?;
+    let runtime_deps = java_collection_values(runtime_deps, heap)?;
+    let exports = java_collection_values(exports, heap)?;
+    let exported_plugins = java_collection_values(exported_plugins, heap)?;
+    let native_libraries = java_collection_values(native_libraries, heap)?;
+
+    let header_compilation_jar = if compile_jar.to_bool() && !header_compilation_jar.to_bool() {
+        compile_jar
+    } else {
+        header_compilation_jar
+    };
+
+    let mut deps_exports = Vec::with_capacity(deps.len() + exports.len());
+    deps_exports.extend(deps.iter().copied());
+    deps_exports.extend(exports.iter().copied());
+
+    let mut exports_deps = Vec::with_capacity(exports.len() + deps.len());
+    exports_deps.extend(exports.iter().copied());
+    exports_deps.extend(deps.iter().copied());
+
+    let mut runtimedeps_exports_deps = Vec::with_capacity(runtime_deps.len() + exports_deps.len());
+    runtimedeps_exports_deps.extend(runtime_deps.iter().copied());
+    runtimedeps_exports_deps.extend(exports_deps.iter().copied());
+
+    let source_jars = if source_jar.to_bool() {
+        vec![source_jar]
+    } else {
+        Vec::new()
+    };
+
+    let mut plugin_infos = Vec::with_capacity(exported_plugins.len() + exports.len());
+    plugin_infos.extend(exported_plugins.iter().copied());
+    plugin_infos.extend(exports.iter().copied());
+    let mut plugins = Vec::new();
+    let mut api_generating_plugins = Vec::new();
+    for info in plugin_infos {
+        let plugin_data = java_attr(info, "plugins", heap)?;
+        if java_has_plugin_data_value(plugin_data, heap)? {
+            plugins.push(plugin_data);
+        }
+        let plugin_data = java_attr(info, "api_generating_plugins", heap)?;
+        if java_has_plugin_data_value(plugin_data, heap)? {
+            api_generating_plugins.push(plugin_data);
+        }
+    }
+    let plugins =
+        java_merge_plugin_data(java_plugin_data_provider, empty_plugin_data, plugins, eval)?;
+    let api_generating_plugins = java_merge_plugin_data(
+        java_plugin_data_provider,
+        empty_plugin_data,
+        api_generating_plugins,
+        eval,
+    )?;
+
+    let transitive_compile_time_jars = java_depset_preorder(
+        heap,
+        if compile_jar.to_bool() {
+            vec![compile_jar]
+        } else {
+            Vec::new()
+        },
+        java_attr_values(&exports_deps, "transitive_compile_time_jars", heap)?,
+    )?;
+
+    let java_output = eval.eval_function(
+        java_output_info_provider,
+        &[],
+        &[
+            ("class_jar", output_jar),
+            ("compile_jar", compile_jar),
+            ("header_compilation_jar", header_compilation_jar),
+            ("ijar", compile_jar),
+            ("compile_jdeps", compile_jdeps),
+            ("generated_class_jar", generated_class_jar),
+            ("generated_source_jar", generated_source_jar),
+            ("native_headers_jar", native_headers_jar),
+            ("manifest_proto", manifest_proto),
+            ("jdeps", jdeps),
+            (
+                "source_jars",
+                bazel_depset_from_values(heap, source_jars.clone())?,
+            ),
+            ("source_jar", source_jar),
+        ],
+    )?;
+    let java_outputs = heap.alloc(AllocList(vec![java_output])).to_value();
+
+    let outputs = eval.eval_function(
+        java_rule_output_jars_info_provider,
+        &[],
+        &[
+            ("jars", java_outputs),
+            ("jdeps", jdeps),
+            ("native_headers", native_headers_jar),
+        ],
+    )?;
+
+    let annotation_processing = eval.eval_function(
+        java_gen_jars_info_provider,
+        &[],
+        &[
+            ("enabled", Value::new_bool(false)),
+            ("class_jar", generated_class_jar),
+            ("source_jar", generated_source_jar),
+            (
+                "transitive_class_jars",
+                java_depset_preorder(
+                    heap,
+                    if generated_class_jar.to_bool() {
+                        vec![generated_class_jar]
+                    } else {
+                        Vec::new()
+                    },
+                    java_annotation_processing_values(
+                        &deps_exports,
+                        "transitive_class_jars",
+                        heap,
+                    )?,
+                )?,
+            ),
+            (
+                "transitive_source_jars",
+                java_depset_preorder(
+                    heap,
+                    if generated_source_jar.to_bool() {
+                        vec![generated_source_jar]
+                    } else {
+                        Vec::new()
+                    },
+                    java_annotation_processing_values(
+                        &deps_exports,
+                        "transitive_source_jars",
+                        heap,
+                    )?,
+                )?,
+            ),
+            (
+                "processor_classnames",
+                heap.alloc(AllocList(Vec::<Value<'v>>::new())).to_value(),
+            ),
+            (
+                "processor_classpath",
+                bazel_depset_from_values(heap, Vec::new())?,
+            ),
+        ],
+    )?;
+
+    let mut compile_time_java_dependencies =
+        java_attr_values(&exports, "_compile_time_java_dependencies", heap)?;
+    if compile_jdeps.to_bool() {
+        compile_time_java_dependencies.push(bazel_depset_from_values(heap, vec![compile_jdeps])?);
+    }
+
+    let mut native_library_depsets = java_attr_values(
+        &runtimedeps_exports_deps,
+        "transitive_native_libraries",
+        heap,
+    )?;
+    for native_library in native_libraries {
+        if let Some(libraries_to_link) =
+            native_library.get_attr("_legacy_transitive_native_libraries", heap)?
+        {
+            native_library_depsets.push(libraries_to_link);
+        }
+    }
+
+    let result = heap
+        .alloc(AllocDict([
+            ("transitive_compile_time_jars", transitive_compile_time_jars),
+            (
+                "compile_jars",
+                java_depset_preorder(
+                    heap,
+                    if compile_jar.to_bool() {
+                        vec![compile_jar]
+                    } else {
+                        Vec::new()
+                    },
+                    java_attr_values(&exports, "compile_jars", heap)?,
+                )?,
+            ),
+            (
+                "header_compilation_direct_deps",
+                java_depset_preorder(
+                    heap,
+                    if header_compilation_jar.to_bool() {
+                        vec![header_compilation_jar]
+                    } else {
+                        Vec::new()
+                    },
+                    java_attr_values(&exports, "header_compilation_direct_deps", heap)?,
+                )?,
+            ),
+            (
+                "full_compile_jars",
+                java_depset_preorder(
+                    heap,
+                    vec![output_jar],
+                    java_attr_values(&exports, "full_compile_jars", heap)?,
+                )?,
+            ),
+            ("source_jars", heap.alloc(AllocList(source_jars)).to_value()),
+            (
+                "runtime_output_jars",
+                heap.alloc(AllocList(vec![output_jar])).to_value(),
+            ),
+            ("plugins", plugins),
+            ("api_generating_plugins", api_generating_plugins),
+            ("java_outputs", java_outputs),
+            ("outputs", outputs),
+            ("annotation_processing", annotation_processing),
+            (
+                "_transitive_full_compile_time_jars",
+                java_depset_preorder(
+                    heap,
+                    vec![output_jar],
+                    java_attr_values(&exports_deps, "_transitive_full_compile_time_jars", heap)?,
+                )?,
+            ),
+            (
+                "_compile_time_java_dependencies",
+                java_depset_preorder(heap, Vec::new(), compile_time_java_dependencies)?,
+            ),
+            ("_neverlink", Value::new_bool(neverlink.to_bool())),
+            ("compilation_info", Value::new_none()),
+            (
+                "_constraints",
+                heap.alloc(AllocList(Vec::<Value<'v>>::new())).to_value(),
+            ),
+            (
+                "transitive_native_libraries",
+                java_depset_topological(heap, Vec::new(), native_library_depsets)?,
+            ),
+        ]))
+        .to_value();
+
+    let concatenated_deps = heap
+        .alloc(AllocStruct([
+            (
+                "deps_exports",
+                heap.alloc(AllocList(deps_exports)).to_value(),
+            ),
+            (
+                "exports_deps",
+                heap.alloc(AllocList(exports_deps)).to_value(),
+            ),
+            (
+                "runtimedeps_exports_deps",
+                heap.alloc(AllocList(runtimedeps_exports_deps)).to_value(),
+            ),
+        ]))
+        .to_value();
+
+    Ok(heap
+        .alloc(AllocTuple([result, concatenated_deps]))
+        .to_value())
+}
+
 fn java_register_gen_class_action<'v>(
     ctx: Value<'v>,
     java_toolchain: Value<'v>,
@@ -1280,13 +1666,7 @@ fn java_common_internal_methods(builder: &mut MethodsBuilder) {
         #[starlark(require = pos)] plugin_data: Value<'v>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<bool> {
-        if !plugin_data.to_bool() {
-            return Ok(false);
-        }
-        let heap = eval.heap();
-        Ok(java_attr(plugin_data, "processor_classes", heap)?.to_bool()
-            || java_attr(plugin_data, "processor_jars", heap)?.to_bool()
-            || java_attr(plugin_data, "processor_data", heap)?.to_bool())
+        java_has_plugin_data_value(plugin_data, eval.heap())
     }
 
     fn merge_plugin_data<'v>(
@@ -1296,32 +1676,58 @@ fn java_common_internal_methods(builder: &mut MethodsBuilder) {
         #[starlark(require = pos)] datas: Value<'v>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {
-        let heap = eval.heap();
-        let datas = java_collection_values(datas, heap)?;
-        let mut processor_classes = Vec::with_capacity(datas.len());
-        let mut processor_jars = Vec::with_capacity(datas.len());
-        let mut processor_data = Vec::with_capacity(datas.len());
-        for data in datas {
-            processor_classes.push(java_attr(data, "processor_classes", heap)?);
-            processor_jars.push(java_attr(data, "processor_jars", heap)?);
-            processor_data.push(java_attr(data, "processor_data", heap)?);
-        }
+        let datas = java_collection_values(datas, eval.heap())?;
+        java_merge_plugin_data(plugin_data_provider, empty_plugin_data, datas, eval)
+    }
 
-        let processor_classes = bazel_depset_from_transitive(heap, processor_classes)?;
-        let processor_jars = bazel_depset_from_transitive(heap, processor_jars)?;
-        let processor_data = bazel_depset_from_transitive(heap, processor_data)?;
-        if !processor_classes.to_bool() && !processor_jars.to_bool() && !processor_data.to_bool() {
-            return Ok(empty_plugin_data);
-        }
-
-        eval.eval_function(
-            plugin_data_provider,
-            &[],
-            &[
-                ("processor_classes", processor_classes),
-                ("processor_jars", processor_jars),
-                ("processor_data", processor_data),
-            ],
+    fn javainfo_init_base<'v>(
+        #[starlark(this)] _this: &JavaCommonInternal,
+        #[starlark(require = pos)] java_output_info_provider: Value<'v>,
+        #[starlark(require = pos)] java_rule_output_jars_info_provider: Value<'v>,
+        #[starlark(require = pos)] java_gen_jars_info_provider: Value<'v>,
+        #[starlark(require = pos)] java_plugin_data_provider: Value<'v>,
+        #[starlark(require = pos)] empty_plugin_data: Value<'v>,
+        #[starlark(require = pos)] output_jar: Value<'v>,
+        #[starlark(require = pos)] compile_jar: Value<'v>,
+        #[starlark(require = pos)] source_jar: Value<'v>,
+        #[starlark(require = pos)] deps: Value<'v>,
+        #[starlark(require = pos)] runtime_deps: Value<'v>,
+        #[starlark(require = pos)] exports: Value<'v>,
+        #[starlark(require = pos)] exported_plugins: Value<'v>,
+        #[starlark(require = pos)] jdeps: Value<'v>,
+        #[starlark(require = pos)] compile_jdeps: Value<'v>,
+        #[starlark(require = pos)] native_headers_jar: Value<'v>,
+        #[starlark(require = pos)] manifest_proto: Value<'v>,
+        #[starlark(require = pos)] generated_class_jar: Value<'v>,
+        #[starlark(require = pos)] generated_source_jar: Value<'v>,
+        #[starlark(require = pos)] native_libraries: Value<'v>,
+        #[starlark(require = pos)] neverlink: Value<'v>,
+        #[starlark(require = pos)] header_compilation_jar: Value<'v>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<Value<'v>> {
+        java_javainfo_init_base(
+            java_output_info_provider,
+            java_rule_output_jars_info_provider,
+            java_gen_jars_info_provider,
+            java_plugin_data_provider,
+            empty_plugin_data,
+            output_jar,
+            compile_jar,
+            source_jar,
+            deps,
+            runtime_deps,
+            exports,
+            exported_plugins,
+            jdeps,
+            compile_jdeps,
+            native_headers_jar,
+            manifest_proto,
+            generated_class_jar,
+            generated_source_jar,
+            native_libraries,
+            neverlink,
+            header_compilation_jar,
+            eval,
         )
     }
 

@@ -482,6 +482,43 @@ fn rewrite_bazel_rules_java_info(
         datas,
     )
 "#;
+    const JAVAINFO_INIT_BASE_VALIDATION_STUB: &str = r#"    _validate_provider_list(deps, "deps", JavaInfo)
+    _validate_provider_list(runtime_deps, "runtime_deps", JavaInfo)
+    _validate_provider_list(exports, "exports", JavaInfo)
+    _validate_provider_list(native_libraries, "native_libraries", CcInfo)
+
+"#;
+    const NATIVE_JAVAINFO_INIT_BASE_VALIDATION_STUB: &str = r#"    _validate_provider_list(deps, "deps", JavaInfo)
+    _validate_provider_list(runtime_deps, "runtime_deps", JavaInfo)
+    _validate_provider_list(exports, "exports", JavaInfo)
+    _validate_provider_list(native_libraries, "native_libraries", CcInfo)
+
+    if not native_libraries and not get_internal_java_common().google_legacy_api_enabled():
+        return get_internal_java_common().javainfo_init_base(
+            _JavaOutputInfo,
+            _JavaRuleOutputJarsInfo,
+            _JavaGenJarsInfo,
+            JavaPluginDataInfo,
+            _EMPTY_PLUGIN_DATA,
+            output_jar,
+            compile_jar,
+            source_jar,
+            deps,
+            runtime_deps,
+            exports,
+            exported_plugins,
+            jdeps,
+            compile_jdeps,
+            native_headers_jar,
+            manifest_proto,
+            generated_class_jar,
+            generated_source_jar,
+            native_libraries,
+            neverlink,
+            header_compilation_jar,
+        )
+
+"#;
 
     let rewritten = contents.replacen(HAS_PLUGIN_DATA_STUB, NATIVE_HAS_PLUGIN_DATA_STUB, 1);
     if rewritten == contents {
@@ -496,7 +533,17 @@ fn rewrite_bazel_rules_java_info(
             "rules_java java_info.bzl hash matched, but _merge_plugin_data stub did not"
         ));
     }
-    Ok(rewritten_merge)
+    let rewritten_javainfo_base = rewritten_merge.replacen(
+        JAVAINFO_INIT_BASE_VALIDATION_STUB,
+        NATIVE_JAVAINFO_INIT_BASE_VALIDATION_STUB,
+        1,
+    );
+    if rewritten_javainfo_base == rewritten_merge {
+        return Err(internal_error!(
+            "rules_java java_info.bzl hash matched, but _javainfo_init_base validation stub did not"
+        ));
+    }
+    Ok(rewritten_javainfo_base)
 }
 
 fn rewrite_bazel_rules_java_common_internal(
