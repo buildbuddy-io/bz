@@ -110,6 +110,8 @@ const BAZEL_RULES_CC_CC_INFO_BZL_SHA256: &str =
     "4424bb876c3f8234d7cfce20652e7ab1a7b2fc34cc2c637b1cb4313590d9f1bc";
 const BAZEL_RULES_CC_CC_HELPER_BZL_SHA256: &str =
     "22b11a7833958f11fb32ddf6406195e02ccef9dc635369a556cbafa4e933fdbe";
+const BAZEL_RULES_CC_CC_HELPER_INTERNAL_BZL_SHA256: &str =
+    "793ab429f8e397df9c486f4c3c7b5c57fae81c8432ba6d08189d65d75676dae1";
 const BAZEL_RULES_CC_CONFIGURE_FEATURES_BZL_SHA256: &str =
     "d950aa9acda68b999c452178f8ccf49860eac910a8c28551c547c3725198b977";
 const BAZEL_RULES_JAVA_INFO_BZL_SHA256: &str =
@@ -163,6 +165,20 @@ fn is_bazel_rules_cc_cc_helper_path(starlark_file: StarlarkPath<'_>) -> bool {
         StarlarkPath::LoadFile(path) => {
             path.cell().as_str().contains("rules_cc")
                 && path.path().path().as_str() == "cc/common/cc_helper.bzl"
+        }
+        StarlarkPath::BuildFile(_)
+        | StarlarkPath::PackageFile(_)
+        | StarlarkPath::BxlFile(_)
+        | StarlarkPath::JsonFile(_)
+        | StarlarkPath::TomlFile(_) => false,
+    }
+}
+
+fn is_bazel_rules_cc_cc_helper_internal_path(starlark_file: StarlarkPath<'_>) -> bool {
+    match starlark_file {
+        StarlarkPath::LoadFile(path) => {
+            path.cell().as_str().contains("rules_cc")
+                && path.path().path().as_str() == "cc/common/cc_helper_internal.bzl"
         }
         StarlarkPath::BuildFile(_)
         | StarlarkPath::PackageFile(_)
@@ -521,6 +537,58 @@ fn rewrite_bazel_rules_cc_cc_helper(
     Ok(rewritten_check_extension)
 }
 
+fn rewrite_bazel_rules_cc_cc_helper_internal(
+    starlark_file: StarlarkPath<'_>,
+    contents: String,
+) -> buck2_error::Result<String> {
+    if !is_bazel_rules_cc_cc_helper_internal_path(starlark_file) {
+        return Ok(contents);
+    }
+    if hex::encode(Sha256::digest(contents.as_bytes()))
+        != BAZEL_RULES_CC_CC_HELPER_INTERNAL_BZL_SHA256
+    {
+        return Ok(contents);
+    }
+
+    const GET_RELATIVE_PATH_STUB: &str = r#"def get_relative_path(path_a, path_b):
+    if is_path_absolute(path_b):
+        return path_b
+    return paths.normalize(paths.join(path_a, path_b))
+"#;
+    const NATIVE_GET_RELATIVE_PATH_STUB: &str = r#"def get_relative_path(path_a, path_b):
+    return __buck2_bazel_get_relative_path(path_a, path_b)
+"#;
+    const PATH_CONTAINS_UP_LEVEL_REFERENCES_STUB: &str = r#"def path_contains_up_level_references(path):
+    return path.startswith("..") and (len(path) == 2 or path[2] == "/")
+"#;
+    const NATIVE_PATH_CONTAINS_UP_LEVEL_REFERENCES_STUB: &str =
+        r#"def path_contains_up_level_references(path):
+    return __buck2_bazel_path_contains_up_level_references(path)
+"#;
+
+    let rewritten = contents.replacen(
+        GET_RELATIVE_PATH_STUB,
+        NATIVE_GET_RELATIVE_PATH_STUB,
+        1,
+    );
+    if rewritten == contents {
+        return Err(internal_error!(
+            "rules_cc cc_helper_internal.bzl hash matched, but get_relative_path stub did not"
+        ));
+    }
+    let rewritten_path_contains = rewritten.replacen(
+        PATH_CONTAINS_UP_LEVEL_REFERENCES_STUB,
+        NATIVE_PATH_CONTAINS_UP_LEVEL_REFERENCES_STUB,
+        1,
+    );
+    if rewritten_path_contains == rewritten {
+        return Err(internal_error!(
+            "rules_cc cc_helper_internal.bzl hash matched, but path_contains_up_level_references stub did not"
+        ));
+    }
+    Ok(rewritten_path_contains)
+}
+
 fn rewrite_bazel_rules_java_info(
     starlark_file: StarlarkPath<'_>,
     contents: String,
@@ -840,6 +908,7 @@ impl<'c, 'd: 'c> DiceCalculationDelegate<'c, 'd> {
         }?;
         let content = rewrite_bazel_rules_cc_cc_info(starlark_path, content)?;
         let content = rewrite_bazel_rules_cc_cc_helper(starlark_path, content)?;
+        let content = rewrite_bazel_rules_cc_cc_helper_internal(starlark_path, content)?;
         let content = rewrite_bazel_rules_cc_configure_features(starlark_path, content)?;
         let content = rewrite_bazel_rules_java_info(starlark_path, content)?;
         let content = rewrite_bazel_rules_java_common_internal(starlark_path, content)?;

@@ -3793,6 +3793,77 @@ fn bazel_cc_is_versioned_shared_library_extension_valid(path: &str) -> bool {
     false
 }
 
+fn bazel_cc_rules_is_path_absolute(path: &str) -> bool {
+    let bytes = path.as_bytes();
+    path.starts_with('/')
+        || (bytes.len() >= 3
+            && bytes[0].is_ascii_alphabetic()
+            && bytes[1] == b':'
+            && (bytes[2] == b'/' || bytes[2] == b'\\'))
+}
+
+fn bazel_cc_skylib_is_path_absolute(path: &str) -> bool {
+    path.starts_with('/') || (path.len() > 2 && path.as_bytes()[1] == b':')
+}
+
+fn bazel_cc_skylib_paths_join(path: &str, other: &str) -> String {
+    if bazel_cc_skylib_is_path_absolute(other) {
+        other.to_owned()
+    } else if path.is_empty() || path.ends_with('/') {
+        format!("{path}{other}")
+    } else {
+        format!("{path}/{other}")
+    }
+}
+
+fn bazel_cc_skylib_paths_normalize(path: &str) -> String {
+    if path.is_empty() {
+        return ".".to_owned();
+    }
+
+    let initial_slashes = if path.starts_with("//") && !path.starts_with("///") {
+        2
+    } else if path.starts_with('/') {
+        1
+    } else {
+        0
+    };
+    let is_relative = initial_slashes == 0;
+
+    let mut components = Vec::new();
+    for component in path.split('/') {
+        if component.is_empty() || component == "." {
+            continue;
+        }
+        if component == ".." {
+            if components.last().is_some_and(|last| *last != "..") {
+                components.pop();
+            } else if is_relative {
+                components.push(component);
+            }
+        } else {
+            components.push(component);
+        }
+    }
+
+    let mut normalized = components.join("/");
+    if !is_relative {
+        normalized = format!("{}{}", "/".repeat(initial_slashes), normalized);
+    }
+    if normalized.is_empty() {
+        ".".to_owned()
+    } else {
+        normalized
+    }
+}
+
+fn bazel_cc_get_relative_path(path_a: &str, path_b: &str) -> String {
+    if bazel_cc_rules_is_path_absolute(path_b) {
+        return path_b.to_owned();
+    }
+    bazel_cc_skylib_paths_normalize(&bazel_cc_skylib_paths_join(path_a, path_b))
+}
+
 #[starlark_module]
 fn bazel_cc_private_globals(builder: &mut GlobalsBuilder) {
     fn __buck2_bazel_merge_compilation_contexts<'v>(
@@ -3860,6 +3931,14 @@ fn bazel_cc_private_globals(builder: &mut GlobalsBuilder) {
         Ok(bazel_cc_is_versioned_shared_library_extension_valid(
             path.as_str(),
         ))
+    }
+
+    fn __buck2_bazel_get_relative_path(path_a: &str, path_b: &str) -> starlark::Result<String> {
+        Ok(bazel_cc_get_relative_path(path_a, path_b))
+    }
+
+    fn __buck2_bazel_path_contains_up_level_references(path: &str) -> starlark::Result<bool> {
+        Ok(path == ".." || path.starts_with("../"))
     }
 }
 
