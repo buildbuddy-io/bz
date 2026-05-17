@@ -588,6 +588,18 @@ mod tests {
         assert!(rewritten.ends_with(
             "/buck-out/v2/external_cells/bzlmod_generated/rules_go++go_sdk+main___download_0/bin/go"
         ));
+
+        let rewritten = repository_ctx_command_path(
+            "all=-trimpath=/repo/buck-out/buildbuddy-source-file-1/external_cells/bzlmod_generated/gazelle++deps+tools",
+            working_dir,
+        );
+        assert!(rewritten.starts_with("all=-trimpath="));
+    }
+
+    #[test]
+    fn test_repository_path_display_is_absolute() {
+        let path = StarlarkRepositoryPath::new("buck-out/v2/external_cells/repo/file".to_owned());
+        assert!(Path::new(&path.to_string()).is_absolute());
     }
 
     #[test]
@@ -2093,13 +2105,9 @@ impl StarlarkRepositoryPath {
 
 impl Display for StarlarkRepositoryPath {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.dep.is_some() {
-            repository_path_for_read_abs(&self.path)
-                .to_string_lossy()
-                .fmt(f)
-        } else {
-            self.path.fmt(f)
-        }
+        repository_path_for_read_abs(&self.path)
+            .to_string_lossy()
+            .fmt(f)
     }
 }
 
@@ -2991,8 +2999,15 @@ fn repository_ctx_command_assignment_path_with_split(
     if prefix.is_empty() || prefix.contains('/') || prefix.contains('\\') {
         return None;
     }
+    if !repository_ctx_command_assignment_value_is_plain_path(value) {
+        return None;
+    }
     let value = repository_ctx_command_external_path(value, working_dir)?;
     Some(format!("{prefix}={value}"))
+}
+
+fn repository_ctx_command_assignment_value_is_plain_path(value: &str) -> bool {
+    Path::new(value).is_absolute() || value.starts_with("buck-out/")
 }
 
 fn repository_ctx_command_external_path(path: &str, working_dir: &str) -> Option<String> {
