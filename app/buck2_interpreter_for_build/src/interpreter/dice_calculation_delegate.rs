@@ -114,6 +114,8 @@ const BAZEL_RULES_CC_CC_HELPER_BZL_SHA256: &str =
     "22b11a7833958f11fb32ddf6406195e02ccef9dc635369a556cbafa4e933fdbe";
 const BAZEL_RULES_CC_CC_HELPER_INTERNAL_BZL_SHA256: &str =
     "793ab429f8e397df9c486f4c3c7b5c57fae81c8432ba6d08189d65d75676dae1";
+const BAZEL_RULES_CC_SEMANTICS_BZL_SHA256: &str =
+    "029254fd58eb8b3bf32a0f772e479b991a51ce21a6f6cc8a5739aadbce3900da";
 const BAZEL_RULES_CC_CONFIGURE_FEATURES_BZL_SHA256: &str =
     "d950aa9acda68b999c452178f8ccf49860eac910a8c28551c547c3725198b977";
 const BAZEL_RULES_JAVA_INFO_BZL_SHA256: &str =
@@ -212,6 +214,20 @@ fn is_bazel_rules_cc_configure_features_path(starlark_file: StarlarkPath<'_>) ->
             path.cell().as_str().contains("rules_cc")
                 && path.path().path().as_str()
                     == "cc/private/toolchain_config/configure_features.bzl"
+        }
+        StarlarkPath::BuildFile(_)
+        | StarlarkPath::PackageFile(_)
+        | StarlarkPath::BxlFile(_)
+        | StarlarkPath::JsonFile(_)
+        | StarlarkPath::TomlFile(_) => false,
+    }
+}
+
+fn is_bazel_rules_cc_semantics_path(starlark_file: StarlarkPath<'_>) -> bool {
+    match starlark_file {
+        StarlarkPath::LoadFile(path) => {
+            path.cell().as_str().contains("rules_cc")
+                && path.path().path().as_str() == "cc/common/semantics.bzl"
         }
         StarlarkPath::BuildFile(_)
         | StarlarkPath::PackageFile(_)
@@ -681,6 +697,47 @@ fn rewrite_bazel_rules_cc_cc_helper_internal(
     Ok(rewritten_path_contains)
 }
 
+fn rewrite_bazel_rules_cc_semantics(
+    starlark_file: StarlarkPath<'_>,
+    contents: String,
+) -> buck2_error::Result<String> {
+    if !is_bazel_rules_cc_semantics_path(starlark_file) {
+        return Ok(contents);
+    }
+    if hex::encode(Sha256::digest(contents.as_bytes())) != BAZEL_RULES_CC_SEMANTICS_BZL_SHA256 {
+        return Ok(contents);
+    }
+
+    const DEF_PARSER_COMPUTED_DEFAULT_STUB: &str = r#"def _def_parser_computed_default(name, tags):
+    # This is needed to break the dependency cycle.
+    if "__DONT_DEPEND_ON_DEF_PARSER__" in tags or "def_parser" in name:
+        return None
+    else:
+        return Label("@bazel_tools//tools/def_parser:def_parser")
+"#;
+    const CACHED_DEF_PARSER_COMPUTED_DEFAULT_STUB: &str =
+        r#"_DEF_PARSER_LABEL = Label("@bazel_tools//tools/def_parser:def_parser")
+
+def _def_parser_computed_default(name, tags):
+    # This is needed to break the dependency cycle.
+    if "__DONT_DEPEND_ON_DEF_PARSER__" in tags or "def_parser" in name:
+        return None
+    return _DEF_PARSER_LABEL
+"#;
+
+    let rewritten = contents.replacen(
+        DEF_PARSER_COMPUTED_DEFAULT_STUB,
+        CACHED_DEF_PARSER_COMPUTED_DEFAULT_STUB,
+        1,
+    );
+    if rewritten == contents {
+        return Err(internal_error!(
+            "rules_cc semantics.bzl hash matched, but _def_parser_computed_default stub did not"
+        ));
+    }
+    Ok(rewritten)
+}
+
 fn rewrite_bazel_rules_java_info(
     starlark_file: StarlarkPath<'_>,
     contents: String,
@@ -1002,6 +1059,7 @@ impl<'c, 'd: 'c> DiceCalculationDelegate<'c, 'd> {
         let content = rewrite_bazel_rules_cc_cc_info(starlark_path, content)?;
         let content = rewrite_bazel_rules_cc_cc_helper(starlark_path, content)?;
         let content = rewrite_bazel_rules_cc_cc_helper_internal(starlark_path, content)?;
+        let content = rewrite_bazel_rules_cc_semantics(starlark_path, content)?;
         let content = rewrite_bazel_rules_cc_configure_features(starlark_path, content)?;
         let content = rewrite_bazel_rules_java_library(starlark_path, content)?;
         let content = rewrite_bazel_rules_java_info(starlark_path, content)?;
