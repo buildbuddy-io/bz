@@ -303,9 +303,10 @@ impl<'c, 'd: 'c> DiceCalculationDelegate<'c, 'd> {
         match starlark_file {
             StarlarkModulePath::JsonFile(_) => self.eval_json_module_uncached(starlark_file).await,
             StarlarkModulePath::TomlFile(_) => self.eval_toml_file_uncached(starlark_file).await,
-            _ => self
-                .eval_starlark_module_uncached(starlark_file, cancellation)
-                .await,
+            _ => {
+                self.eval_starlark_module_uncached(starlark_file, cancellation)
+                    .await
+            }
         }
     }
 

@@ -7,20 +7,20 @@
  * You may select, at your option, one of the above-listed licenses.
  */
 
-use std::fmt;
 use std::collections::BTreeSet;
+use std::fmt;
 
 use allocative::Allocative;
+use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::ValueAsInputArtifactLike;
 use buck2_build_api::interpreter::rule_defs::context::bazel_analysis_context_declare_file;
 use buck2_build_api::interpreter::rule_defs::depset::bazel_depset_is_singleton;
 use buck2_build_api::interpreter::rule_defs::depset::bazel_depset_to_list;
-use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::ValueAsInputArtifactLike;
 use buck2_build_api::interpreter::rule_defs::provider::builtin::default_info::BazelRunfiles;
 use buck2_build_api::interpreter::rule_defs::provider::builtin::default_info::bazel_runfiles_with_generated_inits_empty_files_supplier;
-use buck2_core::deferred::base_deferred_key::BaseDeferredKey;
+use buck2_core::cells::external::bzlmod_canonical_repo_name_for_cell;
 use buck2_core::cells::external::bzlmod_cell_aliases_for_cell;
 use buck2_core::cells::external::bzlmod_cell_name;
-use buck2_core::cells::external::bzlmod_canonical_repo_name_for_cell;
+use buck2_core::deferred::base_deferred_key::BaseDeferredKey;
 use buck2_core::package::PackageLabel;
 use buck2_interpreter::types::configured_providers_label::StarlarkConfiguredProvidersLabel;
 use buck2_interpreter::types::configured_providers_label::StarlarkProvidersLabel;
@@ -176,7 +176,10 @@ fn repo_mapping_cell_from_artifact<'v>(
     Ok(Some(repo_mapping_cell_from_bazel_path(path.as_str())))
 }
 
-fn repo_mapping_ctx_cell<'v>(ctx: Value<'v>, heap: Heap<'v>) -> buck2_error::Result<Option<String>> {
+fn repo_mapping_ctx_cell<'v>(
+    ctx: Value<'v>,
+    heap: Heap<'v>,
+) -> buck2_error::Result<Option<String>> {
     let label = ctx.get_attr_error("label", heap)?;
     if label.is_none() {
         return Ok(None);
@@ -187,13 +190,7 @@ fn repo_mapping_ctx_cell<'v>(ctx: Value<'v>, heap: Heap<'v>) -> buck2_error::Res
         ))
     })?;
     Ok(Some(
-        label
-            .label()
-            .target()
-            .pkg()
-            .cell_name()
-            .as_str()
-            .to_owned(),
+        label.label().target().pkg().cell_name().as_str().to_owned(),
     ))
 }
 
@@ -211,7 +208,10 @@ fn repo_mapping_symlink_path<'v>(heap: Heap<'v>, symlink: Value<'v>) -> starlark
         })
 }
 
-fn repo_mapping_symlink_target<'v>(heap: Heap<'v>, symlink: Value<'v>) -> starlark::Result<Value<'v>> {
+fn repo_mapping_symlink_target<'v>(
+    heap: Heap<'v>,
+    symlink: Value<'v>,
+) -> starlark::Result<Value<'v>> {
     symlink.get_attr_error("target_file", heap)
 }
 
