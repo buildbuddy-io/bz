@@ -30,7 +30,6 @@ use starlark::environment::LibraryExtension;
 use crate::attrs::attrs_global::register_attrs;
 use crate::bazel_apple::register_bazel_apple_common;
 use crate::bazel_aspect::register_bazel_aspect;
-use crate::bazel_cc::register_bazel_cc_common;
 use crate::bazel_config::register_bazel_config;
 use crate::bazel_configuration_field::register_bazel_configuration_field;
 use crate::bazel_native::register_bazel_native;
@@ -88,7 +87,6 @@ pub fn register_load_natives(builder: &mut GlobalsBuilder) {
     register_bazel_repository_globals(builder);
     register_bazel_native(builder);
     register_bazel_apple_common(builder);
-    register_bazel_cc_common(builder);
     register_bazel_config(builder);
     register_bazel_configuration_field(builder);
     register_bazel_package_globals(builder);
