@@ -742,30 +742,6 @@ fn java_bool_attr<'v>(value: Value<'v>, attr: &str, heap: Heap<'v>) -> starlark:
     })
 }
 
-fn java_compile_execution_requirements<'v>(
-    java_toolchain: Value<'v>,
-    heap: Heap<'v>,
-) -> starlark::Result<Value<'v>> {
-    let mut requirements = vec![("supports-path-mapping", "1")];
-    if java_bool_attr(java_toolchain, "_javac_supports_workers", heap)? {
-        requirements.push(("supports-workers", "1"));
-    }
-    if java_bool_attr(java_toolchain, "_javac_supports_multiplex_workers", heap)? {
-        requirements.push(("supports-multiplex-workers", "1"));
-    }
-    if java_bool_attr(java_toolchain, "_javac_supports_worker_cancellation", heap)? {
-        requirements.push(("supports-worker-cancellation", "1"));
-    }
-    if java_bool_attr(
-        java_toolchain,
-        "_javac_supports_worker_multiplex_sandboxing",
-        heap,
-    )? {
-        requirements.push(("supports-multiplex-sandboxing", "1"));
-    }
-    Ok(heap.alloc(AllocDict(requirements)))
-}
-
 fn java_compile_worker_executable<'v>(
     java_toolchain: Value<'v>,
     executable: Value<'v>,
@@ -1487,7 +1463,6 @@ fn java_register_compilation_action<'v>(
     java_push_output(&mut outputs, native_header_jar);
     outputs.extend(java_collection_values(additional_outputs, heap)?);
 
-    let execution_requirements = java_compile_execution_requirements(java_toolchain, heap)?;
     let worker_executable =
         java_compile_worker_executable(java_toolchain, executable, &argv, param_file_start, heap)?;
     java_call_run_action(
@@ -1498,7 +1473,7 @@ fn java_register_compilation_action<'v>(
         outputs,
         "Javac",
         param_file_start,
-        Some(execution_requirements),
+        None,
         worker_executable,
         eval,
     )?;
