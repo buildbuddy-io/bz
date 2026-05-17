@@ -41,6 +41,7 @@ use starlark::values::ValueLike;
 use starlark::values::ValueTyped;
 use starlark::values::ValueTypedComplex;
 use starlark::values::dict::AllocDict;
+use starlark::values::dict::DictRef;
 use starlark::values::list::AllocList;
 use starlark::values::list::ListRef;
 use starlark::values::none::NoneOr;
@@ -1177,6 +1178,43 @@ fn java_merge_plugin_data<'v>(
     )
 }
 
+fn java_library_proxy<'v>(
+    ctx: Value<'v>,
+    bazel_java_library_rule: Value<'v>,
+    eval: &mut Evaluator<'v, '_, '_>,
+) -> starlark::Result<Value<'v>> {
+    let heap = eval.heap();
+    let files = java_attr(ctx, "files", heap)?;
+    let attrs = java_attr(ctx, "attr", heap)?;
+    let result = eval.eval_function(
+        bazel_java_library_rule,
+        &[
+            ctx,
+            java_attr(files, "srcs", heap)?,
+            java_attr(attrs, "deps", heap)?,
+            java_attr(attrs, "runtime_deps", heap)?,
+            java_attr(attrs, "plugins", heap)?,
+            java_attr(attrs, "exports", heap)?,
+            java_attr(attrs, "exported_plugins", heap)?,
+            java_attr(files, "resources", heap)?,
+            java_attr(attrs, "javacopts", heap)?,
+            java_attr(attrs, "neverlink", heap)?,
+            java_attr(files, "proguard_specs", heap)?,
+            java_attr(attrs, "add_exports", heap)?,
+            java_attr(attrs, "add_opens", heap)?,
+            java_attr(attrs, "bootclasspath", heap)?,
+            java_attr(attrs, "javabuilder_jvm_flags", heap)?,
+        ],
+        &[],
+    )?;
+    if let Some(result) = DictRef::from_value(result) {
+        let values = result.iter().map(|(_, value)| value).collect::<Vec<_>>();
+        return Ok(heap.alloc(AllocList(values)).to_value());
+    }
+    let values = java_attr(result, "values", heap)?;
+    eval.eval_function(values, &[], &[])
+}
+
 #[allow(clippy::too_many_arguments)]
 fn java_javainfo_init_base<'v>(
     java_output_info_provider: Value<'v>,
@@ -1958,6 +1996,15 @@ fn java_common_internal_methods(builder: &mut MethodsBuilder) {
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<String> {
         java_resource_mapper(file, eval.heap())
+    }
+
+    fn java_library_proxy<'v>(
+        #[starlark(this)] _this: &JavaCommonInternal,
+        #[starlark(require = pos)] ctx: Value<'v>,
+        #[starlark(require = pos)] bazel_java_library_rule: Value<'v>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<Value<'v>> {
+        java_library_proxy(ctx, bazel_java_library_rule, eval)
     }
 
     fn javainfo_init_base<'v>(

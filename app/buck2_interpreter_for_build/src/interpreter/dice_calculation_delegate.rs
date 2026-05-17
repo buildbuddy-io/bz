@@ -122,6 +122,8 @@ const BAZEL_RULES_JAVA_INFO_BZL_SHA256: &str =
     "02438c92066a825629a47f6dd01d9ea2200dc90a666b68fb4ee1ebf09e6a3026";
 const BAZEL_RULES_JAVA_LIBRARY_BZL_SHA256: &str =
     "b84b50c1e2f610eee786b6df4e3dc4211072ac5b4d252d5ac670270656c609c4";
+const BAZEL_RULES_JAVA_BAZEL_LIBRARY_BZL_SHA256: &str =
+    "97f87b1bc3c6a5faa186e26d325578e2aca274a8131755a7805976b7ee5fb2f7";
 const BAZEL_RULES_JAVA_COMMON_INTERNAL_BZL_SHA256: &str =
     "68776f7ef30ca86f97edb7359812e1c3ff12cf348c812cfa86292d1d41a825a3";
 const BAZEL_RULES_JAVA_HELPER_BZL_SHA256: &str =
@@ -279,6 +281,20 @@ fn is_bazel_rules_java_library_path(starlark_file: StarlarkPath<'_>) -> bool {
     }
 }
 
+fn is_bazel_rules_java_bazel_library_path(starlark_file: StarlarkPath<'_>) -> bool {
+    match starlark_file {
+        StarlarkPath::LoadFile(path) => {
+            path.cell().as_str().contains("rules_java")
+                && path.path().path().as_str() == "java/bazel/rules/bazel_java_library.bzl"
+        }
+        StarlarkPath::BuildFile(_)
+        | StarlarkPath::PackageFile(_)
+        | StarlarkPath::BxlFile(_)
+        | StarlarkPath::JsonFile(_)
+        | StarlarkPath::TomlFile(_) => false,
+    }
+}
+
 fn is_bazel_rules_java_helper_path(starlark_file: StarlarkPath<'_>) -> bool {
     match starlark_file {
         StarlarkPath::LoadFile(path) => {
@@ -348,6 +364,55 @@ fn rewrite_bazel_rules_java_library(
     if rewritten == contents {
         return Err(internal_error!(
             "rules_java java_library.bzl hash matched, but java_library proxy stub did not"
+        ));
+    }
+    Ok(rewritten)
+}
+
+fn rewrite_bazel_rules_java_bazel_library(
+    starlark_file: StarlarkPath<'_>,
+    contents: String,
+) -> buck2_error::Result<String> {
+    if !is_bazel_rules_java_bazel_library_path(starlark_file) {
+        return Ok(contents);
+    }
+    if hex::encode(Sha256::digest(contents.as_bytes()))
+        != BAZEL_RULES_JAVA_BAZEL_LIBRARY_BZL_SHA256
+    {
+        return Ok(contents);
+    }
+
+    const JAVA_LIBRARY_PROXY_STUB: &str = r#"def _proxy(ctx):
+    return bazel_java_library_rule(
+        ctx,
+        ctx.files.srcs,
+        ctx.attr.deps,
+        ctx.attr.runtime_deps,
+        ctx.attr.plugins,
+        ctx.attr.exports,
+        ctx.attr.exported_plugins,
+        ctx.files.resources,
+        ctx.attr.javacopts,
+        ctx.attr.neverlink,
+        ctx.files.proguard_specs,
+        ctx.attr.add_exports,
+        ctx.attr.add_opens,
+        ctx.attr.bootclasspath,
+        ctx.attr.javabuilder_jvm_flags,
+    ).values()
+"#;
+    const NATIVE_JAVA_LIBRARY_PROXY_STUB: &str = r#"def _proxy(ctx):
+    return java_common.internal_DO_NOT_USE().java_library_proxy(ctx, bazel_java_library_rule)
+"#;
+
+    let rewritten = contents.replacen(
+        JAVA_LIBRARY_PROXY_STUB,
+        NATIVE_JAVA_LIBRARY_PROXY_STUB,
+        1,
+    );
+    if rewritten == contents {
+        return Err(internal_error!(
+            "rules_java bazel_java_library.bzl hash matched, but _proxy stub did not"
         ));
     }
     Ok(rewritten)
@@ -1062,6 +1127,7 @@ impl<'c, 'd: 'c> DiceCalculationDelegate<'c, 'd> {
         let content = rewrite_bazel_rules_cc_semantics(starlark_path, content)?;
         let content = rewrite_bazel_rules_cc_configure_features(starlark_path, content)?;
         let content = rewrite_bazel_rules_java_library(starlark_path, content)?;
+        let content = rewrite_bazel_rules_java_bazel_library(starlark_path, content)?;
         let content = rewrite_bazel_rules_java_info(starlark_path, content)?;
         let content = rewrite_bazel_rules_java_common_internal(starlark_path, content)?;
         let content = rewrite_bazel_rules_java_helper(starlark_path, content)?;
