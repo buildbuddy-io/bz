@@ -266,6 +266,10 @@ impl StreamingCommand for RunCommand {
         let to_redact: StdBuckHashSet<_> = self.extra_run_args.iter().collect();
         argv.redacted(to_redact)
     }
+
+    fn build_event_protocol_target_patterns(&self) -> Vec<String> {
+        vec![self.target.clone()]
+    }
 }
 
 #[derive(Serialize)]

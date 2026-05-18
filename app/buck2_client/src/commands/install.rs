@@ -239,4 +239,8 @@ impl StreamingCommand for InstallCommand {
     fn starlark_opts(&self) -> &CommonStarlarkOptions {
         &self.common_opts.starlark_opts
     }
+
+    fn build_event_protocol_target_patterns(&self) -> Vec<String> {
+        self.patterns.clone()
+    }
 }

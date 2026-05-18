@@ -37,6 +37,7 @@ use crate::events_ctx::EventsCtx;
 use crate::exit_result::ExitResult;
 use crate::path_arg::PathArg;
 use crate::signal_handler::with_simple_sigint_handler;
+use crate::subscribers::bep::get_bep_subscriber;
 use crate::subscribers::build_graph_stats::BuildGraphStats;
 use crate::subscribers::build_id_writer::BuildIdWriter;
 use crate::subscribers::event_log::EventLog;
@@ -125,6 +126,9 @@ fn update_events_ctx<T: StreamingCommand>(
     if let Some(build_graph_stats) = get_build_graph_stats(cmd, ctx) {
         subscribers.push(build_graph_stats)
     }
+    if let Some(bep_subscriber) = get_bep_subscriber(cmd, ctx, paths) {
+        subscribers.push(bep_subscriber);
+    }
     let representative_config_flags = if ctx.paths().is_ok() {
         matches.get_representative_config_flags()
     } else {
@@ -207,6 +211,11 @@ pub trait StreamingCommand: Sized + Send + Sync {
     /// Currently only for BxlCommand.
     fn user_event_log(&self) -> &Option<PathArg> {
         &None
+    }
+
+    /// Target patterns to report via the Bazel Build Event Protocol.
+    fn build_event_protocol_target_patterns(&self) -> Vec<String> {
+        Vec::new()
     }
 
     /// Path to write test session ID. Currently only for TestCommand.
