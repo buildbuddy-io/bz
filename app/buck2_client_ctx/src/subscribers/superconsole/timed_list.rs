@@ -55,6 +55,39 @@ struct TimedListBody<'c> {
 }
 
 impl TimedListBody<'_> {
+    fn is_promoted_detail_span(&self, child: &BuckEventSpanHandle) -> bool {
+        matches!(
+            child
+                .info()
+                .event
+                .span_start_event()
+                .and_then(|start| start.data.as_ref()),
+            Some(buck2_data::span_start_event::Data::DiceStateUpdateStage(..))
+        )
+    }
+
+    fn collect_promoted_detail_rows(
+        &self,
+        span: &BuckEventSpanHandle,
+        rows: &mut Vec<TimedRow>,
+        display_platform: bool,
+    ) -> buck2_error::Result<()> {
+        let timekeeper = &self.state.timekeeper;
+        for child in span.children() {
+            if self.is_promoted_detail_span(&child) {
+                rows.push(TimedRow::span(
+                    0,
+                    child.info(),
+                    timekeeper,
+                    self.cutoffs,
+                    display_platform,
+                )?);
+            }
+            self.collect_promoted_detail_rows(&child, rows, display_platform)?;
+        }
+        Ok(())
+    }
+
     /// Render a root  as `root [first child + remaining children]`
     fn draw_root_first_child(
         &self,
@@ -115,13 +148,10 @@ impl TimedListBody<'_> {
 
         let mut it = root.children();
 
-        match it.next() {
-            Some(first) if !two_lines => Ok(vec![self.draw_root_first_child(
-                root,
-                first,
-                it.len(),
-                display_platform,
-            )?]),
+        let mut rows = match it.next() {
+            Some(first) if !two_lines => {
+                vec![self.draw_root_first_child(root, first, it.len(), display_platform)?]
+            }
             first => {
                 let mut rows = Vec::new();
                 rows.push(TimedRow::span(
@@ -141,9 +171,12 @@ impl TimedListBody<'_> {
                         display_platform,
                     )?);
                 }
-                Ok(rows)
+                rows
             }
-        }
+        };
+
+        self.collect_promoted_detail_rows(root, &mut rows, display_platform)?;
+        Ok(rows)
     }
 }
 
@@ -533,6 +566,94 @@ mod tests {
 
             pretty_assertions::assert_eq!(output.fmt_for_test().to_string(), expected);
         }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_dice_state_update_stages_render_as_rows() -> buck2_error::Result<()> {
+        let tick = Tick::now();
+
+        let parent = SpanId::next();
+        let child = SpanId::next();
+
+        let root = Arc::new(BuckEvent::new(
+            fake_time(&tick, 10),
+            TraceId::new(),
+            Some(parent),
+            None,
+            SpanStartEvent {
+                data: Some(buck2_data::DiceSynchronizeSectionStart {}.into()),
+            }
+            .into(),
+        ));
+
+        let child_event = Arc::new(BuckEvent::new(
+            fake_time(&tick, 5),
+            TraceId::new(),
+            Some(child),
+            Some(parent),
+            SpanStartEvent {
+                data: Some(buck2_data::DiceStateUpdateStart {}.into()),
+            }
+            .into(),
+        ));
+
+        let detail_event = Arc::new(BuckEvent::new(
+            fake_time(&tick, 2),
+            TraceId::new(),
+            Some(SpanId::next()),
+            Some(child),
+            SpanStartEvent {
+                data: Some(
+                    buck2_data::DiceStateUpdateStageStart {
+                        stage: "evaluating bzlmod module extension `foo.bzl`%`deps`".to_owned(),
+                    }
+                    .into(),
+                ),
+            }
+            .into(),
+        ));
+
+        let mut state = BuckEventSpanTracker::new();
+        state.start_at(&root).unwrap();
+        state.start_at(&child_event).unwrap();
+        state.start_at(&detail_event).unwrap();
+
+        let action_stats = ActionStats {
+            local_actions: 0,
+            remote_actions: 0,
+            cached_actions: 1,
+            fallback_actions: 0,
+            remote_dep_file_cached_actions: 0,
+            excess_cache_misses: 0,
+        };
+
+        let output = TimedList::new(
+            &CUTOFFS,
+            &super_console_state_for_test(
+                state,
+                action_stats,
+                fake_timekeeper(tick),
+                SuperConsoleConfig {
+                    max_lines: 5,
+                    ..Default::default()
+                },
+            ),
+        )
+        .draw(
+            Dimensions {
+                width: 100,
+                height: 10,
+            },
+            DrawMode::Normal,
+        )?;
+
+        let output = output.fmt_for_test().to_string();
+        assert!(output.contains("Synchronizing buck2 internal state"));
+        assert!(output.contains("Syncing changes to graph"));
+        assert!(output.contains("evaluating bzlmod module extension `foo.bzl`%`deps`"));
+        assert!(!output.contains(" > "));
 
         Ok(())
     }

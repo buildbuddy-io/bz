@@ -91,6 +91,7 @@ message SpanStartEvent {
     DepFileUploadStart dep_file_upload = 88;
     ComputeDetailedAggregatedMetricsStart compute_detailed_aggregated_metrics =
         89;
+    DiceStateUpdateStageStart dice_state_update_stage = 91;
     // Used in Buck unit tests.
     FakeStart fake = 999;
   }
@@ -144,6 +145,7 @@ message SpanEndEvent {
     DepFileUploadEnd dep_file_upload = 88;
     ComputeDetailedAggregatedMetricsEnd compute_detailed_aggregated_metrics =
         89;
+    DiceStateUpdateStageEnd dice_state_update_stage = 91;
     // Used in Buck unit tests.
     FakeEnd fake = 999;
   }
@@ -2949,6 +2951,12 @@ message InstallEventInfoEnd {};
 message DiceStateUpdateStart {}
 
 message DiceStateUpdateEnd {}
+
+message DiceStateUpdateStageStart {
+  string stage = 1;
+}
+
+message DiceStateUpdateStageEnd {}
 
 message MaterializationStart {
   // The digest of the action being materialized.

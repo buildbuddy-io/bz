@@ -345,6 +345,7 @@ pub fn display_event(event: &BuckEvent, opts: TargetDisplayOptions) -> buck2_err
                 info.artifact_name, info.file_path
             )),
             Data::DiceStateUpdate(..) => Ok("Syncing changes to graph".to_owned()),
+            Data::DiceStateUpdateStage(stage) => Ok(truncate(&stage.stage, 200)),
             Data::Materialization(..) => Ok("materializing".to_owned()),
             Data::DiceCriticalSection(..) => Err(ParseEventError::UnexpectedEvent.into()),
             Data::DiceBlockConcurrentCommand(cmd) => Ok(format!(

@@ -539,6 +539,7 @@ pub fn is_span_shown(event: &BuckEvent) -> bool {
             | Data::CreateOutputSymlinks(..)
             | Data::InstallEventInfo(..)
             | Data::DiceStateUpdate(..)
+            | Data::DiceStateUpdateStage(..)
             | Data::Fake(..)
             | Data::AnalysisStage(..)
             | Data::ExecutorStage(..)
