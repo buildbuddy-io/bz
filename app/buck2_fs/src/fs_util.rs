@@ -471,9 +471,138 @@ pub fn set_executable<P: AsRef<AbsPath>>(path: P, executable: bool) -> Result<()
 }
 
 pub fn remove_dir_all<P: AsRef<AbsPath>>(path: P) -> Result<(), IoError> {
+    let path = path.as_ref();
     let _guard = IoCounterKey::RmDirAll.guard();
-    with_retries(|| fs::remove_dir_all(path.as_ref().as_maybe_relativized()))
-        .map_err(|e| IoError::new_with_path("remove_dir_all", path, e))
+    #[cfg(unix)]
+    let result = delete_tree(path.as_maybe_relativized());
+    #[cfg(not(unix))]
+    let result = with_retries(|| fs::remove_dir_all(path.as_maybe_relativized()));
+
+    result.map_err(|e| IoError::new_with_path("remove_dir_all", path, e))
+}
+
+#[cfg(unix)]
+fn delete_tree(path: &Path) -> io::Result<()> {
+    let metadata = with_retries(|| fs::symlink_metadata(path))?;
+    if metadata.file_type().is_symlink() {
+        return with_retries(|| fs::remove_file(path));
+    }
+    if !metadata.is_dir() {
+        return with_retries(|| fs::remove_dir_all(path));
+    }
+
+    delete_trees_below(path)?;
+    with_retries(|| fs::remove_dir(path))
+}
+
+#[cfg(unix)]
+fn delete_trees_below(path: &Path) -> io::Result<()> {
+    if !is_directory_no_follow(path)? {
+        return Ok(());
+    }
+
+    // This mirrors Bazel's FileSystem.deleteTreesBelow: repair directory permissions lazily
+    // when listing or deleting proves they are blocking cleanup.
+    let entries = match read_directory_entries(path) {
+        Ok(entries) => entries,
+        Err(_) => {
+            set_readable(path)?;
+            set_owner_executable(path)?;
+            read_directory_entries(path)?
+        }
+    };
+
+    let mut entries = entries.into_iter();
+    if let Some(first) = entries.next() {
+        let first_delete_result = delete_trees_below(&first).and_then(|()| delete_path(&first));
+        match first_delete_result {
+            Ok(true) => {}
+            Ok(false) => {
+                set_writable(path)?;
+                set_owner_executable(path)?;
+                delete_trees_below(&first)?;
+                delete_path(&first)?;
+            }
+            Err(_) => {
+                set_writable(path)?;
+                set_owner_executable(path)?;
+                delete_trees_below(&first)?;
+                delete_path(&first)?;
+            }
+        }
+    }
+
+    for entry in entries {
+        delete_trees_below(&entry)?;
+        delete_path(&entry)?;
+    }
+
+    Ok(())
+}
+
+#[cfg(unix)]
+fn is_directory_no_follow(path: &Path) -> io::Result<bool> {
+    match with_retries(|| fs::symlink_metadata(path)) {
+        Ok(metadata) => Ok(metadata.is_dir()),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(e) => Err(e),
+    }
+}
+
+#[cfg(unix)]
+fn read_directory_entries(path: &Path) -> io::Result<Vec<PathBuf>> {
+    with_retries(|| fs::read_dir(path))?
+        .map(|entry| entry.map(|entry| entry.path()))
+        .collect()
+}
+
+/// Delete a file, symlink, or empty directory without following symlinks.
+#[cfg(unix)]
+fn delete_path(path: &Path) -> io::Result<bool> {
+    match with_retries(|| fs::symlink_metadata(path)) {
+        Ok(metadata) if metadata.is_dir() => match with_retries(|| fs::remove_dir(path)) {
+            Ok(()) => Ok(true),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(false),
+            Err(e) => Err(e),
+        },
+        Ok(_) => match with_retries(|| fs::remove_file(path)) {
+            Ok(()) => Ok(true),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(false),
+            Err(e) => Err(e),
+        },
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(e) => Err(e),
+    }
+}
+
+#[cfg(unix)]
+fn set_readable(path: &Path) -> io::Result<()> {
+    add_owner_permissions(path, 0o400)
+}
+
+#[cfg(unix)]
+fn set_writable(path: &Path) -> io::Result<()> {
+    add_owner_permissions(path, 0o200)
+}
+
+#[cfg(unix)]
+fn set_owner_executable(path: &Path) -> io::Result<()> {
+    add_owner_permissions(path, 0o100)
+}
+
+#[cfg(unix)]
+fn add_owner_permissions(path: &Path, added_mode: u32) -> io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let metadata = with_retries(|| fs::symlink_metadata(path))?;
+    let mode = metadata.permissions().mode();
+    let new_mode = mode | added_mode;
+    if mode != new_mode {
+        let mut permissions = metadata.permissions();
+        permissions.set_mode(new_mode);
+        with_retries(|| fs::set_permissions(path, permissions.clone()))?;
+    }
+    Ok(())
 }
 
 fn symlink_metadata_if_exists_impl<P: AsRef<AbsPath>>(
@@ -1485,6 +1614,29 @@ mod tests {
         fs_util::set_permissions(&path, perm)?;
         fs_util::remove_all(&path)?;
         assert!(!path.exists());
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_remove_all_removes_readonly_directory() -> buck2_error::Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tempdir = tempfile::tempdir()?;
+        let root = AbsPath::new(tempdir.path())?;
+        let path = root.join("foo/bar/file");
+        let readonly_top_dir = root.join("foo");
+        let readonly_dir = path.parent().unwrap();
+        fs_util::create_dir_all(readonly_dir)?;
+        fs_util::write(&path, b"data")?;
+        let mut perm = fs_util::metadata(readonly_dir)?.permissions();
+        perm.set_mode(0o555);
+        fs_util::set_permissions(readonly_dir, perm)?;
+        let mut perm = fs_util::metadata(&readonly_top_dir)?.permissions();
+        perm.set_mode(0o555);
+        fs_util::set_permissions(&readonly_top_dir, perm)?;
+        fs_util::remove_all(&readonly_top_dir)?;
+        assert!(!readonly_top_dir.exists());
         Ok(())
     }
 
