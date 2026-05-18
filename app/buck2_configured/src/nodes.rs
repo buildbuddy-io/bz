@@ -26,6 +26,7 @@ use buck2_build_signals::node_key::BuildSignalsNodeKey;
 use buck2_build_signals::node_key::BuildSignalsNodeKeyImpl;
 use buck2_common::dice::cells::HasCellResolver;
 use buck2_common::dice::cycles::CycleGuard;
+use buck2_common::legacy_configs::cells::get_bazel_module_registered_toolchains_on_dice;
 use buck2_common::legacy_configs::dice::HasLegacyConfigs;
 use buck2_common::legacy_configs::key::BuckconfigKeyRef;
 use buck2_common::legacy_configs::view::LegacyBuckConfigView;
@@ -1444,6 +1445,10 @@ async fn compute_registered_bazel_toolchain_nodes(
             property: "registered_toolchains",
         })?
         .unwrap_or_default();
+    let mut registered = registered;
+    registered.extend(get_bazel_module_registered_toolchains_on_dice(ctx).await?);
+    registered.sort_unstable();
+    registered.dedup();
     if registered.is_empty() {
         return Ok(Arc::new(Vec::new()));
     }

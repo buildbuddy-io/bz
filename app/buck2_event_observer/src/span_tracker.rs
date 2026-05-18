@@ -530,6 +530,8 @@ pub fn is_span_shown(event: &BuckEvent) -> bool {
             | Data::FinalMaterialization(..)
             | Data::Analysis(..)
             | Data::AnalysisResolveQueries(..)
+            | Data::BzlmodModuleExtension(..)
+            | Data::BzlmodRepo(..)
             | Data::Load(..)
             | Data::LoadPackage(..)
             | Data::TestDiscovery(..)
@@ -572,13 +574,55 @@ pub type BuckEventSpanInfo = SpanInfo<Arc<BuckEvent>>;
 
 impl BuckEventSpanTracker {
     pub fn handle_event(&mut self, event: &Arc<BuckEvent>) -> buck2_error::Result<()> {
-        if let Some(_start) = event.span_start_event() {
+        if let Some(progress) = bzlmod_progress_event(event) {
+            self.update_bzlmod_progress(event.parent_id(), progress);
+        } else if let Some(_start) = event.span_start_event() {
             self.start_at(event)?;
         } else if let Some(_end) = event.span_end_event() {
             self.end(event)?;
         }
         Ok(())
     }
+
+    fn update_bzlmod_progress(&mut self, parent_id: Option<SpanId>, progress: &str) {
+        let Some(parent_id) = parent_id else {
+            return;
+        };
+        let Some(span) = self.all.get_mut(&parent_id) else {
+            return;
+        };
+
+        let mut updated = span.info.event.as_ref().clone();
+        let updated_progress = match updated.data_mut() {
+            buck2_data::buck_event::Data::SpanStart(start) => match start.data.as_mut() {
+                Some(buck2_data::span_start_event::Data::BzlmodRepo(repo)) => {
+                    repo.progress = progress.to_owned();
+                    true
+                }
+                Some(buck2_data::span_start_event::Data::BzlmodModuleExtension(extension)) => {
+                    extension.progress = progress.to_owned();
+                    true
+                }
+                _ => false,
+            },
+            _ => false,
+        };
+
+        if updated_progress {
+            span.info.event = Arc::new(updated);
+        }
+    }
+}
+
+fn bzlmod_progress_event(event: &BuckEvent) -> Option<&str> {
+    let buck2_data::buck_event::Data::Instant(instant) = event.data() else {
+        return None;
+    };
+    let Some(buck2_data::instant_event::Data::BzlmodProgress(progress)) = instant.data.as_ref()
+    else {
+        return None;
+    };
+    Some(progress.progress.as_str())
 }
 
 impl WhatRanState for SpanTracker<Arc<BuckEvent>> {

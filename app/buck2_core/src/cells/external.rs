@@ -107,6 +107,21 @@ pub fn register_bzlmod_cell_aliases(
         .insert(cell_name.to_owned(), aliases);
 }
 
+pub fn extend_bzlmod_cell_aliases(
+    cell_name: &str,
+    aliases: impl IntoIterator<Item = (String, String)>,
+) {
+    let mut aliases_by_cell = BZLMOD_CELL_ALIASES
+        .lock()
+        .expect("bzlmod cell alias map poisoned");
+    let existing = aliases_by_cell.entry(cell_name.to_owned()).or_default();
+    for (alias, destination) in aliases {
+        existing.push((alias, destination));
+    }
+    existing.sort_unstable();
+    existing.dedup();
+}
+
 pub fn register_bzlmod_cell_aliases_from_refs<'a, I>(cell_name: &str, aliases: I)
 where
     I: Clone + IntoIterator<Item = (&'a str, &'a str)>,
@@ -503,6 +518,7 @@ pub struct BzlmodModuleExtensionRepoSetup {
     pub extension_bzl_file: Arc<str>,
     pub extension_bzl_cell: Arc<str>,
     pub extension_bzl_path: Arc<str>,
+    pub extension_unique_name: Arc<str>,
     pub extension_name: Arc<str>,
     pub repo_name: Arc<str>,
     pub extension_usages_key: Arc<str>,
@@ -531,6 +547,8 @@ impl<'de> Deserialize<'de> for BzlmodModuleExtensionRepoSetup {
             extension_bzl_file: Arc<str>,
             extension_bzl_cell: Arc<str>,
             extension_bzl_path: Arc<str>,
+            #[serde(default)]
+            extension_unique_name: Option<Arc<str>>,
             extension_name: Arc<str>,
             repo_name: Arc<str>,
             #[serde(default)]
@@ -573,6 +591,9 @@ impl<'de> Deserialize<'de> for BzlmodModuleExtensionRepoSetup {
             extension_bzl_file: config.extension_bzl_file,
             extension_bzl_cell: config.extension_bzl_cell,
             extension_bzl_path: config.extension_bzl_path,
+            extension_unique_name: config
+                .extension_unique_name
+                .unwrap_or_else(|| Arc::from("")),
             extension_name: config.extension_name,
             repo_name: config.repo_name,
             extension_usages_key,
@@ -588,6 +609,7 @@ impl PartialEq for BzlmodModuleExtensionRepoSetup {
             && self.extension_bzl_file == other.extension_bzl_file
             && self.extension_bzl_cell == other.extension_bzl_cell
             && self.extension_bzl_path == other.extension_bzl_path
+            && self.extension_unique_name == other.extension_unique_name
             && self.extension_name == other.extension_name
             && self.repo_name == other.repo_name
             && self.extension_usages_key == other.extension_usages_key
@@ -603,6 +625,7 @@ impl Hash for BzlmodModuleExtensionRepoSetup {
         self.extension_bzl_file.hash(state);
         self.extension_bzl_cell.hash(state);
         self.extension_bzl_path.hash(state);
+        self.extension_unique_name.hash(state);
         self.extension_name.hash(state);
         self.repo_name.hash(state);
         self.extension_usages_key.hash(state);

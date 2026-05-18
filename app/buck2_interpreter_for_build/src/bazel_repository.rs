@@ -722,6 +722,13 @@ pub struct BazelRepositoryGeneratedFile {
     pub executable: bool,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BazelRepositoryRuleProgress {
+    pub repo: String,
+    pub path: String,
+    pub kind: String,
+}
+
 pub(crate) enum BazelRepositoryRuleEvaluation {
     Success(Vec<BazelRepositoryGeneratedFile>),
     NeedsPathLabelDeps {
@@ -858,6 +865,7 @@ pub async fn evaluate_bzlmod_repository_rule(
     ctx: &mut DiceComputations<'_>,
     invocation: &BazelRepositoryRuleInvocation,
     repository_ctx_working_dir: &str,
+    progress: Option<BazelRepositoryRuleProgress>,
     cancellation: &CancellationContext,
 ) -> buck2_error::Result<Vec<BazelRepositoryGeneratedFile>> {
     let rule_path = match &invocation.rule_id.path {
@@ -877,16 +885,33 @@ pub async fn evaluate_bzlmod_repository_rule(
         let mut interpreter = ctx
             .get_interpreter_calculator(OwnedStarlarkPath::LoadFile(rule_path.clone()))
             .await?;
-        match interpreter
-            .eval_bzlmod_repository_rule(
-                rule_path,
-                &rule_module,
-                invocation,
-                repository_ctx_working_dir,
-                cancellation,
+        let evaluation = interpreter.eval_bzlmod_repository_rule(
+            rule_path,
+            &rule_module,
+            invocation,
+            repository_ctx_working_dir,
+            cancellation,
+        );
+        let evaluation = if let Some(progress) = progress.as_ref() {
+            buck2_events::dispatch::span_async_simple(
+                buck2_data::BzlmodRepoStart {
+                    repo: progress.repo.clone(),
+                    path: progress.path.clone(),
+                    kind: progress.kind.clone(),
+                    progress: "starting".to_owned(),
+                },
+                evaluation,
+                buck2_data::BzlmodRepoEnd {
+                    repo: progress.repo.clone(),
+                    path: progress.path.clone(),
+                    kind: progress.kind.clone(),
+                },
             )
             .await?
-        {
+        } else {
+            evaluation.await?
+        };
+        match evaluation {
             BazelRepositoryRuleEvaluation::Success(files) => return Ok(files),
             BazelRepositoryRuleEvaluation::NeedsPathLabelDeps { label_deps, error } => {
                 let new_label_deps = label_deps
@@ -1060,8 +1085,14 @@ pub async fn evaluate_bzlmod_repository_rule_invocation(
     cancellation: &CancellationContext,
 ) -> buck2_error::Result<Vec<BazelRepositoryGeneratedFile>> {
     let invocation = bzlmod_repository_rule_invocation_from_setup(setup, canonical_repo_name)?;
-    evaluate_bzlmod_repository_rule(ctx, &invocation, repository_ctx_working_dir, cancellation)
-        .await
+    evaluate_bzlmod_repository_rule(
+        ctx,
+        &invocation,
+        repository_ctx_working_dir,
+        None,
+        cancellation,
+    )
+    .await
 }
 
 pub fn bzlmod_repository_rule_invocation_from_setup(
@@ -3684,7 +3715,10 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
         this: ValueTypedComplex<'v, StarlarkRepositoryContext<'v>>,
         #[starlark(require = pos)] message: &str,
     ) -> starlark::Result<NoneType> {
-        let _unused = (this, message);
+        let _unused = this;
+        buck2_events::dispatch::instant_event(buck2_data::BzlmodProgress {
+            progress: message.to_owned(),
+        });
         Ok(NoneType)
     }
 
@@ -5692,7 +5726,10 @@ fn module_extension_context_methods(builder: &mut MethodsBuilder) {
         this: ValueTypedComplex<'v, StarlarkModuleExtensionContext<'v>>,
         #[starlark(require = pos)] message: &str,
     ) -> starlark::Result<NoneType> {
-        let _unused = (this, message);
+        let _unused = this;
+        buck2_events::dispatch::instant_event(buck2_data::BzlmodProgress {
+            progress: message.to_owned(),
+        });
         Ok(NoneType)
     }
 

@@ -15,6 +15,7 @@ use async_trait::async_trait;
 use buck2_core::cells::CellAliasResolver;
 use buck2_core::cells::CellResolver;
 use buck2_core::cells::external::ExternalCellOrigin;
+use buck2_core::cells::external::external_cell_origin_for_cell;
 use buck2_core::cells::name::CellName;
 use buck2_core::fs::project_rel_path::ProjectRelativePath;
 use derive_more::Display;
@@ -31,7 +32,10 @@ use dupe::Dupe;
 use pagable::Pagable;
 use pagable::pagable_typetag;
 
+use crate::external_cells::EXTERNAL_CELLS_IMPL;
 use crate::legacy_configs::cells::BuckConfigBasedCells;
+use crate::legacy_configs::cells::get_bazel_module_resolution_on_dice;
+use crate::legacy_configs::configs::BazelCompatBazelrcOptions;
 use crate::legacy_configs::dice::HasLegacyConfigs;
 
 #[async_trait]
@@ -200,7 +204,23 @@ impl HasExternalCellOrigins for DiceComputations<'_> {
         &mut self,
         cell: CellName,
     ) -> buck2_error::Result<Option<ExternalCellOrigin>> {
-        Ok(self.compute(&ExternalCellOriginKey(cell)).await?)
+        if cell.as_str().starts_with("bzlmod_") {
+            let cell_in_resolver = match self.compute(&CellResolverKey).await? {
+                Some(resolver) => resolver.contains_declared(cell),
+                None => false,
+            };
+            if !cell_in_resolver {
+                if external_cell_origin_for_cell(cell.as_str()).is_none() {
+                    let _aliases = get_bazel_module_resolution_on_dice(self).await?;
+                }
+                return Ok(external_cell_origin_for_cell(cell.as_str()));
+            }
+        }
+        let origin = self.compute(&ExternalCellOriginKey(cell)).await?;
+        if origin.is_some() {
+            return Ok(origin);
+        }
+        Ok(None)
     }
 }
 
@@ -220,11 +240,60 @@ impl Key for CellAliasResolverKey {
     ) -> Self::Value {
         let resolver = ctx.get_cell_resolver().await?;
         let root_aliases = resolver.root_cell_cell_alias_resolver();
+        let bzlmod_module_aliases = if self.0 == resolver.root_cell()
+            || self.0.as_str() == "bazel_tools"
+            || self.0.as_str().starts_with("bzlmod_")
+        {
+            Some(get_bazel_module_resolution_on_dice(ctx).await?)
+        } else {
+            None
+        };
+        let cell = resolver.get(self.0).ok();
+        let cell_exists = cell.is_some();
+        let external_origin = match cell.and_then(|cell| cell.external().map(Dupe::dupe)) {
+            Some(origin) => Some(origin),
+            None if !cell_exists => ctx.get_external_cell_origin(self.0).await?,
+            None => None,
+        };
+        if let Some(ExternalCellOrigin::BzlmodGenerated(_)) = &external_origin {
+            EXTERNAL_CELLS_IMPL
+                .get()?
+                .ensure_cell_alias_resolver_ready(
+                    ctx,
+                    self.0,
+                    external_origin.dupe().expect("origin checked above"),
+                )
+                .await?;
+        }
+        if !cell_exists
+            && matches!(
+                &external_origin,
+                Some(ExternalCellOrigin::BzlmodGenerated(_))
+            )
+        {
+            return BuckConfigBasedCells::get_bazel_cell_alias_resolver_from_config(
+                self.0,
+                &resolver,
+                &crate::legacy_configs::configs::LegacyBuckConfig::empty(),
+            );
+        }
         let config = ctx.get_legacy_config_for_cell(self.0).await?;
-        let cell = resolver.get(self.0)?;
-        if self.0.as_str() == "bazel_tools"
+        let config = if let Some(module_aliases) = &bzlmod_module_aliases {
+            config.with_bazel_compat_cell_defaults(
+                module_aliases.aliases_for_cell(self.0.as_str()),
+                &[],
+                &BazelCompatBazelrcOptions::default(),
+            )
+        } else {
+            config
+        };
+        resolver.get(self.0).map_err(|_| {
+            buck2_error::buck2_error!(buck2_error::ErrorTag::Input, "Unknown cell `{}`", self.0)
+        })?;
+        if bzlmod_module_aliases.is_some()
+            || self.0.as_str() == "bazel_tools"
             || matches!(
-                cell.external(),
+                &external_origin,
                 Some(ExternalCellOrigin::Bzlmod(_)) | Some(ExternalCellOrigin::BzlmodGenerated(_))
             )
         {

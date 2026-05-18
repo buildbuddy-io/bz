@@ -92,6 +92,8 @@ message SpanStartEvent {
     ComputeDetailedAggregatedMetricsStart compute_detailed_aggregated_metrics =
         89;
     DiceStateUpdateStageStart dice_state_update_stage = 91;
+    BzlmodRepoStart bzlmod_repo = 92;
+    BzlmodModuleExtensionStart bzlmod_module_extension = 93;
     // Used in Buck unit tests.
     FakeStart fake = 999;
   }
@@ -146,6 +148,8 @@ message SpanEndEvent {
     ComputeDetailedAggregatedMetricsEnd compute_detailed_aggregated_metrics =
         89;
     DiceStateUpdateStageEnd dice_state_update_stage = 91;
+    BzlmodRepoEnd bzlmod_repo = 92;
+    BzlmodModuleExtensionEnd bzlmod_module_extension = 93;
     // Used in Buck unit tests.
     FakeEnd fake = 999;
   }
@@ -337,6 +341,9 @@ message InstantEvent {
 
     // RE log stream handles available for a running action
     ReLogStreamAvailable re_log_stream_available = 58;
+
+    // Progress update for the active bzlmod repository/module-extension span.
+    BzlmodProgress bzlmod_progress = 59;
   }
 }
 
@@ -1411,6 +1418,38 @@ message LoadPackageStart {
 message LoadPackageEnd {
   reserved 2, 3;
   string path = 1;
+}
+
+message BzlmodRepoStart {
+  string repo = 1;
+  string path = 2;
+  string kind = 3;
+  string progress = 4;
+}
+
+message BzlmodRepoEnd {
+  string repo = 1;
+  string path = 2;
+  string kind = 3;
+}
+
+message BzlmodModuleExtensionStart {
+  string extension_bzl_file = 1;
+  string extension_name = 2;
+  string repo = 3;
+  string working_dir = 4;
+  string progress = 5;
+}
+
+message BzlmodModuleExtensionEnd {
+  string extension_bzl_file = 1;
+  string extension_name = 2;
+  string repo = 3;
+  string working_dir = 4;
+}
+
+message BzlmodProgress {
+  string progress = 1;
 }
 
 message LoadBuildFileStart {

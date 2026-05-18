@@ -61,6 +61,20 @@ impl buck2_common::external_cells::ExternalCellsImpl for ConcreteExternalCellsIm
         }
     }
 
+    async fn ensure_cell_alias_resolver_ready(
+        &self,
+        ctx: &mut DiceComputations<'_>,
+        cell_name: CellName,
+        origin: ExternalCellOrigin,
+    ) -> buck2_error::Result<()> {
+        match origin {
+            ExternalCellOrigin::BzlmodGenerated(setup) => {
+                bzlmod::ensure_generated_cell_alias_resolver_ready(ctx, cell_name, setup).await
+            }
+            _ => Ok(()),
+        }
+    }
+
     fn check_bundled_cell_exists(&self, cell_name: CellName) -> buck2_error::Result<()> {
         bundled::find_bundled_data(cell_name).map(|_| ())
     }

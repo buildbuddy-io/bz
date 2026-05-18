@@ -83,7 +83,6 @@ fn bzlmod_cell_alias_resolver(
     }
     for (alias, destination) in bzlmod_cell_aliases_for_cell(cell_name.as_str()) {
         let destination = CellName::unchecked_new(&destination)?;
-        c.cell_info().cell_resolver().get(destination)?;
         aliases.insert(NonEmptyCellAlias::new(alias)?, destination);
     }
     CellAliasResolver::new(cell_name, aliases)

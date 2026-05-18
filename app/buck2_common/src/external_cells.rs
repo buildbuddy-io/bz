@@ -28,6 +28,15 @@ pub trait ExternalCellsImpl: Send + Sync + 'static {
         origin: ExternalCellOrigin,
     ) -> buck2_error::Result<Arc<dyn FileOpsDelegate>>;
 
+    async fn ensure_cell_alias_resolver_ready(
+        &self,
+        _ctx: &mut DiceComputations<'_>,
+        _cell_name: CellName,
+        _origin: ExternalCellOrigin,
+    ) -> buck2_error::Result<()> {
+        Ok(())
+    }
+
     fn check_bundled_cell_exists(&self, cell_name: CellName) -> buck2_error::Result<()>;
 
     async fn expand(

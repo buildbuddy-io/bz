@@ -280,6 +280,28 @@ pub fn display_event(event: &BuckEvent, opts: TargetDisplayOptions) -> buck2_err
                     opts
                 )?
             )),
+            Data::BzlmodModuleExtension(extension) => {
+                let progress = if extension.progress.is_empty() {
+                    String::new()
+                } else {
+                    format!("; {}", extension.progress)
+                };
+                Ok(format!(
+                    "{}%{} -- evaluating bzlmod module extension{}",
+                    extension.extension_bzl_file, extension.extension_name, progress
+                ))
+            }
+            Data::BzlmodRepo(repo) => {
+                let progress = if repo.progress.is_empty() {
+                    String::new()
+                } else {
+                    format!("; {}", repo.progress)
+                };
+                Ok(format!(
+                    "{} -- fetching bzlmod repository ({}){}",
+                    repo.repo, repo.kind, progress
+                ))
+            }
             Data::LoadPackage(load) => Ok(format!("{} -- loading package file tree", load.path)),
             Data::Load(load) => Ok(format!("{} -- evaluating build file", load.module_id)),
             Data::ExecutorStage(info) => {

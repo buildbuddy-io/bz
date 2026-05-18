@@ -92,6 +92,7 @@ pub mod unchecked_cell_rel_path;
 use std::collections::hash_map;
 use std::fmt::Debug;
 use std::sync::Arc;
+use std::sync::Mutex;
 
 use allocative::Allocative;
 use buck2_fs::paths::abs_path::AbsPath;
@@ -110,8 +111,15 @@ use crate::cells::alias::NonEmptyCellAlias;
 use crate::cells::cell_path::CellPath;
 use crate::cells::cell_path::CellPathRef;
 use crate::cells::cell_root_path::CellRootPathBuf;
+use crate::cells::external::BZLMOD_EXTERNAL_CELL_KIND;
+use crate::cells::external::BZLMOD_GENERATED_EXTERNAL_CELL_KIND;
+use crate::cells::external::ExternalCellOrigin;
+use crate::cells::external::bzlmod_cell_name;
+use crate::cells::external::external_cell_origin_for_cell;
+use crate::cells::external::external_cell_source_path;
 use crate::cells::name::CellName;
 use crate::cells::nested::NestedCells;
+use crate::cells::paths::CellRelativePathBuf;
 use crate::fs::project::ProjectRoot;
 use crate::fs::project_rel_path::ProjectRelativePath;
 use crate::fs::project_rel_path::ProjectRelativePathBuf;
@@ -190,6 +198,9 @@ impl CellAliasResolver {
         if alias.is_empty() {
             return Ok(self.current);
         }
+        if alias.starts_with("bzlmod_") {
+            return CellName::unchecked_new(alias);
+        }
         self.aliases.get(alias).duped().ok_or_else(|| {
             buck2_error::Error::from(CellError::UnknownCellAlias(
                 CellAlias::new(alias.to_owned()),
@@ -221,6 +232,58 @@ struct CellResolverInternals {
     path_mappings: SequenceTrie<FileNameBuf, CellName>,
     root_cell: CellName,
     root_cell_alias_resolver: CellAliasResolver,
+}
+
+static DYNAMIC_EXTERNAL_CELL_INSTANCES: once_cell::sync::Lazy<
+    Mutex<StdBuckHashMap<CellName, &'static CellInstance>>,
+> = once_cell::sync::Lazy::new(|| Mutex::new(StdBuckHashMap::default()));
+
+fn dynamic_external_cell_instance(cell: CellName) -> Option<&'static CellInstance> {
+    let origin = external_cell_origin_for_cell(cell.as_str())?;
+    let (kind, canonical_repo_name) = match &origin {
+        ExternalCellOrigin::Bzlmod(setup) => (
+            BZLMOD_EXTERNAL_CELL_KIND,
+            setup.canonical_repo_name.as_ref(),
+        ),
+        ExternalCellOrigin::BzlmodGenerated(setup) => (
+            BZLMOD_GENERATED_EXTERNAL_CELL_KIND,
+            setup.canonical_repo_name.as_ref(),
+        ),
+        _ => return None,
+    };
+    let mut instances = DYNAMIC_EXTERNAL_CELL_INSTANCES
+        .lock()
+        .expect("dynamic external cell instance map poisoned");
+    if let Some(instance) = instances.get(&cell) {
+        return Some(*instance);
+    }
+    let path = CellRootPathBuf::new(ProjectRelativePathBuf::unchecked_new(
+        external_cell_source_path(kind, canonical_repo_name),
+    ));
+    let instance = CellInstance::new(cell, path, Some(origin), NestedCells::empty()).ok()?;
+    let instance = Box::leak(Box::new(instance));
+    instances.insert(cell, instance);
+    Some(instance)
+}
+
+fn dynamic_external_cell_path(path: &ProjectRelativePath) -> Option<CellPath> {
+    for kind in [
+        BZLMOD_GENERATED_EXTERNAL_CELL_KIND,
+        BZLMOD_EXTERNAL_CELL_KIND,
+    ] {
+        let prefix = external_cell_source_path(kind, "");
+        let Some(suffix) = path.as_str().strip_prefix(&prefix) else {
+            continue;
+        };
+        let (canonical_repo_name, repo_path) = suffix.split_once('/').unwrap_or((suffix, ""));
+        if canonical_repo_name.is_empty() || canonical_repo_name.ends_with(".repository_ctx") {
+            return None;
+        }
+        let cell = CellName::unchecked_new(&bzlmod_cell_name(canonical_repo_name)).ok()?;
+        let relative = CellRelativePathBuf::unchecked_new(repo_path.to_owned());
+        return Some(CellPath::new(cell, relative));
+    }
+    None
 }
 
 impl CellResolver {
@@ -271,12 +334,20 @@ impl CellResolver {
 
     /// Get a `Cell` from the `CellMap`
     pub fn get(&self, cell: CellName) -> buck2_error::Result<&CellInstance> {
-        self.0.cells.get(&cell).ok_or_else(|| {
-            buck2_error::Error::from(CellError::UnknownCellName(
-                cell,
-                self.0.cells.keys().copied().collect(),
-            ))
-        })
+        self.0
+            .cells
+            .get(&cell)
+            .or_else(|| dynamic_external_cell_instance(cell))
+            .ok_or_else(|| {
+                buck2_error::Error::from(CellError::UnknownCellName(
+                    cell,
+                    self.0.cells.keys().copied().collect(),
+                ))
+            })
+    }
+
+    pub fn contains_declared(&self, cell: CellName) -> bool {
+        self.0.cells.contains_key(&cell)
     }
 
     pub fn is_root_cell(&self, name: CellName) -> bool {
@@ -310,6 +381,9 @@ impl CellResolver {
 
     pub fn get_cell_path<P: AsRef<ProjectRelativePath> + ?Sized>(&self, path: &P) -> CellPath {
         let path = path.as_ref();
+        if let Some(cell_path) = dynamic_external_cell_path(path) {
+            return cell_path;
+        }
         let cell = self.find(path);
         // Both of these unwraps are ok by construction of the `CellResolver`
         let instance = self.get(cell).unwrap();
