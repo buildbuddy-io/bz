@@ -1329,6 +1329,7 @@ dependencies = [
  "tokio-stream",
  "tokio-util 0.7.18",
  "tonic",
+ "tonic-prost",
  "tracing",
  "windows-sys 0.61.2",
 ]

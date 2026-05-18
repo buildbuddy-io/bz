@@ -519,4 +519,8 @@ impl StreamingCommand for TestCommand {
     fn write_test_id(&self) -> &Option<PathArg> {
         &self.write_test_id
     }
+
+    fn build_event_protocol_target_patterns(&self) -> Vec<String> {
+        self.patterns.clone()
+    }
 }

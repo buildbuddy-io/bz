@@ -10,6 +10,7 @@
 
 pub(crate) mod build_graph_stats;
 pub(crate) mod build_id_writer;
+pub(crate) mod bep;
 pub(crate) mod classify_server_stderr;
 pub(crate) mod console_output_limit;
 pub(crate) mod emit_event;

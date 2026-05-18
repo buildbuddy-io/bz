@@ -377,6 +377,10 @@ impl StreamingCommand for BuildCommand {
     fn starlark_opts(&self) -> &CommonStarlarkOptions {
         &self.common_opts.starlark_opts
     }
+
+    fn build_event_protocol_target_patterns(&self) -> Vec<String> {
+        self.patterns.clone()
+    }
 }
 
 pub(crate) fn print_build_succeeded(

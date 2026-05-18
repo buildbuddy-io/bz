@@ -160,6 +160,67 @@ pub struct CommonEventLogOptions {
     /// written to `buck-out/v2/<uuid>/command_report` even without this flag.
     #[clap(long, value_name = "PATH")]
     pub(crate) command_report_path: Option<PathArg>,
+
+    /// Bazel-compatible Build Event Service endpoint, e.g. `grpc://localhost:1985`
+    /// or `grpcs://remote.buildbuddy.io`.
+    #[serde(default)]
+    #[clap(
+        long = "bes_backend",
+        alias = "bes-backend",
+        value_name = "ENDPOINT",
+        hide = true
+    )]
+    pub(crate) bes_backend: Option<String>,
+
+    /// Header in `NAME=VALUE` form to include in BES requests. May be repeated.
+    #[serde(default)]
+    #[clap(
+        long = "bes_header",
+        alias = "bes-header",
+        value_name = "NAME=VALUE",
+        hide = true
+    )]
+    pub(crate) bes_header: Vec<String>,
+
+    /// Build Event Service instance/project name.
+    #[serde(default)]
+    #[clap(
+        long = "bes_instance_name",
+        alias = "bes-instance-name",
+        value_name = "INSTANCE",
+        hide = true
+    )]
+    pub(crate) bes_instance_name: Option<String>,
+
+    /// Additional BES notification keywords. Comma-separated values are accepted.
+    #[serde(default)]
+    #[clap(
+        long = "bes_keywords",
+        alias = "bes-keywords",
+        value_name = "KEYWORDS",
+        hide = true
+    )]
+    pub(crate) bes_keywords: Vec<String>,
+
+    /// How long to wait for BES upload completion during finalization.
+    #[serde(default)]
+    #[clap(
+        long = "bes_timeout",
+        alias = "bes-timeout",
+        value_name = "DURATION",
+        hide = true
+    )]
+    pub(crate) bes_timeout: Option<String>,
+
+    /// Base URL for viewing BES results; the invocation id is appended.
+    #[serde(default)]
+    #[clap(
+        long = "bes_results_url",
+        alias = "bes-results-url",
+        value_name = "URL",
+        hide = true
+    )]
+    pub(crate) bes_results_url: Option<String>,
 }
 
 impl CommonEventLogOptions {
@@ -170,6 +231,12 @@ impl CommonEventLogOptions {
             write_build_id: None,
             command_report_path: None,
             unstable_write_invocation_record: None,
+            bes_backend: None,
+            bes_header: Vec::new(),
+            bes_instance_name: None,
+            bes_keywords: Vec::new(),
+            bes_timeout: None,
+            bes_results_url: None,
         };
         &DEFAULT
     }
@@ -181,6 +248,12 @@ impl CommonEventLogOptions {
             write_build_id: None,
             command_report_path: None,
             unstable_write_invocation_record: None,
+            bes_backend: None,
+            bes_header: Vec::new(),
+            bes_instance_name: None,
+            bes_keywords: Vec::new(),
+            bes_timeout: None,
+            bes_results_url: None,
         };
         &NO_EVENT_LOG
     }
