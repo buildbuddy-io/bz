@@ -152,6 +152,19 @@ fn bzlmod_materialization_lock(path: &ProjectRelativePath) -> Arc<tokio::sync::M
         .dupe()
 }
 
+async fn run_bzlmod_cache_io<T>(
+    op: impl FnOnce() -> buck2_error::Result<T> + Send + 'static,
+) -> buck2_error::Result<T>
+where
+    T: Send + 'static,
+{
+    // Cache-hit preparation can run during command setup before per-command Dice
+    // data has installed a BlockingExecutor.
+    tokio::task::spawn_blocking(op)
+        .await
+        .buck_error_context("Failed to spawn bzlmod cache IO")?
+}
+
 struct BzlmodExtractIoRequest {
     setup: BzlmodCellSetup,
     archive: ProjectRelativePathBuf,
@@ -259,23 +272,6 @@ impl IoRequest for BzlmodPrepareExternalCellRootIoRequest {
             record_bzlmod_repo_contents_cache_alias(project_fs, cache_alias, &self.cache_repo)?;
         }
         prepare_bzlmod_external_cell_root(project_fs, &self.cache_repo, &self.dest)
-    }
-}
-
-struct BzlmodPrepareGeneratedExternalCellRootIoRequest {
-    cache_repo: ProjectRelativePathBuf,
-    dest: ProjectRelativePathBuf,
-    setup: BzlmodGeneratedCellSetup,
-}
-
-impl IoRequest for BzlmodPrepareGeneratedExternalCellRootIoRequest {
-    fn execute(self: Box<Self>, project_fs: &ProjectRoot) -> buck2_error::Result<()> {
-        prepare_bzlmod_generated_external_cell_root(
-            project_fs,
-            &self.cache_repo,
-            &self.dest,
-            &self.setup,
-        )
     }
 }
 
@@ -2073,9 +2069,7 @@ async fn bzlmod_generated_materialization_is_current(
     }
     let project_root = ctx.global_data().get_io_provider().project_root().dupe();
     let path = project_root.resolve(path);
-    ctx.get_blocking_executor()
-        .execute_io_inline(move || bzlmod_generated_repo_symlink_targets_exist(&path))
-        .await
+    run_bzlmod_cache_io(move || bzlmod_generated_repo_symlink_targets_exist(&path)).await
 }
 
 async fn write_bzlmod_generated_materialization_stamp(
@@ -2270,33 +2264,21 @@ async fn prepare_bzlmod_generated_external_cell_root_if_cache_exists(
     cache_repo: &ProjectRelativePath,
     dest: &ProjectRelativePath,
     setup: &BzlmodGeneratedCellSetup,
-    cancellations: &CancellationContext,
+    _cancellations: &CancellationContext,
 ) -> buck2_error::Result<bool> {
-    let io = ctx.get_blocking_executor();
     let project_root = ctx.global_data().get_io_provider().project_root().dupe();
-    let cache_repo_abs = project_root.resolve(cache_repo);
-    let hit = io
-        .execute_io_inline(move || {
-            Ok(matches!(
-                fs_util::symlink_metadata_if_exists(&cache_repo_abs)?,
-                Some(metadata) if metadata.is_dir()
-            ))
-        })
-        .await?;
-    if !hit {
-        return Ok(false);
-    }
+    let cache_repo = cache_repo.to_owned();
+    let dest = dest.to_owned();
+    let setup = setup.dupe();
+    run_bzlmod_cache_io(move || {
+        if !bzlmod_repo_contents_cache_exists(&project_root, &cache_repo)? {
+            return Ok(false);
+        }
 
-    io.execute_io(
-        Box::new(BzlmodPrepareGeneratedExternalCellRootIoRequest {
-            cache_repo: cache_repo.to_owned(),
-            dest: dest.to_owned(),
-            setup: setup.dupe(),
-        }),
-        cancellations,
-    )
-    .await?;
-    Ok(true)
+        prepare_bzlmod_generated_external_cell_root(&project_root, &cache_repo, &dest, &setup)?;
+        Ok(true)
+    })
+    .await
 }
 
 async fn download_impl(
@@ -2442,33 +2424,22 @@ async fn prepare_bzlmod_external_cell_root_if_cache_exists(
     cache_repo: &ProjectRelativePath,
     cache_alias: &ProjectRelativePath,
     dest: &ProjectRelativePath,
-    cancellations: &CancellationContext,
+    _cancellations: &CancellationContext,
 ) -> buck2_error::Result<bool> {
-    let io = ctx.get_blocking_executor();
     let project_root = ctx.global_data().get_io_provider().project_root().dupe();
-    let cache_repo_abs = project_root.resolve(cache_repo);
-    let hit = io
-        .execute_io_inline(move || {
-            Ok(matches!(
-                fs_util::symlink_metadata_if_exists(&cache_repo_abs)?,
-                Some(metadata) if metadata.is_dir()
-            ))
-        })
-        .await?;
-    if !hit {
-        return Ok(false);
-    }
+    let cache_repo = cache_repo.to_owned();
+    let cache_alias = cache_alias.to_owned();
+    let dest = dest.to_owned();
+    run_bzlmod_cache_io(move || {
+        if !bzlmod_repo_contents_cache_exists(&project_root, &cache_repo)? {
+            return Ok(false);
+        }
 
-    io.execute_io(
-        Box::new(BzlmodPrepareExternalCellRootIoRequest {
-            cache_repo: cache_repo.to_owned(),
-            cache_alias: Some(cache_alias.to_owned()),
-            dest: dest.to_owned(),
-        }),
-        cancellations,
-    )
-    .await?;
-    Ok(true)
+        record_bzlmod_repo_contents_cache_alias(&project_root, &cache_alias, &cache_repo)?;
+        prepare_bzlmod_external_cell_root(&project_root, &cache_repo, &dest)?;
+        Ok(true)
+    })
+    .await
 }
 
 async fn prepare_bzlmod_external_cell_root_from_source(
@@ -2691,42 +2662,36 @@ async fn promote_current_bzlmod_generated_repo_to_cache(
     let cache_repo = cache_repo.to_owned();
     let path = path.to_owned();
     let setup = setup.dupe();
-    ctx.get_blocking_executor()
-        .execute_io_inline(move || {
-            let cache_repo_abs = project_root.resolve(&cache_repo);
-            if bzlmod_repo_contents_cache_exists(&project_root, &cache_repo)? {
-                prepare_bzlmod_generated_external_cell_root(
-                    &project_root,
-                    &cache_repo,
-                    &path,
-                    &setup,
-                )?;
-                return Ok(true);
-            }
-
-            let path_abs = project_root.resolve(&path);
-            let Some(path_metadata) = fs_util::symlink_metadata_if_exists(&path_abs)? else {
-                return Ok(false);
-            };
-            if !path_metadata.is_dir() {
-                return Ok(false);
-            }
-
-            if let Some(parent) = cache_repo_abs.parent() {
-                fs_util::create_dir_all(parent)?;
-            }
-            match fs_util::rename(&path_abs, &cache_repo_abs) {
-                Ok(()) => {}
-                Err(error) if cache_repo_abs.exists() => {
-                    fs_util::remove_all(&path_abs).categorize_internal()?;
-                    drop(error);
-                }
-                Err(error) => return Err(error.categorize_internal()),
-            }
+    run_bzlmod_cache_io(move || {
+        let cache_repo_abs = project_root.resolve(&cache_repo);
+        if bzlmod_repo_contents_cache_exists(&project_root, &cache_repo)? {
             prepare_bzlmod_generated_external_cell_root(&project_root, &cache_repo, &path, &setup)?;
-            Ok(true)
-        })
-        .await
+            return Ok(true);
+        }
+
+        let path_abs = project_root.resolve(&path);
+        let Some(path_metadata) = fs_util::symlink_metadata_if_exists(&path_abs)? else {
+            return Ok(false);
+        };
+        if !path_metadata.is_dir() {
+            return Ok(false);
+        }
+
+        if let Some(parent) = cache_repo_abs.parent() {
+            fs_util::create_dir_all(parent)?;
+        }
+        match fs_util::rename(&path_abs, &cache_repo_abs) {
+            Ok(()) => {}
+            Err(error) if cache_repo_abs.exists() => {
+                fs_util::remove_all(&path_abs).categorize_internal()?;
+                drop(error);
+            }
+            Err(error) => return Err(error.categorize_internal()),
+        }
+        prepare_bzlmod_generated_external_cell_root(&project_root, &cache_repo, &path, &setup)?;
+        Ok(true)
+    })
+    .await
 }
 
 async fn materialize_generated_with_repo_contents_cache(
@@ -3251,9 +3216,10 @@ impl FileOpsDelegate for BzlmodGeneratedFileOpsDelegate {
 
     async fn read_dir_for_no_watchfs(
         &self,
-        _ctx: &mut DiceComputations<'_>,
+        ctx: &mut DiceComputations<'_>,
         path: &'async_trait CellRelativePath,
     ) -> buck2_error::Result<Arc<[RawDirEntry]>> {
+        ensure_generated_materialized(ctx, self.get_base_path(), self.setup.dupe()).await?;
         self.read_dir_for_no_watchfs_without_dice_impl(path).await
     }
 
@@ -3294,9 +3260,10 @@ impl FileOpsDelegate for BzlmodGeneratedFileOpsDelegate {
 
     async fn read_path_metadata_if_exists_for_no_watchfs(
         &self,
-        _ctx: &mut DiceComputations<'_>,
+        ctx: &mut DiceComputations<'_>,
         path: &'async_trait CellRelativePath,
     ) -> buck2_error::Result<Option<RawPathMetadata>> {
+        ensure_generated_materialized(ctx, self.get_base_path(), self.setup.dupe()).await?;
         let project_path = self.resolve(path);
         let Some(metadata) = (&self.io as &dyn IoProvider)
             .read_path_metadata_if_exists(project_path)
@@ -3319,20 +3286,22 @@ impl FileOpsDelegate for BzlmodGeneratedFileOpsDelegate {
 
     async fn read_path_metadata_for_no_watchfs_if_exists(
         &self,
-        _ctx: &mut DiceComputations<'_>,
+        ctx: &mut DiceComputations<'_>,
         path: &'async_trait CellRelativePath,
     ) -> buck2_error::Result<Option<RawPathMetadataForNoWatchFs>> {
+        ensure_generated_materialized(ctx, self.get_base_path(), self.setup.dupe()).await?;
         self.read_path_metadata_for_no_watchfs_if_exists_with_cache_impl(None, path)
             .await
     }
 
     async fn read_path_metadata_for_no_watchfs_if_exists_with_cache(
         &self,
-        _ctx: &mut DiceComputations<'_>,
+        ctx: &mut DiceComputations<'_>,
         path: &'async_trait CellRelativePath,
-        cache: Option<Arc<NoWatchFsMetadataCache>>,
+        _cache: Option<Arc<NoWatchFsMetadataCache>>,
     ) -> buck2_error::Result<Option<RawPathMetadataForNoWatchFs>> {
-        self.read_path_metadata_for_no_watchfs_if_exists_with_cache_impl(cache, path)
+        ensure_generated_materialized(ctx, self.get_base_path(), self.setup.dupe()).await?;
+        self.read_path_metadata_for_no_watchfs_if_exists_with_cache_impl(None, path)
             .await
     }
 
@@ -3508,6 +3477,7 @@ pub(crate) async fn get_generated_file_ops_delegate(
                     ctx.global_data().get_digest_config().cas_digest_config(),
                 ),
             };
+            ensure_generated_materialized(ctx, ops.get_base_path(), self.1.dupe()).await?;
             Ok(Arc::new(ops))
         }
 
