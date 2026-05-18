@@ -54,6 +54,8 @@ use starlark::environment::FrozenModule;
 use starlark::values::OwnedFrozenValue;
 
 use crate::attrs::coerce::ctx::BuildAttrCoercionContext;
+use crate::interpreter::bazel_glob::BazelGlobRequest;
+use crate::interpreter::bazel_glob::BazelPackageDataRequest;
 use crate::interpreter::globspec::GlobSpec;
 use crate::nodes::unconfigured::bazel_input_file_target;
 
@@ -81,7 +83,6 @@ impl From<ModuleInternals> for EvaluationResult {
             populate_bazel_input_file_targets(
                 package,
                 &buildfile_path,
-                &package_listing,
                 &super_package,
                 &mut targets,
             );
@@ -123,7 +124,6 @@ fn is_bazel_compat_build_file(buildfile_path: &BuildFilePath) -> bool {
 fn populate_bazel_input_file_targets(
     package: &Arc<Package>,
     buildfile_path: &BuildFilePath,
-    package_listing: &PackageListing,
     super_package: &SuperPackage,
     targets: &mut TargetsMap,
 ) {
@@ -149,15 +149,12 @@ fn populate_bazel_input_file_targets(
         let Ok(path) = PackageRelativePath::new(name.as_str()) else {
             continue;
         };
-        // Shallow Bazel package listings include top-level files only. After
-        // all rule targets have been registered, a remaining slashy label is
-        // eligible to be a nested source file label.
-        if package_listing.get_file(path).is_none()
-            && package_listing.get_dir(path).is_none()
-            && !name.as_str().contains('/')
-        {
+        if path.is_empty() {
             continue;
         }
+        // Bazel creates assumed input-file targets for unresolved labels that
+        // point into the current package. File existence is checked later when
+        // the source artifact is requested.
         let target = bazel_input_file_target(package.dupe(), name, buildfile_path, super_package)
             .expect("constructing Bazel input-file target should be infallible");
         targets
@@ -404,6 +401,8 @@ pub struct ModuleInternals {
     package_listing: PackageListing,
     package_listing_strategy: PackageListingStrategy,
     package_listing_restart: Arc<RefCell<Option<PackageListingStrategy>>>,
+    bazel_package_data: Option<BTreeMap<BazelPackageDataRequest, Arc<Vec<String>>>>,
+    bazel_package_data_restart: Arc<RefCell<BTreeSet<BazelPackageDataRequest>>>,
     super_package: RefCell<SuperPackage>,
     bazel_package_declared: RefCell<bool>,
 }
@@ -450,6 +449,11 @@ enum BazelPackageError {
 #[error("BUILD file package listing needs to be expanded before evaluation can continue")]
 struct PackageListingNeedsExpansion;
 
+#[derive(Debug, buck2_error::Error)]
+#[buck2(tag = Tier0)]
+#[error("BUILD file Bazel package data needs to be evaluated before evaluation can continue")]
+struct BazelPackageDataNeedsEvaluation;
+
 impl ModuleInternals {
     pub(crate) fn new(
         attr_coercion_context: BuildAttrCoercionContext,
@@ -461,6 +465,8 @@ impl ModuleInternals {
         package_listing: PackageListing,
         package_listing_strategy: PackageListingStrategy,
         package_listing_restart: Arc<RefCell<Option<PackageListingStrategy>>>,
+        bazel_package_data: Option<BTreeMap<BazelPackageDataRequest, Arc<Vec<String>>>>,
+        bazel_package_data_restart: Arc<RefCell<BTreeSet<BazelPackageDataRequest>>>,
         super_package: SuperPackage,
     ) -> Self {
         Self {
@@ -474,6 +480,8 @@ impl ModuleInternals {
             package_listing,
             package_listing_strategy,
             package_listing_restart,
+            bazel_package_data,
+            bazel_package_data_restart,
             super_package: RefCell::new(super_package),
             bazel_package_declared: RefCell::new(false),
         }
@@ -621,6 +629,21 @@ impl ModuleInternals {
         matches
     }
 
+    pub(crate) fn resolve_bazel_glob(
+        &self,
+        request: BazelGlobRequest,
+    ) -> buck2_error::Result<Option<Arc<Vec<String>>>> {
+        let Some(data) = &self.bazel_package_data else {
+            return Ok(None);
+        };
+        let request = BazelPackageDataRequest::Glob(request);
+        if let Some(result) = data.get(&request) {
+            return Ok(Some(result.dupe()));
+        }
+        self.bazel_package_data_restart.borrow_mut().insert(request);
+        Err(BazelPackageDataNeedsEvaluation.into())
+    }
+
     pub(crate) fn require_package_listing_strategy(
         &self,
         required: PackageListingStrategy,
@@ -642,9 +665,32 @@ impl ModuleInternals {
         self.package_listing_restart.borrow_mut().take()
     }
 
-    pub(crate) fn sub_packages(&self) -> impl Iterator<Item = &PackageRelativePath> {
-        self.package_listing
+    pub(crate) fn take_bazel_package_data_restart(
+        &self,
+    ) -> Option<BTreeSet<BazelPackageDataRequest>> {
+        let mut restart = self.bazel_package_data_restart.borrow_mut();
+        if restart.is_empty() {
+            None
+        } else {
+            Some(std::mem::take(&mut *restart))
+        }
+    }
+
+    pub(crate) fn sub_packages(&self) -> buck2_error::Result<Vec<String>> {
+        if let Some(data) = &self.bazel_package_data {
+            let request = BazelPackageDataRequest::Subpackages;
+            if let Some(result) = data.get(&request) {
+                return Ok((**result).clone());
+            }
+            self.bazel_package_data_restart.borrow_mut().insert(request);
+            return Err(BazelPackageDataNeedsEvaluation.into());
+        }
+
+        Ok(self
+            .package_listing
             .subpackages_within(PackageRelativePath::empty())
+            .map(|p| p.as_str().to_owned())
+            .collect())
     }
 }
 

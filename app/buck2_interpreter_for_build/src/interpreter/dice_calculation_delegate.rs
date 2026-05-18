@@ -8,6 +8,8 @@
  * above-listed licenses.
  */
 
+use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use allocative::Allocative;
@@ -16,6 +18,7 @@ use buck2_common::dice::cells::HasCellResolver;
 use buck2_common::dice::cycles::CycleGuard;
 use buck2_common::file_ops::dice::DiceFileComputations;
 use buck2_common::file_ops::error::FileReadErrorContext;
+use buck2_common::file_ops::metadata::RawPathMetadata;
 use buck2_common::legacy_configs::dice::HasLegacyConfigs;
 use buck2_common::legacy_configs::dice::OpaqueLegacyBuckConfigOnDice;
 use buck2_common::package_boundary::HasPackageBoundaryExceptions;
@@ -64,6 +67,8 @@ use starlark::syntax::AstModule;
 use starlark::values::FrozenHeapName;
 
 use crate::bazel_repository::BazelRepositoryRuleEvaluation;
+use crate::interpreter::bazel_glob::BazelPackageDataKey;
+use crate::interpreter::bazel_glob::BazelPackageDataRequest;
 use crate::interpreter::buckconfig::ConfigsOnDiceViewForStarlark;
 use crate::interpreter::build_context::BazelRepositoryRuleInvocation;
 use crate::interpreter::cell_info::InterpreterCellInfo;
@@ -700,6 +705,67 @@ impl<'c, 'd: 'c> DiceCalculationDelegate<'c, 'd> {
         .await
     }
 
+    async fn resolve_bazel_package_data(
+        ctx: &mut DiceComputations<'_>,
+        package: PackageLabel,
+        requests: BTreeSet<BazelPackageDataRequest>,
+    ) -> buck2_error::Result<BTreeMap<BazelPackageDataRequest, Arc<Vec<String>>>> {
+        let requests = requests.into_iter().collect::<Vec<_>>();
+        let mut results = BTreeMap::new();
+        for result in ctx
+            .compute_join(requests, |ctx: &mut DiceComputations, request| {
+                let package = package.dupe();
+                async move {
+                    let result = ctx
+                        .compute(&BazelPackageDataKey {
+                            package,
+                            request: request.clone(),
+                        })
+                        .await??;
+                    Ok::<_, buck2_error::Error>((request, result))
+                }
+                .boxed()
+            })
+            .await
+        {
+            let (request, result) = result?;
+            results.insert(request, result);
+        }
+        Ok(results)
+    }
+
+    async fn resolve_bazel_build_file(
+        ctx: &mut DiceComputations<'_>,
+        package: PackageLabel,
+    ) -> buck2_error::Result<BuildFilePath> {
+        let buildfile_candidates =
+            DiceFileComputations::buildfiles(ctx, package.cell_name()).await?;
+        let package_root = package.as_cell_path().to_owned();
+        for candidate in buildfile_candidates.iter() {
+            let path = package_root.join(candidate);
+            let metadata = DiceFileComputations::read_path_metadata_if_exists(ctx, path.as_ref())
+                .await
+                .with_buck_error_context(|| format!("Error checking Bazel build file `{path}`"))?;
+            match metadata {
+                Some(RawPathMetadata::File(_)) | Some(RawPathMetadata::Symlink { .. }) => {
+                    return Ok(BuildFilePath::new(package.dupe(), candidate.to_owned()));
+                }
+                Some(RawPathMetadata::Directory) | None => {}
+            }
+        }
+
+        let candidates = buildfile_candidates
+            .iter()
+            .map(|candidate| format!("`{candidate}`"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        Err(buck2_error::buck2_error!(
+            buck2_error::ErrorTag::Input,
+            "package `{}` has no build file; expected one of {candidates}",
+            package.as_cell_path()
+        ))
+    }
+
     pub async fn eval_build_file(
         &mut self,
         package: PackageLabel,
@@ -720,74 +786,84 @@ impl<'c, 'd: 'c> DiceCalculationDelegate<'c, 'd> {
                 )
                 .await?;
 
-            let (mut listing, build_file_path, ast, deps, mut listing_strategy) =
-                if bazel_compat_listing {
-                    let shallow_listing = Self::resolve_package_listing_with_strategy(
-                        self.ctx,
-                        package.dupe(),
-                        PackageListingStrategy::Shallow,
-                    )
-                    .await?;
-                    let build_file_path =
-                        BuildFilePath::new(package.dupe(), shallow_listing.buildfile().to_owned());
-                    let parse_data = self
-                        .parse_file(StarlarkPath::BuildFile(&build_file_path))
-                        .await??;
-                    let strategy = parse_data
-                        .bazel_package_listing_strategy
-                        .clone()
-                        .unwrap_or(PackageListingStrategy::Recursive);
-                    let (listing, deps) = if strategy == PackageListingStrategy::Shallow {
-                        let deps =
-                            Self::eval_deps_with_cycle_guard(self.ctx, &parse_data.imports).await?;
-                        (shallow_listing, deps)
-                    } else {
-                        let imports = parse_data.imports.clone();
-                        self.ctx
-                            .try_compute2(
-                                {
-                                    let package = package.dupe();
-                                    let strategy = strategy.clone();
-                                    move |ctx| {
-                                        async move {
-                                            Self::resolve_package_listing_with_strategy(
-                                                ctx,
-                                                package.dupe(),
-                                                strategy.clone(),
-                                            )
-                                            .await
-                                        }
-                                        .boxed()
-                                    }
-                                },
+            let (
+                mut listing,
+                build_file_path,
+                ast,
+                deps,
+                mut listing_strategy,
+                mut bazel_package_data,
+            ) = if bazel_compat_listing {
+                let build_file_path =
+                    Self::resolve_bazel_build_file(self.ctx, package.dupe()).await?;
+                let listing = PackageListing::empty(build_file_path.filename().to_owned());
+                let parse_data = self
+                    .parse_file(StarlarkPath::BuildFile(&build_file_path))
+                    .await??;
+                let package_data_requests = parse_data
+                    .bazel_package_data_requests
+                    .clone()
+                    .unwrap_or_default();
+                let (deps, package_data) = if package_data_requests.is_empty() {
+                    let deps =
+                        Self::eval_deps_with_cycle_guard(self.ctx, &parse_data.imports).await?;
+                    (deps, BTreeMap::new())
+                } else {
+                    let imports = parse_data.imports.clone();
+                    self.ctx
+                        .try_compute2(
+                            move |ctx| {
+                                async move { Self::eval_deps_with_cycle_guard(ctx, &imports).await }
+                                    .boxed()
+                            },
+                            {
+                                let package = package.dupe();
                                 move |ctx| {
+                                    let requests = package_data_requests.clone();
                                     async move {
-                                        Self::eval_deps_with_cycle_guard(ctx, &imports).await
+                                        Self::resolve_bazel_package_data(
+                                            ctx,
+                                            package.dupe(),
+                                            requests,
+                                        )
+                                        .await
                                     }
                                     .boxed()
-                                },
-                            )
-                            .await?
-                    };
-                    (listing, build_file_path, parse_data.ast, deps, strategy)
-                } else {
-                    let listing = Self::resolve_package_listing(self.ctx, package.dupe()).await?;
-                    let build_file_path =
-                        BuildFilePath::new(package.dupe(), listing.buildfile().to_owned());
-                    let (ast, deps) = self
-                        .prepare_eval(StarlarkPath::BuildFile(&build_file_path))
-                        .await?;
-                    (
-                        listing,
-                        build_file_path,
-                        ast,
-                        deps,
-                        PackageListingStrategy::Recursive,
-                    )
+                                }
+                            },
+                        )
+                        .await?
                 };
-            let super_package = self
-                .eval_package_file_for_build_file(package.dupe(), &listing)
-                .await?;
+                (
+                    listing,
+                    build_file_path,
+                    parse_data.ast,
+                    deps,
+                    PackageListingStrategy::Shallow,
+                    Some(package_data),
+                )
+            } else {
+                let listing = Self::resolve_package_listing(self.ctx, package.dupe()).await?;
+                let build_file_path =
+                    BuildFilePath::new(package.dupe(), listing.buildfile().to_owned());
+                let (ast, deps) = self
+                    .prepare_eval(StarlarkPath::BuildFile(&build_file_path))
+                    .await?;
+                (
+                    listing,
+                    build_file_path,
+                    ast,
+                    deps,
+                    PackageListingStrategy::Recursive,
+                    None,
+                )
+            };
+            let super_package = if bazel_compat_listing {
+                self.eval_package_file(package.dupe()).await?
+            } else {
+                self.eval_package_file_for_build_file(package.dupe(), &listing)
+                    .await?
+            };
 
             let package_boundary_exception = self
                 .ctx
@@ -824,6 +900,7 @@ impl<'c, 'd: 'c> DiceCalculationDelegate<'c, 'd> {
                             &mut buckconfigs,
                             listing.dupe(),
                             listing_strategy.clone(),
+                            bazel_package_data.clone(),
                             super_package.dupe(),
                             package_boundary_exception,
                             ast.clone(),
@@ -849,6 +926,9 @@ impl<'c, 'd: 'c> DiceCalculationDelegate<'c, 'd> {
                             Some(rs.result.targets().len() as u64),
                         ),
                         Ok(BuildFileEvalResult::NeedsPackageListing(_)) => (None, None, None, None),
+                        Ok(BuildFileEvalResult::NeedsBazelPackageData(_)) => {
+                            (None, None, None, None)
+                        }
                         Err(_) => (None, None, None, None),
                     };
 
@@ -889,6 +969,13 @@ impl<'c, 'd: 'c> DiceCalculationDelegate<'c, 'd> {
                             listing_strategy.clone(),
                         )
                         .await?;
+                    }
+                    BuildFileEvalResult::NeedsBazelPackageData(requests) => {
+                        let next_results =
+                            Self::resolve_bazel_package_data(self.ctx, package.dupe(), requests)
+                                .await?;
+                        let data = bazel_package_data.get_or_insert_with(BTreeMap::new);
+                        data.extend(next_results);
                     }
                 }
             };

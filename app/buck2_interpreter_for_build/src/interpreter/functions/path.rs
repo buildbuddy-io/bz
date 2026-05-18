@@ -16,10 +16,18 @@ use starlark::values::list::AllocList;
 use starlark::values::list::UnpackList;
 use starlark::values::list_or_tuple::UnpackListOrTuple;
 
+use crate::interpreter::bazel_glob::BazelGlobRequest;
 use crate::interpreter::build_context::BuildContext;
 use crate::interpreter::globspec::GlobSpec;
 use crate::interpreter::interpreter_for_dir::package_listing_strategy_from_glob_patterns;
 use crate::interpreter::module_internals::ModuleInternals;
+
+#[derive(Debug, buck2_error::Error)]
+#[buck2(input)]
+enum GlobFunctionError {
+    #[error("glob include patterns matched no files and allow_empty is false: `{0:?}`")]
+    EmptyResult(Vec<String>),
+}
 
 #[starlark_module]
 pub(crate) fn register_path(builder: &mut GlobalsBuilder) {
@@ -59,14 +67,28 @@ pub(crate) fn register_path(builder: &mut GlobalsBuilder) {
         #[starlark(require = named, default = 1)] exclude_directories: i32,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<ValueOfUnchecked<'v, UnpackList<String>>> {
-        let _unused = allow_empty;
         let extra = ModuleInternals::from_context(eval, "glob")?;
+        let include_directories = exclude_directories == 0;
+        if let Some(res) = extra.resolve_bazel_glob(BazelGlobRequest {
+            include: include.items.clone(),
+            exclude: exclude.items.clone(),
+            include_directories,
+        })? {
+            if !allow_empty && res.is_empty() {
+                return Err(buck2_error::Error::from(GlobFunctionError::EmptyResult(
+                    include.items.clone(),
+                ))
+                .into());
+            }
+            let res = res.iter().map(String::as_str);
+            return Ok(eval.heap().alloc_typed_unchecked(AllocList(res)).cast());
+        }
         let spec = GlobSpec::new(&include.items, &exclude.items)?;
         extra.require_package_listing_strategy(package_listing_strategy_from_glob_patterns(
             &include.items,
         ))?;
         let res = extra
-            .resolve_glob(&spec, exclude_directories == 0)
+            .resolve_glob(&spec, include_directories)
             .into_iter()
             .map(|path| path.as_str());
         Ok(eval.heap().alloc_typed_unchecked(AllocList(res)).cast())

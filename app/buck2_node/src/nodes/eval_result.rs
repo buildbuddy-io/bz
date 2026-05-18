@@ -19,7 +19,6 @@ use buck2_common::starlark_profiler::StarlarkProfileDataAndStatsDyn;
 use buck2_core::build_file_path::BuildFilePath;
 use buck2_core::bzl::ImportPath;
 use buck2_core::package::PackageLabel;
-use buck2_core::package::package_relative_path::PackageRelativePath;
 use buck2_core::pattern::pattern::PackageSpec;
 use buck2_core::pattern::pattern_type::PatternType;
 use buck2_core::target::label::label::TargetLabel;
@@ -331,24 +330,13 @@ impl EvaluationResult {
         let Some(package) = &self.package else {
             return Ok(None);
         };
-        let Some(package_listing) = &self.package_listing else {
-            return Ok(None);
-        };
-
-        let Ok(path) = PackageRelativePath::new(name.as_str()) else {
-            return Ok(None);
-        };
-
-        // Shallow Bazel package listings only contain top-level files. If a
-        // slashy source label is requested directly or from another package,
-        // synthesize the Bazel input-file target and let later source artifact
-        // access report any real missing-file error.
-        let is_known_path =
-            package_listing.get_file(path).is_some() || package_listing.get_dir(path).is_some();
-        if !is_known_path && !name.as_str().contains('/') {
+        if self.package_listing.is_none() {
             return Ok(None);
         }
 
+        // Bazel creates assumed input-file targets for unresolved labels that
+        // point into the current package. File existence is checked later when
+        // the source artifact is requested.
         Ok(Some(bazel_input_file_target(
             package.dupe(),
             name,

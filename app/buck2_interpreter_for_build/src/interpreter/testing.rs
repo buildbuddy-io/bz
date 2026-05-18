@@ -309,6 +309,7 @@ impl Tester {
                 &mut buckconfigs,
                 package_listing,
                 PackageListingStrategy::Recursive,
+                None,
                 SuperPackage::empty::<SuperPackageValuesImpl>()?,
                 false,
                 ast,

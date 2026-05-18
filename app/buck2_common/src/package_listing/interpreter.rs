@@ -37,6 +37,7 @@ use starlark_map::sorted_set::SortedSet;
 use starlark_map::sorted_vec::SortedVec;
 
 use crate::dice::cells::HasCellResolver;
+use crate::dice::cells::HasExternalCellOrigins;
 use crate::dice::data::HasIoProvider;
 use crate::file_ops::delegate::FileOpsDelegateWithIgnores;
 use crate::file_ops::delegate::get_delegated_file_ops;
@@ -734,9 +735,10 @@ async fn should_use_fast_bzlmod_listing(
         .get_cell_resolver()
         .await
         .map_err(|e| GatherPackageListingError::error(root, e))?;
-    let cell = cells
-        .get(root.cell())
-        .map_err(|e| GatherPackageListingError::error(root, e))?;
+    let cell = match cells.get(root.cell()) {
+        Ok(cell) => cell,
+        Err(_) => return Ok(false),
+    };
     Ok(matches!(
         cell.external(),
         Some(ExternalCellOrigin::Bzlmod(_)) | Some(ExternalCellOrigin::BzlmodGenerated(_))
@@ -758,16 +760,19 @@ async fn gather_bzlmod_package_listing_fast(
         .get_cell_resolver()
         .await
         .map_err(|e| GatherPackageListingError::error(root_cell_path, e))?;
-    let root_project_path = cells
-        .get(root_cell_path.cell())
-        .map_err(|e| GatherPackageListingError::error(root_cell_path, e))?
-        .path()
-        .join(root_cell_path.path());
+    let Some(root_cell) = cells.get(root_cell_path.cell()).ok() else {
+        return Err(GatherPackageListingError::error(
+            root_cell_path,
+            buck2_error::buck2_error!(
+                buck2_error::ErrorTag::Input,
+                "Fast bzlmod package listing requires cell `{}` in the cell resolver",
+                root_cell_path.cell()
+            ),
+        ));
+    };
+    let root_project_path = root_cell.path().join(root_cell_path.path());
     if matches!(
-        cells
-            .get(root_cell_path.cell())
-            .map_err(|e| GatherPackageListingError::error(root_cell_path, e))?
-            .external(),
+        root_cell.external(),
         Some(ExternalCellOrigin::BzlmodGenerated(_))
     ) {
         file_ops
@@ -917,7 +922,7 @@ fn read_raw_dir_entries_direct(
 async fn package_listing_strategy(
     ctx: &mut DiceComputations<'_>,
     package: CellPathRef<'_>,
-    buildfile_candidates: &[FileNameBuf],
+    _buildfile_candidates: &[FileNameBuf],
 ) -> Result<PackageListingStrategy, GatherPackageListingError> {
     if !bazel_compat_package_listing_enabled(ctx, package.cell())
         .await
@@ -926,24 +931,7 @@ async fn package_listing_strategy(
         return Ok(PackageListingStrategy::Recursive);
     }
 
-    let entries = DiceFileComputations::read_dir_ext(ctx, package)
-        .await
-        .map_err(|e| GatherPackageListingError::from_read_dir(package, e))?
-        .included;
-    let Some(buildfile) = find_buildfile(buildfile_candidates, &entries) else {
-        return Ok(PackageListingStrategy::Recursive);
-    };
-    let buildfile_path = package.join(buildfile);
-    let contents = DiceFileComputations::read_file_if_exists(ctx, buildfile_path.as_ref())
-        .await
-        .map_err(|e| GatherPackageListingError::error(package, e))?;
-
-    match contents {
-        Some(contents) if !build_file_requires_recursive_listing(&contents) => {
-            Ok(PackageListingStrategy::Shallow)
-        }
-        _ => Ok(PackageListingStrategy::Recursive),
-    }
+    Ok(PackageListingStrategy::Shallow)
 }
 
 pub async fn bazel_compat_package_listing_enabled(
@@ -951,7 +939,19 @@ pub async fn bazel_compat_package_listing_enabled(
     cell_name: CellName,
 ) -> buck2_error::Result<bool> {
     let cells = ctx.get_cell_resolver().await?;
-    let instance = cells.get(cell_name)?;
+    let instance = match cells.get(cell_name) {
+        Ok(instance) => instance,
+        Err(error)
+            if matches!(
+                ctx.get_external_cell_origin(cell_name).await?,
+                Some(ExternalCellOrigin::BzlmodGenerated(_))
+            ) =>
+        {
+            drop(error);
+            return Ok(true);
+        }
+        Err(error) => return Err(error),
+    };
     if matches!(
         instance.external(),
         Some(ExternalCellOrigin::Bzlmod(_)) | Some(ExternalCellOrigin::BzlmodGenerated(_))
@@ -978,67 +978,4 @@ fn bazel_compat_enabled(
         .as_deref()
         .map(|value| matches!(value.trim(), "1" | "true" | "True" | "TRUE"))
         .unwrap_or(false))
-}
-
-fn build_file_requires_recursive_listing(contents: &str) -> bool {
-    // Keep the text fallback aligned with Bazel's BUILD syntax prefetch:
-    // direct glob/subpackages calls require package traversal. Loaded macros
-    // that actually call glob/sub_packages request a richer listing during
-    // BUILD evaluation, matching Bazel's restart model more closely.
-    may_contain_starlark_identifier(contents, "glob")
-        || may_contain_starlark_identifier(contents, "subpackages")
-        || may_contain_starlark_identifier(contents, "sub_packages")
-}
-
-fn may_contain_starlark_identifier(contents: &str, needle: &str) -> bool {
-    let mut rest = contents;
-    while let Some(index) = rest.find(needle) {
-        let before = rest[..index].chars().next_back();
-        let after = rest[index + needle.len()..].chars().next();
-        if !before.is_some_and(is_starlark_identifier_char)
-            && !after.is_some_and(is_starlark_identifier_char)
-        {
-            return true;
-        }
-        rest = &rest[index + needle.len()..];
-    }
-    false
-}
-
-fn is_starlark_identifier_char(c: char) -> bool {
-    c == '_' || c.is_ascii_alphanumeric()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::build_file_requires_recursive_listing;
-
-    #[test]
-    fn test_build_file_requires_recursive_listing() {
-        assert!(build_file_requires_recursive_listing(
-            "srcs = glob([\"*.go\"])"
-        ));
-        assert!(build_file_requires_recursive_listing(
-            "g = glob\ng([\"**\"])"
-        ));
-        assert!(build_file_requires_recursive_listing(
-            "native.glob([\"*\"])"
-        ));
-        assert!(build_file_requires_recursive_listing(
-            "subpackages(include = [\"foo/**\"])"
-        ));
-        assert!(build_file_requires_recursive_listing("sub_packages()"));
-        assert!(!build_file_requires_recursive_listing(
-            "load(\":defs.bzl\", \"macro\")"
-        ));
-        assert!(!build_file_requires_recursive_listing(
-            "go_library(name = \"globular\")"
-        ));
-        assert!(!build_file_requires_recursive_listing(
-            "my_glob_helper(name = \"x\")"
-        ));
-        assert!(!build_file_requires_recursive_listing(
-            "genrule(name = \"upload\")"
-        ));
-    }
 }

@@ -13,8 +13,6 @@ use starlark::eval::Evaluator;
 use starlark::starlark_module;
 use starlark::values::none::NoneType;
 
-use buck2_common::package_listing::PackageListingStrategy;
-
 use crate::interpreter::module_internals::ModuleInternals;
 
 #[derive(buck2_error::Error, Debug)]
@@ -35,10 +33,6 @@ pub(crate) fn register_internals(builder: &mut GlobalsBuilder) {
     /// Returns a list of direct subpackage relative paths of current package.
     fn sub_packages<'v>(eval: &mut Evaluator<'v, '_, '_>) -> starlark::Result<Vec<String>> {
         let extra = ModuleInternals::from_context(eval, "sub_packages")?;
-        extra.require_package_listing_strategy(PackageListingStrategy::Recursive)?;
-        Ok(extra
-            .sub_packages()
-            .map(|p| p.as_str().to_owned())
-            .collect())
+        Ok(extra.sub_packages()?)
     }
 }

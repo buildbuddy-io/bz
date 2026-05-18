@@ -9,6 +9,8 @@
  */
 
 use std::cell::RefCell;
+use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::fmt::Debug;
 use std::sync::Arc;
 
@@ -31,6 +33,7 @@ use pagable::PagablePanic;
 use starlark::environment::GlobalsBuilder;
 
 use crate::attrs::coerce::ctx::BuildAttrCoercionContext;
+use crate::interpreter::bazel_glob::BazelPackageDataRequest;
 use crate::interpreter::cell_info::InterpreterCellInfo;
 use crate::interpreter::functions::host_info::HostInfo;
 use crate::interpreter::module_internals::ModuleInternals;
@@ -123,6 +126,8 @@ impl BuildInterpreterConfiguror {
         package_listing: PackageListing,
         package_listing_strategy: PackageListingStrategy,
         package_listing_restart: Arc<RefCell<Option<PackageListingStrategy>>>,
+        bazel_package_data: Option<BTreeMap<BazelPackageDataRequest, Arc<Vec<String>>>>,
+        bazel_package_data_restart: Arc<RefCell<BTreeSet<BazelPackageDataRequest>>>,
         super_package: SuperPackage,
         package_boundary_exception: bool,
         loaded_modules: &LoadedModules,
@@ -168,6 +173,8 @@ impl BuildInterpreterConfiguror {
             package_listing,
             package_listing_strategy,
             package_listing_restart,
+            bazel_package_data,
+            bazel_package_data_restart,
             super_package,
         ))
     }

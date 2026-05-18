@@ -216,11 +216,16 @@ impl Key for LegacyBuckConfigForCellKey {
     ) -> buck2_error::Result<LegacyBuckConfig> {
         let cells = ctx.get_cell_resolver().await?;
         let this_cell = cells.get(self.cell_name)?;
-        let config = BuckConfigBasedCells::parse_single_cell_with_dice(ctx, this_cell.path())
-            .await
-            .with_buck_error_context(|| {
-                format!("Computing legacy buckconfigs for cell `{}`", self.cell_name)
-            })?;
+        let cell_path = this_cell.path().to_buf();
+        let config = BuckConfigBasedCells::parse_single_cell_with_dice_for_cell(
+            ctx,
+            self.cell_name,
+            &cell_path,
+        )
+        .await
+        .with_buck_error_context(|| {
+            format!("Computing legacy buckconfigs for cell `{}`", self.cell_name)
+        })?;
         let config = config.filter_values(is_config_invisible_to_dice);
 
         let event = buck2_data::CellHasNewConfigs {

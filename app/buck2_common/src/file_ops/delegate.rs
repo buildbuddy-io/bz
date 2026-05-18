@@ -11,6 +11,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use buck2_core::cells::external::ExternalCellOrigin;
 use buck2_core::cells::name::CellName;
 use buck2_core::cells::paths::CellRelativePath;
 use buck2_core::cells::unchecked_cell_rel_path::UncheckedCellRelativePath;
@@ -189,14 +190,17 @@ impl Key for FileOpsKey {
         _cancellations: &CancellationContext,
     ) -> Self::Value {
         let cells = ctx.get_cell_resolver().await?;
+        let origin = ctx.get_external_cell_origin(self.cell).await?;
         let ignores = if self.check_ignores == CheckIgnores::Yes {
             Some(ctx.new_cell_ignores(self.cell).await?)
         } else {
             None
         };
 
-        let out = if let Some(origin) = ctx.get_external_cell_origin(self.cell).await? {
-            cells.get(self.cell)?;
+        let out = if let Some(origin) = origin {
+            if !matches!(origin, ExternalCellOrigin::BzlmodGenerated(_)) {
+                cells.get(self.cell)?;
+            }
             let delegate = EXTERNAL_CELLS_IMPL
                 .get()?
                 .get_file_ops_delegate(ctx, self.cell, origin)

@@ -14,10 +14,12 @@ use async_trait::async_trait;
 use buck2_core::cells::cell_path::CellPath;
 use buck2_core::cells::external::ExternalCellOrigin;
 use buck2_core::cells::name::CellName;
+use buck2_core::cells::nested::NestedCells;
 use buck2_core::cells::paths::CellRelativePathBuf;
 use dice::DiceComputations;
 
 use crate::dice::cells::HasCellResolver;
+use crate::dice::cells::HasExternalCellOrigins;
 use crate::file_ops::dice::DiceFileComputations;
 use crate::ignores::file_ignores::CellFileIgnores;
 use crate::ignores::ignore_set::bazelignore_to_ignore_spec;
@@ -40,7 +42,24 @@ impl HasCellFileIgnores for DiceComputations<'_> {
         cell_name: CellName,
     ) -> buck2_error::Result<Arc<CellFileIgnores>> {
         let cells = self.get_cell_resolver().await?;
-        let instance = cells.get(cell_name)?;
+        let instance = match cells.get(cell_name) {
+            Ok(instance) => instance,
+            Err(error)
+                if matches!(
+                    self.get_external_cell_origin(cell_name).await?,
+                    Some(ExternalCellOrigin::BzlmodGenerated(_))
+                ) =>
+            {
+                drop(error);
+                let ignore_spec = read_bazelignore_spec(self, cell_name).await?;
+                return Ok(Arc::new(CellFileIgnores::new_for_interpreter(
+                    &ignore_spec,
+                    NestedCells::empty(),
+                    false,
+                )?));
+            }
+            Err(error) => return Err(error),
+        };
         if matches!(
             instance.external(),
             Some(ExternalCellOrigin::Bzlmod(_)) | Some(ExternalCellOrigin::BzlmodGenerated(_))

@@ -14,6 +14,8 @@
 
 use std::cell::OnceCell;
 use std::cell::RefCell;
+use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use allocative::Allocative;
@@ -72,6 +74,8 @@ use starlark::syntax::ast::AstLiteral;
 use starlark::syntax::ast::Expr;
 use starlark::values::any_complex::StarlarkAnyComplex;
 
+use crate::interpreter::bazel_glob::BazelGlobRequest;
+use crate::interpreter::bazel_glob::BazelPackageDataRequest;
 use crate::interpreter::buckconfig::BuckConfigsViewForStarlark;
 use crate::interpreter::build_context::BazelRepositoryRuleInvocation;
 use crate::interpreter::build_context::BazelRepositoryRuleRecorder;
@@ -108,7 +112,7 @@ enum StarlarkPeakMemoryError {
 pub struct ParseData {
     pub ast: AstModule,
     pub imports: Arc<Vec<(Option<FileSpan>, OwnedStarlarkModulePath)>>,
-    pub bazel_package_listing_strategy: Option<PackageListingStrategy>,
+    pub(crate) bazel_package_data_requests: Option<BTreeSet<BazelPackageDataRequest>>,
 }
 
 pub type ParseResult = Result<ParseData, buck2_error::Error>;
@@ -132,12 +136,12 @@ impl ParseData {
                 })?;
             loads.push((Some(x.span), path));
         }
-        let bazel_package_listing_strategy =
-            is_build_file.then(|| bazel_package_listing_strategy_from_ast(&ast));
+        let bazel_package_data_requests =
+            is_build_file.then(|| bazel_package_data_requests_from_ast(&ast));
         Ok(Self {
             ast,
             imports: Arc::new(loads),
-            bazel_package_listing_strategy,
+            bazel_package_data_requests,
         })
     }
 
@@ -154,14 +158,13 @@ impl ParseData {
 mod tests {
     use super::*;
 
-    fn strategy(source: &str) -> PackageListingStrategy {
-        let ast = AstModule::parse(
-            "BUILD.bazel",
-            source.to_owned(),
-            &StarlarkFileType::Buck.dialect(true),
+    fn strategy(patterns: &[&str]) -> PackageListingStrategy {
+        package_listing_strategy_from_glob_patterns(
+            &patterns
+                .iter()
+                .map(|pattern| pattern.to_string())
+                .collect::<Vec<_>>(),
         )
-        .unwrap();
-        bazel_package_listing_strategy_from_ast(&ast)
     }
 
     fn prefix(path: &str) -> PackageRelativePathBuf {
@@ -169,91 +172,47 @@ mod tests {
     }
 
     #[test]
-    fn test_bazel_package_listing_strategy_does_not_recurse_for_load() {
-        assert_eq!(
-            strategy(
-                r#"
-load("//:defs.bzl", "go_library")
-go_library(name = "demo")
-"#
-            ),
-            PackageListingStrategy::Shallow
-        );
+    fn test_bazel_package_listing_strategy_shallow_glob() {
+        assert_eq!(strategy(&["*.cc"]), PackageListingStrategy::Shallow);
     }
 
     #[test]
     fn test_bazel_package_listing_strategy_selective_glob_prefix() {
         assert_eq!(
-            strategy(r#"cc_library(name = "demo", srcs = glob(["src/**/*.cc"]))"#),
+            strategy(&["src/**/*.cc"]),
             PackageListingStrategy::Selective(vec![prefix("src")])
         );
     }
 
     #[test]
     fn test_bazel_package_listing_strategy_recursive_glob() {
-        assert_eq!(
-            strategy(r#"cc_library(name = "demo", srcs = glob(["**/*.cc"]))"#),
-            PackageListingStrategy::Recursive
-        );
-    }
-
-    #[test]
-    fn test_bazel_package_listing_strategy_subpackages() {
-        assert_eq!(
-            strategy(r#"subpackages(include = ["tools/**"])"#),
-            PackageListingStrategy::Selective(vec![prefix("tools")])
-        );
-        assert_eq!(
-            strategy(r#"sub_packages()"#),
-            PackageListingStrategy::Recursive
-        );
+        assert_eq!(strategy(&["**/*.cc"]), PackageListingStrategy::Recursive);
     }
 }
 
-fn bazel_package_listing_strategy_from_ast(ast: &AstModule) -> PackageListingStrategy {
-    // Match Bazel's PackageFactory.checkBuildSyntax prefetch heuristic for BUILD
-    // files: direct glob/subpackages calls drive package traversal. Loaded
-    // macros request expanded package listings during evaluation if needed.
+fn bazel_package_data_requests_from_ast(ast: &AstModule) -> BTreeSet<BazelPackageDataRequest> {
     struct Visitor {
-        unknown_glob_use: bool,
-        prefixes: Vec<PackageRelativePathBuf>,
+        requests: BTreeSet<BazelPackageDataRequest>,
     }
 
     impl Visitor {
         fn visit_expr(&mut self, node: &AstExpr) {
             match &node.node {
-                Expr::Call(callee, arguments) if is_direct_package_listing_callee(callee) => {
-                    match literal_glob_include_patterns(arguments.args.as_slice()) {
-                        Some(patterns) => {
-                            for pattern in patterns {
-                                match glob_listing_prefix(&pattern) {
-                                    GlobListingPrefix::Shallow => {}
-                                    GlobListingPrefix::Prefix(prefix) => self.prefixes.push(prefix),
-                                    GlobListingPrefix::Recursive => {
-                                        self.unknown_glob_use = true;
-                                    }
-                                }
+                Expr::Call(callee, arguments) => {
+                    match package_data_callee_name(callee) {
+                        Some("glob") => {
+                            if let Some(request) = literal_glob_request(arguments.args.as_slice()) {
+                                self.requests.insert(BazelPackageDataRequest::Glob(request));
                             }
                         }
-                        None => self.unknown_glob_use = true,
+                        Some("sub_packages") => {
+                            self.requests.insert(BazelPackageDataRequest::Subpackages);
+                        }
+                        _ => {}
                     }
                     for argument in &arguments.args {
                         visit_argument_exprs(argument, |expr| self.visit_expr(expr));
                     }
-                }
-                Expr::Identifier(ident)
-                    if ident.node.ident == "glob"
-                        || ident.node.ident == "subpackages"
-                        || ident.node.ident == "sub_packages" =>
-                {
-                    self.unknown_glob_use = true;
-                }
-                Expr::Dot(_, field)
-                    if field.node == "glob"
-                        || field.node == "subpackages"
-                        || field.node == "sub_packages" =>
-                {
-                    self.unknown_glob_use = true;
                 }
                 _ => node.visit_expr(|expr| self.visit_expr(expr)),
             }
@@ -261,15 +220,10 @@ fn bazel_package_listing_strategy_from_ast(ast: &AstModule) -> PackageListingStr
     }
 
     let mut visitor = Visitor {
-        unknown_glob_use: false,
-        prefixes: Vec::new(),
+        requests: BTreeSet::new(),
     };
     ast.statement().visit_expr(|expr| visitor.visit_expr(expr));
-    if visitor.unknown_glob_use {
-        PackageListingStrategy::Recursive
-    } else {
-        PackageListingStrategy::selective(visitor.prefixes)
-    }
+    visitor.requests
 }
 
 pub(crate) fn package_listing_strategy_from_glob_patterns(
@@ -286,17 +240,11 @@ pub(crate) fn package_listing_strategy_from_glob_patterns(
     PackageListingStrategy::selective(prefixes)
 }
 
-fn is_direct_package_listing_callee(callee: &AstExpr) -> bool {
+fn package_data_callee_name(callee: &AstExpr) -> Option<&str> {
     match &callee.node {
-        Expr::Identifier(ident) => {
-            ident.node.ident == "glob"
-                || ident.node.ident == "subpackages"
-                || ident.node.ident == "sub_packages"
-        }
-        Expr::Dot(_, field) => {
-            field.node == "glob" || field.node == "subpackages" || field.node == "sub_packages"
-        }
-        _ => false,
+        Expr::Identifier(ident) => Some(ident.node.ident.as_str()),
+        Expr::Dot(_, field) => Some(field.node.as_str()),
+        _ => None,
     }
 }
 
@@ -312,23 +260,49 @@ fn visit_argument_exprs(
     }
 }
 
-fn literal_glob_include_patterns(
+fn literal_glob_request(
     arguments: &[starlark::syntax::ast::AstArgument],
-) -> Option<Vec<String>> {
-    let mut positional = arguments
-        .iter()
-        .filter_map(|argument| match &argument.node {
-            Argument::Positional(expr) => Some(expr),
-            _ => None,
-        });
-    if let Some(include) = positional.next() {
-        return literal_string_list(include);
+) -> Option<BazelGlobRequest> {
+    let include = literal_glob_list_arg(arguments, "include", true)??;
+    let exclude = literal_glob_list_arg(arguments, "exclude", false)?.unwrap_or_default();
+    if has_named_arg(arguments, "exclude_directories") {
+        return None;
+    }
+    Some(BazelGlobRequest {
+        include,
+        exclude,
+        include_directories: false,
+    })
+}
+
+fn literal_glob_list_arg(
+    arguments: &[starlark::syntax::ast::AstArgument],
+    name: &str,
+    allow_positional: bool,
+) -> Option<Option<Vec<String>>> {
+    if allow_positional {
+        let mut positional = arguments
+            .iter()
+            .filter_map(|argument| match &argument.node {
+                Argument::Positional(expr) => Some(expr),
+                _ => None,
+            });
+        if let Some(expr) = positional.next() {
+            return Some(Some(literal_string_list(expr)?));
+        }
     }
 
-    arguments.iter().find_map(|argument| match &argument.node {
-        Argument::Named(name, expr) if name.node == "include" => literal_string_list(expr),
-        _ => None,
-    })
+    for argument in arguments {
+        match &argument.node {
+            Argument::Named(arg_name, expr) if arg_name.node == name => {
+                return Some(Some(literal_string_list(expr)?));
+            }
+            Argument::Args(_) | Argument::KwArgs(_) => return None,
+            _ => {}
+        }
+    }
+
+    Some(None)
 }
 
 fn literal_string_list(expr: &AstExpr) -> Option<Vec<String>> {
@@ -342,6 +316,13 @@ fn literal_string_list(expr: &AstExpr) -> Option<Vec<String>> {
             .collect(),
         _ => None,
     }
+}
+
+fn has_named_arg(arguments: &[starlark::syntax::ast::AstArgument], name: &str) -> bool {
+    arguments.iter().any(|argument| match &argument.node {
+        Argument::Named(arg_name, _) => arg_name.node == name,
+        _ => false,
+    })
 }
 
 enum GlobListingPrefix {
@@ -474,6 +455,18 @@ impl LoadResolver for InterpreterLoadResolver {
             }
         }
 
+        // Bazel module repos carry their own repository mappings. A .bzl file loaded from a
+        // bzlmod repo must therefore resolve its own label literals and transitive loads in that
+        // repo's context, not in the context of the BUILD or .bzl file that imported it.
+        if path.cell().as_str().starts_with("bzlmod_") || path.cell().as_str() == "bazel_tools" {
+            let import_path = ImportPath::new_same_cell_with_package_root(path, package_root)?;
+            return Ok(match import_path.path().path().extension() {
+                Some("json") => OwnedStarlarkModulePath::JsonFile(import_path),
+                Some("toml") => OwnedStarlarkModulePath::TomlFile(import_path),
+                _ => OwnedStarlarkModulePath::LoadFile(import_path),
+            });
+        }
+
         // If you load the same .bzl file twice via different aliases (e.g. fbcode//buck2/prelude/foo.bzl and prelude.bzl)
         // then anything doing pointer equality (t-sets, provider identities) will go wrong.
         let project_path = self
@@ -518,17 +511,6 @@ impl LoadResolver for InterpreterLoadResolver {
             }
         }
 
-        // Bazel module repos carry their own repository mappings. A .bzl file loaded from a
-        // bzlmod repo must therefore resolve its own label literals and transitive loads in that
-        // repo's context, not in the context of the BUILD or .bzl file that imported it.
-        if path.cell().as_str().starts_with("bzlmod_") || path.cell().as_str() == "bazel_tools" {
-            let import_path = ImportPath::new_same_cell_with_package_root(path, package_root)?;
-            return Ok(match import_path.path().path().extension() {
-                Some("json") => OwnedStarlarkModulePath::JsonFile(import_path),
-                Some("toml") => OwnedStarlarkModulePath::TomlFile(import_path),
-                _ => OwnedStarlarkModulePath::LoadFile(import_path),
-            });
-        }
         let import_path = ImportPath::new_with_build_file_cells_and_package_root(
             path,
             self.build_file_cell,
@@ -556,11 +538,13 @@ pub(crate) enum BuildFileEvalResult {
         EvaluationResultWithStats,
     ),
     NeedsPackageListing(PackageListingStrategy),
+    NeedsBazelPackageData(BTreeSet<BazelPackageDataRequest>),
 }
 
 enum BuildFileEvalControl {
     Error(buck2_error::Error),
     NeedsPackageListing(PackageListingStrategy),
+    NeedsBazelPackageData(BTreeSet<BazelPackageDataRequest>),
 }
 
 impl From<buck2_error::Error> for BuildFileEvalControl {
@@ -693,6 +677,8 @@ impl InterpreterForDir {
         package_listing: &PackageListing,
         package_listing_strategy: PackageListingStrategy,
         package_listing_restart: Arc<RefCell<Option<PackageListingStrategy>>>,
+        bazel_package_data: Option<BTreeMap<BazelPackageDataRequest, Arc<Vec<String>>>>,
+        bazel_package_data_restart: Arc<RefCell<BTreeSet<BazelPackageDataRequest>>>,
         super_package: SuperPackage,
         package_boundary_exception: bool,
         loaded_modules: &LoadedModules,
@@ -703,6 +689,8 @@ impl InterpreterForDir {
             package_listing.dupe(),
             package_listing_strategy,
             package_listing_restart,
+            bazel_package_data,
+            bazel_package_data_restart,
             super_package,
             package_boundary_exception,
             loaded_modules,
@@ -1189,6 +1177,7 @@ impl InterpreterForDir {
         buckconfigs: &mut dyn BuckConfigsViewForStarlark,
         listing: PackageListing,
         listing_strategy: PackageListingStrategy,
+        bazel_package_data: Option<BTreeMap<BazelPackageDataRequest, Arc<Vec<String>>>>,
         super_package: SuperPackage,
         package_boundary_exception: bool,
         ast: AstModule,
@@ -1199,12 +1188,15 @@ impl InterpreterForDir {
     ) -> buck2_error::Result<BuildFileEvalResult> {
         match BuckStarlarkModule::with_profiling(|env| {
             let package_listing_restart = Arc::new(RefCell::new(None));
+            let bazel_package_data_restart = Arc::new(RefCell::new(BTreeSet::new()));
             let (env, internals) = self.create_build_env(
                 env,
                 build_file,
                 &listing,
                 listing_strategy,
                 package_listing_restart.dupe(),
+                bazel_package_data,
+                bazel_package_data_restart.dupe(),
                 super_package,
                 package_boundary_exception,
                 &loaded_modules,
@@ -1233,6 +1225,11 @@ impl InterpreterForDir {
             ) {
                 Ok(result) => result,
                 Err(e) => {
+                    if let Some(requests) =
+                        take_bazel_package_data_restart(&bazel_package_data_restart)
+                    {
+                        return Err(BuildFileEvalControl::NeedsBazelPackageData(requests));
+                    }
                     if let Some(strategy) = package_listing_restart.borrow_mut().take() {
                         return Err(BuildFileEvalControl::NeedsPackageListing(strategy));
                     }
@@ -1241,6 +1238,10 @@ impl InterpreterForDir {
             };
 
             let internals = eval_result.additional.into_build()?;
+            if let Some(requests) = internals.take_bazel_package_data_restart() {
+                let (token, _profile_data) = finished_eval.finish()?;
+                return Ok((token, BuildFileEvalResult::NeedsBazelPackageData(requests)));
+            }
             if let Some(strategy) = internals.take_package_listing_restart() {
                 let (token, _profile_data) = finished_eval.finish()?;
                 return Ok((token, BuildFileEvalResult::NeedsPackageListing(strategy)));
@@ -1287,6 +1288,20 @@ impl InterpreterForDir {
             Err(BuildFileEvalControl::NeedsPackageListing(strategy)) => {
                 Ok(BuildFileEvalResult::NeedsPackageListing(strategy))
             }
+            Err(BuildFileEvalControl::NeedsBazelPackageData(requests)) => {
+                Ok(BuildFileEvalResult::NeedsBazelPackageData(requests))
+            }
         }
+    }
+}
+
+fn take_bazel_package_data_restart(
+    restart: &Arc<RefCell<BTreeSet<BazelPackageDataRequest>>>,
+) -> Option<BTreeSet<BazelPackageDataRequest>> {
+    let mut restart = restart.borrow_mut();
+    if restart.is_empty() {
+        None
+    } else {
+        Some(std::mem::take(&mut *restart))
     }
 }

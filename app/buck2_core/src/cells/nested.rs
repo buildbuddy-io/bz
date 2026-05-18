@@ -26,6 +26,10 @@ pub struct NestedCells {
 }
 
 impl NestedCells {
+    pub fn empty() -> NestedCells {
+        NestedCells { paths: Vec::new() }
+    }
+
     fn from_cell_paths_relative_to_this_cell<'a>(
         paths: impl IntoIterator<Item = (&'a CellRelativePath, CellName)>,
     ) -> NestedCells {
