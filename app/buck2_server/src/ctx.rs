@@ -888,7 +888,18 @@ impl DiceUpdater for DiceCommandUpdater<'_, '_> {
         early_timings: &mut EarlyCommandTimingBuilder,
     ) -> buck2_error::Result<(DiceTransactionUpdater, UserComputationData)> {
         let existing_state = &mut ctx.existing_state().await.clone();
-        let mut cells_and_configs = self.cmd_ctx.load_new_configs(existing_state).await?;
+        let mut cells_and_configs = buck2_events::dispatch::span_async(
+            buck2_data::DiceStateUpdateStageStart {
+                stage: "loading buckconfigs".to_owned(),
+            },
+            async {
+                (
+                    self.cmd_ctx.load_new_configs(existing_state).await,
+                    buck2_data::DiceStateUpdateStageEnd {},
+                )
+            },
+        )
+        .await?;
 
         let bzlmod_module_extension_evaluation_requests = cells_and_configs
             .bzlmod_module_extension_evaluation_requests
@@ -1032,7 +1043,18 @@ impl DiceUpdater for DiceCommandUpdater<'_, '_> {
             .sync(ctx)
             .await?;
         let mut ctx = ctx;
-        let _external_file_state_stats = invalidate_changed_external_file_state(&mut ctx).await?;
+        let _external_file_state_stats = buck2_events::dispatch::span_async(
+            buck2_data::DiceStateUpdateStageStart {
+                stage: "checking external file state".to_owned(),
+            },
+            async {
+                (
+                    invalidate_changed_external_file_state(&mut ctx).await,
+                    buck2_data::DiceStateUpdateStageEnd {},
+                )
+            },
+        )
+        .await?;
         early_timings.end_known_span();
         let file_watcher_added_changes =
             ctx.pending_change_count() != pending_changes_before_file_watcher;
@@ -1637,16 +1659,36 @@ impl DiceCommandUpdater<'_, '_> {
         ctx: &mut DiceComputations<'_>,
         request: &BzlmodModuleExtensionEvaluationRequest,
     ) -> buck2_error::Result<BzlmodEvaluatedModuleExtension> {
-        let working_dir_key = bzlmod_cell_name(&request.extension_unique_name);
-        let working_dir = format!(
-            "{}/external_cells/bzlmod_module_extensions/{working_dir_key}",
-            self.cmd_ctx.buck_out_dir.as_str()
-        );
-        let working_dir_path = ProjectRelativePath::new(&working_dir)?.to_owned();
-        let evaluation = self
-            .evaluate_cached_bzlmod_module_extension_for_cell_graph(ctx, request, working_dir_path)
-            .await?;
-        self.bzlmod_evaluated_module_extension_from_evaluation(request, &evaluation)
+        buck2_events::dispatch::span_async(
+            buck2_data::DiceStateUpdateStageStart {
+                stage: format!(
+                    "evaluating bzlmod module extension `{}`%`{}`",
+                    request.extension_bzl_file, request.extension_name
+                ),
+            },
+            async {
+                let result = async {
+                    let working_dir_key = bzlmod_cell_name(&request.extension_unique_name);
+                    let working_dir = format!(
+                        "{}/external_cells/bzlmod_module_extensions/{working_dir_key}",
+                        self.cmd_ctx.buck_out_dir.as_str()
+                    );
+                    let working_dir_path = ProjectRelativePath::new(&working_dir)?.to_owned();
+                    let evaluation = self
+                        .evaluate_cached_bzlmod_module_extension_for_cell_graph(
+                            ctx,
+                            request,
+                            working_dir_path,
+                        )
+                        .await?;
+                    self.bzlmod_evaluated_module_extension_from_evaluation(request, &evaluation)
+                }
+                .await;
+
+                (result, buck2_data::DiceStateUpdateStageEnd {})
+            },
+        )
+        .await
     }
 
     async fn evaluate_bzlmod_module_extensions_for_cell_graph(

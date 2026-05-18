@@ -514,7 +514,19 @@ impl ConcurrencyHandler {
                                     let updater = self.dice.updater();
                                     let (transaction, user_data) =
                                         updates.update(updater, early_timings).await?;
-                                    buck2_error::Ok(transaction.commit_with_data(user_data).await)
+                                    let transaction = buck2_events::dispatch::span_async(
+                                        buck2_data::DiceStateUpdateStageStart {
+                                            stage: "committing graph changes".to_owned(),
+                                        },
+                                        async move {
+                                            (
+                                                transaction.commit_with_data(user_data).await,
+                                                buck2_data::DiceStateUpdateStageEnd {},
+                                            )
+                                        },
+                                    )
+                                    .await;
+                                    buck2_error::Ok(transaction)
                                 }
                                 .await,
                                 buck2_data::DiceStateUpdateEnd {},

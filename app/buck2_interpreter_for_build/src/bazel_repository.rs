@@ -5205,25 +5205,45 @@ fn module_ctx_download_to_path_blocking(
             return module_ctx_download_result_checksums_verified(expected_checksum);
         }
 
-        module_ctx_download_to_path_uncached_blocking(
-            urls,
-            destination,
-            Some(expected_checksum),
-            executable,
-            headers,
-            auth_headers,
+        buck2_events::dispatch::span(
+            buck2_data::DiceStateUpdateStageStart {
+                stage: module_ctx_download_stage_label(urls, destination),
+            },
+            || {
+                (
+                    module_ctx_download_to_path_uncached_blocking(
+                        urls,
+                        destination,
+                        Some(expected_checksum),
+                        executable,
+                        headers,
+                        auth_headers,
+                    ),
+                    buck2_data::DiceStateUpdateStageEnd {},
+                )
+            },
         )?;
         module_ctx_download_cache_put_verified(expected_checksum, canonical_id, destination)?;
         return module_ctx_download_result_checksums_verified(expected_checksum);
     }
 
-    let checksums = module_ctx_download_to_path_uncached_blocking(
-        urls,
-        destination,
-        None,
-        executable,
-        headers,
-        auth_headers,
+    let checksums = buck2_events::dispatch::span(
+        buck2_data::DiceStateUpdateStageStart {
+            stage: module_ctx_download_stage_label(urls, destination),
+        },
+        || {
+            (
+                module_ctx_download_to_path_uncached_blocking(
+                    urls,
+                    destination,
+                    None,
+                    executable,
+                    headers,
+                    auth_headers,
+                ),
+                buck2_data::DiceStateUpdateStageEnd {},
+            )
+        },
     )?;
     if let Some(sha256) = &checksums.0 {
         module_ctx_download_cache_put_verified(
@@ -5421,6 +5441,34 @@ fn module_ctx_download_result_checksums_verified(
         .then(|| expected_checksum.hex.clone());
     let integrity = module_ctx_integrity_from_checksum(expected_checksum)?;
     Ok((sha256, integrity))
+}
+
+fn module_ctx_download_display_url(url: &str) -> String {
+    let url = url.split(['?', '#']).next().unwrap_or(url);
+    let Some((scheme, rest)) = url.split_once("://") else {
+        return url.to_owned();
+    };
+    let Some((authority, path)) = rest.split_once('/') else {
+        let authority = rest.rsplit_once('@').map_or(rest, |(_, host)| host);
+        return format!("{scheme}://{authority}");
+    };
+    let authority = authority
+        .rsplit_once('@')
+        .map_or(authority, |(_, host)| host);
+    format!("{scheme}://{authority}/{path}")
+}
+
+fn module_ctx_download_stage_label(urls: &[String], destination: &Path) -> String {
+    let display_url = urls
+        .first()
+        .map(|url| module_ctx_download_display_url(url))
+        .unwrap_or_else(|| destination.to_string_lossy().into_owned());
+    let mirrors = urls.len().saturating_sub(1);
+    if mirrors == 0 {
+        format!("downloading {display_url}")
+    } else {
+        format!("downloading {display_url} (+{mirrors} mirrors)")
+    }
 }
 
 fn module_ctx_download_result<'v>(
