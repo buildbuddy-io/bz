@@ -2180,13 +2180,13 @@ fn bzlmod_module_extension_evaluation_working_dir(
 )]
 #[display("{setup:?}")]
 #[pagable_typetag(dice::DiceKeyDyn)]
-struct BzlmodModuleExtensionEvaluationKey {
+struct BzlmodSingleExtensionEvalKey {
     setup: BzlmodModuleExtensionRepoSetup,
     working_dir: ProjectRelativePathBuf,
 }
 
 #[async_trait::async_trait]
-impl Key for BzlmodModuleExtensionEvaluationKey {
+impl Key for BzlmodSingleExtensionEvalKey {
     type Value = buck2_error::Result<Arc<BazelModuleExtensionEvaluationResult>>;
 
     async fn compute(
@@ -2251,14 +2251,84 @@ impl Key for BzlmodModuleExtensionEvaluationKey {
     }
 }
 
+#[derive(
+    Clone,
+    Debug,
+    derive_more::Display,
+    PartialEq,
+    Eq,
+    Hash,
+    allocative::Allocative,
+    Pagable
+)]
+#[display("{setup:?}")]
+#[pagable_typetag(dice::DiceKeyDyn)]
+struct BzlmodSingleExtensionKey {
+    setup: BzlmodModuleExtensionRepoSetup,
+    working_dir: ProjectRelativePathBuf,
+}
+
+#[async_trait::async_trait]
+impl Key for BzlmodSingleExtensionKey {
+    type Value = buck2_error::Result<Arc<BazelModuleExtensionEvaluationResult>>;
+
+    async fn compute(
+        &self,
+        ctx: &mut DiceComputations,
+        _cancellations: &CancellationContext,
+    ) -> Self::Value {
+        let eval_setup = bzlmod_module_extension_evaluation_setup(&self.setup);
+        let evaluation = ctx
+            .compute(&BzlmodSingleExtensionEvalKey {
+                setup: eval_setup,
+                working_dir: self.working_dir.clone(),
+            })
+            .await??;
+        if !self.setup.repo_name.is_empty()
+            && !evaluation
+                .repository_rule_invocations
+                .iter()
+                .any(|invocation| invocation.name == self.setup.repo_name.as_ref())
+        {
+            let emitted = evaluation
+                .repository_rule_invocations
+                .iter()
+                .map(|invocation| invocation.name.clone())
+                .collect();
+            return Err(BzlmodError::ModuleExtensionRepoNotEmitted {
+                extension_bzl_file: self.setup.extension_bzl_file.to_string(),
+                extension_name: self.setup.extension_name.to_string(),
+                repo_name: self.setup.repo_name.to_string(),
+                emitted,
+            }
+            .into());
+        }
+        Ok(evaluation)
+    }
+
+    fn equality(_x: &Self::Value, _y: &Self::Value) -> bool {
+        false
+    }
+
+    fn validity(x: &Self::Value) -> bool {
+        x.is_ok()
+    }
+
+    fn value_serialize() -> impl ValueSerialize<Value = Self::Value> {
+        NoValueSerialize::<Self::Value>::new()
+    }
+}
+
 async fn evaluate_cached_bzlmod_module_extension(
     ctx: &mut DiceComputations<'_>,
     setup: &BzlmodModuleExtensionRepoSetup,
     generated_repo_path: &ProjectRelativePath,
 ) -> buck2_error::Result<Arc<BazelModuleExtensionEvaluationResult>> {
-    let setup = bzlmod_module_extension_evaluation_setup(setup);
     let working_dir = bzlmod_module_extension_evaluation_working_dir(generated_repo_path, &setup);
-    ctx.compute(&BzlmodModuleExtensionEvaluationKey { setup, working_dir })
+    ctx.compute(&BzlmodSingleExtensionKey {
+        setup: setup.dupe(),
+        working_dir,
+    })
         .await?
 }
 
@@ -2841,15 +2911,80 @@ fn bzlmod_module_extension_unique_name(
         .map(str::to_owned)
 }
 
-fn register_bzlmod_module_extension_repo_mappings(
+#[derive(Clone, Debug, PartialEq, Eq, allocative::Allocative, Pagable)]
+struct BzlmodModuleExtensionRepoMappingEntries {
+    sibling_origins: Vec<(String, String, BzlmodGeneratedCellSetup)>,
+    cell_aliases: Vec<(String, Vec<(String, String)>)>,
+}
+
+#[derive(
+    Clone,
+    Debug,
+    derive_more::Display,
+    PartialEq,
+    Eq,
+    Hash,
+    allocative::Allocative,
+    Pagable
+)]
+#[display("{generated_setup:?}")]
+#[pagable_typetag(dice::DiceKeyDyn)]
+struct BzlmodModuleExtensionRepoMappingEntriesKey {
+    generated_setup: BzlmodGeneratedCellSetup,
+    module_extension: BzlmodModuleExtensionRepoSetup,
+    working_dir: ProjectRelativePathBuf,
+}
+
+#[async_trait::async_trait]
+impl Key for BzlmodModuleExtensionRepoMappingEntriesKey {
+    type Value = buck2_error::Result<Arc<BzlmodModuleExtensionRepoMappingEntries>>;
+
+    async fn compute(
+        &self,
+        ctx: &mut DiceComputations,
+        _cancellations: &CancellationContext,
+    ) -> Self::Value {
+        let evaluation = ctx
+            .compute(&BzlmodSingleExtensionKey {
+                setup: self.module_extension.dupe(),
+                working_dir: self.working_dir.clone(),
+            })
+            .await??;
+        Ok(Arc::new(bzlmod_module_extension_repo_mapping_entries(
+            &self.generated_setup,
+            &self.module_extension,
+            &evaluation,
+        )?))
+    }
+
+    fn equality(x: &Self::Value, y: &Self::Value) -> bool {
+        match (x, y) {
+            (Ok(x), Ok(y)) => x == y,
+            _ => false,
+        }
+    }
+
+    fn validity(x: &Self::Value) -> bool {
+        x.is_ok()
+    }
+
+    fn value_serialize() -> impl ValueSerialize<Value = Self::Value> {
+        NoValueSerialize::<Self::Value>::new()
+    }
+}
+
+fn bzlmod_module_extension_repo_mapping_entries(
     generated_setup: &BzlmodGeneratedCellSetup,
     module_extension: &BzlmodModuleExtensionRepoSetup,
     evaluation: &BazelModuleExtensionEvaluationResult,
-) -> buck2_error::Result<()> {
+) -> buck2_error::Result<BzlmodModuleExtensionRepoMappingEntries> {
     let Some(extension_unique_name) =
         bzlmod_module_extension_unique_name(generated_setup, module_extension)
     else {
-        return Ok(());
+        return Ok(BzlmodModuleExtensionRepoMappingEntries {
+            sibling_origins: Vec::new(),
+            cell_aliases: Vec::new(),
+        });
     };
 
     let current_cell_name = bzlmod_cell_name(&generated_setup.canonical_repo_name);
@@ -2873,6 +3008,8 @@ fn register_bzlmod_module_extension_repo_mappings(
     ));
 
     let visible_aliases = visible_aliases.into_iter().collect::<Vec<_>>();
+    let mut sibling_origins = Vec::new();
+    let mut cell_aliases = Vec::new();
     for (repo_name, (cell_name, canonical_repo_name)) in sibling_cells {
         let mut sibling_module_extension = module_extension.dupe();
         sibling_module_extension.extension_unique_name = Arc::from(extension_unique_name.as_str());
@@ -2881,15 +3018,46 @@ fn register_bzlmod_module_extension_repo_mappings(
             canonical_repo_name: Arc::from(canonical_repo_name.clone()),
             generator: BzlmodGeneratedCellGenerator::ModuleExtensionRepo(sibling_module_extension),
         };
-        register_bzlmod_cell_canonical_repo_name_for_cell(&cell_name, &canonical_repo_name);
-        register_external_cell_origin(
-            CellName::unchecked_new(&cell_name)?,
-            ExternalCellOrigin::BzlmodGenerated(sibling_setup),
-        );
-        extend_bzlmod_cell_aliases(&cell_name, visible_aliases.clone());
+        sibling_origins.push((cell_name.clone(), canonical_repo_name, sibling_setup));
+        cell_aliases.push((cell_name, visible_aliases.clone()));
     }
 
+    Ok(BzlmodModuleExtensionRepoMappingEntries {
+        sibling_origins,
+        cell_aliases,
+    })
+}
+
+fn register_bzlmod_module_extension_repo_mapping_entries(
+    entries: &BzlmodModuleExtensionRepoMappingEntries,
+) -> buck2_error::Result<()> {
+    for (cell_name, canonical_repo_name, setup) in &entries.sibling_origins {
+        register_bzlmod_cell_canonical_repo_name_for_cell(cell_name, canonical_repo_name);
+        register_external_cell_origin(
+            CellName::unchecked_new(cell_name)?,
+            ExternalCellOrigin::BzlmodGenerated(setup.dupe()),
+        );
+    }
+    for (cell_name, aliases) in &entries.cell_aliases {
+        extend_bzlmod_cell_aliases(cell_name, aliases.clone());
+    }
     Ok(())
+}
+
+async fn compute_bzlmod_module_extension_repo_mapping_entries(
+    ctx: &mut DiceComputations<'_>,
+    setup: &BzlmodGeneratedCellSetup,
+    module_extension: &BzlmodModuleExtensionRepoSetup,
+    generated_repo_path: &ProjectRelativePath,
+) -> buck2_error::Result<Arc<BzlmodModuleExtensionRepoMappingEntries>> {
+    let working_dir =
+        bzlmod_module_extension_evaluation_working_dir(generated_repo_path, module_extension);
+    ctx.compute(&BzlmodModuleExtensionRepoMappingEntriesKey {
+        generated_setup: setup.dupe(),
+        module_extension: module_extension.dupe(),
+        working_dir,
+    })
+    .await?
 }
 
 pub(crate) async fn ensure_generated_cell_alias_resolver_ready(
@@ -2909,10 +3077,14 @@ pub(crate) async fn ensure_generated_cell_alias_resolver_ready(
             CellRelativePath::empty(),
             ExternalCellOrigin::BzlmodGenerated(setup.dupe()),
         );
-    let evaluation =
-        evaluate_cached_bzlmod_module_extension(ctx, module_extension, &generated_repo_path)
-            .await?;
-    register_bzlmod_module_extension_repo_mappings(&setup, module_extension, &evaluation)
+    let entries = compute_bzlmod_module_extension_repo_mapping_entries(
+        ctx,
+        &setup,
+        module_extension,
+        &generated_repo_path,
+    )
+    .await?;
+    register_bzlmod_module_extension_repo_mapping_entries(&entries)
 }
 
 async fn materialize_generated_contents(
@@ -2925,7 +3097,14 @@ async fn materialize_generated_contents(
         BzlmodGeneratedCellGenerator::ModuleExtensionRepo(module_extension) => {
             let evaluation =
                 evaluate_cached_bzlmod_module_extension(ctx, module_extension, path).await?;
-            register_bzlmod_module_extension_repo_mappings(setup, module_extension, &evaluation)?;
+            let entries = compute_bzlmod_module_extension_repo_mapping_entries(
+                ctx,
+                setup,
+                module_extension,
+                path,
+            )
+            .await?;
+            register_bzlmod_module_extension_repo_mapping_entries(&entries)?;
             if let Some(invocation) = evaluation
                 .repository_rule_invocations
                 .iter()
