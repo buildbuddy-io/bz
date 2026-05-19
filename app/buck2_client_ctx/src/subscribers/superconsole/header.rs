@@ -26,6 +26,8 @@ use crate::subscribers::superconsole::SuperConsoleState;
 use crate::subscribers::superconsole::common::HeaderLineComponent;
 use crate::subscribers::superconsole::common::StaticStringComponent;
 
+const PROGRESS_LABEL_WIDTH: usize = "Validated".len();
+
 pub(crate) struct TasksHeader<'s> {
     header: &'s str,
     state: &'s SuperConsoleState,
@@ -207,24 +209,30 @@ impl Style {
         &self,
         mode: DrawMode,
         header: &str,
-        mut pending: u64,
+        progress_label: &str,
+        mut completed: u64,
         total: u64,
         running_str: &str,
         running_num: u64,
     ) -> String {
         if let DrawMode::Final = mode {
-            pending = 0;
+            completed = total;
         }
         let mut line = match self {
             Style::Normal(num_width) | Style::Compact(num_width) => format!(
-                "{header} Remaining {pending:>num_width$}/{total:<num_width$}",
+                "{header} {progress_label:<progress_label_width$} {completed:>num_width$}/{total:<num_width$}",
                 header = header,
-                pending = pending,
+                progress_label = progress_label,
+                progress_label_width = PROGRESS_LABEL_WIDTH,
+                completed = completed,
                 total = total,
                 num_width = *num_width
             ),
             Style::ExtraCompact => {
-                format!("{header} Remaining {pending}/{total}",)
+                format!(
+                    "{header} {progress_label:<progress_label_width$} {completed}/{total}",
+                    progress_label_width = PROGRESS_LABEL_WIDTH,
+                )
             }
         };
 
@@ -257,7 +265,8 @@ impl ProgressHeader<'_> {
         style.render(
             mode,
             "Loading targets.    ",
-            self.phase_stats.loads.pending(),
+            "Loaded",
+            self.phase_stats.loads.finished,
             self.phase_stats.loads.started,
             &style.display_num(self.phase_stats.loads.running),
             self.phase_stats.loads.running,
@@ -280,7 +289,8 @@ impl ProgressHeader<'_> {
         style.render(
             mode,
             "Analyzing targets.  ",
-            self.phase_stats.analyses.pending(),
+            "Analyzed",
+            self.phase_stats.analyses.finished,
             self.phase_stats.analyses.started,
             &style.display_num(self.phase_stats.analyses.running),
             self.phase_stats.analyses.running,
@@ -328,7 +338,8 @@ impl ProgressHeader<'_> {
         style.render(
             mode,
             "Executing actions.  ",
-            phase_stats.pending(),
+            "Executed",
+            phase_stats.finished,
             phase_stats.started,
             &running_str,
             phase_stats.running,
@@ -412,7 +423,8 @@ impl ProgressHeader<'_> {
         style.render(
             mode,
             "Running validations.",
-            self.phase_stats.validations.pending(),
+            "Validated",
+            self.phase_stats.validations.finished,
             self.phase_stats.validations.started,
             &style.display_num(self.phase_stats.validations.running),
             self.phase_stats.validations.running,
@@ -443,7 +455,7 @@ impl Component for ProgressHeader<'_> {
 
         let num_width = std::cmp::max(5, digits_len(max_total));
 
-        let header_width = "Executing actions.  Remaining _/_ (running: _ local, _ remote)  ".len()
+        let header_width = "Executing actions.  Validated _/_ (running: _ local, _ remote)  ".len()
             + 4 * (num_width - 1);
 
         let elapsed = format!("Time elapsed: {}", &self.time_elapsed);
@@ -506,7 +518,7 @@ impl Component for ProgressHeader<'_> {
             // otherwise use 18-char padding (original)
             let header_pad = if validations.started > 0 { 20 } else { 18 };
             main.push(format!(
-                // typically aligns this with "Remaining:" in the line above, but a long header would push it over, which is okay
+                // typically aligns this with the progress count in the line above, but a long header would push it over, which is okay
                 "{:<header_pad$} {}",
                 self.header,
                 self.render_actions_stats(if dimensions.width > 90 {
@@ -723,71 +735,71 @@ mod tests {
 
         let expected = indoc::indoc!(
             r#"
-                Loading targets.     Remaining
-                Analyzing targets.   Remaining
-                Executing actions.   Remaining
-                Running validations. Remaining
+                Loading targets.     Loaded
+                Analyzing targets.   Analyzed
+                Executing actions.   Executed
+                Running validations. Validated
                 header     Time elapsed: 1234s
 
-                Loading targets.     Remaining 11000/111
-                Analyzing targets.   Remaining 22000/222
-                Executing actions.   Remaining 33000/333
-                Running validations. Remaining 44000/444
+                Loading targets.     Loaded    111/11111
+                Analyzing targets.   Analyzed  222/22222
+                Executing actions.   Executed  333/33333
+                Running validations. Validated 444/44444
                 header               Time elapsed: 1234s
 
-                Loading targets.     Remaining 11000/11111 (11)
-                Analyzing targets.   Remaining 22000/22222 (22)
-                Executing actions.   Remaining 33000/33333 (100)
-                Running validations. Remaining 44000/44444 (44)
+                Loading targets.     Loaded    111/11111 (11)
+                Analyzing targets.   Analyzed  222/22222 (22)
+                Executing actions.   Executed  333/33333 (100)
+                Running validations. Validated 444/44444 (44)
                 header               Cache hits 37%      Time elapsed: 1234s
 
-                Loading targets.     Remaining 11000/11111 (11)
-                Analyzing targets.   Remaining 22000/22222 (22)
-                Executing actions.   Remaining 33000/33333 (100)
-                Running validations. Remaining 44000/44444 (44)
+                Loading targets.     Loaded    111/11111 (11)
+                Analyzing targets.   Analyzed  222/22222 (22)
+                Executing actions.   Executed  333/33333 (100)
+                Running validations. Validated 444/44444 (44)
                 header               Cache hits 37%                          Time elapsed: 1234s
 
-                Loading targets.     Remaining 11000/11111 (running:    11)
-                Analyzing targets.   Remaining 22000/22222 (running:    22)
-                Executing actions.   Remaining 33000/33333 (running:    55 local,    66 remote)
-                Running validations. Remaining 44000/44444 (running:    44)
+                Loading targets.     Loaded      111/11111 (running:    11)
+                Analyzing targets.   Analyzed    222/22222 (running:    22)
+                Executing actions.   Executed    333/33333 (running:    55 local,    66 remote)
+                Running validations. Validated   444/44444 (running:    44)
                 header               Finished 100 local, 122 remote, 133 cache (37% hit)         Time elapsed: 1234s
 
-                Loading targets.     Remaining 11000/11111 (running:    11)
-                Analyzing targets.   Remaining 22000/22222 (running:    22)
-                Executing actions.   Remaining 33000/33333 (running:    55 local,    66 remote)
-                Running validations. Remaining 44000/44444 (running:    44)
+                Loading targets.     Loaded      111/11111 (running:    11)
+                Analyzing targets.   Analyzed    222/22222 (running:    22)
+                Executing actions.   Executed    333/33333 (running:    55 local,    66 remote)
+                Running validations. Validated   444/44444 (running:    44)
                 header               Finished 100 local, 122 remote, 133 cache (37% hit)                                      Time elapsed: 1234s
 
-                Loading targets.     Remaining 11000/11111 (running:    11)                      111 dirs read, 22222 targets declared
-                Analyzing targets.   Remaining 22000/22222 (running:    22)                      3333333 actions, 4444444 artifacts declared
-                Executing actions.   Remaining 33000/33333 (running:    55 local,    66 remote)  2:09:37.0s exec time total
-                Running validations. Remaining 44000/44444 (running:    44)
+                Loading targets.     Loaded      111/11111 (running:    11)                      111 dirs read, 22222 targets declared
+                Analyzing targets.   Analyzed    222/22222 (running:    22)                      3333333 actions, 4444444 artifacts declared
+                Executing actions.   Executed    333/33333 (running:    55 local,    66 remote)  2:09:37.0s exec time total
+                Running validations. Validated   444/44444 (running:    44)
                 header               Finished 100 local, 122 remote, 133 cache (37% hit)                                       Time elapsed: 1234s
 
-                Loading targets.     Remaining 11000/11111 (running:    11)                      111 dirs read, 22222 targets declared
-                Analyzing targets.   Remaining 22000/22222 (running:    22)                      3333333 actions, 4444444 artifacts declared
-                Executing actions.   Remaining 33000/33333 (running:    55 local,    66 remote)  2:09:37.0s exec time total
-                Running validations. Remaining 44000/44444 (running:    44)
+                Loading targets.     Loaded      111/11111 (running:    11)                      111 dirs read, 22222 targets declared
+                Analyzing targets.   Analyzed    222/22222 (running:    22)                      3333333 actions, 4444444 artifacts declared
+                Executing actions.   Executed    333/33333 (running:    55 local,    66 remote)  2:09:37.0s exec time total
+                Running validations. Validated   444/44444 (running:    44)
                 header               Finished 100 local, 122 remote, 133 cache (37% hit)         11:06.0s exec time cached (8%)          Time elapsed: 1234s
 
-                Loading targets.     Remaining 11000/11111 (running:    11)                                111 dirs read, 22222 targets declared
-                Analyzing targets.   Remaining 22000/22222 (running:    22)                                3333333 actions, 4444444 artifacts declared
-                Executing actions.   Remaining 33000/33333 (running:    55 local,    66 remote)            2:09:37.0s exec time total
-                Running validations. Remaining 44000/44444 (running:    44)
+                Loading targets.     Loaded      111/11111 (running:    11)                                111 dirs read, 22222 targets declared
+                Analyzing targets.   Analyzed    222/22222 (running:    22)                                3333333 actions, 4444444 artifacts declared
+                Executing actions.   Executed    333/33333 (running:    55 local,    66 remote)            2:09:37.0s exec time total
+                Running validations. Validated   444/44444 (running:    44)
                 header               Finished 100 local, 122 remote, 133 cache (37% hit)                   11:06.0s exec time cached (8%)                    Time elapsed: 1234s
 
-                Loading targets.     Remaining 0/11111
-                Analyzing targets.   Remaining 0/22222
-                Executing actions.   Remaining 0/33333
-                Running validations. Remaining 0/44444
+                Loading targets.     Loaded    11111/11111
+                Analyzing targets.   Analyzed  22222/22222
+                Executing actions.   Executed  33333/33333
+                Running validations. Validated 44444/44444
                 header               Cache hits 37%
                 Time elapsed: 1234s
 
-                Loading targets.     Remaining     0/11111                                111 dirs read, 22222 targets declared
-                Analyzing targets.   Remaining     0/22222                                3333333 actions, 4444444 artifacts declared
-                Executing actions.   Remaining     0/33333                                2:09:37.0s exec time total
-                Running validations. Remaining     0/44444
+                Loading targets.     Loaded    11111/11111                                111 dirs read, 22222 targets declared
+                Analyzing targets.   Analyzed  22222/22222                                3333333 actions, 4444444 artifacts declared
+                Executing actions.   Executed  33333/33333                                2:09:37.0s exec time total
+                Running validations. Validated 44444/44444
                 header               Finished 100 local, 122 remote, 133 cache (37% hit)  11:06.0s exec time cached (8%)
                 Time elapsed: 1234s
 

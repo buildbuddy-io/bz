@@ -121,10 +121,6 @@ pub struct BuildProgressPhaseStatsItem {
 }
 
 impl BuildProgressPhaseStatsItem {
-    pub fn pending(&self) -> u64 {
-        self.started - self.finished
-    }
-
     pub fn mark_all_finished(&mut self) {
         self.finished = self.started;
         self.running = 0;
