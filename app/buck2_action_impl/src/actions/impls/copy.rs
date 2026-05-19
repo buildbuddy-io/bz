@@ -178,10 +178,7 @@ impl CopyAction {
     ) -> buck2_error::Result<LocalActionCacheKey> {
         let key = output
             .as_ref()
-            .resolve(
-                ctx.fs(),
-                Some(&ContentBasedPathHash::for_output_artifact()),
-            )?
+            .resolve(ctx.fs(), Some(&ContentBasedPathHash::for_output_artifact()))?
             .into_path()
             .to_string();
 
@@ -276,10 +273,7 @@ impl SymlinkAction {
     ) -> buck2_error::Result<LocalActionCacheKey> {
         let key = output
             .as_ref()
-            .resolve(
-                ctx.fs(),
-                Some(&ContentBasedPathHash::for_output_artifact()),
-            )?
+            .resolve(ctx.fs(), Some(&ContentBasedPathHash::for_output_artifact()))?
             .into_path()
             .to_string();
 
@@ -504,7 +498,8 @@ impl Action for SymlinkAction {
     ) -> Result<(ActionOutputs, ActionExecutionMetadata), ExecuteError> {
         let local_action_cache_output = self.local_action_cache_output();
         let local_action_cache_outputs = buck_indexset![local_action_cache_output.clone()];
-        let local_action_cache_key = self.local_action_cache_key(ctx, &local_action_cache_output)?;
+        let local_action_cache_key =
+            self.local_action_cache_key(ctx, &local_action_cache_output)?;
         let manager = ctx.command_execution_manager(waiting_data.clone());
         match ctx
             .unprepared_action_cache(

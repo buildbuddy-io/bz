@@ -10,8 +10,6 @@
 
 use std::borrow::Cow;
 use std::cell::RefCell;
-use std::hash::Hash;
-use std::hash::Hasher;
 use std::ops::ControlFlow;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -88,7 +86,6 @@ use buck2_core::execution_types::executor_config::RemoteExecutorDependency;
 use buck2_core::fs::artifact_path_resolver::ArtifactFs;
 use buck2_core::fs::buck_out_path::BazelOutputRoot;
 use buck2_core::fs::buck_out_path::BuckOutPathKind;
-use buck2_core::fs::buck_out_path::BuckOutScratchPath;
 use buck2_core::fs::buck_out_path::BuildArtifactPath;
 use buck2_core::fs::project_rel_path::ProjectRelativePath;
 use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
@@ -128,7 +125,6 @@ use buck2_execute::materialize::materializer::WriteRequest;
 use buck2_fs::fs_util;
 use buck2_fs::paths::RelativePathBuf;
 use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
-use buck2_hash::BuckDefaultHasher;
 use buck2_hash::BuckIndexMap;
 use buck2_hash::BuckIndexSet;
 use buck2_hash::buck_indexmap;
@@ -1989,23 +1985,6 @@ impl RunAction {
             ))
     }
 
-    fn bazel_private_execroot(
-        fs: &ArtifactFs,
-        scratch: &BuckOutScratchPath,
-    ) -> buck2_error::Result<ProjectRelativePathBuf> {
-        let scratch_path = fs.buck_out_path_resolver().resolve_scratch(scratch)?;
-        let mut hasher = BuckDefaultHasher::new();
-        scratch_path.as_str().hash(&mut hasher);
-
-        Ok(fs
-            .buck_out_path_resolver()
-            .root()
-            .join(ForwardRelativePathBuf::unchecked_new(format!(
-                "__bazel_execroot/{:016x}",
-                hasher.finish()
-            ))))
-    }
-
     fn bazel_execroot_path(
         bazel_execroot: &ProjectRelativePath,
         path: String,
@@ -3456,23 +3435,20 @@ impl RunAction {
         )
         .await?;
 
-        let mut ignored_shared_content_based_paths = Vec::new();
-        self.prepare_scratch_path(
-            ctx,
-            &cli_ctx,
-            fs,
-            &mut ignored_inputs,
-            &mut ignored_shared_content_based_paths,
-            &mut extra_env,
-        )?;
-
         let bazel_paths = self.inner.bazel_use_default_shell_env.is_some();
+        if !bazel_paths {
+            let mut ignored_shared_content_based_paths = Vec::new();
+            self.prepare_scratch_path(
+                ctx,
+                &cli_ctx,
+                fs,
+                &mut ignored_inputs,
+                &mut ignored_shared_content_based_paths,
+                &mut extra_env,
+            )?;
+        }
         let bazel_execroot = if bazel_paths {
-            Some(if worker.is_some() {
-                Self::bazel_worker_execroot(fs)
-            } else {
-                Self::bazel_private_execroot(fs, &ctx.target().scratch_path())?
-            })
+            Some(Self::bazel_worker_execroot(fs))
         } else {
             None
         };
@@ -3557,13 +3533,8 @@ impl RunAction {
         } else {
             artifact_inputs[..].map(|&i| CommandExecutionInput::Artifact(Box::new(i.dupe())))
         };
-        let scratch = ctx.target().scratch_path();
         let bazel_execroot = if bazel_paths {
-            Some(if worker.is_some() {
-                Self::bazel_worker_execroot(fs)
-            } else {
-                Self::bazel_private_execroot(fs, &scratch)?
-            })
+            Some(Self::bazel_worker_execroot(fs))
         } else {
             None
         };
@@ -3622,14 +3593,16 @@ impl RunAction {
         .await?;
 
         let mut shared_content_based_paths = Vec::new();
-        self.prepare_scratch_path(
-            ctx,
-            &cli_ctx,
-            fs,
-            &mut inputs,
-            &mut shared_content_based_paths,
-            &mut extra_env,
-        )?;
+        if !bazel_paths {
+            self.prepare_scratch_path(
+                ctx,
+                &cli_ctx,
+                fs,
+                &mut inputs,
+                &mut shared_content_based_paths,
+                &mut extra_env,
+            )?;
+        }
 
         for output in self.outputs.iter() {
             if output.get_path().is_content_based_path() {
@@ -4301,7 +4274,6 @@ impl RunAction {
             None | Some(true) => EnvironmentInheritance::local_command_exclusions(),
             Some(false) => EnvironmentInheritance::empty(),
         };
-        let uses_worker = prepared_run_action.worker.is_some();
         let mut req = prepared_run_action
             .into_command_execution_request()
             .with_prefetch_lossy_stderr(true)
@@ -4321,13 +4293,7 @@ impl RunAction {
             .with_outputs_for_error_handler(outputs_for_error_handler);
 
         if self.inner.bazel_use_default_shell_env.is_some() {
-            let scratch = ctx.target().scratch_path();
-            let working_directory = if uses_worker {
-                Self::bazel_worker_execroot(ctx.executor_fs().fs())
-            } else {
-                Self::bazel_private_execroot(ctx.executor_fs().fs(), &scratch)?
-            };
-            req = req.with_working_directory(working_directory);
+            req = req.with_working_directory(Self::bazel_worker_execroot(ctx.executor_fs().fs()));
         }
 
         if let Some(timeout) = self.inner.timeout {

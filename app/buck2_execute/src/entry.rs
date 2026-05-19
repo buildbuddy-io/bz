@@ -10,6 +10,7 @@
 
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
+use std::fs::Metadata;
 use std::time::Duration;
 use std::time::Instant;
 
@@ -30,12 +31,14 @@ use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
 use buck2_fs::paths::file_name::FileNameBuf;
 use buck2_util::future::try_join_all;
 use derive_more::Add;
-use faccess::PathExt;
 use futures::Future;
 use futures::future::try_join;
 use once_cell::sync::Lazy;
 use pathdiff::diff_paths;
 use tokio::sync::Semaphore;
+
+#[cfg(not(unix))]
+use faccess::PathExt;
 
 use crate::directory::ActionDirectoryBuilder;
 use crate::directory::ActionDirectoryEntry;
@@ -70,7 +73,7 @@ impl HashingInfo {
 // same permissions they would as if the action had run remotely, and we'd
 // downloaded the result from CAS. Note that `std::fs:remove*` _can_ remove
 // non-writable files. It's the directories that matter for the cleanup operations.
-fn do_normalize_permissions(path: &AbsNormPathBuf) -> buck2_error::Result<()> {
+fn do_normalize_permissions(path: &AbsNormPathBuf) -> buck2_error::Result<Metadata> {
     // While the path ould have been populated by an action, we only get here if
     // we've walked the output tree and know the path exists already. Hence we
     // categorize this as internal, not user.
@@ -89,6 +92,7 @@ fn do_normalize_permissions(path: &AbsNormPathBuf) -> buck2_error::Result<()> {
         if mode != perms.mode() {
             perms.set_mode(mode);
             fs_util::set_permissions(path, perms).categorize_input()?;
+            return fs_util::symlink_metadata(path).categorize_internal();
         }
     }
     #[cfg(not(unix))]
@@ -97,9 +101,10 @@ fn do_normalize_permissions(path: &AbsNormPathBuf) -> buck2_error::Result<()> {
             #[allow(clippy::permissions_set_readonly_false)]
             perms.set_readonly(false);
             fs_util::set_permissions(path, perms).categorize_internal()?;
+            return fs_util::symlink_metadata(path).categorize_internal();
         }
     }
-    Ok(())
+    Ok(m)
 }
 
 pub async fn build_entry_from_disk(
@@ -266,14 +271,16 @@ fn build_file_metadata(
     disk_path: AbsNormPathBuf,
     digest_config: FileDigestConfig,
 ) -> impl Future<Output = buck2_error::Result<(FileMetadata, HashingInfo)>> {
-    static SEMAPHORE: Lazy<Semaphore> = Lazy::new(|| Semaphore::new(100));
+    static SEMAPHORE: Lazy<Semaphore> =
+        Lazy::new(|| Semaphore::new(buck2_util::threads::available_parallelism()));
     let io_task = move || {
-        do_normalize_permissions(&disk_path)?;
+        let metadata = do_normalize_permissions(&disk_path)?;
+        let is_executable = is_executable(&disk_path, &metadata)?;
         let hashing_start = Instant::now();
-        let digest = FileDigest::from_file(&disk_path, digest_config);
+        let digest = FileDigest::from_file_with_metadata(&disk_path, digest_config, &metadata);
         let hashing_info = HashingInfo::new(Instant::now() - hashing_start, 1);
 
-        buck2_error::Ok((disk_path.executable(), hashing_info, digest))
+        buck2_error::Ok((is_executable, hashing_info, digest))
     };
 
     async move {
@@ -288,6 +295,16 @@ fn build_file_metadata(
 
         Ok((file_metadata, hashing_info))
     }
+}
+
+#[cfg(unix)]
+fn is_executable(_path: &AbsNormPathBuf, metadata: &Metadata) -> buck2_error::Result<bool> {
+    Ok(metadata.permissions().mode() & 0o111 != 0)
+}
+
+#[cfg(not(unix))]
+fn is_executable(path: &AbsNormPathBuf, _metadata: &Metadata) -> buck2_error::Result<bool> {
+    Ok(path.executable()?)
 }
 
 fn create_symlink(

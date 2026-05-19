@@ -161,10 +161,7 @@ impl TemplateExpansionAction {
     ) -> buck2_error::Result<LocalActionCacheKey> {
         let key = output
             .as_ref()
-            .resolve(
-                ctx.fs(),
-                Some(&ContentBasedPathHash::for_output_artifact()),
-            )?
+            .resolve(ctx.fs(), Some(&ContentBasedPathHash::for_output_artifact()))?
             .into_path()
             .to_string();
 

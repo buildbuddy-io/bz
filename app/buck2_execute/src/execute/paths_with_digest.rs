@@ -67,7 +67,10 @@ impl<'a> PathsWithDigestBuilder<'a> {
         )))
     }
 
-    pub fn build_digest(self, digest_config: CasDigestConfig) -> buck2_error::Result<TrackedFileDigest> {
+    pub fn build_digest(
+        self,
+        digest_config: CasDigestConfig,
+    ) -> buck2_error::Result<TrackedFileDigest> {
         let json = MetadataJson {
             digests: self.paths,
             // Increment this version if format changes
@@ -77,7 +80,10 @@ impl<'a> PathsWithDigestBuilder<'a> {
             digester: FileDigest::digester(digest_config),
         };
         serde_json::to_writer(&mut writer, &json)?;
-        Ok(TrackedFileDigest::new(writer.digester.finalize(), digest_config))
+        Ok(TrackedFileDigest::new(
+            writer.digester.finalize(),
+            digest_config,
+        ))
     }
 }
 

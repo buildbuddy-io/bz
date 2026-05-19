@@ -36,6 +36,9 @@ use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
 use buck2_core::soft_error;
 use buck2_core::tag_error;
 use buck2_core::tag_result;
+use buck2_directory::directory::directory::Directory;
+use buck2_directory::directory::directory_iterator::DirectoryIterator;
+use buck2_directory::directory::entry::DirectoryEntry;
 use buck2_error::BuckErrorContext;
 use buck2_error::buck2_error;
 use buck2_events::daemon_id::DaemonId;
@@ -44,6 +47,9 @@ use buck2_events::dispatch::get_dispatcher_opt;
 use buck2_execute::artifact_utils::ArtifactValueBuilder;
 use buck2_execute::artifact_value::ArtifactValue;
 use buck2_execute::digest_config::DigestConfig;
+use buck2_execute::directory::ActionDirectoryBuilder;
+use buck2_execute::directory::ActionDirectoryEntry;
+use buck2_execute::directory::ActionDirectoryMember;
 use buck2_execute::directory::extract_artifact_value;
 use buck2_execute::directory::insert_entry;
 use buck2_execute::entry::HashingInfo;
@@ -128,6 +134,12 @@ use crate::sqlite::incremental_state_db::IncrementalDbState;
 
 static ARTIFACT_PATH_ALIAS_TMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 static BAZEL_WORKER_SANDBOX_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+fn bazel_local_tmpdir() -> OsString {
+    std::env::var_os("TMPDIR")
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| OsString::from("/tmp"))
+}
 
 #[derive(Debug, buck2_error::Error)]
 #[buck2(input)]
@@ -699,11 +711,14 @@ impl LocalExecutor {
         let build_id: &str = &dispatcher.trace_id().to_string();
 
         let mut env = vec![];
+        let working_directory_abs = self.root.join_cow(request.working_directory());
+        let is_bazel_execroot_action =
+            is_bazel_execroot_working_directory(working_directory_abs.as_ref());
 
         let scratch_path_abs;
+        let local_tmpdir;
 
         if let Some(scratch_path) = &scratch_path.0 {
-            // For the $TMPDIR - important it is absolute
             scratch_path_abs = self.artifact_fs.fs().resolve(scratch_path);
 
             if cfg!(windows) {
@@ -721,7 +736,8 @@ impl LocalExecutor {
                 env.push(("TEMP", StrOrOsStr::OsStr(scratch_path_abs.as_os_str())));
                 env.push(("TMP", StrOrOsStr::OsStr(scratch_path_abs.as_os_str())));
             } else {
-                env.push(("TMPDIR", StrOrOsStr::OsStr(scratch_path_abs.as_os_str())));
+                local_tmpdir = bazel_local_tmpdir();
+                env.push(("TMPDIR", StrOrOsStr::OsStr(local_tmpdir.as_os_str())));
             }
         }
         env.extend(
@@ -739,9 +755,12 @@ impl LocalExecutor {
                 )
             })
         }));
-        let daemon_id = self.daemon_id.to_string();
-        env.push(("BUCK2_DAEMON_UUID", StrOrOsStr::from(&*daemon_id)));
-        env.push(("BUCK_BUILD_ID", StrOrOsStr::from(build_id)));
+        let daemon_id;
+        if !is_bazel_execroot_action {
+            daemon_id = self.daemon_id.to_string();
+            env.push(("BUCK2_DAEMON_UUID", StrOrOsStr::from(&*daemon_id)));
+            env.push(("BUCK_BUILD_ID", StrOrOsStr::from(build_id)));
+        }
 
         let liveliness_observer = manager.inner.liveliness_observer.dupe().and(cancellation);
 
@@ -1005,10 +1024,10 @@ impl LocalExecutor {
         BuckIndexMap<CommandExecutionOutput, ArtifactValue>,
         HashingInfo,
     )> {
-        let mut builder = inputs_directory(request.inputs(), digest_config, &self.artifact_fs)?;
-
         // Read outputs from disk and add them to the builder
         let mut entries = Vec::new();
+        let mut output_entries = Vec::new();
+        let mut output_contains_symlink = false;
         let mut total_hashing_time = Duration::ZERO;
         let mut total_hashed_outputs = 0;
         for output in request.outputs() {
@@ -1039,9 +1058,22 @@ impl LocalExecutor {
             total_hashing_time += hashing_info.hashing_duration;
             total_hashed_outputs += hashing_info.hashed_artifacts_count;
             if let Some(entry) = entry {
-                insert_entry(&mut builder, path.clone(), entry)?;
+                output_contains_symlink |= output_entry_contains_symlink(&entry);
+                output_entries.push((path.clone(), entry));
                 entries.push((output.cloned(), path));
             }
+        }
+
+        // Bazel's ActionOutputMetadataStore constructs output metadata from the output tree
+        // directly. Only fall back to the full input+output directory when an output symlink may
+        // need Buck's dependency extraction logic to resolve targets through known inputs.
+        let mut builder = if output_contains_symlink {
+            inputs_directory(request.inputs(), digest_config, &self.artifact_fs)?
+        } else {
+            ActionDirectoryBuilder::empty()
+        };
+        for (path, entry) in output_entries {
+            insert_entry(&mut builder, path, entry)?;
         }
 
         let mut to_declare = vec![];
@@ -1970,6 +2002,27 @@ fn is_bazel_private_execroot_working_directory(working_directory: &AbsNormPath) 
         .is_some_and(|parent| parent.ends_with("__bazel_execroot"))
 }
 
+fn output_entry_contains_symlink(entry: &ActionDirectoryEntry<ActionDirectoryBuilder>) -> bool {
+    match entry {
+        DirectoryEntry::Leaf(
+            ActionDirectoryMember::Symlink(_) | ActionDirectoryMember::ExternalSymlink(_),
+        ) => true,
+        DirectoryEntry::Leaf(_) => false,
+        DirectoryEntry::Dir(dir) => {
+            let mut leaves = dir.unordered_walk_leaves();
+            while let Some((_path, member)) = leaves.next() {
+                if matches!(
+                    member,
+                    ActionDirectoryMember::Symlink(_) | ActionDirectoryMember::ExternalSymlink(_)
+                ) {
+                    return true;
+                }
+            }
+            false
+        }
+    }
+}
+
 struct BazelWorkerSandbox {
     relative_path: String,
     project_path: ProjectRelativePathBuf,
@@ -2136,6 +2189,86 @@ pub struct MaterializedInputPaths {
     pub artifact_path_aliases: Vec<(ProjectRelativePathBuf, ProjectRelativePathBuf)>,
 }
 
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+struct ExternalCellRoot {
+    source_root: ProjectRelativePathBuf,
+    kind: String,
+    repo: String,
+}
+
+fn external_cell_root(path: &ProjectRelativePath) -> Option<ExternalCellRoot> {
+    let path = path.as_str();
+    let rest = path.strip_prefix("buck-out/v2/external_cells/")?;
+    let (kind, rest) = rest.split_once('/')?;
+    if kind.is_empty() {
+        return None;
+    }
+    let repo = rest.split_once('/').map_or(rest, |(repo, _)| repo);
+    if repo.is_empty() {
+        return None;
+    }
+
+    Some(ExternalCellRoot {
+        source_root: ProjectRelativePathBuf::unchecked_new(format!(
+            "buck-out/v2/external_cells/{kind}/{repo}"
+        )),
+        kind: kind.to_owned(),
+        repo: repo.to_owned(),
+    })
+}
+
+fn bazel_execroot_prefix(path: &ProjectRelativePath) -> Option<String> {
+    let path = path.as_str();
+    let (prefix, rest) = path.split_once("__bazel_execroot/")?;
+    let (first_component, _) = rest.split_once('/')?;
+    if first_component.len() == 16
+        && first_component
+            .as_bytes()
+            .iter()
+            .all(u8::is_ascii_hexdigit)
+    {
+        return Some(format!("{prefix}__bazel_execroot/{first_component}"));
+    }
+    Some(format!("{prefix}__bazel_execroot"))
+}
+
+fn path_is_at_or_under(path: &str, root: &str) -> bool {
+    path == root
+        || path
+            .strip_prefix(root)
+            .is_some_and(|rest| rest.starts_with('/'))
+}
+
+fn external_cell_root_alias(
+    source_path: &ProjectRelativePath,
+    alias_path: &ProjectRelativePath,
+) -> Option<(ProjectRelativePathBuf, ProjectRelativePathBuf)> {
+    let external_root = external_cell_root(source_path)?;
+    let execroot = bazel_execroot_prefix(alias_path)?;
+    let alias = alias_path.as_str();
+
+    let bazel_external_root = format!("{execroot}/external/{}", external_root.repo);
+    if path_is_at_or_under(alias, &bazel_external_root) {
+        return Some((
+            external_root.source_root,
+            ProjectRelativePathBuf::unchecked_new(bazel_external_root),
+        ));
+    }
+
+    let source_alias_root = format!(
+        "{execroot}/buck-out/v2/external_cells/{}/{}",
+        external_root.kind, external_root.repo
+    );
+    if path_is_at_or_under(alias, &source_alias_root) {
+        return Some((
+            external_root.source_root,
+            ProjectRelativePathBuf::unchecked_new(source_alias_root),
+        ));
+    }
+
+    None
+}
+
 fn expand_bazel_worker_args(
     artifact_fs: &ArtifactFs,
     request: &CommandExecutionRequest,
@@ -2237,6 +2370,20 @@ fn materialize_artifact_path_alias(
             }
         }
     }
+}
+
+fn materialize_external_cell_root_alias(
+    artifact_fs: &ArtifactFs,
+    source_root: &ProjectRelativePath,
+    alias_root: &ProjectRelativePath,
+) -> buck2_error::Result<()> {
+    let fs = artifact_fs.fs();
+    let source = fs.resolve(source_root);
+    let dest = fs.resolve(alias_root);
+
+    create_or_replace_symlink(source.as_path(), &dest).with_buck_error_context(|| {
+        format!("Error creating external repository alias `{alias_root}` -> `{source_root}`")
+    })
 }
 
 fn create_artifact_path_alias_symlink(
@@ -2384,10 +2531,15 @@ fn promote_produced_output_path(
             format!("Error creating parent directory for output path `{output_path}`")
         })?;
     }
-    fs.copy(produced_path, output_path)
-        .with_buck_error_context(|| {
-            format!("Error copying produced output `{produced_path}` to `{output_path}`")
-        })?;
+    match fs_util::rename(&produced, &output) {
+        Ok(()) => return Ok(()),
+        Err(_rename_error) => {
+            fs.copy(produced_path, output_path)
+                .with_buck_error_context(|| {
+                    format!("Error copying produced output `{produced_path}` to `{output_path}`")
+                })?;
+        }
+    }
 
     Ok(())
 }
@@ -2408,6 +2560,7 @@ pub async fn materialize_inputs(
     let mut configuration_path_to_content_based_path_symlinks = vec![];
     let mut shared_artifact_path_aliases = vec![];
     let mut sandbox_artifact_path_aliases = vec![];
+    let mut external_cell_roots_to_materialize = BuckIndexSet::new();
     let use_bazel_worker_sandbox = request.worker().as_ref().is_some_and(|worker| {
         worker.protocol == WorkerProtocol::Bazel && worker.bazel_worker_sandboxing
     });
@@ -2465,7 +2618,11 @@ pub async fn materialize_inputs(
                 ..
             } => {
                 if *source_requires_materialization {
-                    paths.push(source_path.clone());
+                    if let Some(root) = external_cell_root(source_path.as_ref()) {
+                        external_cell_roots_to_materialize.insert(root.source_root);
+                    } else {
+                        paths.push(source_path.clone());
+                    }
                 }
                 let sandbox_alias = use_bazel_worker_sandbox
                     && !is_worker_input
@@ -2500,6 +2657,8 @@ pub async fn materialize_inputs(
         }
     }
 
+    paths.extend(external_cell_roots_to_materialize);
+
     buck2_util::future::try_join_all(
         configuration_path_to_content_based_path_symlinks
             .into_iter()
@@ -2528,9 +2687,23 @@ pub async fn materialize_inputs(
         }
     }
 
+    let mut external_cell_root_aliases = BuckIndexSet::new();
     for (source_path, path) in &shared_artifact_path_aliases {
-        materialize_artifact_path_alias(artifact_fs, source_path.as_ref(), path.as_ref())?;
-        paths.push(path.clone());
+        if let Some((source_root, alias_root)) =
+            external_cell_root_alias(source_path.as_ref(), path.as_ref())
+        {
+            if external_cell_root_aliases.insert((source_root.clone(), alias_root.clone())) {
+                materialize_external_cell_root_alias(
+                    artifact_fs,
+                    source_root.as_ref(),
+                    alias_root.as_ref(),
+                )?;
+                paths.push(alias_root);
+            }
+        } else {
+            materialize_artifact_path_alias(artifact_fs, source_path.as_ref(), path.as_ref())?;
+            paths.push(path.clone());
+        }
     }
 
     Ok(MaterializedInputPaths {

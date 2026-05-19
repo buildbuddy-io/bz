@@ -38,7 +38,8 @@ pub fn inputs_directory(
                 ..
             } => {
                 let abs_path = fs.fs().resolve(source_path);
-                let value = value.resolve_source_file_proxy(abs_path.as_abs_path(), digest_config)?;
+                let value =
+                    value.resolve_source_file_proxy(abs_path.as_abs_path(), digest_config)?;
                 insert_artifact_lazy(&mut builder, path.clone(), &value)?;
             }
             CommandExecutionInput::ActionMetadata(metadata) => {

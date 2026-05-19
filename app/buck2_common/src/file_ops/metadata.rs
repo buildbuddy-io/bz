@@ -137,6 +137,10 @@ static COMPUTED_FILE_DIGEST_CACHE: Lazy<Mutex<LruCache<ComputedFileDigestCacheKe
         ))
     });
 
+pub fn clear_computed_file_digest_cache() {
+    COMPUTED_FILE_DIGEST_CACHE.lock().clear();
+}
+
 #[derive(Clone, Eq, Hash, PartialEq)]
 struct ComputedFileDigestCacheKey {
     path: PathBuf,
@@ -232,18 +236,32 @@ impl FileDigestConfig {
 impl FileDigest {
     /// Obtain the digest of the file if you can.
     pub fn from_file(file: &AbsPath, config: FileDigestConfig) -> buck2_error::Result<Self> {
+        let metadata = fs_util::symlink_metadata(file).categorize_internal()?;
+        Self::from_file_with_metadata(file, config, &metadata)
+    }
+
+    /// Obtain the digest of a file, reusing recently collected filesystem metadata.
+    pub fn from_file_with_metadata(
+        file: &AbsPath,
+        config: FileDigestConfig,
+        metadata: &std::fs::Metadata,
+    ) -> buck2_error::Result<Self> {
         if !buck2_env!("BUCK2_DISABLE_FILE_ATTR", bool)? {
-            if let Some(digest) = Self::from_file_attr(file, config) {
+            if let Some(digest) = Self::from_file_attr(file, config, metadata) {
                 return Ok(digest);
             }
         }
 
-        Self::from_file_disk(file, config)
+        Self::from_file_disk(file, config, metadata)
     }
 
     /// Read the file from the xattr, or skip if it's not available.
     #[cfg(unix)]
-    fn from_file_attr(file: &AbsPath, config: FileDigestConfig) -> Option<Self> {
+    fn from_file_attr(
+        file: &AbsPath,
+        config: FileDigestConfig,
+        metadata: &std::fs::Metadata,
+    ) -> Option<Self> {
         use crate::cas_digest::RawDigest;
 
         enum Digest {
@@ -262,11 +280,9 @@ impl FileDigest {
             return None;
         };
 
-        let meta = fs_util::symlink_metadata(file).ok()?;
-
         // This really shouldn't happen (and it better not because we're about to read the xattr of
         // a symlink otherwise) but this method doesn't have the ability to return an error.
-        if meta.is_symlink() {
+        if metadata.is_symlink() {
             return None;
         }
 
@@ -286,28 +302,35 @@ impl FileDigest {
                 .and_then(|v| RawDigest::parse_blake3_keyed(&v).ok()),
         };
 
-        raw_digest.map(|raw| Self::new(raw, meta.len()))
+        raw_digest.map(|raw| Self::new(raw, metadata.len()))
     }
 
     /// Windows doesn't support extended file attributes.
     #[cfg(windows)]
-    fn from_file_attr(_file: &AbsPath, _config: FileDigestConfig) -> Option<Self> {
+    fn from_file_attr(
+        _file: &AbsPath,
+        _config: FileDigestConfig,
+        _metadata: &std::fs::Metadata,
+    ) -> Option<Self> {
         None
     }
 
     /// Get the digest from disk. You should usually prefer `from_file`
     /// which also uses faster methods of getting the SHA1 if it can.
-    fn from_file_disk(file: &AbsPath, config: FileDigestConfig) -> buck2_error::Result<Self> {
+    fn from_file_disk(
+        file: &AbsPath,
+        config: FileDigestConfig,
+        metadata: &std::fs::Metadata,
+    ) -> buck2_error::Result<Self> {
         if buck2_env!("BUCK2_DISABLE_COMPUTED_FILE_DIGEST_CACHE", bool)? {
             return Self::from_file_disk_uncached(file, config);
         }
 
-        let metadata = fs_util::symlink_metadata(file).categorize_internal()?;
         if !metadata.is_file() {
             return Self::from_file_disk_uncached(file, config);
         }
 
-        let key = ComputedFileDigestCacheKey::new(file, config, &metadata);
+        let key = ComputedFileDigestCacheKey::new(file, config, metadata);
         if let Some(digest) = COMPUTED_FILE_DIGEST_CACHE.lock().get(&key) {
             return Ok(digest.dupe());
         }
