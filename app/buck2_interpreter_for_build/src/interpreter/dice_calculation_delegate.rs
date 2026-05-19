@@ -30,6 +30,7 @@ use buck2_core::build_file_path::BuildFilePath;
 use buck2_core::bzl::ImportPath;
 use buck2_core::cells::build_file_cell::BuildFileCell;
 use buck2_core::cells::cell_path::CellPath;
+use buck2_core::cells::cell_path_with_allowed_relative_dir::CellPathWithAllowedRelativeDir;
 use buck2_core::package::PackageLabel;
 use buck2_error::BuckErrorContext;
 use buck2_error::internal_error;
@@ -41,8 +42,10 @@ use buck2_interpreter::factory::StarlarkEvaluatorProvider;
 use buck2_interpreter::file_loader::LoadedModule;
 use buck2_interpreter::file_loader::ModuleDeps;
 use buck2_interpreter::from_freeze::from_freeze_error;
+use buck2_interpreter::import_paths::ImplicitImportPaths;
 use buck2_interpreter::import_paths::HasImportPaths;
 use buck2_interpreter::load_module::InterpreterCalculation;
+use buck2_interpreter::package_imports::PackageImplicitImports;
 use buck2_interpreter::paths::module::OwnedStarlarkModulePath;
 use buck2_interpreter::paths::module::StarlarkModulePath;
 use buck2_interpreter::paths::package::PackageFilePath;
@@ -67,8 +70,8 @@ use starlark::syntax::AstModule;
 use starlark::values::FrozenHeapName;
 
 use crate::bazel_repository::BazelRepositoryRuleEvaluation;
-use crate::interpreter::bazel_glob::BazelPackageDataKey;
 use crate::interpreter::bazel_glob::BazelPackageDataRequest;
+use crate::interpreter::bazel_glob::compute_bazel_package_data;
 use crate::interpreter::buckconfig::ConfigsOnDiceViewForStarlark;
 use crate::interpreter::build_context::BazelRepositoryRuleInvocation;
 use crate::interpreter::cell_info::InterpreterCellInfo;
@@ -137,11 +140,29 @@ impl<'c, 'd> HasCalculationDelegate<'c, 'd> for DiceComputations<'d> {
                 let global_state = ctx.get_global_interpreter_state().await?;
 
                 let cell_alias_resolver = ctx.get_cell_alias_resolver(self.0.cell()).await?;
+                let is_bazel_external_cell = self.0.cell().as_str() == "bazel_tools"
+                    || self.0.cell().as_str().starts_with("bzlmod_");
 
-                let implicit_import_paths = ctx.import_paths_for_cell(self.1).await?;
+                let implicit_import_paths = if is_bazel_external_cell {
+                    Arc::new(ImplicitImportPaths {
+                        root_import: None,
+                        package_imports: PackageImplicitImports::new(
+                            self.1,
+                            cell_alias_resolver.dupe(),
+                            None,
+                        )?,
+                    })
+                } else {
+                    ctx.import_paths_for_cell(self.1).await?
+                };
 
-                let dirs_allowing_relative_paths =
-                    ctx.dirs_allowing_relative_paths(self.0.clone()).await?;
+                let dirs_allowing_relative_paths = if is_bazel_external_cell {
+                    Arc::new(CellPathWithAllowedRelativeDir::backwards_relative_not_supported(
+                        self.0.clone(),
+                    ))
+                } else {
+                    ctx.dirs_allowing_relative_paths(self.0.clone()).await?
+                };
 
                 let cell_info = InterpreterCellInfo::new(
                     self.1,
@@ -315,6 +336,32 @@ impl<'c, 'd: 'c> DiceCalculationDelegate<'c, 'd> {
         }
     }
 
+    pub async fn eval_module_uncached_with_parse_data(
+        &mut self,
+        starlark_file: StarlarkModulePath<'_>,
+        parse_data: Arc<ParseData>,
+        cancellation: &CancellationContext,
+    ) -> buck2_error::Result<LoadedModule> {
+        match starlark_file {
+            StarlarkModulePath::JsonFile(_) | StarlarkModulePath::TomlFile(_) => {
+                Err(internal_error!(
+                    "preparsed Starlark data supplied for non-Starlark module `{}`",
+                    starlark_file
+                ))
+            }
+            StarlarkModulePath::LoadFile(_) | StarlarkModulePath::BxlFile(_) => {
+                let deps = Self::eval_deps_with_cycle_guard(self.ctx, &parse_data.imports).await?;
+                self.eval_starlark_module_uncached_prepared(
+                    starlark_file,
+                    parse_data.ast.clone(),
+                    deps,
+                    cancellation,
+                )
+                .await
+            }
+        }
+    }
+
     async fn eval_json_module_uncached(
         &mut self,
         starlark_file: StarlarkModulePath<'_>,
@@ -378,6 +425,17 @@ impl<'c, 'd: 'c> DiceCalculationDelegate<'c, 'd> {
         cancellation: &CancellationContext,
     ) -> buck2_error::Result<LoadedModule> {
         let (ast, deps) = self.prepare_eval(starlark_file.into()).await?;
+        self.eval_starlark_module_uncached_prepared(starlark_file, ast, deps, cancellation)
+            .await
+    }
+
+    async fn eval_starlark_module_uncached_prepared(
+        &mut self,
+        starlark_file: StarlarkModulePath<'_>,
+        ast: AstModule,
+        deps: ModuleDeps,
+        cancellation: &CancellationContext,
+    ) -> buck2_error::Result<LoadedModule> {
         let loaded_modules = deps.get_loaded_modules();
         let buckconfig = self.get_legacy_buck_config_for_starlark().await?;
         let root_buckconfig = self.ctx.get_legacy_root_config_on_dice().await?;
@@ -710,28 +768,7 @@ impl<'c, 'd: 'c> DiceCalculationDelegate<'c, 'd> {
         package: PackageLabel,
         requests: BTreeSet<BazelPackageDataRequest>,
     ) -> buck2_error::Result<BTreeMap<BazelPackageDataRequest, Arc<Vec<String>>>> {
-        let requests = requests.into_iter().collect::<Vec<_>>();
-        let mut results = BTreeMap::new();
-        for result in ctx
-            .compute_join(requests, |ctx: &mut DiceComputations, request| {
-                let package = package.dupe();
-                async move {
-                    let result = ctx
-                        .compute(&BazelPackageDataKey {
-                            package,
-                            request: request.clone(),
-                        })
-                        .await??;
-                    Ok::<_, buck2_error::Error>((request, result))
-                }
-                .boxed()
-            })
-            .await
-        {
-            let (request, result) = result?;
-            results.insert(request, result);
-        }
-        Ok(results)
+        compute_bazel_package_data(ctx, package, requests).await
     }
 
     async fn resolve_bazel_build_file(

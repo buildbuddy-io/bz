@@ -60,6 +60,7 @@ use starlark_map::small_map::SmallMap;
 use crate::interpreter::dice_calculation_delegate::HasCalculationDelegate;
 use crate::interpreter::dice_calculation_delegate::testing::EvalImportKey;
 use crate::interpreter::global_interpreter_state::HasGlobalInterpreterState;
+use crate::interpreter::interpreter_for_dir::ParseData;
 use crate::interpreter::package_file_calculation::EvalPackageFile;
 
 // Key for 'InterpreterCalculation::get_interpreter_results'
@@ -284,7 +285,7 @@ impl Key for BazelPackageErrorMessageKey {
 
 #[async_trait]
 impl Key for BazelBzlCompileKey {
-    type Value = buck2_error::Result<Arc<Vec<OwnedStarlarkModulePath>>>;
+    type Value = buck2_error::Result<Arc<ParseData>>;
     async fn compute(
         &self,
         ctx: &mut DiceComputations,
@@ -293,7 +294,10 @@ impl Key for BazelBzlCompileKey {
         let starlark_path = self.0.borrow();
         match starlark_path {
             StarlarkModulePath::JsonFile(_) | StarlarkModulePath::TomlFile(_) => {
-                Ok(Arc::new(Vec::new()))
+                Err(buck2_error::internal_error!(
+                    "BZL_COMPILE called for non-Starlark module `{}`",
+                    starlark_path
+                ))
             }
             StarlarkModulePath::LoadFile(_) | StarlarkModulePath::BxlFile(_) => {
                 let content = DiceFileComputations::read_file(ctx, starlark_path.path().as_ref())
@@ -306,22 +310,13 @@ impl Key for BazelBzlCompileKey {
                     .await?;
                 let parse_data = interpreter
                     .prepare_eval_with_content(starlark_path.starlark_path(), content)??;
-                Ok(Arc::new(
-                    parse_data
-                        .imports
-                        .iter()
-                        .map(|(_span, path)| path.clone())
-                        .collect(),
-                ))
+                Ok(Arc::new(parse_data))
             }
         }
     }
 
-    fn equality(x: &Self::Value, y: &Self::Value) -> bool {
-        match (x, y) {
-            (Ok(x), Ok(y)) => x == y,
-            _ => false,
-        }
+    fn equality(_x: &Self::Value, _y: &Self::Value) -> bool {
+        false
     }
 
     fn validity(x: &Self::Value) -> bool {
@@ -419,13 +414,37 @@ impl Key for BazelBzlLoadKey {
         cancellation: &CancellationContext,
     ) -> Self::Value {
         let starlark_path = self.0.borrow();
-        ctx.compute(&BazelBzlCompileKey(self.0.clone())).await??;
+        if matches!(
+            starlark_path,
+            StarlarkModulePath::JsonFile(_) | StarlarkModulePath::TomlFile(_)
+        ) {
+            return Ok(ctx
+                .get_interpreter_calculator(OwnedStarlarkPath::new(
+                    starlark_path.starlark_path(),
+                ))
+                .await?
+                .eval_module_uncached(starlark_path, cancellation)
+                .await?);
+        }
+
+        // Bazel only creates separate BZL_COMPILE Skyframe nodes when BZL_LOAD itself is being
+        // inlined. This path still computes BZL_LOAD as a DICE key, so keep parsing local to the
+        // load key and avoid an extra graph node per .bzl.
+        let content = DiceFileComputations::read_file(ctx, starlark_path.path().as_ref())
+            .await
+            .without_package_context_information()?;
+        let mut interpreter = ctx
+            .get_interpreter_calculator(OwnedStarlarkPath::new(starlark_path.starlark_path()))
+            .await?;
+        let parse_data = Arc::new(interpreter.prepare_eval_with_content(
+            starlark_path.starlark_path(),
+            content,
+        )??);
+
         // We cannot just use the inner default delegate's eval_import because that would not
         // delegate back to this Bazel-shaped key for transitive loads.
-        Ok(ctx
-            .get_interpreter_calculator(OwnedStarlarkPath::new(starlark_path.starlark_path()))
-            .await?
-            .eval_module_uncached(starlark_path, cancellation)
+        Ok(interpreter
+            .eval_module_uncached_with_parse_data(starlark_path, parse_data, cancellation)
             .await?)
     }
 

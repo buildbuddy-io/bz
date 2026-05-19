@@ -109,7 +109,9 @@ enum StarlarkPeakMemoryError {
 ///
 /// The imports are under a separate Arc so that that can be shared with
 /// the evaluation result (which needs the imports but no longer needs the AST).
+#[derive(Allocative)]
 pub struct ParseData {
+    #[allocative(skip)]
     pub ast: AstModule,
     pub imports: Arc<Vec<(Option<FileSpan>, OwnedStarlarkModulePath)>>,
     pub(crate) bazel_package_data_requests: Option<BTreeSet<BazelPackageDataRequest>>,

@@ -338,10 +338,15 @@ impl GetStarlarkProfilerInstrumentation for DiceComputations<'_> {
         &mut self,
         eval_kind: &StarlarkEvalKind,
     ) -> buck2_error::Result<StarlarkProfileMode> {
+        let cfg_value = self.compute(&StarlarkProfilerConfigurationResolvedKey).await?;
+        let resolved = cfg_value.as_ref().map_err(|e| e.dupe())?;
+        if matches!(&**resolved, StarlarkProfilerConfigurationResolved::None) {
+            return Ok(StarlarkProfileMode::None);
+        }
+
         let cfg = self
             .compute_opaque(&StarlarkProfilerConfigurationResolvedKey)
             .await?;
-
         Ok(self.projection(&cfg, StarlarkProfileModeForKind::ref_cast(eval_kind))??)
     }
 }

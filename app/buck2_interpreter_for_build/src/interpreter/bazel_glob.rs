@@ -8,13 +8,18 @@
  */
 
 use std::fmt;
+use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use buck2_common::dice::cells::HasCellResolver;
 use buck2_common::file_ops::dice::DiceFileComputations;
 use buck2_common::file_ops::metadata::SimpleDirEntry;
 use buck2_common::find_buildfile::find_buildfile;
 use buck2_common::package_listing::PackageListingStrategy;
+use buck2_common::package_listing::dice::DicePackageListingResolver;
+use buck2_core::cells::external::ExternalCellOrigin;
 use buck2_core::cells::cell_path::CellPathRef;
 use buck2_core::package::PackageLabel;
 use buck2_core::package::package_relative_path::PackageRelativePath;
@@ -80,12 +85,33 @@ pub(crate) struct BazelPackageDataKey {
     pub(crate) request: BazelPackageDataRequest,
 }
 
+#[derive(
+    Clone,
+    Debug,
+    Eq,
+    Hash,
+    PartialEq,
+    allocative::Allocative,
+    pagable::Pagable
+)]
+#[pagable_typetag(dice::DiceKeyDyn)]
+struct BazelPackageDataBatchKey {
+    package: PackageLabel,
+    requests: BTreeSet<BazelPackageDataRequest>,
+}
+
 impl fmt::Display for BazelPackageDataKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.request {
             BazelPackageDataRequest::Glob(_) => write!(f, "GLOB({})", self.package),
             BazelPackageDataRequest::Subpackages => write!(f, "GLOBS({})", self.package),
         }
+    }
+}
+
+impl fmt::Display for BazelPackageDataBatchKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "GLOBS({})", self.package)
     }
 }
 
@@ -120,6 +146,114 @@ impl Key for BazelPackageDataKey {
     }
 }
 
+#[async_trait]
+impl Key for BazelPackageDataBatchKey {
+    type Value = buck2_error::Result<Arc<BTreeMap<BazelPackageDataRequest, Arc<Vec<String>>>>>;
+
+    async fn compute(
+        &self,
+        ctx: &mut DiceComputations,
+        _cancellations: &CancellationContext,
+    ) -> Self::Value {
+        if should_use_fast_package_listing_for_bazel_package_data(ctx, self.package.dupe()).await? {
+            return Ok(Arc::new(
+                compute_package_data_from_single_listing(
+                    ctx,
+                    self.package.dupe(),
+                    &self.requests,
+                )
+                .await?,
+            ));
+        }
+
+        let mut results = BTreeMap::new();
+        for request in &self.requests {
+            let result = match request {
+                BazelPackageDataRequest::Glob(request) => {
+                    compute_glob(ctx, self.package.dupe(), request).await?
+                }
+                BazelPackageDataRequest::Subpackages => {
+                    compute_subpackages(ctx, self.package.dupe()).await?
+                }
+            };
+            results.insert(request.clone(), Arc::new(result));
+        }
+        Ok(Arc::new(results))
+    }
+
+    fn equality(x: &Self::Value, y: &Self::Value) -> bool {
+        match (x, y) {
+            (Ok(x), Ok(y)) => x == y,
+            _ => false,
+        }
+    }
+
+    fn value_serialize() -> impl ValueSerialize<Value = Self::Value> {
+        OkPagableValueSerialize::<Self::Value>::new()
+    }
+}
+
+pub(crate) async fn compute_bazel_package_data(
+    ctx: &mut DiceComputations<'_>,
+    package: PackageLabel,
+    requests: BTreeSet<BazelPackageDataRequest>,
+) -> buck2_error::Result<BTreeMap<BazelPackageDataRequest, Arc<Vec<String>>>> {
+    Ok((*ctx
+        .compute(&BazelPackageDataBatchKey { package, requests })
+        .await??)
+        .clone())
+}
+
+async fn compute_package_data_from_single_listing(
+    ctx: &mut DiceComputations<'_>,
+    package: PackageLabel,
+    requests: &BTreeSet<BazelPackageDataRequest>,
+) -> buck2_error::Result<BTreeMap<BazelPackageDataRequest, Arc<Vec<String>>>> {
+    let mut strategy = PackageListingStrategy::Shallow;
+    for request in requests {
+        strategy = strategy.union(&match request {
+            BazelPackageDataRequest::Glob(request) => {
+                package_listing_strategy_from_glob_patterns(&request.include)
+            }
+            BazelPackageDataRequest::Subpackages => PackageListingStrategy::Recursive,
+        });
+    }
+    let listing = DicePackageListingResolver(ctx)
+        .resolve_package_listing_with_strategy(package, strategy)
+        .await?;
+
+    let mut results = BTreeMap::new();
+    for request in requests {
+        let result = match request {
+            BazelPackageDataRequest::Glob(request) => {
+                let spec = GlobSpec::new(&request.include, &request.exclude)?;
+                let mut result = spec
+                    .resolve_glob(listing.files())
+                    .map(|path| path.as_str().to_owned())
+                    .collect::<Vec<_>>();
+                if request.include_directories {
+                    result.extend(
+                        listing
+                            .dirs()
+                            .filter(|path| spec.matches(path.as_str()))
+                            .map(|path| path.as_str().to_owned()),
+                    );
+                }
+                result.sort();
+                result.dedup();
+                result
+            }
+            BazelPackageDataRequest::Subpackages => listing
+                .subpackages_within(PackageRelativePath::empty())
+                .map(|path| path.as_str().to_owned())
+                .collect(),
+        };
+        results.insert(request.clone(), Arc::new(result));
+    }
+
+    Ok(results)
+}
+
 async fn compute_glob(
     ctx: &mut DiceComputations<'_>,
     package: PackageLabel,
@@ -127,6 +261,26 @@ async fn compute_glob(
 ) -> buck2_error::Result<Vec<String>> {
     let spec = GlobSpec::new(&request.include, &request.exclude)?;
     let strategy = package_listing_strategy_from_glob_patterns(&request.include);
+    if should_use_fast_package_listing_for_bazel_package_data(ctx, package.dupe()).await? {
+        let listing = DicePackageListingResolver(ctx)
+            .resolve_package_listing_with_strategy(package, strategy)
+            .await?;
+        let mut results = spec
+            .resolve_glob(listing.files())
+            .map(|path| path.as_str().to_owned())
+            .collect::<Vec<_>>();
+        if request.include_directories {
+            results.extend(
+                listing
+                    .dirs()
+                    .filter(|path| spec.matches(path.as_str()))
+                    .map(|path| path.as_str().to_owned()),
+            );
+        }
+        results.sort();
+        results.dedup();
+        return Ok(results);
+    }
     let buildfile_candidates = DiceFileComputations::buildfiles(ctx, package.cell_name()).await?;
     let package_root = package.as_cell_path().to_owned();
     let mut results = Vec::new();
@@ -188,6 +342,15 @@ async fn compute_subpackages(
     ctx: &mut DiceComputations<'_>,
     package: PackageLabel,
 ) -> buck2_error::Result<Vec<String>> {
+    if should_use_fast_package_listing_for_bazel_package_data(ctx, package.dupe()).await? {
+        let listing = DicePackageListingResolver(ctx)
+            .resolve_package_listing_with_strategy(package, PackageListingStrategy::Recursive)
+            .await?;
+        return Ok(listing
+            .subpackages_within(PackageRelativePath::empty())
+            .map(|path| path.as_str().to_owned())
+            .collect());
+    }
     let buildfile_candidates = DiceFileComputations::buildfiles(ctx, package.cell_name()).await?;
     let package_root = package.as_cell_path().to_owned();
     let mut results = Vec::new();
@@ -245,6 +408,18 @@ fn missing_buildfile(
     Err(buck2_error::buck2_error!(
         buck2_error::ErrorTag::Input,
         "package `{package}` has no build file; expected one of {candidates}"
+    ))
+}
+
+async fn should_use_fast_package_listing_for_bazel_package_data(
+    ctx: &mut DiceComputations<'_>,
+    package: PackageLabel,
+) -> buck2_error::Result<bool> {
+    let cells = ctx.get_cell_resolver().await?;
+    let cell = cells.get(package.cell_name())?;
+    Ok(matches!(
+        cell.external(),
+        Some(ExternalCellOrigin::Bzlmod(_)) | Some(ExternalCellOrigin::BzlmodGenerated(_))
     ))
 }
 
