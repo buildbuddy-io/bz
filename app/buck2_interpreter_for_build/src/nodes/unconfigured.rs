@@ -416,7 +416,9 @@ impl TargetNodeExt for TargetNode {
         internals: &ModuleInternals,
         param_parser: &mut ParametersParser<'v, '_>,
     ) -> buck2_error::Result<Self> {
-        let (name, indices, attr_values) = rule.attributes.start_parse(param_parser, 1)?;
+        let (name, indices, attr_values) =
+            rule.attributes
+                .start_parse(param_parser, 1, internals.is_bazel_compat_build_file())?;
 
         for (_, _, _) in indices {
             // Consume all the arguments.

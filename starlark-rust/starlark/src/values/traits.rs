@@ -814,6 +814,11 @@ pub trait StarlarkValue<'v>:
         ValueError::unsupported_with(self, "|", other)
     }
 
+    /// Called on `rhs` of `lhs | rhs` when `lhs.bit_or` does not support `lhs`.
+    fn rbit_or(&self, _lhs: Value<'v>, _heap: Heap<'v>) -> Option<crate::Result<Value<'v>>> {
+        None
+    }
+
     /// Bitwise `^` operator.
     fn bit_xor(&self, other: Value<'v>, _heap: Heap<'v>) -> crate::Result<Value<'v>> {
         ValueError::unsupported_with(self, "^", other)

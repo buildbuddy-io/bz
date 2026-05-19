@@ -50,6 +50,7 @@ use starlark_map::Equivalent;
 use starlark_syntax::value_error;
 
 use crate as starlark;
+use crate::ErrorKind;
 use crate::any::AnyLifetime;
 use crate::any::ProvidesStaticType;
 use crate::cast::transmute;
@@ -260,6 +261,20 @@ pub struct FrozenValue(
 pub(crate) struct IntegerTooBigError {
     pub(crate) integer_type: &'static str,
     pub(crate) value: String,
+}
+
+fn is_unsupported_op(e: &crate::Error, op: &str) -> bool {
+    let ErrorKind::Value(e) = e.kind() else {
+        return false;
+    };
+    let Some(e) = e.downcast_ref::<ValueError>() else {
+        return false;
+    };
+    match e {
+        ValueError::OperationNotSupported { op: actual, .. }
+        | ValueError::OperationNotSupportedBinary { op: actual, .. } => actual == op,
+        _ => false,
+    }
 }
 
 impl<'v> Value<'v> {
@@ -644,7 +659,14 @@ impl<'v> Value<'v> {
 
     /// `x | other`.
     pub fn bit_or(self, other: Value<'v>, heap: Heap<'v>) -> crate::Result<Value<'v>> {
-        self.get_ref().bit_or(other, heap)
+        match self.get_ref().bit_or(other, heap) {
+            Ok(value) => Ok(value),
+            Err(e) if is_unsupported_op(&e, "|") => match other.get_ref().rbit_or(self, heap) {
+                Some(value) => value,
+                None => Err(e),
+            },
+            Err(e) => Err(e),
+        }
     }
 
     /// `x ^ other`.

@@ -81,6 +81,7 @@ use starlark::values::StarlarkValue;
 use starlark::values::StringValue;
 use starlark::values::Trace;
 use starlark::values::Value;
+use starlark::values::ValueLike;
 use starlark::values::dict::DictRef;
 use starlark::values::dict::UnpackDictEntries;
 use starlark::values::list::ListType;
@@ -165,6 +166,105 @@ fn bazel_subrule_context<'v>(heap: Heap<'v>) -> Value<'v> {
     let cpp = heap.alloc(BazelSubruleCppFragment);
     let fragments = heap.alloc(AllocStruct([("cpp", cpp)]));
     heap.alloc(AllocStruct([("fragments", fragments)]))
+}
+
+#[derive(Debug, ProvidesStaticType, Trace, NoSerialize, Allocative)]
+struct StarlarkMacroCallable<'v> {
+    implementation: Value<'v>,
+    default_none_attrs: Vec<String>,
+}
+
+#[derive(Debug, ProvidesStaticType, NoSerialize, Allocative)]
+struct FrozenStarlarkMacroCallable {
+    implementation: FrozenValue,
+    default_none_attrs: Vec<String>,
+}
+
+impl<'v> fmt::Display for StarlarkMacroCallable<'v> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("macro(...)")
+    }
+}
+
+impl fmt::Display for FrozenStarlarkMacroCallable {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("macro(...)")
+    }
+}
+
+impl<'v> AllocValue<'v> for StarlarkMacroCallable<'v> {
+    fn alloc_value(self, heap: Heap<'v>) -> Value<'v> {
+        heap.alloc_complex(self)
+    }
+}
+
+impl<'v> Freeze for StarlarkMacroCallable<'v> {
+    type Frozen = FrozenStarlarkMacroCallable;
+
+    fn freeze(self, freezer: &Freezer) -> FreezeResult<Self::Frozen> {
+        Ok(FrozenStarlarkMacroCallable {
+            implementation: self.implementation.freeze(freezer)?,
+            default_none_attrs: self.default_none_attrs,
+        })
+    }
+}
+
+fn invoke_bazel_macro<'v>(
+    implementation: Value<'v>,
+    default_none_attrs: &[String],
+    args: &Arguments<'v, '_>,
+    eval: &mut Evaluator<'v, '_, '_>,
+) -> starlark::Result<Value<'v>> {
+    let positional = args.positions(eval.heap())?.collect::<Vec<_>>();
+    let mut named = args
+        .names_map()?
+        .into_iter()
+        .map(|(name, value)| (name.as_str().to_owned(), value))
+        .collect::<Vec<_>>();
+    for attr_name in default_none_attrs {
+        if !named.iter().any(|(name, _)| name == attr_name) {
+            named.push((attr_name.clone(), Value::new_none()));
+        }
+    }
+    let named = named
+        .iter()
+        .map(|(name, value)| (name.as_str(), *value))
+        .collect::<Vec<_>>();
+
+    eval.eval_function(implementation, &positional, &named)
+}
+
+#[starlark_value(type = "macro")]
+impl<'v> StarlarkValue<'v> for StarlarkMacroCallable<'v> {
+    fn invoke(
+        &self,
+        _me: Value<'v>,
+        args: &Arguments<'v, '_>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<Value<'v>> {
+        invoke_bazel_macro(self.implementation, &self.default_none_attrs, args, eval)
+    }
+}
+
+starlark_simple_value!(FrozenStarlarkMacroCallable);
+
+#[starlark_value(type = "macro")]
+impl<'v> StarlarkValue<'v> for FrozenStarlarkMacroCallable {
+    type Canonical = StarlarkMacroCallable<'v>;
+
+    fn invoke(
+        &self,
+        _me: Value<'v>,
+        args: &Arguments<'v, '_>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<Value<'v>> {
+        invoke_bazel_macro(
+            self.implementation.to_value(),
+            &self.default_none_attrs,
+            args,
+            eval,
+        )
+    }
 }
 
 #[derive(Debug, ProvidesStaticType, Trace, NoSerialize, Allocative)]
@@ -1358,6 +1458,33 @@ impl<'v> StarlarkValue<'v> for FrozenStarlarkRuleCallable {
     }
 }
 
+fn bazel_macro_default_none_attrs_from_spec(spec: &AttributeSpec) -> Vec<String> {
+    spec.attr_specs()
+        .filter_map(|(name, _, attr)| {
+            if name == NAME_ATTRIBUTE_FIELD || name == "visibility" || name.starts_with('_') {
+                return None;
+            }
+            attr.default().is_some().then(|| name.to_owned())
+        })
+        .collect()
+}
+
+fn bazel_macro_default_none_attrs(inherit_attrs: Option<Value<'_>>) -> Vec<String> {
+    let Some(inherit_attrs) = inherit_attrs else {
+        return Vec::new();
+    };
+    if inherit_attrs.is_none() {
+        return Vec::new();
+    }
+    if let Some(rule) = inherit_attrs.downcast_ref::<StarlarkRuleCallable>() {
+        return bazel_macro_default_none_attrs_from_spec(&rule.attributes);
+    }
+    if let Some(rule) = inherit_attrs.downcast_ref::<FrozenStarlarkRuleCallable>() {
+        return bazel_macro_default_none_attrs_from_spec(rule.attributes());
+    }
+    Vec::new()
+}
+
 #[starlark_module]
 #[starlark_types(StarlarkRuleCallable<'_> as Rule)]
 pub fn register_rule_function(builder: &mut GlobalsBuilder) {
@@ -1370,9 +1497,13 @@ pub fn register_rule_function(builder: &mut GlobalsBuilder) {
         #[starlark(require = named)] inherit_attrs: Option<Value<'v>>,
         #[starlark(require = named, default = false)] finalizer: bool,
         #[starlark(require = named)] doc: Option<&str>,
+        eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {
-        let _ = (attrs, inherit_attrs, finalizer, doc);
-        Ok(implementation)
+        let _ = (attrs, finalizer, doc);
+        Ok(eval.heap().alloc(StarlarkMacroCallable {
+            implementation,
+            default_none_attrs: bazel_macro_default_none_attrs(inherit_attrs),
+        }))
     }
 
     /// Define a Bazel subrule.

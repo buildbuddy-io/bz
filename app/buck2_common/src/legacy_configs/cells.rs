@@ -491,6 +491,14 @@ impl BuckConfigBasedCells {
                 self.trace.insert(path.clone());
                 self.inner.read_dir(path).await
             }
+
+            fn resolve_project_relative_to_absolute(
+                &self,
+                base: &ProjectRelativePath,
+                path: &RelativePath,
+            ) -> buck2_error::Result<Option<buck2_fs::paths::abs_path::AbsPathBuf>> {
+                self.inner.resolve_project_relative_to_absolute(base, path)
+            }
         }
 
         let mut file_ops = TracingFileOps {
@@ -1051,22 +1059,31 @@ fn bazelrc_tokenize(line: &str) -> Vec<String> {
 
 fn bazelrc_import_path(
     root_path: &CellRootPath,
+    file_ops: &dyn ConfigParserFileOps,
     current_path: &ConfigPath,
     import_path: &str,
-) -> buck2_error::Result<ConfigPath> {
+) -> buck2_error::Result<Option<ConfigPath>> {
     if let Some(path) = import_path.strip_prefix("%workspace%/") {
-        return Ok(ConfigPath::Project(
-            root_path
-                .as_project_relative_path()
-                .join(ForwardRelativePath::new(path)?),
-        ));
+        let path = RelativePath::new(path);
+        let root_path = root_path.as_project_relative_path();
+        return match root_path.join_normalized(path) {
+            Ok(path) => Ok(Some(ConfigPath::Project(path))),
+            Err(_) => file_ops
+                .resolve_project_relative_to_absolute(root_path, path)
+                .map(|path| path.map(ConfigPath::Global)),
+        };
     }
     if import_path == "%workspace%" {
-        return Ok(ConfigPath::Project(
+        return Ok(Some(ConfigPath::Project(
             root_path.as_project_relative_path().to_buf(),
-        ));
+        )));
     }
-    current_path.join_to_parent_normalized(RelativePath::new(import_path))
+    if let Ok(path) = AbsPath::new(import_path) {
+        return Ok(Some(ConfigPath::Global(path.to_owned())));
+    }
+    current_path
+        .join_to_parent_normalized(RelativePath::new(import_path))
+        .map(Some)
 }
 
 fn collect_bazelrc_records<'a>(
@@ -1102,12 +1119,25 @@ fn collect_bazelrc_records<'a>(
                     let Some(import_path) = args.first() else {
                         continue;
                     };
-                    let import_path = bazelrc_import_path(root_path, &path, import_path)?;
+                    let import_required = directive == "import";
+                    let Some(import_path) =
+                        bazelrc_import_path(root_path, file_ops, &path, import_path)?
+                    else {
+                        if import_required {
+                            return Err(buck2_error!(
+                                buck2_error::ErrorTag::Input,
+                                "Bazel rc import `{}` in `{}` could not be resolved",
+                                import_path,
+                                path
+                            ));
+                        }
+                        continue;
+                    };
                     collect_bazelrc_records(
                         root_path,
                         file_ops,
                         import_path,
-                        directive == "import",
+                        import_required,
                         visited,
                         records,
                     )
@@ -2054,6 +2084,7 @@ async fn read_bazel_module_resolution_inputs(
                 continue;
             };
             validate_bzlmod_module_lines(&module_file, &lines)?;
+            let constants = bzlmod_module_constants_from_lines(&lines);
             root_module_lines.extend(lines.iter().cloned());
 
             for call in collect_bzl_calls(&lines, "module(") {
@@ -2084,7 +2115,8 @@ async fn read_bazel_module_resolution_inputs(
             }
 
             for call in collect_bzl_calls(&lines, "archive_override(") {
-                let mut archive_override = bzlmod_archive_override_from_call(&module_file, &call)?;
+                let mut archive_override =
+                    bzlmod_archive_override_from_call(&module_file, &call, &constants)?;
                 read_bzlmod_root_patch_contents(cell_path, file_ops, &mut archive_override.patches)
                     .await?;
                 archive_overrides.insert(archive_override.module_name.clone(), archive_override);
@@ -2092,7 +2124,7 @@ async fn read_bazel_module_resolution_inputs(
 
             for call in collect_bzl_calls(&lines, "single_version_override(") {
                 let Some((module_name, mut single_version_override)) =
-                    bzlmod_single_version_override_from_call(&module_file, &call)?
+                    bzlmod_single_version_override_from_call(&module_file, &call, &constants)?
                 else {
                     continue;
                 };
@@ -6396,22 +6428,24 @@ fn bzlmod_module_aliases(lines: &[String]) -> Vec<String> {
 fn bzlmod_archive_override_from_call(
     current_module_file: &str,
     call: &str,
+    constants: &[(String, String)],
 ) -> buck2_error::Result<BzlmodArchiveOverride> {
-    let module_name = bzl_string_arg(call, "module_name").ok_or_else(|| {
-        buck2_error!(
-            buck2_error::ErrorTag::Input,
-            "archive_override must have a literal string `module_name`: {}",
-            call
-        )
-    })?;
+    let module_name =
+        bzl_string_expression_arg(call, "module_name", constants).ok_or_else(|| {
+            buck2_error!(
+                buck2_error::ErrorTag::Input,
+                "archive_override must have a literal string `module_name`: {}",
+                call
+            )
+        })?;
     let mut urls = Vec::new();
-    if let Some(url) = bzl_string_arg(call, "url") {
+    if let Some(url) = bzl_string_expression_arg(call, "url", constants) {
         urls.push(url);
     }
     urls.extend(
         bzl_call_named_arg_value(call, "urls")
             .as_deref()
-            .and_then(|value| bzl_string_sequence_expression_raw_values(value, &[]))
+            .and_then(|value| bzl_string_sequence_expression_raw_values(value, constants))
             .unwrap_or_default(),
     );
     if urls.is_empty() {
@@ -6421,11 +6455,11 @@ fn bzlmod_archive_override_from_call(
             module_name
         ));
     }
-    let integrity = bzl_string_arg(call, "integrity").unwrap_or_default();
-    let strip_prefix = bzl_string_arg(call, "strip_prefix");
-    let archive_type =
-        bzl_string_arg(call, "type").or_else(|| bzl_string_arg(call, "archive_type"));
-    let patches = bzlmod_override_patch_paths_from_call(current_module_file, call)?;
+    let integrity = bzl_string_expression_arg(call, "integrity", constants).unwrap_or_default();
+    let strip_prefix = bzl_string_expression_arg(call, "strip_prefix", constants);
+    let archive_type = bzl_string_expression_arg(call, "type", constants)
+        .or_else(|| bzl_string_expression_arg(call, "archive_type", constants));
+    let patches = bzlmod_override_patch_paths_from_call(current_module_file, call, constants)?;
     let patch_strip =
         bzlmod_override_patch_strip_from_call("archive_override", &module_name, call)?;
     Ok(BzlmodArchiveOverride {
@@ -6442,8 +6476,9 @@ fn bzlmod_archive_override_from_call(
 fn bzlmod_single_version_override_from_call(
     current_module_file: &str,
     call: &str,
+    constants: &[(String, String)],
 ) -> buck2_error::Result<Option<(String, BzlmodSingleVersionOverride)>> {
-    let Some(module_name) = bzl_string_arg(call, "module_name") else {
+    let Some(module_name) = bzl_string_expression_arg(call, "module_name", constants) else {
         return Ok(None);
     };
     reject_unsupported_bzlmod_override_arg(
@@ -6460,8 +6495,8 @@ fn bzlmod_single_version_override_from_call(
         "patch_cmds",
         "Bazel runs `patch_cmds` after applying patch files.",
     )?;
-    let version = bzl_string_arg(call, "version");
-    let patches = bzlmod_override_patch_paths_from_call(current_module_file, call)?;
+    let version = bzl_string_expression_arg(call, "version", constants);
+    let patches = bzlmod_override_patch_paths_from_call(current_module_file, call, constants)?;
     let patch_strip =
         bzlmod_override_patch_strip_from_call("single_version_override", &module_name, call)?;
     Ok(Some((
@@ -6539,10 +6574,11 @@ fn bzlmod_local_path_override_from_call(
 fn bzlmod_override_patch_paths_from_call(
     current_module_file: &str,
     call: &str,
+    constants: &[(String, String)],
 ) -> buck2_error::Result<Vec<BzlmodRootPatch>> {
     let patches = bzl_call_named_arg_value(call, "patches")
         .as_deref()
-        .and_then(|value| bzl_string_sequence_expression_raw_values(value, &[]))
+        .and_then(|value| bzl_string_sequence_expression_raw_values(value, constants))
         .unwrap_or_default();
     patches
         .into_iter()
@@ -7534,6 +7570,9 @@ fn bzl_string_sequence_expression_raw_values(
     if let Some(values) = bzl_string_sequence_literal_raw_values(expression) {
         return Some(values);
     }
+    if let Some(values) = bzl_string_sequence_list_expression_raw_values(expression, constants) {
+        return Some(values);
+    }
     if let Some(values) = bzl_string_list_comprehension_raw_values(expression, constants) {
         return Some(values);
     }
@@ -7549,6 +7588,31 @@ fn bzl_string_sequence_expression_raw_values(
         return bzl_string_sequence_expression_raw_values(value, constants);
     }
     None
+}
+
+fn bzl_string_sequence_list_expression_raw_values(
+    expression: &str,
+    constants: &[(String, String)],
+) -> Option<Vec<String>> {
+    let expression = expression.trim();
+    let inner = if let Some(inner) = expression
+        .strip_prefix('[')
+        .and_then(|expression| expression.strip_suffix(']'))
+    {
+        inner
+    } else if let Some(inner) = expression
+        .strip_prefix('(')
+        .and_then(|expression| expression.strip_suffix(')'))
+    {
+        inner
+    } else {
+        return None;
+    };
+    bzl_split_top_level(inner, ',')
+        .into_iter()
+        .filter(|item| !item.trim().is_empty())
+        .map(|item| bzl_string_expression_value(item.trim(), constants))
+        .collect()
 }
 
 fn bzl_string_list_comprehension_raw_values(
@@ -8353,6 +8417,15 @@ fn bzl_string_arg(call: &str, arg: &str) -> Option<String> {
     bzl_string_value(value)
 }
 
+fn bzl_string_expression_arg(
+    call: &str,
+    arg: &str,
+    constants: &[(String, String)],
+) -> Option<String> {
+    let value = bzl_call_named_arg_value(call, arg)?;
+    bzl_string_expression_value(&value, constants)
+}
+
 fn bzl_bool_arg(call: &str, arg: &str) -> bool {
     bzl_arg_value(call, arg).is_some_and(|value| {
         let value = value.trim_start();
@@ -9047,6 +9120,51 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_bazelrc_workspace_import_normalizes_path() -> buck2_error::Result<()> {
+        let mut file_ops = TestConfigParserFileOps::new(&[
+            (
+                ".bazelrc",
+                "try-import %workspace%/configs/../imported.bazelrc\n",
+            ),
+            ("imported.bazelrc", "build --copt=-DFROM_IMPORTED\n"),
+        ])?;
+
+        let options =
+            super::get_bazelrc_options(CellRootPath::testing_new(""), &mut file_ops).await?;
+
+        assert_eq!(options.copt, vec!["-DFROM_IMPORTED"]);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_bazelrc_try_import_workspace_path_outside_project_is_optional()
+    -> buck2_error::Result<()> {
+        let mut file_ops = TestConfigParserFileOps::new(&[(
+            ".bazelrc",
+            "try-import %workspace%/../../internal_tools/preset.bazelrc\nbuild --copt=-DLOCAL\n",
+        )])?;
+
+        let options =
+            super::get_bazelrc_options(CellRootPath::testing_new(""), &mut file_ops).await?;
+
+        assert_eq!(options.copt, vec!["-DLOCAL"]);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_bazelrc_import_workspace_path_outside_project_is_required() {
+        let mut file_ops = TestConfigParserFileOps::new(&[(
+            ".bazelrc",
+            "import %workspace%/../../internal_tools/preset.bazelrc\n",
+        )])
+        .unwrap();
+
+        let result = super::get_bazelrc_options(CellRootPath::testing_new(""), &mut file_ops).await;
+
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
     async fn test_cells() -> buck2_error::Result<()> {
         let mut file_ops = TestConfigParserFileOps::new(&[
             (
@@ -9287,6 +9405,7 @@ mod tests {
                 )
                 "#
             ),
+            &[],
         )
         .unwrap()
         .unwrap();
@@ -9322,6 +9441,7 @@ mod tests {
                 )
                 "#
             ),
+            &[],
         )
         .unwrap();
 
@@ -9347,12 +9467,48 @@ mod tests {
                 )
                 "#
             ),
+            &[],
         )
         .unwrap();
 
         assert_eq!(
             super::bzlmod_archive_override_kind(&archive_override),
             Some(crate::bzlmod_archive::ArchiveKind::TarGz)
+        );
+    }
+
+    #[test]
+    fn test_bzlmod_archive_override_resolves_module_constants() {
+        let lines = indoc!(
+            r#"
+            COMMIT = "abc123"
+
+            archive_override(
+                module_name = "example",
+                strip_prefix = "example-{}".format(COMMIT),
+                urls = ["https://example.com/{}.tar.gz".format(COMMIT)],
+            )
+            "#
+        )
+        .lines()
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+        let constants = super::bzlmod_module_constants_from_lines(&lines);
+        let call = super::collect_bzl_calls(&lines, "archive_override(")
+            .into_iter()
+            .next()
+            .unwrap();
+
+        let archive_override =
+            super::bzlmod_archive_override_from_call("MODULE.bazel", &call, &constants).unwrap();
+
+        assert_eq!(
+            archive_override.strip_prefix.as_deref(),
+            Some("example-abc123")
+        );
+        assert_eq!(
+            archive_override.urls,
+            vec!["https://example.com/abc123.tar.gz"]
         );
     }
 
@@ -9368,6 +9524,7 @@ mod tests {
                 )
                 "#
             ),
+            &[],
         )
         .unwrap_err();
 
@@ -9387,6 +9544,7 @@ mod tests {
                 )
                 "#
             ),
+            &[],
         )
         .unwrap_err();
 

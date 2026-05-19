@@ -324,6 +324,20 @@ fn test_dict() -> buck2_error::Result<()> {
             configured.as_display_no_ctx().to_string()
         );
 
+        let value = to_value(
+            &env,
+            &globals,
+            r#"{"b":["1"], "a":[]} | select({"DEFAULT": {"a": ["override"], "c": []}})"#,
+        );
+        let coerced = attr.coerce(AttrIsConfigurable::Yes, &coercion_ctx(), value)?;
+        let configured = coerced
+            .configure(&attr, &configuration_ctx(), None)
+            .require_compatible()?;
+        assert_eq!(
+            r#"{"b": ["1"], "a": ["override"], "c": []}"#,
+            configured.as_display_no_ctx().to_string()
+        );
+
         Ok(())
     })
 }

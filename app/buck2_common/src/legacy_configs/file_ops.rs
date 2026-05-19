@@ -13,6 +13,7 @@ use std::io::BufRead;
 use allocative::Allocative;
 use buck2_core::cells::CellResolver;
 use buck2_core::fs::project::ProjectRoot;
+use buck2_core::fs::project_rel_path::ProjectRelativePath;
 use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
 use buck2_error::BuckErrorContext;
 use buck2_error::internal_error;
@@ -98,6 +99,14 @@ pub trait ConfigParserFileOps: Send + Sync {
     ) -> buck2_error::Result<Option<Vec<String>>>;
 
     async fn read_dir(&mut self, path: &ConfigPath) -> buck2_error::Result<Vec<ConfigDirEntry>>;
+
+    fn resolve_project_relative_to_absolute(
+        &self,
+        _base: &ProjectRelativePath,
+        _path: &RelativePath,
+    ) -> buck2_error::Result<Option<AbsPathBuf>> {
+        Ok(None)
+    }
 }
 
 #[derive(buck2_error::Error, Debug)]
@@ -174,6 +183,19 @@ impl ConfigParserFileOps for DefaultConfigParserFileOps {
         entries.sort_by(|a, b| a.name.cmp(&b.name));
         Ok(entries)
     }
+
+    fn resolve_project_relative_to_absolute(
+        &self,
+        base: &ProjectRelativePath,
+        path: &RelativePath,
+    ) -> buck2_error::Result<Option<AbsPathBuf>> {
+        Ok(Some(
+            self.project_fs
+                .resolve(base)
+                .into_abs_path_buf()
+                .join(path.as_str()),
+        ))
+    }
 }
 
 pub(crate) struct DiceConfigFileOps<'a, 'b> {
@@ -247,6 +269,14 @@ impl ConfigParserFileOps for DiceConfigFileOps<'_, '_> {
             })
             .collect();
         Ok(out)
+    }
+
+    fn resolve_project_relative_to_absolute(
+        &self,
+        base: &ProjectRelativePath,
+        path: &RelativePath,
+    ) -> buck2_error::Result<Option<AbsPathBuf>> {
+        self.io_ops.resolve_project_relative_to_absolute(base, path)
     }
 }
 

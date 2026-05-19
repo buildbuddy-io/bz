@@ -565,6 +565,10 @@ impl ModuleInternals {
         &self.buildfile_path
     }
 
+    pub(crate) fn is_bazel_compat_build_file(&self) -> bool {
+        is_bazel_compat_build_file(&self.buildfile_path)
+    }
+
     pub(crate) fn super_package(&self) -> Ref<'_, SuperPackage> {
         self.super_package.borrow()
     }

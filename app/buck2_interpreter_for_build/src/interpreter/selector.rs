@@ -186,6 +186,35 @@ impl<'v> StarlarkSelector<'v> {
         )))
     }
 
+    fn union_dict_before_primary(
+        other: DictRef<'v>,
+        selector: DictRef<'v>,
+        heap: Heap<'v>,
+    ) -> starlark::Result<Value<'v>> {
+        let mut mapped = SmallMap::with_capacity(selector.len());
+        for (k, v) in selector.iter_hashed() {
+            if StarlarkSelectFail::from_value(v).is_some()
+                || StarlarkSelectIncompatible::from_value(v).is_some()
+            {
+                mapped.insert_hashed(k, v);
+            } else if let Some(v) = DictRef::from_value(v) {
+                mapped.insert_hashed(k, Self::dict_union(other.clone(), &v, heap));
+            } else {
+                return Err(
+                    buck2_error::Error::from(SelectError::CannotCombineIncompatibleTypes(
+                        "dict".to_owned(),
+                        Self::select_value_type(v).unwrap_or_else(|| v.get_type().to_owned()),
+                    ))
+                    .into(),
+                );
+            }
+        }
+        Ok(heap.alloc(StarlarkSelector::new(
+            ValueOf::unpack_value_err(heap.alloc(Dict::new(mapped)))
+                .internal_error("validated at construction")?,
+        )))
+    }
+
     pub fn from_concat<I>(iter: I, heap: Heap<'v>) -> buck2_error::Result<Value<'v>>
     where
         I: IntoIterator<Item = Value<'v>>,
@@ -411,6 +440,29 @@ where
         }
     }
 
+    fn rbit_or(
+        &self,
+        other_value: Value<'v>,
+        heap: Heap<'v>,
+    ) -> Option<starlark::Result<Value<'v>>> {
+        let Some(other) = DictRef::from_value(other_value) else {
+            return None;
+        };
+
+        Some(match self {
+            Self::Primary(v) => {
+                let Some(selector) = DictRef::from_value(v.get().to_value()) else {
+                    return Some(Err(buck2_error::internal_error!(
+                        "validated at construction"
+                    )
+                    .into()));
+                };
+                StarlarkSelector::union_dict_before_primary(other, selector, heap)
+            }
+            Self::Sum(..) => starlark::values::ValueError::unsupported_with(self, "|", other_value),
+        })
+    }
+
     // used to provide the type documentation here
     fn get_methods() -> Option<&'static Methods> {
         static RES: MethodsStatic = MethodsStatic::new();
@@ -423,8 +475,10 @@ where
 pub fn register_select(globals: &mut GlobalsBuilder) {
     fn select<'v>(
         #[starlark(require = pos)] d: DictRef<'v>,
+        #[starlark(require = named, default = "")] no_match_error: &str,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<StarlarkSelector<'v>> {
+        let _ = no_match_error;
         let mut normalized = Vec::with_capacity(d.len());
         for (key, value) in d.iter() {
             let key = StarlarkSelector::select_key_to_string(key)?;

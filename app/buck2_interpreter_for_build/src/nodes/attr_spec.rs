@@ -308,6 +308,7 @@ pub trait AttributeSpecExt {
         &'a self,
         param_parser: &mut ParametersParser<'v, '_>,
         size_hint: usize,
+        use_bazel_target_names: bool,
     ) -> buck2_error::Result<(
         // "name" attribute value.
         &'v TargetNameRef,
@@ -352,11 +353,23 @@ pub trait AttributeSpecExt {
     fn docstrings(&self) -> HashMap<String, Option<DocString>>;
 }
 
+fn target_name<'v>(
+    name: &'v str,
+    use_bazel_target_names: bool,
+) -> buck2_error::Result<&'v TargetNameRef> {
+    if use_bazel_target_names {
+        TargetNameRef::new_bazel(name)
+    } else {
+        TargetNameRef::new(name)
+    }
+}
+
 impl AttributeSpecExt for AttributeSpec {
     fn start_parse<'a, 'v>(
         &'a self,
         param_parser: &mut ParametersParser<'v, '_>,
         size_hint: usize,
+        use_bazel_target_names: bool,
     ) -> buck2_error::Result<(
         &'v TargetNameRef,
         impl ExactSizeIterator<Item = (&'a str, AttributeId, &'a Attribute)> + 'a,
@@ -378,7 +391,7 @@ impl AttributeSpecExt for AttributeSpec {
                 return Err(internal_error!("First attribute is `name`, it is known"));
             }
         };
-        let name = TargetNameRef::new(name)?;
+        let name = target_name(name, use_bazel_target_names)?;
         Ok((name, indices, attr_values))
     }
 
@@ -389,7 +402,11 @@ impl AttributeSpecExt for AttributeSpec {
         arg_count: usize,
         internals: &ModuleInternals,
     ) -> buck2_error::Result<(&'v TargetNameRef, AttrValues)> {
-        let (name, indices, mut attr_values) = self.start_parse(param_parser, arg_count)?;
+        let (name, indices, mut attr_values) = self.start_parse(
+            param_parser,
+            arg_count,
+            internals.is_bazel_compat_build_file(),
+        )?;
 
         let target_label = TargetLabelRef::new(internals.buildfile_path().package(), name);
 
@@ -517,7 +534,7 @@ impl AttributeSpecExt for AttributeSpec {
             )
             .into());
         };
-        let name = TargetNameRef::new(name)?;
+        let name = target_name(name, internals.is_bazel_compat_build_file())?;
         let target_label = TargetLabelRef::new(internals.buildfile_path().package(), name);
         let mut attr_values = AttrValues::with_capacity(named.len());
         let mut default_allowed_deps = HashMap::new();

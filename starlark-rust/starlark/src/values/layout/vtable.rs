@@ -501,6 +501,15 @@ impl<'v> AValueDyn<'v> {
     }
 
     #[inline]
+    pub(crate) fn rbit_or(
+        self,
+        other: Value<'v>,
+        heap: Heap<'v>,
+    ) -> Option<crate::Result<Value<'v>>> {
+        (self.vtable.starlark_value.rbit_or)(self.value, other, heap)
+    }
+
+    #[inline]
     pub(crate) fn bit_xor(self, other: Value<'v>, heap: Heap<'v>) -> crate::Result<Value<'v>> {
         (self.vtable.starlark_value.bit_xor)(self.value, other, heap)
     }
