@@ -426,6 +426,29 @@ impl<T: IoHandler> DeferredMaterializerExtensions for DeferredMaterializerAccess
                         keep_since_time,
                         dry_run,
                         tracked_only,
+                        delete_all: false,
+                        dispatcher,
+                    },
+                    sender,
+                },
+            )))?;
+        recv.await?.await.map(|res| res.into())
+    }
+
+    async fn clean_all_artifacts(
+        &self,
+        dry_run: bool,
+    ) -> buck2_error::Result<buck2_cli_proto::CleanStaleResponse> {
+        let dispatcher = get_dispatcher();
+        let (sender, recv) = oneshot::channel();
+        self.command_sender
+            .send(MaterializerCommand::Extension(Box::new(
+                CleanStaleArtifactsExtensionCommand {
+                    cmd: CleanStaleArtifactsCommand {
+                        keep_since_time: DateTime::<Utc>::MAX_UTC,
+                        dry_run,
+                        tracked_only: false,
+                        delete_all: true,
                         dispatcher,
                     },
                     sender,

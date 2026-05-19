@@ -690,6 +690,45 @@ impl ConcurrencyHandler {
         &self.dice
     }
 
+    pub async fn reset_dice(
+        self: &Arc<Self>,
+        event_dispatcher: EventDispatcher,
+        command_name: String,
+    ) -> buck2_error::Result<()> {
+        let _exclusive_command_guard = event_dispatcher
+            .span_async(
+                ExclusiveCommandWaitStart {
+                    command_name: self.exclusive_command_lock.owning_command(),
+                },
+                async {
+                    let guard = self
+                        .exclusive_command_lock
+                        .exclusive_lock(command_name)
+                        .await;
+                    self.dice.wait_for_idle().await;
+                    (guard, ExclusiveCommandWaitEnd {})
+                },
+            )
+            .await;
+
+        let mut data = self.data.lock().await;
+        while !data.has_no_active_commands() {
+            data = self.cond.wait((data, &self.data)).await;
+        }
+        data.dice_status = DiceStatus::idle();
+        data.previously_tainted = false;
+        drop(data);
+
+        let updater = self.dice.updater().unstable_take();
+        updater.commit().await;
+
+        let mut data = self.data.lock().await;
+        data.dice_status = DiceStatus::idle();
+        data.previously_tainted = false;
+
+        Ok(())
+    }
+
     fn cancel_preemptible_commands(&self, data: &mut ConcurrencyHandlerData, is_same_state: bool) {
         // If the active commands are preemptible, interrupt them.
         for cmd in data.active_commands.values_mut() {

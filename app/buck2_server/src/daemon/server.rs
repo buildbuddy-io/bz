@@ -111,6 +111,7 @@ use tonic::transport::Server;
 
 use crate::active_commands::ActiveCommand;
 use crate::active_commands::ActiveCommandStateWriter;
+use crate::clean::clean_command;
 use crate::clean_stale::clean_stale_command;
 use crate::ctx::ServerCommandContext;
 use crate::daemon::crash::crash;
@@ -1536,6 +1537,18 @@ impl DaemonApi for BuckdServer {
             DefaultCommandOptions,
             |context, partial: PartialResultDispatcher<NoPartialResult>, req| {
                 new_generic_command(context, req, partial).boxed()
+            },
+        )
+        .await
+    }
+
+    type CleanStream = ResponseStream;
+    async fn clean(&self, req: Request<CleanRequest>) -> Result<Response<ResponseStream>, Status> {
+        self.run_streaming(
+            req,
+            DefaultCommandOptions,
+            |context, partial_result_dispatcher: PartialResultDispatcher<NoPartialResult>, req| {
+                clean_command(context, partial_result_dispatcher, req).boxed()
             },
         )
         .await

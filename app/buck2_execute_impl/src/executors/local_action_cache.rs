@@ -361,6 +361,34 @@ impl LocalActionCache {
         };
         cache.remove_action_metadata(key)
     }
+
+    pub async fn clear(&self) -> buck2_error::Result<()> {
+        match &self.state {
+            LocalActionCacheState::Disabled => Ok(()),
+            #[cfg(test)]
+            LocalActionCacheState::Loaded(cache) => cache.clear(),
+            LocalActionCacheState::Lazy {
+                cache_dir,
+                io_executor,
+                cache,
+                ..
+            } => {
+                if let Some(cache) = cache.get() {
+                    return cache.clear();
+                }
+
+                let cache_dir = cache_dir.clone();
+                (io_executor.dupe() as Arc<dyn BlockingExecutor>)
+                    .execute_io_inline(move || {
+                        if cache_dir.exists() {
+                            fs_util::remove_dir_all(&cache_dir).categorize_internal()?;
+                        }
+                        Ok(())
+                    })
+                    .await
+            }
+        }
+    }
 }
 
 impl LoadedLocalActionCache {
@@ -482,6 +510,12 @@ impl LoadedLocalActionCache {
         LocalActionCacheSqliteTable::new(self.connection.dupe())
             .delete_action_metadata(key.to_owned())?;
         Ok(())
+    }
+
+    fn clear(&self) -> buck2_error::Result<()> {
+        self.entries.clear();
+        self.action_metadata_entries.clear();
+        LocalActionCacheSqliteTable::new(self.connection.dupe()).clear()
     }
 }
 
@@ -658,6 +692,19 @@ impl LocalActionCacheSqliteTable {
             .with_buck_error_context(|| {
                 format!("deleting from sqlite table {ACTION_METADATA_TABLE_NAME}")
             })?;
+        Ok(())
+    }
+
+    fn clear(&self) -> buck2_error::Result<()> {
+        let mut connection = self.connection.lock();
+        let tx = connection.transaction()?;
+        tx.execute(&format!("DELETE FROM {STATE_TABLE_NAME}"), [])
+            .with_buck_error_context(|| format!("clearing sqlite table {STATE_TABLE_NAME}"))?;
+        tx.execute(&format!("DELETE FROM {ACTION_METADATA_TABLE_NAME}"), [])
+            .with_buck_error_context(|| {
+                format!("clearing sqlite table {ACTION_METADATA_TABLE_NAME}")
+            })?;
+        tx.commit()?;
         Ok(())
     }
 }

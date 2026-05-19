@@ -17,19 +17,28 @@ use std::sync::atomic::Ordering;
 use std::time::Duration;
 use std::time::Instant;
 
+use async_trait::async_trait;
+use buck2_cli_proto::CleanRequest;
+use buck2_cli_proto::CleanStaleResponse;
 use buck2_client_ctx::client_ctx::BuckSubcommand;
 use buck2_client_ctx::client_ctx::ClientCommandContext;
 use buck2_client_ctx::common::BuckArgMatches;
+use buck2_client_ctx::common::CommonBuildConfigurationOptions;
 use buck2_client_ctx::common::CommonCommandOptions;
 use buck2_client_ctx::common::CommonEventLogOptions;
+use buck2_client_ctx::common::CommonStarlarkOptions;
 use buck2_client_ctx::common::target_cfg::TargetCfgUnusedOptions;
+use buck2_client_ctx::common::ui::CommonConsoleOptions;
 use buck2_client_ctx::common::ui::ConsoleType;
+use buck2_client_ctx::daemon::client::BuckdClientConnector;
 use buck2_client_ctx::daemon::client::BuckdLifecycleLock;
+use buck2_client_ctx::daemon::client::NoPartialResultHandler;
 use buck2_client_ctx::daemon::client::kill::kill_command_impl;
 use buck2_client_ctx::events_ctx::EventsCtx;
 use buck2_client_ctx::exit_result::ExitResult;
 use buck2_client_ctx::final_console::FinalConsole;
 use buck2_client_ctx::startup_deadline::StartupDeadline;
+use buck2_client_ctx::streaming::StreamingCommand;
 use buck2_client_ctx::subscribers::superconsole::StatefulSuperConsole;
 use buck2_common::daemon_dir::DaemonDir;
 use buck2_error::BuckErrorContext;
@@ -51,7 +60,8 @@ use crate::commands::clean_stale::parse_clean_stale_args;
 
 /// Delete generated files and caches.
 ///
-/// The command also kills the buck2 daemon.
+/// By default this keeps the buck2 daemon running, like Bazel clean. Use
+/// --expunge to remove daemon state and stop the daemon.
 #[derive(Debug, clap::Parser)]
 pub struct CleanCommand {
     #[clap(
@@ -88,8 +98,14 @@ the specified duration, without killing the daemon",
     background: bool,
 
     #[clap(
+        long = "expunge",
+        help = "Remove daemon state and stop the buck2 daemon, like Bazel clean --expunge"
+    )]
+    expunge: bool,
+
+    #[clap(
         long = "expunge-bzlmod-caches",
-        help = "Also delete bzlmod repository caches. By default, normal clean preserves them like Bazel preserves fetched external repositories."
+        help = "Also delete bzlmod repository caches and materialized external repository roots. By default, normal clean preserves them like Bazel preserves fetched external repositories."
     )]
     expunge_bzlmod_caches: bool,
 
@@ -117,16 +133,27 @@ impl CleanCommand {
             };
             ctx.exec(cmd, matches, events_ctx)
         } else {
-            ctx.exec(
-                InnerCleanCommand {
-                    dry_run: self.dry_run,
-                    background: self.background,
-                    preserve_bzlmod_caches: !self.expunge_bzlmod_caches,
-                    common_opts: self.common_opts,
-                },
-                matches,
-                events_ctx,
-            )
+            let use_expunge_path = self.expunge || self.background || self.expunge_bzlmod_caches;
+            if self.dry_run || use_expunge_path {
+                ctx.exec(
+                    InnerCleanCommand {
+                        dry_run: self.dry_run,
+                        background: self.background,
+                        preserve_bzlmod_caches: !(self.expunge || self.expunge_bzlmod_caches),
+                        common_opts: self.common_opts,
+                    },
+                    matches,
+                    events_ctx,
+                )
+            } else {
+                ctx.exec(
+                    DaemonCleanCommand {
+                        common_opts: self.common_opts,
+                    },
+                    matches,
+                    events_ctx,
+                )
+            }
         }
     }
 
@@ -144,6 +171,77 @@ struct InnerCleanCommand {
     background: bool,
     preserve_bzlmod_caches: bool,
     common_opts: CommonCommandOptions,
+}
+
+struct DaemonCleanCommand {
+    common_opts: CommonCommandOptions,
+}
+
+fn format_clean_stats(stats: buck2_data::CleanStaleStats) -> String {
+    let mut output = String::new();
+    output += &format!(
+        "Found {} output roots ({})\n",
+        stats.stale_artifact_count,
+        bytesize::ByteSize::b(stats.stale_bytes).display().iec(),
+    );
+    output += &format!("Cleaned {} paths\n", stats.cleaned_artifact_count,);
+    output += &format!(
+        "{} bytes cleaned ({})\n",
+        stats.cleaned_bytes,
+        bytesize::ByteSize::b(stats.cleaned_bytes).display().iec(),
+    );
+    output
+}
+
+#[async_trait(?Send)]
+impl StreamingCommand for DaemonCleanCommand {
+    const COMMAND_NAME: &'static str = "clean";
+
+    async fn exec_impl(
+        self,
+        buckd: &mut BuckdClientConnector,
+        matches: BuckArgMatches<'_>,
+        ctx: &mut ClientCommandContext<'_>,
+        events_ctx: &mut EventsCtx,
+    ) -> ExitResult {
+        let context = ctx.client_context(matches, &self)?;
+        let response: CleanStaleResponse = buckd
+            .with_flushing()
+            .clean(
+                CleanRequest {
+                    context: Some(context),
+                    dry_run: false,
+                },
+                events_ctx,
+                ctx.console_interaction_stream(&self.common_opts.console_opts),
+                &mut NoPartialResultHandler,
+            )
+            .await??;
+
+        if let Some(message) = response.message {
+            buck2_client_ctx::eprintln!("{}", message)?;
+        }
+        if let Some(stats) = response.stats {
+            buck2_client_ctx::eprintln!("{}", format_clean_stats(stats))?;
+        }
+        ExitResult::success()
+    }
+
+    fn console_opts(&self) -> &CommonConsoleOptions {
+        &self.common_opts.console_opts
+    }
+
+    fn event_log_opts(&self) -> &CommonEventLogOptions {
+        &self.common_opts.event_log_opts
+    }
+
+    fn build_config_opts(&self) -> &CommonBuildConfigurationOptions {
+        &self.common_opts.config_opts
+    }
+
+    fn starlark_opts(&self) -> &CommonStarlarkOptions {
+        &self.common_opts.starlark_opts
+    }
 }
 
 impl BuckSubcommand for InnerCleanCommand {
@@ -235,7 +333,7 @@ async fn clean(
             fs_util::rename(&buck_out_dir, &trash_target).categorize_internal()?;
             let trash_target_normalized = AbsNormPathBuf::new(trash_target.to_path_buf())?;
             if preserve_bzlmod_caches {
-                restore_preserved_bzlmod_caches(&trash_target_normalized, &buck_out_dir)?;
+                restore_preserved_bzlmod_paths(&trash_target_normalized, &buck_out_dir)?;
             }
         }
 
@@ -303,10 +401,12 @@ async fn clean(
     Ok(())
 }
 
-const PRESERVED_BZLMOD_CACHE_DIRS: &[&str] = &[
+const PRESERVED_BZLMOD_PATHS: &[&str] = &[
     "bzlmod_bcr_discovery",
     "bzlmod_cell_graph_module_extensions",
     "bzlmod_repo_contents",
+    "../external_cells/bzlmod",
+    "../external_cells/bzlmod_generated",
 ];
 
 fn cache_dir(buck_out_path: &AbsNormPathBuf) -> AbsNormPathBuf {
@@ -314,27 +414,32 @@ fn cache_dir(buck_out_path: &AbsNormPathBuf) -> AbsNormPathBuf {
         .join(buck2_fs::paths::forward_rel_path::ForwardRelativePath::unchecked_new("cache"))
 }
 
-fn bzlmod_cache_dir(
+fn preserved_bzlmod_path(
     buck_out_path: &AbsNormPathBuf,
-    cache_dir_name: &str,
+    preserved_path: &str,
 ) -> buck2_error::Result<AbsNormPathBuf> {
+    if let Some(path) = preserved_path.strip_prefix("../") {
+        return Ok(buck_out_path.join(
+            buck2_fs::paths::forward_rel_path::ForwardRelativePath::new(path)?,
+        ));
+    }
     Ok(
         cache_dir(buck_out_path).join(buck2_fs::paths::forward_rel_path::ForwardRelativePath::new(
-            cache_dir_name,
+            preserved_path,
         )?),
     )
 }
 
-fn preserved_bzlmod_cache_paths(
+fn preserved_bzlmod_paths(
     buck_out_path: &AbsNormPathBuf,
     preserve_bzlmod_caches: bool,
 ) -> buck2_error::Result<Vec<AbsNormPathBuf>> {
     if !preserve_bzlmod_caches {
         return Ok(Vec::new());
     }
-    PRESERVED_BZLMOD_CACHE_DIRS
+    PRESERVED_BZLMOD_PATHS
         .iter()
-        .map(|cache_dir_name| bzlmod_cache_dir(buck_out_path, cache_dir_name))
+        .map(|path| preserved_bzlmod_path(buck_out_path, path))
         .collect()
 }
 
@@ -350,18 +455,19 @@ fn contains_preserved_path(path: &Path, preserved_paths: &[AbsNormPathBuf]) -> b
         .any(|preserved| preserved.as_path().starts_with(path))
 }
 
-fn restore_preserved_bzlmod_caches(
+fn restore_preserved_bzlmod_paths(
     from_buck_out: &AbsNormPathBuf,
     to_buck_out: &AbsNormPathBuf,
 ) -> buck2_error::Result<()> {
-    let to_cache_dir = cache_dir(to_buck_out);
-    for cache_dir_name in PRESERVED_BZLMOD_CACHE_DIRS {
-        let from = bzlmod_cache_dir(from_buck_out, cache_dir_name)?;
+    for preserved_path in PRESERVED_BZLMOD_PATHS {
+        let from = preserved_bzlmod_path(from_buck_out, preserved_path)?;
         if fs_util::symlink_metadata_if_exists(&from)?.is_none() {
             continue;
         }
-        fs_util::create_dir_all(&to_cache_dir)?;
-        let to = bzlmod_cache_dir(to_buck_out, cache_dir_name)?;
+        let to = preserved_bzlmod_path(to_buck_out, preserved_path)?;
+        if let Some(parent) = to.parent() {
+            fs_util::create_dir_all(parent)?;
+        }
         fs_util::remove_all(&to).categorize_internal()?;
         fs_util::rename(&from, &to).categorize_internal()?;
     }
@@ -372,7 +478,7 @@ fn collect_paths_to_clean(
     buck_out_path: &AbsNormPathBuf,
     preserve_bzlmod_caches: bool,
 ) -> buck2_error::Result<Vec<AbsNormPathBuf>> {
-    let preserved_paths = preserved_bzlmod_cache_paths(buck_out_path, preserve_bzlmod_caches)?;
+    let preserved_paths = preserved_bzlmod_paths(buck_out_path, preserve_bzlmod_caches)?;
     collect_paths_to_clean_with_preserved(buck_out_path, &preserved_paths)
 }
 
@@ -528,7 +634,7 @@ fn clean_buck_out(
     console_type: ConsoleType,
     preserve_bzlmod_caches: bool,
 ) -> buck2_error::Result<()> {
-    let preserved_paths = preserved_bzlmod_cache_paths(path, preserve_bzlmod_caches)?;
+    let preserved_paths = preserved_bzlmod_paths(path, preserve_bzlmod_caches)?;
     let walk = WalkDir::new(path);
     let thread_pool = ThreadPool::new(buck2_util::threads::available_parallelism());
     let error = Arc::new(Mutex::new(None));

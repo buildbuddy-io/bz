@@ -63,6 +63,7 @@ pub struct CleanStaleArtifactsCommand {
     pub keep_since_time: DateTime<Utc>,
     pub dry_run: bool,
     pub tracked_only: bool,
+    pub delete_all: bool,
     pub dispatcher: EventDispatcher,
 }
 
@@ -195,14 +196,23 @@ impl CleanStaleArtifactsCommand {
         let (liveliness_observer, liveliness_guard) = LivelinessGuard::create_sync();
         *processor.command_sender.clean_guard.write() = Some(liveliness_guard);
 
-        if let Some(sqlite_db) = processor.sqlite_db.as_mut() {
+        if self.delete_all {
+            self.scan_and_create_clean_fut(
+                &mut processor.tree,
+                &processor.declared_artifact_values,
+                processor.sqlite_db.as_mut(),
+                &processor.io,
+                processor.cancellations,
+                liveliness_observer.clone(),
+            )
+        } else if let Some(sqlite_db) = processor.sqlite_db.as_mut() {
             if !processor.defer_write_actions {
                 Ok(CleanStaleResultKind::SkippedDeferWriteDisabled.into())
             } else {
                 self.scan_and_create_clean_fut(
                     &mut processor.tree,
                     &processor.declared_artifact_values,
-                    sqlite_db,
+                    Some(sqlite_db),
                     &processor.io,
                     processor.cancellations,
                     liveliness_observer.clone(),
@@ -217,7 +227,7 @@ impl CleanStaleArtifactsCommand {
         &self,
         tree: &mut ArtifactTree,
         declared_artifact_values: &BuckDashMap<ProjectRelativePathBuf, ArtifactValue>,
-        sqlite_db: &mut MaterializerStateSqliteDb,
+        mut sqlite_db: Option<&mut MaterializerStateSqliteDb>,
         io: &Arc<T>,
         cancellations: &'static CancellationContext,
         liveliness_observer: Arc<dyn LivelinessObserverSync>,
@@ -239,7 +249,12 @@ impl CleanStaleArtifactsCommand {
         }
 
         let mut found_paths = Vec::new();
-        if self.tracked_only {
+        if self.delete_all {
+            for dir_path in &artifact_dirs {
+                let dir_abs = io.fs().resolve(dir_path);
+                found_paths.push(FoundPath::Stale(dir_path.clone(), get_size(&dir_abs)?));
+            }
+        } else if self.tracked_only {
             find_stale_tracked_only(tree, self.keep_since_time, &mut found_paths)?
         } else {
             for dir_path in &artifact_dirs {
@@ -297,21 +312,23 @@ impl CleanStaleArtifactsCommand {
         }
 
         // If no stale or retained artifact founds, the db should be empty.
-        if stats.stale_artifact_count + stats.retained_artifact_count == 0 {
-            // Just need to know if any entries exist, could be a simpler query.
-            // Checking the db directly in case tree is somehow not in sync.
-            let materializer_state = sqlite_db
-                .materializer_state_table()
-                .read_materializer_state(io.digest_config())?;
+        if !self.delete_all && stats.stale_artifact_count + stats.retained_artifact_count == 0 {
+            if let Some(sqlite_db) = sqlite_db.as_mut() {
+                // Just need to know if any entries exist, could be a simpler query.
+                // Checking the db directly in case tree is somehow not in sync.
+                let materializer_state = sqlite_db
+                    .materializer_state_table()
+                    .read_materializer_state(io.digest_config())?;
 
-            // Entries in the db should have been found in buck-out, return error and skip cleaning untracked artifacts.
-            if !materializer_state.is_empty() {
-                let error = CleanStaleError {
-                    db_size: materializer_state.len(),
-                    stats,
-                };
-                // quiet just because it's also returned, soft_error to log to scribe
-                return Err(soft_error!("clean_stale_error", error.into(), quiet: true)?);
+                // Entries in the db should have been found in buck-out, return error and skip cleaning untracked artifacts.
+                if !materializer_state.is_empty() {
+                    let error = CleanStaleError {
+                        db_size: materializer_state.len(),
+                        stats,
+                    };
+                    // quiet just because it's also returned, soft_error to log to scribe
+                    return Err(soft_error!("clean_stale_error", error.into(), quiet: true)?);
+                }
             }
         }
 
@@ -369,7 +386,7 @@ fn create_clean_fut<T: IoHandler>(
     mut stats: CleanStaleStats,
     tree: &mut ArtifactTree,
     declared_artifact_values: &BuckDashMap<ProjectRelativePathBuf, ArtifactValue>,
-    sqlite_db: &mut MaterializerStateSqliteDb,
+    sqlite_db: Option<&mut MaterializerStateSqliteDb>,
     io: &Arc<T>,
     cancellations: &'static CancellationContext,
     liveliness_observer: Arc<dyn LivelinessObserverSync>,
@@ -384,8 +401,7 @@ fn create_clean_fut<T: IoHandler>(
         })
         .collect();
 
-    let invalidation =
-        tree.invalidate_paths_and_collect_futures(paths_to_invalidate, Some(sqlite_db))?;
+    let invalidation = tree.invalidate_paths_and_collect_futures(paths_to_invalidate, sqlite_db)?;
     for path in invalidation.paths {
         declared_artifact_values.remove(&path);
     }

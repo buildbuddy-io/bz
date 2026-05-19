@@ -330,6 +330,7 @@ define_request!(TestRequest, has(context, build_options));
 define_request!(GenericRequest, has(context));
 define_request!(ProfileRequest, has(context));
 define_request!(AllocativeRequest, has(context));
+define_request!(CleanRequest, has(context));
 define_request!(CleanStaleRequest, has(context));
 define_request!(FileStatusRequest, has(context));
 define_request!(TraceIoRequest, has(context));

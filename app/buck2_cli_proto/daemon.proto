@@ -923,6 +923,11 @@ message CleanStaleRequest {
   bool tracked_only = 4;
 }
 
+message CleanRequest {
+  ClientContext context = 1;
+  bool dry_run = 2;
+}
+
 message CleanStaleResponse {
   optional string message = 1;
   buck.data.CleanStaleStats stats = 2;
@@ -1016,6 +1021,7 @@ service DaemonApi {
   rpc Audit(GenericRequest) returns (stream MultiCommandProgress);
   rpc Starlark(GenericRequest) returns (stream MultiCommandProgress);
   rpc Install(InstallRequest) returns (stream MultiCommandProgress);
+  rpc Clean(CleanRequest) returns (stream MultiCommandProgress);
   rpc CleanStale(CleanStaleRequest) returns (stream MultiCommandProgress);
   rpc FileStatus(FileStatusRequest) returns (stream MultiCommandProgress);
   rpc HydrationPageOut(HydrationPageOutRequest)

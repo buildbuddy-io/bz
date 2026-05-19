@@ -556,6 +556,7 @@ impl FlushingBuckdClient<'_> {
         CleanStaleResponse,
         NoPartialResult
     );
+    stream_method!(clean, CleanRequest, CleanStaleResponse, NoPartialResult);
     stream_method!(
         file_status,
         FileStatusRequest,

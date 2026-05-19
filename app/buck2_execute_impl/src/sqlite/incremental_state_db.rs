@@ -109,6 +109,14 @@ impl IncrementalDbState {
 
         self.state.remove(key);
     }
+
+    pub fn clear(&self) -> buck2_error::Result<()> {
+        if let Some(db) = &self.db {
+            db.incremental_state_table().clear()?;
+        }
+        self.state.clear();
+        Ok(())
+    }
 }
 
 #[derive(Debug)]
