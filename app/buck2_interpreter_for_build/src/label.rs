@@ -10,6 +10,7 @@
 
 use buck2_core::cells::CellAliasResolver;
 use buck2_core::cells::alias::NonEmptyCellAlias;
+use buck2_core::cells::external::bzlmod_canonical_repo_name_for_cell;
 use buck2_core::cells::external::bzlmod_cell_aliases_for_cell;
 use buck2_core::cells::external::bzlmod_cell_name;
 use buck2_core::cells::external::register_bzlmod_cell_canonical_repo_name_for_cell;
@@ -38,6 +39,7 @@ use starlark::values::Value;
 
 use crate::bazel_label::bazel_absolute_label_parts;
 use crate::bazel_label::parse_bazel_canonical_providers_label;
+use crate::interpreter::build_context::BazelRepositoryRecordedInput;
 use crate::interpreter::build_context::BuildContext;
 
 #[derive(Debug, buck2_error::Error)]
@@ -130,6 +132,7 @@ fn parse_providers_label<'v>(
 ) -> starlark::Result<StarlarkProvidersLabel> {
     let c = BuildContext::from_context(eval)?;
     let label_context = label_parse_context(c, eval)?;
+    let apparent_repo = bazel_apparent_repo_from_label(s);
     let label = if s.starts_with(':') {
         let package = match label_context.package {
             Some(package) => package,
@@ -154,14 +157,29 @@ fn parse_providers_label<'v>(
         Ok(pattern) => pattern,
         Err(e) => {
             if let Some(label) = bazel_compat_label(s, &label_context)? {
+                record_bazel_repository_repo_mapping(
+                    eval,
+                    &label_context,
+                    apparent_repo.as_deref(),
+                );
                 return Ok(StarlarkProvidersLabel::new(label));
             }
             if s != label
                 && let Some(label) = bazel_compat_label(&label, &label_context)?
             {
+                record_bazel_repository_repo_mapping(
+                    eval,
+                    &label_context,
+                    apparent_repo.as_deref(),
+                );
                 return Ok(StarlarkProvidersLabel::new(label));
             }
             if let Some(label) = bazel_non_visible_repo_label(&label, &label_context)? {
+                record_bazel_repository_repo_mapping(
+                    eval,
+                    &label_context,
+                    apparent_repo.as_deref(),
+                );
                 return Ok(StarlarkProvidersLabel::new(label));
             }
             return Err(e.into());
@@ -177,7 +195,63 @@ fn parse_providers_label<'v>(
             );
         }
     };
+    record_bazel_repository_repo_mapping(eval, &label_context, apparent_repo.as_deref());
     Ok(StarlarkProvidersLabel::new(target))
+}
+
+fn bazel_apparent_repo_from_label(value: &str) -> Option<String> {
+    let value = value.strip_prefix('@')?;
+    if value.starts_with('@') {
+        return None;
+    }
+    let (repo, _) = value.split_once("//")?;
+    Some(repo.to_owned())
+}
+
+fn bazel_repo_name_for_cell(cell_name: CellName) -> String {
+    if cell_name.as_str() == "root" {
+        return String::new();
+    }
+    bzlmod_canonical_repo_name_for_cell(cell_name.as_str())
+        .unwrap_or_else(|| cell_name.as_str().to_owned())
+}
+
+fn record_bazel_repository_repo_mapping(
+    eval: &Evaluator<'_, '_, '_>,
+    label_context: &LabelParseContext,
+    apparent_repo: Option<&str>,
+) {
+    let Some(apparent_name) = apparent_repo else {
+        return;
+    };
+    let Ok(build_context) = BuildContext::from_context(eval) else {
+        return;
+    };
+    let Some(repository_context) = &build_context.bazel_repository_context else {
+        return;
+    };
+    let canonical_name = if apparent_name.is_empty() {
+        Some(String::new())
+    } else {
+        label_context
+            .cell_alias_resolver
+            .resolve(apparent_name)
+            .ok()
+            .map(bazel_repo_name_for_cell)
+    };
+    let input = BazelRepositoryRecordedInput::RepoMapping {
+        source_repo: bazel_repo_name_for_cell(label_context.cell_name),
+        source_cell_name: label_context.cell_name.as_str().to_owned(),
+        apparent_name: apparent_name.to_owned(),
+        canonical_name,
+    };
+    let mut recorded_inputs = repository_context
+        .recorded_inputs
+        .lock()
+        .expect("repository recorded inputs poisoned");
+    if !recorded_inputs.iter().any(|existing| existing == &input) {
+        recorded_inputs.push(input);
+    }
 }
 
 fn bazel_repo_only_label(value: &str) -> Option<String> {

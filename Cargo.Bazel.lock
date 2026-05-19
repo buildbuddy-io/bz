@@ -2566,6 +2566,7 @@ dependencies = [
  "async-compression",
  "async-trait",
  "base64",
+ "blake3",
  "buck2_build_api",
  "buck2_common",
  "buck2_core",

@@ -305,6 +305,7 @@ impl<'a> ClientCommandContext<'a> {
                 name: BZLMOD_ALLOWED_YANKED_VERSIONS_ENV.to_owned(),
                 value: std::env::var(BZLMOD_ALLOWED_YANKED_VERSIONS_ENV).ok(),
             }],
+            repo_environment: client_repository_environment(),
         })
     }
 
@@ -326,6 +327,23 @@ impl<'a> ClientCommandContext<'a> {
         }
         Ok(daemon_startup_config)
     }
+}
+
+fn client_repository_environment() -> Vec<ClientEnvironmentVariable> {
+    std::env::vars_os()
+        .map(|(name, value)| {
+            (
+                name.to_string_lossy().into_owned(),
+                value.to_string_lossy().into_owned(),
+            )
+        })
+        .collect::<std::collections::BTreeMap<_, _>>()
+        .into_iter()
+        .map(|(name, value)| ClientEnvironmentVariable {
+            name,
+            value: Some(value),
+        })
+        .collect()
 }
 
 /// Provides a common interface for buck subcommands that use event subscribers for logging.

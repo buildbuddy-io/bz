@@ -42,8 +42,8 @@ use buck2_interpreter::factory::StarlarkEvaluatorProvider;
 use buck2_interpreter::file_loader::LoadedModule;
 use buck2_interpreter::file_loader::ModuleDeps;
 use buck2_interpreter::from_freeze::from_freeze_error;
-use buck2_interpreter::import_paths::ImplicitImportPaths;
 use buck2_interpreter::import_paths::HasImportPaths;
+use buck2_interpreter::import_paths::ImplicitImportPaths;
 use buck2_interpreter::load_module::InterpreterCalculation;
 use buck2_interpreter::package_imports::PackageImplicitImports;
 use buck2_interpreter::paths::module::OwnedStarlarkModulePath;
@@ -157,9 +157,11 @@ impl<'c, 'd> HasCalculationDelegate<'c, 'd> for DiceComputations<'d> {
                 };
 
                 let dirs_allowing_relative_paths = if is_bazel_external_cell {
-                    Arc::new(CellPathWithAllowedRelativeDir::backwards_relative_not_supported(
-                        self.0.clone(),
-                    ))
+                    Arc::new(
+                        CellPathWithAllowedRelativeDir::backwards_relative_not_supported(
+                            self.0.clone(),
+                        ),
+                    )
                 } else {
                     ctx.dirs_allowing_relative_paths(self.0.clone()).await?
                 };
@@ -472,6 +474,7 @@ impl<'c, 'd: 'c> DiceCalculationDelegate<'c, 'd> {
         extension_name: &str,
         extension_usages_json: &str,
         module_ctx_working_dir: &str,
+        repo_env: std::sync::Arc<std::collections::BTreeMap<String, String>>,
         cancellation: &CancellationContext,
     ) -> buck2_error::Result<crate::bazel_repository::BazelModuleExtensionEvaluation> {
         let buckconfig = self.get_legacy_buck_config_for_starlark().await?;
@@ -490,6 +493,7 @@ impl<'c, 'd: 'c> DiceCalculationDelegate<'c, 'd> {
             extension_name,
             extension_usages_json,
             module_ctx_working_dir,
+            repo_env,
             &mut buckconfigs,
             provider,
             cancellation,
@@ -502,6 +506,7 @@ impl<'c, 'd: 'c> DiceCalculationDelegate<'c, 'd> {
         rule_module: &LoadedModule,
         invocation: &BazelRepositoryRuleInvocation,
         repository_ctx_working_dir: &str,
+        repo_env: std::sync::Arc<std::collections::BTreeMap<String, String>>,
         cancellation: &CancellationContext,
     ) -> buck2_error::Result<BazelRepositoryRuleEvaluation> {
         let buckconfig = self.get_legacy_buck_config_for_starlark().await?;
@@ -519,6 +524,7 @@ impl<'c, 'd: 'c> DiceCalculationDelegate<'c, 'd> {
             rule_module.env(),
             invocation,
             repository_ctx_working_dir,
+            repo_env,
             &mut buckconfigs,
             provider,
             cancellation,

@@ -58,6 +58,8 @@ use buck2_common::io::trace::TracingIoProvider;
 use buck2_common::legacy_configs::cells::BZLMOD_ALLOWED_YANKED_VERSIONS_ENV;
 use buck2_common::legacy_configs::cells::BuckConfigBasedCells;
 use buck2_common::legacy_configs::cells::SetBzlmodClientEnvironment;
+use buck2_common::legacy_configs::cells::SetBzlmodRegistryInvalidation;
+use buck2_common::legacy_configs::cells::SetBzlmodRepositoryEnvironment;
 use buck2_common::legacy_configs::configs::LegacyBuckConfig;
 use buck2_common::legacy_configs::dice::HasInjectedLegacyConfigs;
 use buck2_common::legacy_configs::file_ops::ConfigPath;
@@ -255,6 +257,9 @@ pub struct ServerCommandContext<'a> {
     /// Client environment variables that are DICE inputs.
     client_environment: Vec<ClientEnvironmentVariable>,
 
+    /// Effective repository/module-extension environment from the client.
+    repo_environment: Vec<ClientEnvironmentVariable>,
+
     cancellations: &'a CancellationContext,
 
     preemptible: PreemptibleWhen,
@@ -377,6 +382,7 @@ impl<'a> ServerCommandContext<'a> {
             sanitized_argv: client_context.sanitized_argv.clone(),
             agent_context: client_context.agent_context.clone(),
             client_environment: client_context.client_environment.clone(),
+            repo_environment: client_context.repo_environment.clone(),
             debugger_handle,
             cancellations,
             preemptible: client_context.preemptible(),
@@ -836,6 +842,23 @@ impl DiceUpdater for DiceCommandUpdater<'_, '_> {
             ));
         }
         ctx.set_bzlmod_client_environment(bzlmod_client_environment)?;
+        ctx.set_bzlmod_repository_environment(
+            self.cmd_ctx
+                .repo_environment
+                .iter()
+                .filter_map(|entry| {
+                    entry
+                        .value
+                        .as_ref()
+                        .map(|value| (entry.name.clone(), value.clone()))
+                })
+                .collect(),
+        )?;
+        let registry_epoch_hour = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_secs() / 3600)
+            .unwrap_or_default();
+        ctx.set_bzlmod_registry_invalidation(registry_epoch_hour)?;
 
         let profiler_instrumentation_override =
             &self.cmd_ctx.starlark_profiling_manager.configuration;

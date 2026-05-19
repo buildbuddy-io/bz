@@ -196,6 +196,9 @@ message ClientContext {
 
   // Client environment variables whose values are Skyframe/DICE inputs.
   repeated ClientEnvironmentVariable client_environment = 28;
+
+  // Effective repository/module-extension environment, matching Bazel's REPO_ENV input.
+  repeated ClientEnvironmentVariable repo_environment = 29;
 }
 
 message ClientEnvironmentVariable {

@@ -18,7 +18,10 @@ use async_trait::async_trait;
 use buck2_common::dice::data::HasIoProvider;
 use buck2_common::file_ops::delegate::FileOpsDelegate;
 use buck2_common::file_ops::metadata::RawPathMetadata;
+use buck2_common::legacy_configs::cells::BZLMOD_MODULE_EXTENSION_EVALUATOR;
+use buck2_common::legacy_configs::cells::BzlmodModuleExtensionEvaluator;
 use buck2_core::cells::cell_root_path::CellRootPath;
+use buck2_core::cells::external::BzlmodModuleExtensionRepoSetup;
 use buck2_core::cells::external::ExternalCellOrigin;
 use buck2_core::cells::name::CellName;
 use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
@@ -30,6 +33,8 @@ mod bzlmod;
 mod git;
 
 struct ConcreteExternalCellsImpl;
+
+struct ConcreteBzlmodModuleExtensionEvaluator;
 
 #[derive(buck2_error::Error, Debug)]
 #[buck2(tag = Tier0)]
@@ -142,6 +147,18 @@ impl buck2_common::external_cells::ExternalCellsImpl for ConcreteExternalCellsIm
     }
 }
 
+#[async_trait]
+impl BzlmodModuleExtensionEvaluator for ConcreteBzlmodModuleExtensionEvaluator {
+    async fn evaluate_bzlmod_module_extension(
+        &self,
+        ctx: &mut DiceComputations<'_>,
+        setup: BzlmodModuleExtensionRepoSetup,
+    ) -> buck2_error::Result<Vec<String>> {
+        bzlmod::evaluate_module_extension(ctx, setup).await
+    }
+}
+
 pub fn init_late_bindings() {
     buck2_common::external_cells::EXTERNAL_CELLS_IMPL.init(&ConcreteExternalCellsImpl);
+    BZLMOD_MODULE_EXTENSION_EVALUATOR.init(&ConcreteBzlmodModuleExtensionEvaluator);
 }

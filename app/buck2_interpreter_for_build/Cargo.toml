@@ -10,6 +10,7 @@ version = "0.1.0"
 async-compression = { workspace = true }
 async-trait = { workspace = true }
 base64 = { workspace = true }
+blake3 = { workspace = true }
 bumpalo = { workspace = true }
 cmp_any = { workspace = true }
 derivative = { workspace = true }

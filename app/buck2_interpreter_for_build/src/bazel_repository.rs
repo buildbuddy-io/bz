@@ -40,6 +40,7 @@ use buck2_common::dice::cells::HasCellResolver;
 use buck2_common::file_ops::dice::DiceFileComputations;
 use buck2_common::file_ops::error::FileReadErrorContext;
 use buck2_common::file_ops::metadata::RawPathMetadata;
+use buck2_common::legacy_configs::cells::GetBzlmodRepositoryEnvironment;
 use buck2_core::bzl::ImportPath;
 use buck2_core::cells::CellAliasResolver;
 use buck2_core::cells::alias::NonEmptyCellAlias;
@@ -141,6 +142,7 @@ use crate::attrs::AttributeCoerceExt;
 use crate::attrs::coerce::ctx::BuildAttrCoercionContext;
 use crate::attrs::starlark_attribute::StarlarkAttribute;
 use crate::interpreter::build_context::BazelModuleExtensionEvaluationResult;
+use crate::interpreter::build_context::BazelRepositoryRecordedInput;
 use crate::interpreter::build_context::BazelRepositoryRuleInvocation;
 use crate::interpreter::build_context::BuildContext;
 use crate::interpreter::build_context::PerFileTypeContext;
@@ -485,13 +487,16 @@ fn bazel_host_os_name() -> &'static str {
     }
 }
 
-fn host_environ<'v>(heap: Heap<'v>) -> Value<'v> {
-    heap.alloc(AllocDict(env::vars_os().map(|(key, value)| {
-        (
-            key.to_string_lossy().into_owned(),
-            value.to_string_lossy().into_owned(),
-        )
-    })))
+fn host_environ<'v>(
+    heap: Heap<'v>,
+    repo_env: &BTreeMap<String, String>,
+    _recorded_inputs: &Mutex<Vec<BazelRepositoryRecordedInput>>,
+) -> Value<'v> {
+    heap.alloc(AllocDict(
+        repo_env
+            .iter()
+            .map(|(key, value)| (key.clone(), value.clone())),
+    ))
 }
 
 #[cfg(test)]
@@ -730,7 +735,7 @@ pub struct BazelRepositoryRuleProgress {
 }
 
 pub(crate) enum BazelRepositoryRuleEvaluation {
-    Success(Vec<BazelRepositoryGeneratedFile>),
+    Success(BazelRepositoryRuleEvaluationResult),
     NeedsPathLabelDeps {
         label_deps: Vec<RepositoryPathLabelDep>,
         error: String,
@@ -743,6 +748,12 @@ pub enum BazelModuleExtensionEvaluation {
         label_deps: Vec<RepositoryPathLabelDep>,
         error: String,
     },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BazelRepositoryRuleEvaluationResult {
+    pub files: Vec<BazelRepositoryGeneratedFile>,
+    pub recorded_inputs: Vec<BazelRepositoryRecordedInput>,
 }
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Freeze, Allocative)]
@@ -784,6 +795,230 @@ impl RepositoryPathLabelDep {
     }
 }
 
+fn record_repository_input(
+    recorded_inputs: &Mutex<Vec<BazelRepositoryRecordedInput>>,
+    input: BazelRepositoryRecordedInput,
+) {
+    let mut recorded_inputs = recorded_inputs
+        .lock()
+        .expect("repository recorded inputs poisoned");
+    if !recorded_inputs.iter().any(|existing| existing == &input) {
+        recorded_inputs.push(input);
+    }
+}
+
+fn record_repository_env_var(
+    repo_env: &BTreeMap<String, String>,
+    recorded_inputs: &Mutex<Vec<BazelRepositoryRecordedInput>>,
+    name: &str,
+) -> Option<String> {
+    let value = repo_env.get(name).cloned();
+    record_repository_input(
+        recorded_inputs,
+        BazelRepositoryRecordedInput::EnvVar {
+            name: name.to_owned(),
+            value: value.clone(),
+        },
+    );
+    value
+}
+
+fn repository_recorded_file_value(path: &Path) -> io::Result<String> {
+    let metadata = match fs::metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok("ENOENT".to_owned()),
+        Err(error) => return Err(error),
+    };
+    if metadata.is_dir() {
+        return Ok("DIR".to_owned());
+    }
+    if metadata.is_file() {
+        let mut file = fs::File::open(path)?;
+        let mut hasher = blake3::Hasher::new();
+        let mut buf = [0u8; 8192];
+        loop {
+            let len = file.read(&mut buf)?;
+            if len == 0 {
+                break;
+            }
+            hasher.update(&buf[..len]);
+        }
+        return Ok(format!(
+            "FILE:{}",
+            blake3::Hasher::finalize(&hasher).to_hex()
+        ));
+    }
+    Ok("OTHER".to_owned())
+}
+
+fn repository_recorded_dirents_value(path: &Path) -> io::Result<String> {
+    let metadata = match fs::metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok("ENOENT".to_owned()),
+        Err(error) => return Err(error),
+    };
+    if !metadata.is_dir() {
+        return repository_recorded_file_value(path);
+    }
+    let mut entries = fs::read_dir(path)?
+        .map(|entry| entry.map(|entry| entry.file_name().to_string_lossy().into_owned()))
+        .collect::<io::Result<Vec<_>>>()?;
+    entries.sort();
+    let mut hasher = blake3::Hasher::new();
+    for entry in entries {
+        hasher.update(entry.as_bytes());
+        hasher.update(&[0]);
+    }
+    Ok(format!(
+        "DIRENTS:{}",
+        blake3::Hasher::finalize(&hasher).to_hex()
+    ))
+}
+
+fn repository_recorded_dir_tree_value(path: &Path) -> io::Result<String> {
+    fn visit(base: &Path, path: &Path, hasher: &mut blake3::Hasher) -> io::Result<()> {
+        let metadata = match fs::metadata(path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                hasher.update(b"ENOENT");
+                return Ok(());
+            }
+            Err(error) => return Err(error),
+        };
+        let relative = path.strip_prefix(base).unwrap_or(path);
+        hasher.update(relative.to_string_lossy().as_bytes());
+        hasher.update(&[0]);
+        if metadata.is_dir() {
+            hasher.update(b"DIR");
+            let mut entries = fs::read_dir(path)?
+                .map(|entry| entry.map(|entry| entry.path()))
+                .collect::<io::Result<Vec<_>>>()?;
+            entries.sort();
+            for entry in entries {
+                visit(base, &entry, hasher)?;
+            }
+        } else if metadata.is_file() {
+            hasher.update(repository_recorded_file_value(path)?.as_bytes());
+        } else {
+            hasher.update(b"OTHER");
+        }
+        hasher.update(&[0]);
+        Ok(())
+    }
+
+    let mut hasher = blake3::Hasher::new();
+    visit(path, path, &mut hasher)?;
+    Ok(format!(
+        "DIRTREE:{}",
+        blake3::Hasher::finalize(&hasher).to_hex()
+    ))
+}
+
+fn repository_recorded_input_path(path: &str, working_dir: &str) -> PathBuf {
+    repository_path_for_read_abs_relative_to(path, working_dir)
+}
+
+fn repository_path_is_under_working_dir(path: &Path, working_dir: &str) -> bool {
+    let Ok(working_dir) = repository_path_for_write(working_dir) else {
+        return false;
+    };
+    path == working_dir || path.starts_with(working_dir)
+}
+
+fn record_repository_file_input(
+    recorded_inputs: &Mutex<Vec<BazelRepositoryRecordedInput>>,
+    path: &str,
+    working_dir: &str,
+) -> starlark::Result<()> {
+    let resolved = repository_recorded_input_path(path, working_dir);
+    if repository_path_is_under_working_dir(&resolved, working_dir) {
+        return Ok(());
+    }
+    let value = repository_recorded_file_value(&resolved).map_err(|error| {
+        buck2_error::buck2_error!(
+            buck2_error::ErrorTag::Tier0,
+            "failed to record repository file input `{}`: {}",
+            resolved.to_string_lossy(),
+            error
+        )
+    })?;
+    record_repository_input(
+        recorded_inputs,
+        BazelRepositoryRecordedInput::File {
+            path: resolved.to_string_lossy().into_owned(),
+            value,
+        },
+    );
+    Ok(())
+}
+
+fn record_repository_dirents_input(
+    recorded_inputs: &Mutex<Vec<BazelRepositoryRecordedInput>>,
+    path: &str,
+    working_dir: &str,
+) -> starlark::Result<()> {
+    let resolved = repository_recorded_input_path(path, working_dir);
+    if repository_path_is_under_working_dir(&resolved, working_dir) {
+        return Ok(());
+    }
+    let value = repository_recorded_dirents_value(&resolved).map_err(|error| {
+        buck2_error::buck2_error!(
+            buck2_error::ErrorTag::Tier0,
+            "failed to record repository directory entries input `{}`: {}",
+            resolved.to_string_lossy(),
+            error
+        )
+    })?;
+    record_repository_input(
+        recorded_inputs,
+        BazelRepositoryRecordedInput::Dirents {
+            path: resolved.to_string_lossy().into_owned(),
+            value,
+        },
+    );
+    Ok(())
+}
+
+fn record_repository_dir_tree_input(
+    recorded_inputs: &Mutex<Vec<BazelRepositoryRecordedInput>>,
+    path: &str,
+    working_dir: &str,
+) -> starlark::Result<()> {
+    let resolved = repository_recorded_input_path(path, working_dir);
+    if repository_path_is_under_working_dir(&resolved, working_dir) {
+        return Ok(());
+    }
+    let value = repository_recorded_dir_tree_value(&resolved).map_err(|error| {
+        buck2_error::buck2_error!(
+            buck2_error::ErrorTag::Tier0,
+            "failed to record repository directory tree input `{}`: {}",
+            resolved.to_string_lossy(),
+            error
+        )
+    })?;
+    record_repository_input(
+        recorded_inputs,
+        BazelRepositoryRecordedInput::DirTree {
+            path: resolved.to_string_lossy().into_owned(),
+            value,
+        },
+    );
+    Ok(())
+}
+
+fn repository_should_record_watch(watch: &str) -> starlark::Result<bool> {
+    match watch {
+        "auto" | "yes" => Ok(true),
+        "no" => Ok(false),
+        other => Err(buck2_error::buck2_error!(
+            buck2_error::ErrorTag::Input,
+            "repository watch mode must be `auto`, `yes`, or `no`, got `{}`",
+            other
+        )
+        .into()),
+    }
+}
+
 pub async fn evaluate_bzlmod_module_extension_repo(
     ctx: &mut DiceComputations<'_>,
     setup: &BzlmodModuleExtensionRepoSetup,
@@ -799,6 +1034,7 @@ pub async fn evaluate_bzlmod_module_extension_repo(
     let extension_module = ctx
         .get_loaded_module(StarlarkModulePath::LoadFile(&extension_path))
         .await?;
+    let repo_env = ctx.get_bzlmod_repository_environment().await?;
     let mut materialized_path_label_deps = BTreeSet::new();
     loop {
         let mut interpreter = ctx
@@ -811,6 +1047,7 @@ pub async fn evaluate_bzlmod_module_extension_repo(
                 &setup.extension_name,
                 &setup.extension_usages_json,
                 module_ctx_working_dir,
+                repo_env.clone(),
                 cancellation,
             )
             .await?
@@ -868,6 +1105,24 @@ pub async fn evaluate_bzlmod_repository_rule(
     progress: Option<BazelRepositoryRuleProgress>,
     cancellation: &CancellationContext,
 ) -> buck2_error::Result<Vec<BazelRepositoryGeneratedFile>> {
+    Ok(evaluate_bzlmod_repository_rule_with_recorded_inputs(
+        ctx,
+        invocation,
+        repository_ctx_working_dir,
+        progress,
+        cancellation,
+    )
+    .await?
+    .files)
+}
+
+pub async fn evaluate_bzlmod_repository_rule_with_recorded_inputs(
+    ctx: &mut DiceComputations<'_>,
+    invocation: &BazelRepositoryRuleInvocation,
+    repository_ctx_working_dir: &str,
+    progress: Option<BazelRepositoryRuleProgress>,
+    cancellation: &CancellationContext,
+) -> buck2_error::Result<BazelRepositoryRuleEvaluationResult> {
     let rule_path = match &invocation.rule_id.path {
         BzlOrBxlPath::Bzl(path) => path,
         BzlOrBxlPath::Bxl(_) => {
@@ -880,6 +1135,7 @@ pub async fn evaluate_bzlmod_repository_rule(
     let rule_module = ctx
         .get_loaded_module(StarlarkModulePath::LoadFile(rule_path))
         .await?;
+    let repo_env = ctx.get_bzlmod_repository_environment().await?;
     let mut materialized_path_label_deps = BTreeSet::new();
     loop {
         let mut interpreter = ctx
@@ -890,6 +1146,7 @@ pub async fn evaluate_bzlmod_repository_rule(
             &rule_module,
             invocation,
             repository_ctx_working_dir,
+            repo_env.clone(),
             cancellation,
         );
         let evaluation = if let Some(progress) = progress.as_ref() {
@@ -912,7 +1169,7 @@ pub async fn evaluate_bzlmod_repository_rule(
             evaluation.await?
         };
         match evaluation {
-            BazelRepositoryRuleEvaluation::Success(files) => return Ok(files),
+            BazelRepositoryRuleEvaluation::Success(result) => return Ok(result),
             BazelRepositoryRuleEvaluation::NeedsPathLabelDeps { label_deps, error } => {
                 let new_label_deps = label_deps
                     .into_iter()
@@ -1003,6 +1260,37 @@ async fn repository_rule_loaded_module_load_paths(
 ) -> buck2_error::Result<Arc<Vec<ImportPath>>> {
     ctx.compute(&RepositoryRuleLoadedModuleLoadPathsKey { path: path.clone() })
         .await?
+}
+
+pub async fn bzlmod_module_extension_bzl_transitive_digest(
+    ctx: &mut DiceComputations<'_>,
+    setup: &BzlmodModuleExtensionRepoSetup,
+) -> buck2_error::Result<String> {
+    let extension_cell_path = CellPath::new(
+        CellName::unchecked_new(&setup.extension_bzl_cell)?,
+        CellRelativePathBuf::try_from(setup.extension_bzl_path.to_string())?,
+    );
+    let extension_path = ImportPath::new_same_cell(extension_cell_path)?;
+    let extension_module = ctx
+        .get_loaded_module(StarlarkModulePath::LoadFile(&extension_path))
+        .await?;
+    let mut paths = vec![extension_path];
+    collect_loaded_module_load_paths(&extension_module, &mut BTreeSet::new(), &mut paths);
+    paths.sort_by_key(|path| path.to_string());
+    paths.dedup_by_key(|path| path.to_string());
+
+    let mut hasher = blake3::Hasher::new();
+    for path in paths {
+        let path_string = path.to_string();
+        hasher.update(path_string.as_bytes());
+        hasher.update(&[0]);
+        let source = DiceFileComputations::read_file(ctx, path.path().as_ref())
+            .await
+            .with_package_context_information(path.path().path().to_string())?;
+        hasher.update(source.as_bytes());
+        hasher.update(&[0]);
+    }
+    Ok(blake3::Hasher::finalize(&hasher).to_hex().to_string())
 }
 
 async fn materialize_repository_rule_path_label_deps(
@@ -1354,6 +1642,8 @@ pub(crate) fn alloc_bzlmod_module_extension_context<'v>(
     extension: &FrozenStarlarkModuleExtension,
     extension_usages_json: &str,
     working_dir: &str,
+    repo_env: Arc<BTreeMap<String, String>>,
+    recorded_inputs: Arc<Mutex<Vec<BazelRepositoryRecordedInput>>>,
     globals: &Globals,
     eval: &mut Evaluator<'v, '_, '_>,
 ) -> starlark::Result<Value<'v>> {
@@ -1466,17 +1756,25 @@ pub(crate) fn alloc_bzlmod_module_extension_context<'v>(
     }
     let modules = eval.heap().alloc(AllocList(modules));
 
-    Ok(eval.heap().alloc(StarlarkModuleExtensionContext::new(
+    let module_ctx = StarlarkModuleExtensionContext::new(
         modules,
         working_dir.to_owned(),
         config.root_module_has_non_dev_dependency,
-    )))
+        repo_env,
+        recorded_inputs,
+    );
+    for name in &extension.environ {
+        record_repository_env_var(&module_ctx.repo_env, &module_ctx.recorded_inputs, name);
+    }
+    Ok(eval.heap().alloc(module_ctx))
 }
 
 pub(crate) fn alloc_bzlmod_repository_context<'v>(
     repository_rule: &FrozenStarlarkRepositoryRule,
     invocation: &BazelRepositoryRuleInvocation,
     working_dir: &str,
+    repo_env: Arc<BTreeMap<String, String>>,
+    recorded_inputs: Arc<Mutex<Vec<BazelRepositoryRecordedInput>>>,
     globals: &Globals,
     eval: &mut Evaluator<'v, '_, '_>,
 ) -> starlark::Result<Value<'v>> {
@@ -1528,13 +1826,23 @@ pub(crate) fn alloc_bzlmod_repository_context<'v>(
         eval.heap().alloc_str(&invocation.name).to_value(),
     ));
     let attr = eval.heap().alloc(AllocStruct(attrs));
-    Ok(eval.heap().alloc(StarlarkRepositoryContext::new(
+    let repository_ctx = StarlarkRepositoryContext::new(
         invocation.name.clone(),
         invocation.original_name.clone(),
         attr,
         working_dir.to_owned(),
         repository_ctx_workspace_root(working_dir),
-    )))
+        repo_env,
+        recorded_inputs,
+    );
+    for name in &repository_rule.environ {
+        record_repository_env_var(
+            &repository_ctx.repo_env,
+            &repository_ctx.recorded_inputs,
+            name,
+        );
+    }
+    Ok(eval.heap().alloc(repository_ctx))
 }
 
 fn repository_ctx_workspace_root(working_dir: &str) -> String {
@@ -2066,7 +2374,26 @@ impl<'v> StarlarkValue<'v> for FrozenStarlarkModuleExtension {
 }
 
 #[derive(Debug, ProvidesStaticType, Trace, NoSerialize, Allocative)]
-pub(crate) struct StarlarkRepositoryOs;
+pub(crate) struct StarlarkRepositoryOs {
+    #[trace(unsafe_ignore)]
+    #[allocative(skip)]
+    repo_env: Arc<BTreeMap<String, String>>,
+    #[trace(unsafe_ignore)]
+    #[allocative(skip)]
+    recorded_inputs: Arc<Mutex<Vec<BazelRepositoryRecordedInput>>>,
+}
+
+impl StarlarkRepositoryOs {
+    fn new(
+        repo_env: Arc<BTreeMap<String, String>>,
+        recorded_inputs: Arc<Mutex<Vec<BazelRepositoryRecordedInput>>>,
+    ) -> Self {
+        Self {
+            repo_env,
+            recorded_inputs,
+        }
+    }
+}
 
 impl Display for StarlarkRepositoryOs {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -2089,7 +2416,7 @@ impl<'v> StarlarkValue<'v> for StarlarkRepositoryOs {
     fn get_attr(&self, attribute: &str, heap: Heap<'v>) -> Option<Value<'v>> {
         match attribute {
             "arch" => Some(heap.alloc(env::consts::ARCH)),
-            "environ" => Some(host_environ(heap)),
+            "environ" => Some(host_environ(heap, &self.repo_env, &self.recorded_inputs)),
             "name" => Some(heap.alloc(bazel_host_os_name())),
             _ => None,
         }
@@ -2100,12 +2427,32 @@ impl Freeze for StarlarkRepositoryOs {
     type Frozen = FrozenStarlarkRepositoryOs;
 
     fn freeze(self, _freezer: &Freezer) -> FreezeResult<Self::Frozen> {
-        Ok(FrozenStarlarkRepositoryOs)
+        Ok(FrozenStarlarkRepositoryOs {
+            repo_env: self.repo_env,
+            recorded_inputs: self.recorded_inputs,
+        })
     }
 }
 
 #[derive(Debug, ProvidesStaticType, NoSerialize, Allocative)]
-pub(crate) struct FrozenStarlarkRepositoryOs;
+pub(crate) struct FrozenStarlarkRepositoryOs {
+    #[allocative(skip)]
+    repo_env: Arc<BTreeMap<String, String>>,
+    #[allocative(skip)]
+    recorded_inputs: Arc<Mutex<Vec<BazelRepositoryRecordedInput>>>,
+}
+
+impl FrozenStarlarkRepositoryOs {
+    fn new(
+        repo_env: Arc<BTreeMap<String, String>>,
+        recorded_inputs: Arc<Mutex<Vec<BazelRepositoryRecordedInput>>>,
+    ) -> Self {
+        Self {
+            repo_env,
+            recorded_inputs,
+        }
+    }
+}
 
 impl Display for FrozenStarlarkRepositoryOs {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -2126,7 +2473,7 @@ impl<'v> StarlarkValue<'v> for FrozenStarlarkRepositoryOs {
     fn get_attr(&self, attribute: &str, heap: Heap<'v>) -> Option<Value<'v>> {
         match attribute {
             "arch" => Some(heap.alloc(env::consts::ARCH)),
-            "environ" => Some(host_environ(heap)),
+            "environ" => Some(host_environ(heap, &self.repo_env, &self.recorded_inputs)),
             "name" => Some(heap.alloc(bazel_host_os_name())),
             _ => None,
         }
@@ -2246,8 +2593,18 @@ fn repository_path_methods(builder: &mut MethodsBuilder) {
     fn readdir(
         this: &StarlarkRepositoryPath,
         #[starlark(require = named, default = "auto")] watch: &str,
+        eval: &mut Evaluator<'_, '_, '_>,
     ) -> starlark::Result<Vec<StarlarkRepositoryPath>> {
-        let _unused = watch;
+        if repository_should_record_watch(watch)?
+            && let Ok(build_context) = BuildContext::from_context(eval)
+            && let Some(repository_context) = &build_context.bazel_repository_context
+        {
+            record_repository_dirents_input(
+                &repository_context.recorded_inputs,
+                &this.path,
+                &repository_context.working_dir,
+            )?;
+        }
         let read_path = repository_path_for_read(&this.path);
         let entries = fs::read_dir(&read_path).map_err(|error| {
             buck2_error::Error::from(BazelRepositoryError::RepositoryPathReaddir {
@@ -2523,10 +2880,16 @@ pub(crate) struct StarlarkRepositoryContext<'v> {
     workspace_root: String,
     #[trace(unsafe_ignore)]
     #[allocative(skip)]
+    repo_env: Arc<BTreeMap<String, String>>,
+    #[trace(unsafe_ignore)]
+    #[allocative(skip)]
     files: Mutex<Vec<BazelRepositoryGeneratedFile>>,
     #[trace(unsafe_ignore)]
     #[allocative(skip)]
     path_label_deps: Mutex<Vec<RepositoryPathLabelDep>>,
+    #[trace(unsafe_ignore)]
+    #[allocative(skip)]
+    recorded_inputs: Arc<Mutex<Vec<BazelRepositoryRecordedInput>>>,
 }
 
 impl<'v> StarlarkRepositoryContext<'v> {
@@ -2536,6 +2899,8 @@ impl<'v> StarlarkRepositoryContext<'v> {
         attr: Value<'v>,
         working_dir: String,
         workspace_root: String,
+        repo_env: Arc<BTreeMap<String, String>>,
+        recorded_inputs: Arc<Mutex<Vec<BazelRepositoryRecordedInput>>>,
     ) -> Self {
         Self {
             name,
@@ -2543,8 +2908,10 @@ impl<'v> StarlarkRepositoryContext<'v> {
             attr,
             working_dir,
             workspace_root,
+            repo_env,
             files: Mutex::new(Vec::new()),
             path_label_deps: Mutex::new(Vec::new()),
+            recorded_inputs,
         }
     }
 
@@ -2558,6 +2925,15 @@ impl<'v> StarlarkRepositoryContext<'v> {
                 .path_label_deps
                 .lock()
                 .expect("repository_ctx path label deps poisoned"),
+        )
+    }
+
+    fn take_recorded_inputs(&self) -> Vec<BazelRepositoryRecordedInput> {
+        std::mem::take(
+            &mut *self
+                .recorded_inputs
+                .lock()
+                .expect("repository_ctx recorded inputs poisoned"),
         )
     }
 }
@@ -2591,7 +2967,10 @@ impl<'v> StarlarkValue<'v> for StarlarkRepositoryContext<'v> {
             "attr" => Some(self.attr),
             "name" => Some(heap.alloc_str(&self.name).to_value()),
             "original_name" => Some(heap.alloc_str(&self.original_name).to_value()),
-            "os" => Some(heap.alloc(StarlarkRepositoryOs)),
+            "os" => Some(heap.alloc(StarlarkRepositoryOs::new(
+                self.repo_env.clone(),
+                self.recorded_inputs.clone(),
+            ))),
             "workspace_root" => {
                 Some(heap.alloc(StarlarkRepositoryPath::new(self.workspace_root.clone())))
             }
@@ -2615,6 +2994,7 @@ impl<'v> Freeze for StarlarkRepositoryContext<'v> {
             attr: self.attr.freeze(freezer)?,
             working_dir: self.working_dir,
             workspace_root: self.workspace_root,
+            repo_env: self.repo_env,
             files: Mutex::new(
                 self.files
                     .into_inner()
@@ -2625,6 +3005,7 @@ impl<'v> Freeze for StarlarkRepositoryContext<'v> {
                     .into_inner()
                     .expect("repository_ctx path label deps poisoned"),
             ),
+            recorded_inputs: self.recorded_inputs,
         })
     }
 }
@@ -2637,9 +3018,13 @@ pub(crate) struct FrozenStarlarkRepositoryContext {
     working_dir: String,
     workspace_root: String,
     #[allocative(skip)]
+    repo_env: Arc<BTreeMap<String, String>>,
+    #[allocative(skip)]
     files: Mutex<Vec<BazelRepositoryGeneratedFile>>,
     #[allocative(skip)]
     path_label_deps: Mutex<Vec<RepositoryPathLabelDep>>,
+    #[allocative(skip)]
+    recorded_inputs: Arc<Mutex<Vec<BazelRepositoryRecordedInput>>>,
 }
 
 impl Display for FrozenStarlarkRepositoryContext {
@@ -2669,7 +3054,10 @@ impl<'v> StarlarkValue<'v> for FrozenStarlarkRepositoryContext {
             "attr" => Some(self.attr.to_value()),
             "name" => Some(heap.alloc_str(&self.name).to_value()),
             "original_name" => Some(heap.alloc_str(&self.original_name).to_value()),
-            "os" => Some(heap.alloc(FrozenStarlarkRepositoryOs)),
+            "os" => Some(heap.alloc(FrozenStarlarkRepositoryOs::new(
+                self.repo_env.clone(),
+                self.recorded_inputs.clone(),
+            ))),
             "workspace_root" => {
                 Some(heap.alloc(StarlarkRepositoryPath::new(self.workspace_root.clone())))
             }
@@ -2786,6 +3174,21 @@ pub(crate) fn take_repository_ctx_path_label_deps<'v>(
     Ok(repository_ctx.take_path_label_deps())
 }
 
+pub(crate) fn take_repository_ctx_recorded_inputs<'v>(
+    repository_ctx: Value<'v>,
+) -> starlark::Result<Vec<BazelRepositoryRecordedInput>> {
+    let repository_ctx = repository_ctx
+        .downcast_ref::<StarlarkRepositoryContext>()
+        .ok_or_else(|| {
+            buck2_error::buck2_error!(
+                buck2_error::ErrorTag::Input,
+                "expected repository_ctx, got `{}`",
+                repository_ctx.get_type()
+            )
+        })?;
+    Ok(repository_ctx.take_recorded_inputs())
+}
+
 pub(crate) fn take_module_ctx_path_label_deps<'v>(
     module_ctx: Value<'v>,
 ) -> starlark::Result<Vec<RepositoryPathLabelDep>> {
@@ -2801,12 +3204,45 @@ pub(crate) fn take_module_ctx_path_label_deps<'v>(
     Ok(module_ctx.take_path_label_deps())
 }
 
+pub(crate) fn take_module_ctx_recorded_inputs<'v>(
+    module_ctx: Value<'v>,
+) -> starlark::Result<Vec<BazelRepositoryRecordedInput>> {
+    let module_ctx = module_ctx
+        .downcast_ref::<StarlarkModuleExtensionContext>()
+        .ok_or_else(|| {
+            buck2_error::buck2_error!(
+                buck2_error::ErrorTag::Input,
+                "expected module_ctx, got `{}`",
+                module_ctx.get_type()
+            )
+        })?;
+    Ok(module_ctx.take_recorded_inputs())
+}
+
 fn repository_ctx_working_dir<'v>(
     this: ValueTypedComplex<'v, StarlarkRepositoryContext<'v>>,
 ) -> &'v str {
     match this.unpack() {
         either::Either::Left(ctx) => &ctx.working_dir,
         either::Either::Right(ctx) => &ctx.working_dir,
+    }
+}
+
+fn repository_ctx_repo_env<'v>(
+    this: ValueTypedComplex<'v, StarlarkRepositoryContext<'v>>,
+) -> Arc<BTreeMap<String, String>> {
+    match this.unpack() {
+        either::Either::Left(ctx) => ctx.repo_env.clone(),
+        either::Either::Right(ctx) => ctx.repo_env.clone(),
+    }
+}
+
+fn repository_ctx_recorded_inputs<'v>(
+    this: ValueTypedComplex<'v, StarlarkRepositoryContext<'v>>,
+) -> Arc<Mutex<Vec<BazelRepositoryRecordedInput>>> {
+    match this.unpack() {
+        either::Either::Left(ctx) => ctx.recorded_inputs.clone(),
+        either::Either::Right(ctx) => ctx.recorded_inputs.clone(),
     }
 }
 
@@ -3627,12 +4063,19 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
             &'v str,
         >,
         #[starlark(default = true)] executable: bool,
-        #[starlark(require = named, default = "auto")] _watch_template: &str,
+        #[starlark(require = named, default = "auto")] watch_template: &str,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<NoneType> {
         let working_dir = repository_ctx_working_dir(this);
         let path = repository_ctx_output_path_from_value(path, working_dir)?;
         let template_path = repository_ctx_path_from_value_relative_to(this, template, eval)?;
+        if repository_should_record_watch(watch_template)? {
+            record_repository_file_input(
+                &repository_ctx_recorded_inputs(this),
+                &template_path,
+                working_dir,
+            )?;
+        }
         let read_path = repository_path_for_read(&template_path);
         let mut content = fs::read_to_string(&read_path).map_err(|e| {
             buck2_error::Error::from(BazelRepositoryError::RepositoryCtxTemplateReadFile {
@@ -3671,6 +4114,11 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
         )?;
         if let Some(dep) = dep.clone() {
             repository_ctx_record_path_dep(this, dep);
+            record_repository_file_input(
+                &repository_ctx_recorded_inputs(this),
+                &path,
+                repository_ctx_working_dir(this),
+            )?;
         }
         Ok(StarlarkRepositoryPath::new_with_dep(path, dep))
     }
@@ -3678,10 +4126,17 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
     fn read<'v>(
         this: ValueTypedComplex<'v, StarlarkRepositoryContext<'v>>,
         #[starlark(require = pos)] path: Value<'v>,
-        #[starlark(require = named, default = "auto")] _watch: &str,
+        #[starlark(require = named, default = "auto")] watch: &str,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<String> {
         let path = repository_ctx_path_from_value_relative_to(this, path, eval)?;
+        if repository_should_record_watch(watch)? {
+            record_repository_file_input(
+                &repository_ctx_recorded_inputs(this),
+                &path,
+                repository_ctx_working_dir(this),
+            )?;
+        }
         let read_path = repository_path_for_read(&path);
         let bytes = fs::read(&read_path).map_err(|e| {
             buck2_error::Error::from(BazelRepositoryError::ModuleCtxReadFile {
@@ -3697,7 +4152,12 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
         #[starlark(require = pos)] path: Value<'v>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<NoneType> {
-        let _path = repository_ctx_path_from_value_relative_to(this, path, eval)?;
+        let path = repository_ctx_path_from_value_relative_to(this, path, eval)?;
+        record_repository_file_input(
+            &repository_ctx_recorded_inputs(this),
+            &path,
+            repository_ctx_working_dir(this),
+        )?;
         Ok(NoneType)
     }
 
@@ -3710,6 +4170,11 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
         if let Some(dep) = repository_ctx_external_input_tree_dep(Path::new(&path)) {
             repository_ctx_record_path_dep(this, dep);
         }
+        record_repository_dir_tree_input(
+            &repository_ctx_recorded_inputs(this),
+            &path,
+            repository_ctx_working_dir(this),
+        )?;
         Ok(NoneType)
     }
 
@@ -3776,11 +4241,18 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
         this: ValueTypedComplex<'v, StarlarkRepositoryContext<'v>>,
         #[starlark(require = pos)] patch_file: Value<'v>,
         #[starlark(default = 0)] strip: i32,
-        #[starlark(require = named, default = "auto")] _watch_patch: &str,
+        #[starlark(require = named, default = "auto")] watch_patch: &str,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<NoneType> {
         let working_dir = repository_ctx_working_dir(this);
         let patch_path = repository_ctx_path_from_value_relative_to(this, patch_file, eval)?;
+        if repository_should_record_watch(watch_patch)? {
+            record_repository_file_input(
+                &repository_ctx_recorded_inputs(this),
+                &patch_path,
+                working_dir,
+            )?;
+        }
         let patch_path_abs = repository_path_for_read_abs_relative_to(&patch_path, working_dir);
         if patch_path_abs.is_dir() {
             return Err(
@@ -3867,7 +4339,6 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
         #[starlark(require = pos)] program: &str,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {
-        let _unused = this;
         if program.is_empty() {
             return Err(buck2_error::Error::from(
                 BazelRepositoryError::RepositoryCtxWhichEmptyProgram,
@@ -3880,10 +4351,12 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
             )
             .into());
         }
-        let Some(path) = env::var_os("PATH") else {
+        let repo_env = repository_ctx_repo_env(this);
+        let recorded_inputs = repository_ctx_recorded_inputs(this);
+        let Some(path) = record_repository_env_var(&repo_env, &recorded_inputs, "PATH") else {
             return Ok(Value::new_none());
         };
-        for dir in env::split_paths(&path) {
+        for dir in env::split_paths(std::ffi::OsStr::new(&path)) {
             if !dir.is_absolute() {
                 continue;
             }
@@ -3940,7 +4413,14 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
             &program,
             |dep| repository_ctx_record_path_dep(this, dep),
         )?;
+        let repo_env = repository_ctx_repo_env(this);
         let mut command = Command::new(&program);
+        command.env_clear();
+        command.envs(
+            repo_env
+                .iter()
+                .map(|(key, value)| (key.as_str(), value.as_str())),
+        );
         command.args(arguments);
         for (key, value) in environment {
             command.env(key, value);
@@ -4123,7 +4603,13 @@ pub(crate) struct StarlarkModuleExtensionContext<'v> {
     root_module_has_non_dev_dependency: bool,
     #[trace(unsafe_ignore)]
     #[allocative(skip)]
+    repo_env: Arc<BTreeMap<String, String>>,
+    #[trace(unsafe_ignore)]
+    #[allocative(skip)]
     path_label_deps: Mutex<Vec<RepositoryPathLabelDep>>,
+    #[trace(unsafe_ignore)]
+    #[allocative(skip)]
+    recorded_inputs: Arc<Mutex<Vec<BazelRepositoryRecordedInput>>>,
 }
 
 #[allow(dead_code)]
@@ -4132,12 +4618,16 @@ impl<'v> StarlarkModuleExtensionContext<'v> {
         modules: Value<'v>,
         working_dir: String,
         root_module_has_non_dev_dependency: bool,
+        repo_env: Arc<BTreeMap<String, String>>,
+        recorded_inputs: Arc<Mutex<Vec<BazelRepositoryRecordedInput>>>,
     ) -> Self {
         Self {
             modules,
             working_dir,
             root_module_has_non_dev_dependency,
+            repo_env,
             path_label_deps: Mutex::new(Vec::new()),
+            recorded_inputs,
         }
     }
 
@@ -4147,6 +4637,15 @@ impl<'v> StarlarkModuleExtensionContext<'v> {
                 .path_label_deps
                 .lock()
                 .expect("module_ctx path label deps poisoned"),
+        )
+    }
+
+    fn take_recorded_inputs(&self) -> Vec<BazelRepositoryRecordedInput> {
+        std::mem::take(
+            &mut *self
+                .recorded_inputs
+                .lock()
+                .expect("module_ctx recorded inputs poisoned"),
         )
     }
 }
@@ -4182,7 +4681,10 @@ impl<'v> StarlarkValue<'v> for StarlarkModuleExtensionContext<'v> {
         match attribute {
             "facts" => Some(empty_dict_value(heap)),
             "modules" => Some(self.modules),
-            "os" => Some(heap.alloc(StarlarkRepositoryOs)),
+            "os" => Some(heap.alloc(StarlarkRepositoryOs::new(
+                self.repo_env.clone(),
+                self.recorded_inputs.clone(),
+            ))),
             "root_module_has_non_dev_dependency" => {
                 Some(Value::new_bool(self.root_module_has_non_dev_dependency))
             }
@@ -4204,11 +4706,13 @@ impl<'v> Freeze for StarlarkModuleExtensionContext<'v> {
             modules: self.modules.freeze(freezer)?,
             working_dir: self.working_dir,
             root_module_has_non_dev_dependency: self.root_module_has_non_dev_dependency,
+            repo_env: self.repo_env,
             path_label_deps: Mutex::new(
                 self.path_label_deps
                     .into_inner()
                     .expect("module_ctx path label deps poisoned"),
             ),
+            recorded_inputs: self.recorded_inputs,
         })
     }
 }
@@ -4220,7 +4724,11 @@ pub(crate) struct FrozenStarlarkModuleExtensionContext {
     working_dir: String,
     root_module_has_non_dev_dependency: bool,
     #[allocative(skip)]
+    repo_env: Arc<BTreeMap<String, String>>,
+    #[allocative(skip)]
     path_label_deps: Mutex<Vec<RepositoryPathLabelDep>>,
+    #[allocative(skip)]
+    recorded_inputs: Arc<Mutex<Vec<BazelRepositoryRecordedInput>>>,
 }
 
 impl Display for FrozenStarlarkModuleExtensionContext {
@@ -4252,7 +4760,10 @@ impl<'v> StarlarkValue<'v> for FrozenStarlarkModuleExtensionContext {
         match attribute {
             "facts" => Some(empty_dict_value(heap)),
             "modules" => Some(self.modules.to_value()),
-            "os" => Some(heap.alloc(FrozenStarlarkRepositoryOs)),
+            "os" => Some(heap.alloc(FrozenStarlarkRepositoryOs::new(
+                self.repo_env.clone(),
+                self.recorded_inputs.clone(),
+            ))),
             "root_module_has_non_dev_dependency" => {
                 Some(Value::new_bool(self.root_module_has_non_dev_dependency))
             }
@@ -4555,6 +5066,12 @@ impl<'v> StarlarkValue<'v> for FrozenStarlarkBazelModuleTag {
 pub(crate) struct StarlarkModuleExtensionMetadata {
     #[allow(dead_code)]
     reproducible: bool,
+}
+
+impl StarlarkModuleExtensionMetadata {
+    pub(crate) fn reproducible(&self) -> bool {
+        self.reproducible
+    }
 }
 
 starlark_simple_value!(StarlarkModuleExtensionMetadata);
@@ -5672,6 +6189,24 @@ fn module_ctx_working_dir<'v>(
     }
 }
 
+fn module_ctx_repo_env<'v>(
+    this: ValueTypedComplex<'v, StarlarkModuleExtensionContext<'v>>,
+) -> Arc<BTreeMap<String, String>> {
+    match this.unpack() {
+        either::Either::Left(ctx) => ctx.repo_env.clone(),
+        either::Either::Right(ctx) => ctx.repo_env.clone(),
+    }
+}
+
+fn module_ctx_recorded_inputs<'v>(
+    this: ValueTypedComplex<'v, StarlarkModuleExtensionContext<'v>>,
+) -> Arc<Mutex<Vec<BazelRepositoryRecordedInput>>> {
+    match this.unpack() {
+        either::Either::Left(ctx) => ctx.recorded_inputs.clone(),
+        either::Either::Right(ctx) => ctx.recorded_inputs.clone(),
+    }
+}
+
 #[starlark_module]
 fn module_extension_context_methods(builder: &mut MethodsBuilder) {
     fn is_dev_dependency<'v>(
@@ -5696,13 +6231,11 @@ fn module_extension_context_methods(builder: &mut MethodsBuilder) {
         #[starlark(require = pos, default = NoneOr::None)] default: NoneOr<StringValue<'v>>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<NoneOr<StringValue<'v>>> {
-        let _unused = this;
-        match env::var(name) {
-            Ok(value) => Ok(NoneOr::Other(eval.heap().alloc_str(&value))),
-            Err(env::VarError::NotPresent) => Ok(default),
-            Err(env::VarError::NotUnicode(value)) => Ok(NoneOr::Other(
-                eval.heap().alloc_str(&value.to_string_lossy()),
-            )),
+        let repo_env = module_ctx_repo_env(this);
+        let recorded_inputs = module_ctx_recorded_inputs(this);
+        match record_repository_env_var(&repo_env, &recorded_inputs, name) {
+            Some(value) => Ok(NoneOr::Other(eval.heap().alloc_str(&value))),
+            None => Ok(default),
         }
     }
 
@@ -5735,6 +6268,11 @@ fn module_extension_context_methods(builder: &mut MethodsBuilder) {
         )?;
         if let Some(dep) = dep.clone() {
             module_ctx_record_path_dep(this, dep);
+            record_repository_file_input(
+                &module_ctx_recorded_inputs(this),
+                &path,
+                module_ctx_working_dir(this),
+            )?;
         }
         Ok(StarlarkRepositoryPath::new_with_dep(path, dep))
     }
@@ -5744,7 +6282,12 @@ fn module_extension_context_methods(builder: &mut MethodsBuilder) {
         #[starlark(require = pos)] path: Value<'v>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<NoneType> {
-        let _path = module_ctx_path_from_value_relative_to(this, path, eval)?;
+        let path = module_ctx_path_from_value_relative_to(this, path, eval)?;
+        record_repository_file_input(
+            &module_ctx_recorded_inputs(this),
+            &path,
+            module_ctx_working_dir(this),
+        )?;
         Ok(NoneType)
     }
 
@@ -5799,7 +6342,14 @@ fn module_extension_context_methods(builder: &mut MethodsBuilder) {
             &program,
             |dep| module_ctx_record_path_dep(this, dep),
         )?;
+        let repo_env = module_ctx_repo_env(this);
         let mut command = Command::new(&program);
+        command.env_clear();
+        command.envs(
+            repo_env
+                .iter()
+                .map(|(key, value)| (key.as_str(), value.as_str())),
+        );
         command.args(arguments);
         for (key, value) in environment {
             command.env(key, value);
@@ -5847,10 +6397,17 @@ fn module_extension_context_methods(builder: &mut MethodsBuilder) {
     fn read<'v>(
         this: ValueTypedComplex<'v, StarlarkModuleExtensionContext<'v>>,
         #[starlark(require = pos)] path: Value<'v>,
-        #[starlark(require = named, default = "auto")] _watch: &str,
+        #[starlark(require = named, default = "auto")] watch: &str,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<String> {
         let path = module_ctx_path_from_value_relative_to(this, path, eval)?;
+        if repository_should_record_watch(watch)? {
+            record_repository_file_input(
+                &module_ctx_recorded_inputs(this),
+                &path,
+                module_ctx_working_dir(this),
+            )?;
+        }
         let read_path = repository_path_for_read(&path);
         let bytes = fs::read(&read_path).map_err(|e| {
             buck2_error::Error::from(BazelRepositoryError::ModuleCtxReadFile {

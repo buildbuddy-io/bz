@@ -17,6 +17,7 @@ use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::sync::Arc;
+use std::sync::Mutex;
 
 use allocative::Allocative;
 use buck2_common::legacy_configs::configs::LegacyBuckConfig;
@@ -72,11 +73,14 @@ use starlark::syntax::ast::Argument;
 use starlark::syntax::ast::AstExpr;
 use starlark::syntax::ast::AstLiteral;
 use starlark::syntax::ast::Expr;
+use starlark::values::ValueLike;
 use starlark::values::any_complex::StarlarkAnyComplex;
 
 use crate::interpreter::bazel_glob::BazelGlobRequest;
 use crate::interpreter::bazel_glob::BazelPackageDataRequest;
 use crate::interpreter::buckconfig::BuckConfigsViewForStarlark;
+use crate::interpreter::build_context::BazelRepositoryContextForStarlark;
+use crate::interpreter::build_context::BazelRepositoryRecordedInput;
 use crate::interpreter::build_context::BazelRepositoryRuleInvocation;
 use crate::interpreter::build_context::BazelRepositoryRuleRecorder;
 use crate::interpreter::build_context::BuildContext;
@@ -960,6 +964,7 @@ impl InterpreterForDir {
         extension_name: &str,
         extension_usages_json: &str,
         module_ctx_working_dir: &str,
+        repo_env: std::sync::Arc<std::collections::BTreeMap<String, String>>,
         buckconfigs: &mut dyn BuckConfigsViewForStarlark,
         eval_provider: StarlarkEvaluatorProvider,
         cancellation: &CancellationContext,
@@ -982,6 +987,8 @@ impl InterpreterForDir {
                 extension_value,
             )?;
             let recorder = BazelRepositoryRuleRecorder::default();
+            let recorded_inputs: Arc<Mutex<Vec<BazelRepositoryRecordedInput>>> =
+                Arc::new(Mutex::new(Vec::new()));
             let extra_context = PerFileTypeContext::Bzl(BzlEvalCtx::new(extension_path.clone()));
             let extra = BuildContext::new_with_bazel_repository_rule_recorder(
                 &self.cell_info,
@@ -990,6 +997,10 @@ impl InterpreterForDir {
                 extra_context,
                 self.ignore_attrs_for_profiling,
                 &recorder,
+                BazelRepositoryContextForStarlark {
+                    recorded_inputs: recorded_inputs.clone(),
+                    working_dir: module_ctx_working_dir.to_owned(),
+                },
             );
 
             let print = EventDispatcherPrintHandler(get_dispatcher());
@@ -1005,13 +1016,26 @@ impl InterpreterForDir {
                             &extension,
                             extension_usages_json,
                             module_ctx_working_dir,
+                            repo_env.clone(),
+                            recorded_inputs.clone(),
                             globals,
                             eval,
                         )?;
                     match extension.invoke_implementation(module_ctx, eval) {
-                        Ok(_) => Ok(crate::bazel_repository::BazelModuleExtensionEvaluation::Success(
-                            recorder.take_result(),
-                        )),
+                        Ok(value) => {
+                            let mut result = recorder.take_result();
+                            result.recorded_inputs =
+                                crate::bazel_repository::take_module_ctx_recorded_inputs(
+                                    module_ctx,
+                                )?;
+                            result.reproducible = value
+                                .downcast_ref::<crate::bazel_repository::StarlarkModuleExtensionMetadata>(
+                                )
+                                .is_some_and(|metadata| metadata.reproducible());
+                            Ok(crate::bazel_repository::BazelModuleExtensionEvaluation::Success(
+                                result,
+                            ))
+                        }
                         Err(error) => {
                             let label_deps =
                                 crate::bazel_repository::take_module_ctx_path_label_deps(
@@ -1039,6 +1063,7 @@ impl InterpreterForDir {
         rule_module: &FrozenModule,
         invocation: &BazelRepositoryRuleInvocation,
         repository_ctx_working_dir: &str,
+        repo_env: std::sync::Arc<std::collections::BTreeMap<String, String>>,
         buckconfigs: &mut dyn BuckConfigsViewForStarlark,
         eval_provider: StarlarkEvaluatorProvider,
         cancellation: &CancellationContext,
@@ -1061,13 +1086,19 @@ impl InterpreterForDir {
                 &invocation.rule_id.name,
                 rule_value,
             )?;
+            let recorded_inputs: Arc<Mutex<Vec<BazelRepositoryRecordedInput>>> =
+                Arc::new(Mutex::new(Vec::new()));
             let extra_context = PerFileTypeContext::Bzl(BzlEvalCtx::new(rule_path.clone()));
-            let extra = BuildContext::new(
+            let extra = BuildContext::new_with_bazel_repository_context(
                 &self.cell_info,
                 buckconfigs,
                 self.global_state.configuror.host_info(),
                 extra_context,
                 self.ignore_attrs_for_profiling,
+                BazelRepositoryContextForStarlark {
+                    recorded_inputs: recorded_inputs.clone(),
+                    working_dir: repository_ctx_working_dir.to_owned(),
+                },
             );
 
             let print = EventDispatcherPrintHandler(get_dispatcher());
@@ -1082,6 +1113,8 @@ impl InterpreterForDir {
                         repository_rule.as_ref(),
                         invocation,
                         repository_ctx_working_dir,
+                        repo_env.clone(),
+                        recorded_inputs.clone(),
                         globals,
                         eval,
                     )?;
@@ -1090,7 +1123,15 @@ impl InterpreterForDir {
                         .invoke_implementation(repository_ctx, eval)
                     {
                         Ok(_) => Ok(crate::bazel_repository::BazelRepositoryRuleEvaluation::Success(
-                            crate::bazel_repository::take_repository_ctx_files(repository_ctx)?,
+                            crate::bazel_repository::BazelRepositoryRuleEvaluationResult {
+                                files: crate::bazel_repository::take_repository_ctx_files(
+                                    repository_ctx,
+                                )?,
+                                recorded_inputs:
+                                    crate::bazel_repository::take_repository_ctx_recorded_inputs(
+                                        repository_ctx,
+                                    )?,
+                            },
                         )),
                         Err(error) => {
                             let label_deps =

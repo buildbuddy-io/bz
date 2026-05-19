@@ -11,6 +11,8 @@
 use std::cell::OnceCell;
 use std::cell::RefCell;
 use std::fmt::Debug;
+use std::sync::Arc;
+use std::sync::Mutex;
 
 use buck2_core::bxl::BxlFilePath;
 use buck2_core::bzl::ImportPath;
@@ -180,6 +182,8 @@ pub struct BuildContext<'a> {
     pub(crate) starlark_peak_allocated_byte_limit: OnceCell<Option<u64>>,
 
     pub(crate) bazel_repository_rule_recorder: Option<&'a BazelRepositoryRuleRecorder>,
+
+    pub(crate) bazel_repository_context: Option<BazelRepositoryContextForStarlark>,
 }
 
 impl<'a> BuildContext<'a> {
@@ -198,6 +202,7 @@ impl<'a> BuildContext<'a> {
             additional,
             ignore_attrs_for_profiling,
             None,
+            None,
         )
     }
 
@@ -209,6 +214,7 @@ impl<'a> BuildContext<'a> {
         additional: PerFileTypeContext,
         ignore_attrs_for_profiling: bool,
         bazel_repository_rule_recorder: &'a BazelRepositoryRuleRecorder,
+        bazel_repository_context: BazelRepositoryContextForStarlark,
     ) -> BuildContext<'a> {
         Self::new_with_options(
             cell_info,
@@ -217,6 +223,26 @@ impl<'a> BuildContext<'a> {
             additional,
             ignore_attrs_for_profiling,
             Some(bazel_repository_rule_recorder),
+            Some(bazel_repository_context),
+        )
+    }
+
+    pub(crate) fn new_with_bazel_repository_context(
+        cell_info: &'a InterpreterCellInfo,
+        buckconfigs: &'a mut dyn BuckConfigsViewForStarlark,
+        host_info: &'a HostInfo,
+        additional: PerFileTypeContext,
+        ignore_attrs_for_profiling: bool,
+        bazel_repository_context: BazelRepositoryContextForStarlark,
+    ) -> BuildContext<'a> {
+        Self::new_with_options(
+            cell_info,
+            buckconfigs,
+            host_info,
+            additional,
+            ignore_attrs_for_profiling,
+            None,
+            Some(bazel_repository_context),
         )
     }
 
@@ -227,6 +253,7 @@ impl<'a> BuildContext<'a> {
         additional: PerFileTypeContext,
         ignore_attrs_for_profiling: bool,
         bazel_repository_rule_recorder: Option<&'a BazelRepositoryRuleRecorder>,
+        bazel_repository_context: Option<BazelRepositoryContextForStarlark>,
     ) -> BuildContext<'a> {
         let buckconfigs = LegacyBuckConfigsForStarlark::new(buckconfigs);
         BuildContext {
@@ -237,6 +264,7 @@ impl<'a> BuildContext<'a> {
             ignore_attrs_for_profiling,
             starlark_peak_allocated_byte_limit: OnceCell::new(),
             bazel_repository_rule_recorder,
+            bazel_repository_context,
         }
     }
 
@@ -283,9 +311,52 @@ pub struct BazelRepositoryRuleInvocation {
     pub attrs: Vec<(String, String)>,
 }
 
+#[derive(
+    Clone,
+    Debug,
+    Eq,
+    PartialEq,
+    serde::Serialize,
+    serde::Deserialize,
+    allocative::Allocative
+)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum BazelRepositoryRecordedInput {
+    EnvVar {
+        name: String,
+        value: Option<String>,
+    },
+    File {
+        path: String,
+        value: String,
+    },
+    Dirents {
+        path: String,
+        value: String,
+    },
+    DirTree {
+        path: String,
+        value: String,
+    },
+    RepoMapping {
+        source_repo: String,
+        source_cell_name: String,
+        apparent_name: String,
+        canonical_name: Option<String>,
+    },
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct BazelRepositoryContextForStarlark {
+    pub(crate) recorded_inputs: Arc<Mutex<Vec<BazelRepositoryRecordedInput>>>,
+    pub(crate) working_dir: String,
+}
+
 #[derive(Debug, Default, Eq, PartialEq, allocative::Allocative)]
 pub struct BazelModuleExtensionEvaluationResult {
     pub repository_rule_invocations: Vec<BazelRepositoryRuleInvocation>,
+    pub recorded_inputs: Vec<BazelRepositoryRecordedInput>,
+    pub reproducible: bool,
 }
 
 #[derive(Debug, Default)]
@@ -301,6 +372,8 @@ impl BazelRepositoryRuleRecorder {
     pub(crate) fn take_result(&self) -> BazelModuleExtensionEvaluationResult {
         BazelModuleExtensionEvaluationResult {
             repository_rule_invocations: std::mem::take(&mut *self.invocations.borrow_mut()),
+            recorded_inputs: Vec::new(),
+            reproducible: false,
         }
     }
 }
