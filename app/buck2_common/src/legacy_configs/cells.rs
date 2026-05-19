@@ -1441,6 +1441,38 @@ impl BazelModuleCellAliases {
     }
 }
 
+fn bzlmod_external_module_is_local(module: &BazelCompatExternalModule) -> bool {
+    match module {
+        BazelCompatExternalModule::Registry(module) => module.local_path.is_some(),
+        BazelCompatExternalModule::Generated(_) => false,
+    }
+}
+
+fn bzlmod_external_module_is_configure_repo(module: &BazelCompatExternalModule) -> bool {
+    match module {
+        BazelCompatExternalModule::Registry(_) => false,
+        BazelCompatExternalModule::Generated(module) => {
+            match serde_json::from_str::<BzlmodGeneratedCellGenerator>(&module.generator_json) {
+                Ok(
+                    BzlmodGeneratedCellGenerator::HostPlatform(_)
+                    | BzlmodGeneratedCellGenerator::CcAutoconfToolchains(_)
+                    | BzlmodGeneratedCellGenerator::CcAutoconf(_)
+                    | BzlmodGeneratedCellGenerator::ShellConfig(_),
+                ) => true,
+                Ok(_) => bzlmod_canonical_repo_name_looks_configure(&module.canonical_repo_name),
+                Err(_) => bzlmod_canonical_repo_name_looks_configure(&module.canonical_repo_name),
+            }
+        }
+    }
+}
+
+fn bzlmod_canonical_repo_name_looks_configure(canonical_repo_name: &str) -> bool {
+    canonical_repo_name.contains("configure")
+        || canonical_repo_name.contains("config")
+        || canonical_repo_name.contains("toolchain")
+        || canonical_repo_name.contains("toolchains")
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash, Allocative, Pagable)]
 struct BazelDep {
     name: String,
@@ -1591,6 +1623,18 @@ struct BzlmodModTidyValue {
 #[derive(Clone, Debug, PartialEq, Eq, Allocative, Pagable)]
 struct BzlmodFetchAllValue {
     repos_to_vendor: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Allocative, Pagable)]
+struct BzlmodRepoDefinitionValue {
+    found: bool,
+    configure: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Allocative, Pagable)]
+struct BzlmodRepositoryDirectoryValue {
+    found: bool,
+    exclude_from_vendoring: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Allocative, Pagable)]
@@ -2800,6 +2844,105 @@ impl Key for BzlmodModTidyKey {
 }
 
 #[derive(Clone, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable)]
+#[display("BzlmodRepoDefinitionKey({canonical_repo_name})")]
+#[pagable_typetag(dice::DiceKeyDyn)]
+struct BzlmodRepoDefinitionKey {
+    canonical_repo_name: String,
+}
+
+#[async_trait::async_trait]
+impl Key for BzlmodRepoDefinitionKey {
+    type Value = buck2_error::Result<Arc<BzlmodRepoDefinitionValue>>;
+
+    async fn compute(
+        &self,
+        ctx: &mut DiceComputations,
+        _cancellations: &CancellationContext,
+    ) -> Self::Value {
+        let aliases = ctx.compute(&BzlmodResolutionKey).await??;
+        let Some(module) = aliases
+            .external_modules
+            .iter()
+            .find(|module| module.canonical_repo_name() == self.canonical_repo_name)
+        else {
+            return Ok(Arc::new(BzlmodRepoDefinitionValue {
+                found: false,
+                configure: false,
+            }));
+        };
+        Ok(Arc::new(BzlmodRepoDefinitionValue {
+            found: true,
+            configure: bzlmod_external_module_is_configure_repo(module),
+        }))
+    }
+
+    fn equality(_x: &Self::Value, _y: &Self::Value) -> bool {
+        false
+    }
+
+    fn validity(x: &Self::Value) -> bool {
+        x.is_ok()
+    }
+
+    fn value_serialize() -> impl ValueSerialize<Value = Self::Value> {
+        NoValueSerialize::<Self::Value>::new()
+    }
+}
+
+#[derive(Clone, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable)]
+#[display("BzlmodRepositoryDirectoryKey({canonical_repo_name})")]
+#[pagable_typetag(dice::DiceKeyDyn)]
+struct BzlmodRepositoryDirectoryKey {
+    canonical_repo_name: String,
+}
+
+#[async_trait::async_trait]
+impl Key for BzlmodRepositoryDirectoryKey {
+    type Value = buck2_error::Result<Arc<BzlmodRepositoryDirectoryValue>>;
+
+    async fn compute(
+        &self,
+        ctx: &mut DiceComputations,
+        _cancellations: &CancellationContext,
+    ) -> Self::Value {
+        let repo_definition = ctx
+            .compute(&BzlmodRepoDefinitionKey {
+                canonical_repo_name: self.canonical_repo_name.clone(),
+            })
+            .await??;
+        if !repo_definition.found {
+            return Ok(Arc::new(BzlmodRepositoryDirectoryValue {
+                found: false,
+                exclude_from_vendoring: true,
+            }));
+        }
+
+        let aliases = ctx.compute(&BzlmodResolutionKey).await??;
+        let local = aliases
+            .external_modules
+            .iter()
+            .find(|module| module.canonical_repo_name() == self.canonical_repo_name)
+            .is_some_and(bzlmod_external_module_is_local);
+        Ok(Arc::new(BzlmodRepositoryDirectoryValue {
+            found: true,
+            exclude_from_vendoring: local || repo_definition.configure,
+        }))
+    }
+
+    fn equality(_x: &Self::Value, _y: &Self::Value) -> bool {
+        false
+    }
+
+    fn validity(x: &Self::Value) -> bool {
+        x.is_ok()
+    }
+
+    fn value_serialize() -> impl ValueSerialize<Value = Self::Value> {
+        NoValueSerialize::<Self::Value>::new()
+    }
+}
+
+#[derive(Clone, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable)]
 #[display("BzlmodFetchAllKey(configure={configure})")]
 #[pagable_typetag(dice::DiceKeyDyn)]
 struct BzlmodFetchAllKey {
@@ -2822,13 +2965,56 @@ impl Key for BzlmodFetchAllKey {
             .map(|module| module.canonical_repo_name().to_owned())
             .collect::<Vec<_>>();
         if self.configure {
-            repos_to_vendor.retain(|repo| {
-                repo.contains("configure")
-                    || repo.contains("config")
-                    || repo.contains("toolchain")
-                    || repo.contains("toolchains")
-            });
+            let repo_definitions: Vec<(BzlmodRepoDefinitionKey, Arc<BzlmodRepoDefinitionValue>)> =
+                ctx.try_compute_join(
+                    repos_to_vendor
+                        .iter()
+                        .cloned()
+                        .map(|canonical_repo_name| BzlmodRepoDefinitionKey {
+                            canonical_repo_name,
+                        })
+                        .collect::<Vec<_>>(),
+                    |ctx, key| {
+                        async move {
+                            let value = ctx.compute(&key).await??;
+                            buck2_error::Ok((key, value))
+                        }
+                        .boxed()
+                    },
+                )
+                .await?;
+            repos_to_vendor = repo_definitions
+                .into_iter()
+                .filter_map(|(key, value)| value.configure.then_some(key.canonical_repo_name))
+                .collect();
         }
+        let repo_directories: Vec<(
+            BzlmodRepositoryDirectoryKey,
+            Arc<BzlmodRepositoryDirectoryValue>,
+        )> = ctx
+            .try_compute_join(
+                repos_to_vendor
+                    .iter()
+                    .cloned()
+                    .map(|canonical_repo_name| BzlmodRepositoryDirectoryKey {
+                        canonical_repo_name,
+                    })
+                    .collect::<Vec<_>>(),
+                |ctx, key| {
+                    async move {
+                        let value = ctx.compute(&key).await??;
+                        buck2_error::Ok((key, value))
+                    }
+                    .boxed()
+                },
+            )
+            .await?;
+        repos_to_vendor = repo_directories
+            .into_iter()
+            .filter_map(|(key, value)| {
+                (value.found && !value.exclude_from_vendoring).then_some(key.canonical_repo_name)
+            })
+            .collect();
         repos_to_vendor.sort_unstable();
         repos_to_vendor.dedup();
         Ok(Arc::new(BzlmodFetchAllValue { repos_to_vendor }))
