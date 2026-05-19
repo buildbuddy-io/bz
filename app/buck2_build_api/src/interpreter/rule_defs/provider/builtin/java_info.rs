@@ -97,7 +97,15 @@ pub static BAZEL_JAVA_RUN_ACTION: LateBinding<
     ) -> starlark::Result<NoneType>,
 > = LateBinding::new("BAZEL_JAVA_RUN_ACTION");
 
-#[derive(Clone, Debug, Freeze, ProvidesStaticType, Trace, NoSerialize, Allocative)]
+#[derive(
+    Clone,
+    Debug,
+    Freeze,
+    ProvidesStaticType,
+    Trace,
+    NoSerialize,
+    Allocative
+)]
 #[repr(C)]
 pub struct BazelJavaCommandLineGen<V: ValueLifetimeless> {
     arguments: Box<[V]>,
@@ -107,8 +115,7 @@ pub struct BazelJavaCommandLineGen<V: ValueLifetimeless> {
 
 starlark::starlark_complex_value!(pub BazelJavaCommandLine);
 
-unsafe impl<FromV, ToV> Coerce<BazelJavaCommandLineGen<ToV>>
-    for BazelJavaCommandLineGen<FromV>
+unsafe impl<FromV, ToV> Coerce<BazelJavaCommandLineGen<ToV>> for BazelJavaCommandLineGen<FromV>
 where
     FromV: ValueLifetimeless + Coerce<ToV>,
     ToV: ValueLifetimeless,

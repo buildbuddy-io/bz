@@ -786,6 +786,39 @@ pub struct RecordedAnalysisValues {
 register_any_complex_frozen!(FrozenAnalysisValueStorage);
 
 impl RecordedAnalysisValues {
+    pub fn new_provider_collection(
+        self_key: DeferredHolderKey,
+        heap: FrozenHeap,
+        providers: FrozenValueTyped<'static, FrozenProviderCollection>,
+    ) -> Self {
+        let value = heap.alloc_simple(StarlarkAnyComplex {
+            value: FrozenAnalysisValueStorage {
+                self_key: self_key.dupe(),
+                action_data: SmallMap::new(),
+                transitive_sets: Vec::new().into_iter().collect(),
+                lambda_params: DYNAMIC_LAMBDA_PARAMS_STORAGES
+                    .get()
+                    .unwrap()
+                    .new_frozen_dynamic_lambda_params_storage(),
+                result_value: Some(providers),
+            },
+        });
+        Self {
+            self_key,
+            analysis_storage: Some(
+                unsafe {
+                    OwnedFrozenValue::new(
+                        heap.into_ref_named(Buck2TestHeapName::frozen_heap_name()),
+                        value,
+                    )
+                }
+                .downcast()
+                .unwrap(),
+            ),
+            actions: RecordedActions::new(0),
+        }
+    }
+
     /// Creates a minimal RecordedAnalysisValues for testing action lookups only.
     /// This version doesn't require DYNAMIC_LAMBDA_PARAMS_STORAGES to be initialized.
     pub fn testing_new_actions_only(self_key: DeferredHolderKey, actions: RecordedActions) -> Self {

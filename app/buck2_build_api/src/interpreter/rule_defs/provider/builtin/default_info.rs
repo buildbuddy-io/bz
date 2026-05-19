@@ -79,6 +79,7 @@ use crate::interpreter::rule_defs::depset::FrozenBazelDepset;
 use crate::interpreter::rule_defs::depset::bazel_depset_empty;
 use crate::interpreter::rule_defs::depset::bazel_depset_empty_frozen;
 use crate::interpreter::rule_defs::depset::bazel_depset_from_direct_and_transitive;
+use crate::interpreter::rule_defs::depset::bazel_depset_from_frozen_values;
 use crate::interpreter::rule_defs::depset::bazel_depset_from_transitive;
 use crate::interpreter::rule_defs::depset::bazel_depset_from_values;
 use crate::interpreter::rule_defs::depset::bazel_depset_to_list;
@@ -840,6 +841,45 @@ impl FrozenDefaultInfo {
             FrozenValueOfUnchecked::<FrozenBazelDepset>::new(bazel_depset_empty_frozen(heap));
         let files_to_run = FrozenValueOfUnchecked::<StructRef>::new(heap.alloc(AllocStruct([
             ("executable", FrozenValue::new_none()),
+            ("repo_mapping_manifest", FrozenValue::new_none()),
+            ("runfiles_manifest", FrozenValue::new_none()),
+        ])));
+        let data_runfiles = FrozenValueOfUnchecked::<FrozenBazelRunfiles>::new(
+            bazel_runfiles_empty_frozen_value(heap),
+        );
+        let default_runfiles = FrozenValueOfUnchecked::<FrozenBazelRunfiles>::new(
+            bazel_runfiles_empty_frozen_value(heap),
+        );
+        FrozenValueTyped::new_err(heap.alloc(FrozenDefaultInfo {
+            sub_targets,
+            default_outputs,
+            other_outputs,
+            files,
+            files_to_run,
+            data_runfiles,
+            default_runfiles,
+        }))
+        .unwrap()
+    }
+
+    pub fn for_file_target(
+        heap: &FrozenHeap,
+        artifact: FrozenValue,
+    ) -> FrozenValueTyped<'static, FrozenDefaultInfo> {
+        let sub_targets = heap
+            .alloc_typed_unchecked(AllocDict(
+                iter::empty::<(String, FrozenProviderCollection)>(),
+            ))
+            .cast();
+        let default_outputs =
+            FrozenValueOfUnchecked::<ListType<_>>::new(heap.alloc(AllocList([artifact])));
+        let other_outputs =
+            FrozenValueOfUnchecked::<ListType<_>>::new(heap.alloc(AllocList::EMPTY));
+        let files = FrozenValueOfUnchecked::<FrozenBazelDepset>::new(
+            bazel_depset_from_frozen_values(heap, vec![artifact]),
+        );
+        let files_to_run = FrozenValueOfUnchecked::<StructRef>::new(heap.alloc(AllocStruct([
+            ("executable", artifact),
             ("repo_mapping_manifest", FrozenValue::new_none()),
             ("runfiles_manifest", FrozenValue::new_none()),
         ])));

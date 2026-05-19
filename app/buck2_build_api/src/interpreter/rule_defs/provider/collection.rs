@@ -470,16 +470,23 @@ impl<'v> ProviderCollection<'v> {
 }
 
 impl FrozenProviderCollection {
-    pub fn testing_new_default(
+    pub fn new_default_info(
         heap: &FrozenHeap,
+        default_info: FrozenValueTyped<'static, FrozenDefaultInfo>,
     ) -> FrozenValueTyped<'static, FrozenProviderCollection> {
         FrozenValueTyped::new_err(heap.alloc(FrozenProviderCollection {
             providers: SmallMap::from_iter([(
                 DefaultInfoCallable::provider_id().dupe(),
-                FrozenDefaultInfo::testing_empty(heap).to_frozen_value(),
+                default_info.to_frozen_value(),
             )]),
         }))
         .unwrap()
+    }
+
+    pub fn testing_new_default(
+        heap: &FrozenHeap,
+    ) -> FrozenValueTyped<'static, FrozenProviderCollection> {
+        Self::new_default_info(heap, FrozenDefaultInfo::testing_empty(heap))
     }
 }
 

@@ -206,17 +206,17 @@ fn finalizing_actions() -> buck2_error::Result<()> {
             "cell//pkg:foo",
             ConfigurationData::testing_new(),
         ));
-            let mut actions = ActionsRegistry::new(
-                DeferredHolderKey::Base(base.dupe()),
-                ExecutionPlatformResolution::new_for_testing(
-                    Some(ExecutionPlatform::legacy_execution_platform(
-                        CommandExecutorConfig::testing_local(),
-                        ConfigurationNoExec::testing_new(),
-                    )),
-                    Vec::new(),
-                ),
-                None,
-            );
+        let mut actions = ActionsRegistry::new(
+            DeferredHolderKey::Base(base.dupe()),
+            ExecutionPlatformResolution::new_for_testing(
+                Some(ExecutionPlatform::legacy_execution_platform(
+                    CommandExecutorConfig::testing_local(),
+                    ConfigurationNoExec::testing_new(),
+                )),
+                Vec::new(),
+            ),
+            None,
+        );
         let out = ForwardRelativePathBuf::unchecked_new("bar.out".into());
         let declared = actions.declare_artifact(
             None,

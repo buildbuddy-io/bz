@@ -773,6 +773,21 @@ pub(crate) fn bazel_depset_empty_frozen(heap: &FrozenHeap) -> FrozenValue {
     })
 }
 
+pub(crate) fn bazel_depset_from_frozen_values(
+    heap: &FrozenHeap,
+    direct: Vec<FrozenValue>,
+) -> FrozenValue {
+    heap.alloc(FrozenBazelDepset {
+        direct: direct.into_boxed_slice(),
+        transitive: Vec::new().into_boxed_slice(),
+        order: BazelDepsetOrder::Default,
+        element_type: None,
+        to_list_cache: BazelDepsetToListCache::default(),
+        artifact_inputs_cache: BazelDepsetArtifactInputsCache::default(),
+        _marker: PhantomData,
+    })
+}
+
 #[starlark_module]
 fn bazel_depset_methods(builder: &mut MethodsBuilder) {
     fn to_list<'v>(this: &BazelDepset<'v>, heap: Heap<'v>) -> starlark::Result<Value<'v>> {

@@ -2271,7 +2271,10 @@ fn bazel_cc_language(
         })?
     }
     .replace('+', "p");
-    if requested_features.iter().any(|feature| feature == "lang_objc") {
+    if requested_features
+        .iter()
+        .any(|feature| feature == "lang_objc")
+    {
         language = "objc".to_owned();
     }
     Ok(language)
@@ -2287,9 +2290,8 @@ fn bazel_cc_configure_features_from_ctx<'v>(
 ) -> starlark::Result<BazelFeatureConfiguration> {
     let heap = eval.heap();
     let language = bazel_cc_language(language, &requested_features)?;
-    let cpp_configuration = bazel_cc_nested_attr(ctx, &["fragments", "cpp"], heap)?.ok_or_else(|| {
-        bazel_cc_error("cpp configuration fragment is missing")
-    })?;
+    let cpp_configuration = bazel_cc_nested_attr(ctx, &["fragments", "cpp"], heap)?
+        .ok_or_else(|| bazel_cc_error("cpp configuration fragment is missing"))?;
 
     let mut all_requested_features = HashSet::<String>::new();
     let mut all_unsupported_features = unsupported_features.into_iter().collect::<HashSet<_>>();
@@ -2370,12 +2372,11 @@ fn bazel_cc_configure_features_from_ctx<'v>(
     }
 
     if !bazel_cc_bool_attr(cpp_configuration, "_dont_enable_host_nonhost", heap)? {
-        let host_or_nonhost =
-            if bazel_cc_bool_attr(cc_toolchain, "_is_tool_configuration", heap)? {
-                "host"
-            } else {
-                "nonhost"
-            };
+        let host_or_nonhost = if bazel_cc_bool_attr(cc_toolchain, "_is_tool_configuration", heap)? {
+            "host"
+        } else {
+            "nonhost"
+        };
         bazel_cc_add_requested_feature(
             &mut all_requested_features,
             &all_unsupported_features,

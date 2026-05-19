@@ -68,6 +68,7 @@ use smallvec::SmallVec;
 
 use crate::analysis::env::RuleSpec;
 use crate::analysis::env::get_user_defined_rule_spec;
+use crate::analysis::env::new_bazel_input_file_analysis_result;
 use crate::analysis::env::run_analysis;
 use crate::analysis::env::run_bazel_input_file_analysis;
 use crate::analysis::env::run_bazel_output_file_analysis;
@@ -221,10 +222,13 @@ pub async fn get_dep_analysis<'v>(
 ) -> buck2_error::Result<Vec<(&'v ConfiguredTargetLabel, AnalysisResult)>> {
     KeepGoing::try_compute_join_all(ctx, configured_node.deps(), |ctx, dep| {
         async move {
-            let res = ctx
-                .get_analysis_result(dep.label())
-                .await
-                .and_then(|v| v.require_compatible());
+            let res = if matches!(dep.rule_type(), RuleType::BazelInputFile) {
+                new_bazel_input_file_analysis_result(dep.label())
+            } else {
+                ctx.get_analysis_result(dep.label())
+                    .await
+                    .and_then(|v| v.require_compatible())
+            };
             res.map(|x| (dep.label(), x))
         }
         .boxed()
@@ -282,7 +286,8 @@ async fn get_analysis_result_inner(
 
     // For precision, grab the *actual* rule type and not the *underlying* rule type.
     let target_rule_type_name = configured_node.rule_type().name().to_owned();
-    let action_owner_rule_type_name: Arc<str> = Arc::from(configured_node.underlying_rule_type().name());
+    let action_owner_rule_type_name: Arc<str> =
+        Arc::from(configured_node.underlying_rule_type().name());
 
     let configured_node = configured_node.as_ref();
 

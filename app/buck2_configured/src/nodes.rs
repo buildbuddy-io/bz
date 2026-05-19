@@ -86,6 +86,7 @@ use buck2_node::nodes::frontend::TargetGraphCalculation;
 use buck2_node::nodes::unconfigured::TargetNode;
 use buck2_node::nodes::unconfigured::TargetNodeRef;
 use buck2_node::rule::RuleIncomingTransition;
+use buck2_node::rule_type::RuleType;
 use buck2_node::visibility::VisibilityError;
 use buck2_node::visibility::VisibilityPatternList;
 use buck2_util::arc_str::ArcStr;
@@ -856,7 +857,7 @@ pub(crate) async fn gather_deps(
 
     let dep_results = ctx
         .compute_join(traversal.deps.iter(), |ctx, v| {
-            async move { ctx.get_internal_configured_target_node(v.0.target()).await }.boxed()
+            async move { get_configured_dep_node(ctx, v.0.target()).await }.boxed()
         })
         .await;
 
@@ -929,6 +930,51 @@ pub(crate) async fn gather_deps(
         },
         errors_and_incompats,
     ))
+}
+
+fn new_bazel_input_file_configured_target_node(
+    target_label: &ConfiguredTargetLabel,
+    target_node: TargetNode,
+) -> buck2_error::Result<ConfiguredTargetNode> {
+    Ok(ConfiguredTargetNode::new(
+        target_label.dupe(),
+        target_node,
+        MatchedConfigurationSettingKeysWithCfg::new(
+            ConfigurationNoExec::new(target_label.cfg().dupe()),
+            MatchedConfigurationSettingKeys::empty(),
+        ),
+        OrderedMap::new(),
+        ExecutionPlatformResolution::unspecified(),
+        Vec::new(),
+        Vec::new(),
+        OrderedMap::new(),
+        Vec::new(),
+        PluginLists::new(),
+    ))
+}
+
+async fn get_configured_dep_node(
+    ctx: &mut DiceComputations<'_>,
+    target_label: &ConfiguredTargetLabel,
+) -> ResultMaybeCompatible<ConfiguredTargetNode> {
+    let target_node = ctx
+        .get_target_node(target_label.unconfigured())
+        .await
+        .with_buck_error_context(|| {
+            format!(
+                "looking up unconfigured target node `{}`",
+                target_label.unconfigured()
+            )
+        })?;
+
+    if matches!(target_node.rule_type(), RuleType::BazelInputFile) {
+        return ResultMaybeCompatible::Compatible(new_bazel_input_file_configured_target_node(
+            target_label,
+            target_node,
+        )?);
+    }
+
+    ctx.get_internal_configured_target_node(target_label).await
 }
 
 struct ResolvedTransitionInputAttrs<'a> {
@@ -1365,15 +1411,88 @@ async fn configuration_settings_match(
     Ok(true)
 }
 
-fn cfg_constraint_keys(
-    cfg: &ConfigurationData,
-) -> buck2_error::Result<Vec<ConfigurationSettingKey>> {
-    Ok(cfg
-        .data()?
-        .constraints
+fn platform_constraints_contain_label(
+    platform_constraints: &std::collections::BTreeMap<
+        buck2_core::configuration::constraints::ConstraintKey,
+        buck2_core::configuration::constraints::ConstraintValue,
+    >,
+    constraint_value: &TargetLabel,
+) -> bool {
+    let expected = ProvidersLabel::default_for(constraint_value.dupe());
+    platform_constraints
         .values()
-        .map(|constraint| ConfigurationSettingKey(constraint.0.dupe()))
-        .collect())
+        .any(|actual| actual.0 == expected)
+}
+
+async fn resolve_constraint_value_alias(
+    ctx: &mut DiceComputations<'_>,
+    constraint_value: &TargetLabel,
+) -> buck2_error::Result<TargetLabel> {
+    let mut current = constraint_value.dupe();
+    for _ in 0..16 {
+        let node = ctx.get_target_node(&current).await?;
+        if node.rule_type().name() != "alias" {
+            return Ok(current);
+        }
+        let Some(actual) = node
+            .attr_or_none("actual", AttrInspectOptions::All)
+            .and_then(|attr| attr_target_label(&attr.value).map(|label| label.dupe()))
+        else {
+            return Ok(current);
+        };
+        if actual == current {
+            return Ok(current);
+        }
+        current = actual;
+    }
+
+    Ok(current)
+}
+
+async fn platform_contains_constraint_values(
+    ctx: &mut DiceComputations<'_>,
+    platform_cfg: &ConfigurationData,
+    constraint_values: &[TargetLabel],
+) -> buck2_error::Result<bool> {
+    if constraint_values.is_empty() {
+        return Ok(true);
+    }
+    if !platform_cfg.is_bound() {
+        return Ok(false);
+    }
+
+    let platform_constraints = &platform_cfg.data()?.constraints;
+    for constraint_value in constraint_values {
+        if platform_constraints_contain_label(platform_constraints, constraint_value) {
+            continue;
+        }
+
+        let resolved = resolve_constraint_value_alias(ctx, constraint_value).await?;
+        if !platform_constraints_contain_label(platform_constraints, &resolved) {
+            return Ok(false);
+        }
+    }
+
+    Ok(true)
+}
+
+fn platform_contains_platform_constraints(
+    platform_cfg: &ConfigurationData,
+    required_cfg: &ConfigurationData,
+) -> buck2_error::Result<bool> {
+    if !platform_cfg.is_bound() || !required_cfg.is_bound() {
+        return Ok(false);
+    }
+
+    let platform_constraints = &platform_cfg.data()?.constraints;
+    for (constraint_key, required_value) in &required_cfg.data()?.constraints {
+        match platform_constraints.get(constraint_key) {
+            Some(actual_value) if actual_value == required_value => {}
+            _ => return Ok(false),
+        }
+    }
+
+    Ok(true)
 }
 
 async fn toolchain_constraints_match(
@@ -1397,26 +1516,22 @@ async fn toolchain_constraints_match(
         .and_then(|attr| attr_bool(&attr.value))
         .unwrap_or(false);
     if use_target_platform_constraints {
-        let target_constraints = cfg_constraint_keys(target_cfg)?;
-        return configuration_settings_match(ctx, exec_cfg, toolchain_cell, &target_constraints)
-            .await;
+        return platform_contains_platform_constraints(exec_cfg, target_cfg);
     }
 
     let target_compatible_with = target_node
         .known_attr_or_none(TARGET_COMPATIBLE_WITH_ATTRIBUTE.id, AttrInspectOptions::All)
-        .map(|attr| attr_configuration_setting_keys(&attr.value))
+        .map(|attr| attr_target_labels(&attr.value))
         .unwrap_or_default();
-    if !configuration_settings_match(ctx, target_cfg, toolchain_cell, &target_compatible_with)
-        .await?
-    {
+    if !platform_contains_constraint_values(ctx, target_cfg, &target_compatible_with).await? {
         return Ok(false);
     }
 
     let exec_compatible_with = target_node
         .known_attr_or_none(EXEC_COMPATIBLE_WITH_ATTRIBUTE.id, AttrInspectOptions::All)
-        .map(|attr| attr_configuration_setting_keys(&attr.value))
+        .map(|attr| attr_target_labels(&attr.value))
         .unwrap_or_default();
-    if !configuration_settings_match(ctx, exec_cfg, toolchain_cell, &exec_compatible_with).await? {
+    if !platform_contains_constraint_values(ctx, exec_cfg, &exec_compatible_with).await? {
         return Ok(false);
     }
 
@@ -1446,9 +1561,10 @@ async fn compute_registered_bazel_toolchain_nodes(
         })?
         .unwrap_or_default();
     let mut registered = registered;
+    registered.reverse();
     registered.extend(get_bazel_module_registered_toolchains_on_dice(ctx).await?);
-    registered.sort_unstable();
-    registered.dedup();
+    let mut seen = BTreeSet::new();
+    registered.retain(|pattern| seen.insert(pattern.clone()));
     if registered.is_empty() {
         return Ok(Arc::new(Vec::new()));
     }
@@ -1475,11 +1591,23 @@ async fn compute_registered_bazel_toolchain_nodes(
     }
 
     let resolved = ResolveTargetPatterns::resolve(ctx, &parsed_patterns).await?;
+    let loaded_toolchain_packages = ctx
+        .try_compute_join(
+            resolved.specs.into_iter().collect::<Vec<_>>(),
+            |ctx, (package_with_modifiers, spec)| {
+                async move {
+                    let result = ctx
+                        .get_interpreter_results(package_with_modifiers.package)
+                        .await?;
+                    buck2_error::Ok((result, spec))
+                }
+                .boxed()
+            },
+        )
+        .await?;
+
     let mut toolchains = Vec::new();
-    for (package_with_modifiers, spec) in resolved.specs {
-        let result = ctx
-            .get_interpreter_results(package_with_modifiers.package)
-            .await?;
+    for (result, spec) in loaded_toolchain_packages {
         let (targets, missing) = result.apply_spec(spec);
         if let Some(missing) = missing {
             return Err(missing.into_first_error().into());
@@ -1533,6 +1661,90 @@ async fn registered_bazel_toolchain_nodes(
     ctx.compute(&RegisteredBazelToolchainNodesKey).await?
 }
 
+#[derive(Clone, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable)]
+#[display(
+    "SINGLE_BAZEL_TOOLCHAIN_RESOLUTION({}, target: {}, exec: {})",
+    toolchain_type,
+    target_cfg,
+    exec_cfg
+)]
+#[pagable_typetag(dice::DiceKeyDyn)]
+struct BazelSingleToolchainResolutionKey {
+    toolchain_type: String,
+    target_cfg: ConfigurationData,
+    exec_cfg: ConfigurationData,
+}
+
+async fn compute_bazel_single_toolchain_resolution(
+    ctx: &mut DiceComputations<'_>,
+    key: &BazelSingleToolchainResolutionKey,
+) -> buck2_error::Result<Option<TargetLabel>> {
+    let registered = registered_bazel_toolchain_nodes(ctx).await?;
+    if registered.is_empty() {
+        return Ok(None);
+    }
+
+    for candidate in registered.iter() {
+        if !bazel_toolchain_keys_match(&key.toolchain_type, &candidate.toolchain_type) {
+            continue;
+        }
+        if !toolchain_constraints_match(ctx, &candidate.node, &key.target_cfg, &key.exec_cfg)
+            .await?
+        {
+            continue;
+        }
+
+        let Some(toolchain_attr) = candidate
+            .node
+            .attr_or_none("toolchain", AttrInspectOptions::All)
+        else {
+            continue;
+        };
+        return bazel_toolchain_implementation_label(ctx, &candidate.node, toolchain_attr.value)
+            .await;
+    }
+
+    Ok(None)
+}
+
+#[async_trait]
+impl Key for BazelSingleToolchainResolutionKey {
+    type Value = buck2_error::Result<Option<TargetLabel>>;
+
+    async fn compute(
+        &self,
+        ctx: &mut DiceComputations,
+        _cancellation: &CancellationContext,
+    ) -> Self::Value {
+        compute_bazel_single_toolchain_resolution(ctx, self).await
+    }
+
+    fn equality(x: &Self::Value, y: &Self::Value) -> bool {
+        match (x, y) {
+            (Ok(x), Ok(y)) => x == y,
+            _ => false,
+        }
+    }
+
+    fn value_serialize() -> impl ValueSerialize<Value = Self::Value> {
+        NoValueSerialize::<Self::Value>::new()
+    }
+}
+
+async fn resolve_bazel_single_toolchain(
+    ctx: &mut DiceComputations<'_>,
+    toolchain_type: String,
+    target_cfg: ConfigurationData,
+    exec_cfg: ConfigurationData,
+) -> buck2_error::Result<Option<TargetLabel>> {
+    ctx.compute(&BazelSingleToolchainResolutionKey {
+        toolchain_type,
+        target_cfg,
+        exec_cfg,
+    })
+    .await?
+}
+
 async fn resolve_bazel_toolchain_deps(
     ctx: &mut DiceComputations<'_>,
     target_label: &ConfiguredTargetLabel,
@@ -1543,52 +1755,45 @@ async fn resolve_bazel_toolchain_deps(
         return Ok((Vec::new(), Vec::new()));
     }
 
-    let registered = registered_bazel_toolchain_nodes(ctx).await?;
-    if registered.is_empty() {
-        return Ok((Vec::new(), Vec::new()));
-    }
+    let declared_toolchains = target_node
+        .bazel_toolchains()
+        .iter()
+        .map(|declared| normalize_bazel_toolchain_key(declared))
+        .collect::<Vec<_>>();
 
-    let mut deps = Vec::new();
-    let mut resolved = Vec::new();
-    for declared in target_node.bazel_toolchains() {
-        let declared = normalize_bazel_toolchain_key(declared);
-        let mut toolchain_node = None;
-        for candidate in registered.iter() {
-            if !bazel_toolchain_keys_match(&declared, &candidate.toolchain_type) {
-                continue;
+    let resolved_toolchain_impls: Vec<(String, Option<TargetLabel>)> = ctx
+        .try_compute_join(declared_toolchains.iter(), |ctx, declared: &String| {
+            async move {
+                let toolchain_impl = resolve_bazel_single_toolchain(
+                    ctx,
+                    declared.clone(),
+                    target_label.cfg().dupe(),
+                    execution_platform_cfg.cfg().dupe(),
+                )
+                .await?;
+                buck2_error::Ok((declared.clone(), toolchain_impl))
             }
-            if toolchain_constraints_match(
-                ctx,
-                &candidate.node,
-                target_label.cfg(),
-                execution_platform_cfg.cfg(),
-            )
-            .await?
-            {
-                toolchain_node = Some(&candidate.node);
-                break;
-            }
-        }
-        let Some(toolchain_node) = toolchain_node else {
-            continue;
-        };
+            .boxed()
+        })
+        .await?;
 
-        let Some(toolchain_attr) =
-            toolchain_node.attr_or_none("toolchain", AttrInspectOptions::All)
-        else {
-            continue;
-        };
-        let Some(toolchain_impl) =
-            bazel_toolchain_implementation_label(ctx, toolchain_node, toolchain_attr.value).await?
-        else {
-            continue;
-        };
-        let configured = toolchain_impl.configure_with_exec(
-            target_label.cfg().dupe(),
-            execution_platform_cfg.cfg().dupe(),
-        );
-        let provider_label =
-            ConfiguredProvidersLabel::new(configured.dupe(), ProvidersName::Default);
+    let resolved_toolchain_impls = resolved_toolchain_impls
+        .into_iter()
+        .filter_map(|(declared, toolchain_impl)| {
+            let toolchain_impl = toolchain_impl?;
+            let configured = toolchain_impl.configure_with_exec(
+                target_label.cfg().dupe(),
+                execution_platform_cfg.cfg().dupe(),
+            );
+            let provider_label =
+                ConfiguredProvidersLabel::new(configured.dupe(), ProvidersName::Default);
+            Some((declared, configured, provider_label))
+        })
+        .collect::<Vec<_>>();
+
+    let mut deps = Vec::with_capacity(resolved_toolchain_impls.len());
+    let mut resolved = Vec::with_capacity(resolved_toolchain_impls.len());
+    for (declared, configured, provider_label) in resolved_toolchain_impls {
         let dep = ctx
             .get_internal_configured_target_node(&configured)
             .await
@@ -1857,6 +2062,13 @@ async fn compute_configured_target_node(
             );
         }
         _ => {}
+    }
+
+    if matches!(target_node.rule_type(), RuleType::BazelInputFile) {
+        return ResultMaybeCompatible::Compatible(new_bazel_input_file_configured_target_node(
+            &key.0,
+            target_node,
+        )?);
     }
 
     let transition_id = match &target_node.rule.cfg {

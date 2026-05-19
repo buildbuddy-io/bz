@@ -16,6 +16,7 @@ use buck2_build_api::analysis::AnalysisResult;
 use buck2_build_api::analysis::anon_promises_dyn::RunAnonPromisesAccessorPair;
 use buck2_build_api::analysis::calculation::RuleAnalysisCalculation;
 use buck2_build_api::analysis::registry::AnalysisRegistry;
+use buck2_build_api::analysis::registry::RecordedAnalysisValues;
 use buck2_build_api::interpreter::rule_defs::artifact::associated::AssociatedArtifacts;
 use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact::StarlarkArtifact;
 use buck2_build_api::interpreter::rule_defs::artifact::starlark_declared_artifact::StarlarkDeclaredArtifact;
@@ -27,6 +28,7 @@ use buck2_build_api::interpreter::rule_defs::context::analysis_actions_to_bazel_
 use buck2_build_api::interpreter::rule_defs::provider::builtin::bazel_output_file_info::FrozenBazelOutputFileInfo;
 use buck2_build_api::interpreter::rule_defs::provider::builtin::bazel_output_file_info::new_bazel_output_file_info;
 use buck2_build_api::interpreter::rule_defs::provider::builtin::default_info::DefaultInfo;
+use buck2_build_api::interpreter::rule_defs::provider::builtin::default_info::FrozenDefaultInfo;
 use buck2_build_api::interpreter::rule_defs::provider::builtin::template_placeholder_info::FrozenTemplatePlaceholderInfo;
 use buck2_build_api::interpreter::rule_defs::provider::builtin::toolchain_info::FrozenToolchainInfo;
 use buck2_build_api::interpreter::rule_defs::provider::builtin::validation_info::FrozenValidationInfo;
@@ -42,6 +44,7 @@ use buck2_common::legacy_configs::dice::HasLegacyConfigs;
 use buck2_common::legacy_configs::key::BuckconfigKeyRef;
 use buck2_common::legacy_configs::view::LegacyBuckConfigView;
 use buck2_core::deferred::base_deferred_key::BaseDeferredKey;
+use buck2_core::deferred::key::DeferredHolderKey;
 use buck2_core::execution_types::execution::ExecutionPlatformResolution;
 use buck2_core::fs::buck_out_path::BazelOutputRoot;
 use buck2_core::fs::buck_out_path::BuckOutPathKind;
@@ -90,6 +93,7 @@ use futures::FutureExt;
 use starlark::environment::FrozenModule;
 use starlark::environment::Module;
 use starlark::eval::Evaluator;
+use starlark::values::FrozenHeap;
 use starlark::values::FrozenValue;
 use starlark::values::FrozenValueTyped;
 use starlark::values::Value;
@@ -325,70 +329,40 @@ pub(crate) fn run_bazel_input_file_analysis<'a, 'd: 'a>(
 }
 
 async fn run_bazel_input_file_analysis_underlying(
-    dice: &mut DiceComputations<'_>,
+    _dice: &mut DiceComputations<'_>,
     label: &ConfiguredTargetLabel,
-    execution_platform: &ExecutionPlatformResolution,
-    cancellation: &CancellationContext,
+    _execution_platform: &ExecutionPlatformResolution,
+    _cancellation: &CancellationContext,
 ) -> buck2_error::Result<AnalysisResult> {
-    BuckStarlarkModule::with_profiling_async(async move |env| {
-        let print = EventDispatcherPrintHandler(get_dispatcher());
-        let registry = AnalysisRegistry::new_from_owner(
-            BaseDeferredKey::TargetLabel(label.dupe()),
-            execution_platform.dupe(),
-        )?;
-        let path = PackageRelativePath::new(label.unconfigured().name().as_str())?.to_arc();
+    new_bazel_input_file_analysis_result(label)
+}
 
-        let eval_kind = StarlarkEvalKind::Analysis(label.dupe());
-        let eval_provider = StarlarkEvaluatorProvider::new(dice, eval_kind).await?;
-        let mut reentrant_eval =
-            eval_provider.make_reentrant_evaluator(&env, cancellation.into())?;
-
-        let provider_collection = reentrant_eval.with_evaluator(|eval| {
-            eval.set_print_handler(&print);
-            eval.set_soft_error_handler(&Buck2StarlarkSoftErrorHandler);
-
-            let source =
-                SourceArtifact::new(SourcePath::new(label.unconfigured().pkg().dupe(), path));
-            let source = eval
-                .heap()
-                .alloc(StarlarkArtifact::new_source(source.into(), false));
-            let default_info = eval
-                .heap()
-                .alloc(DefaultInfo::for_file_target(eval.heap(), source));
-            let providers =
-                ProviderCollection::try_from_value(eval.heap().alloc(AllocList([default_info])))?;
-            Ok(ValueTypedComplex::new_err(eval.heap().alloc(providers))
-                .internal_error("Just allocated provider collection")?)
-        })?;
-
-        registry
-            .analysis_value_storage
-            .set_result_value(provider_collection)?;
-
-        let finished_eval = reentrant_eval.finish_evaluation();
-        let declared_actions = registry.num_declared_actions();
-        let declared_artifacts = registry.num_declared_artifacts();
-        let registry_finalizer = registry.finalize(&env)?;
-        let (token, frozen_env, profile_data) = finished_eval.freeze_and_finish(env)?;
-        let recorded_values = registry_finalizer(&frozen_env)?;
-
-        Ok((
-            token,
-            AnalysisResult::new(
-                recorded_values,
-                profile_data,
-                StdBuckHashMap::default(),
-                declared_actions,
-                declared_artifacts,
-                None,
-            ),
-        ))
-    })
-    .await
+pub(crate) fn new_bazel_input_file_analysis_result(
+    label: &ConfiguredTargetLabel,
+) -> buck2_error::Result<AnalysisResult> {
+    let heap = FrozenHeap::new();
+    let path = PackageRelativePath::new(label.unconfigured().name().as_str())?.to_arc();
+    let source = SourceArtifact::new(SourcePath::new(label.unconfigured().pkg().dupe(), path));
+    let source = heap.alloc(StarlarkArtifact::new_source(source.into(), false));
+    let default_info = FrozenDefaultInfo::for_file_target(&heap, source);
+    let providers = FrozenProviderCollection::new_default_info(&heap, default_info);
+    let recorded_values = RecordedAnalysisValues::new_provider_collection(
+        DeferredHolderKey::Base(BaseDeferredKey::TargetLabel(label.dupe())),
+        heap,
+        providers,
+    );
+    Ok(AnalysisResult::new(
+        recorded_values,
+        None,
+        StdBuckHashMap::default(),
+        0,
+        0,
+        None,
+    ))
 }
 
 async fn run_bazel_output_file_analysis_underlying(
-    dice: &mut DiceComputations<'_>,
+    _dice: &mut DiceComputations<'_>,
     label: &ConfiguredTargetLabel,
     results: Vec<(&ConfiguredTargetLabel, AnalysisResult)>,
     execution_platform: &ExecutionPlatformResolution,
@@ -432,7 +406,7 @@ async fn run_bazel_output_file_analysis_underlying(
         )?;
 
         let eval_kind = StarlarkEvalKind::Analysis(label.dupe());
-        let eval_provider = StarlarkEvaluatorProvider::new(dice, eval_kind).await?;
+        let eval_provider = StarlarkEvaluatorProvider::passthrough(eval_kind);
         let mut reentrant_eval =
             eval_provider.make_reentrant_evaluator(&env, cancellation.into())?;
 

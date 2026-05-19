@@ -717,11 +717,7 @@ pub(crate) struct ExecutionPlatformResolutionKey {
 
 impl Display for ExecutionPlatformResolutionKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "TOOLCHAIN_RESOLUTION(cell:{})",
-            self.target_node_cell
-        )?;
+        write!(f, "TOOLCHAIN_RESOLUTION(cell:{})", self.target_node_cell)?;
 
         if !self.exec_compatible_with.is_empty() {
             write!(
