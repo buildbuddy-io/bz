@@ -14,6 +14,7 @@ use std::collections::BTreeSet;
 use std::collections::VecDeque;
 use std::fs;
 use std::future::Future;
+use std::io::ErrorKind;
 use std::path::Path;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -58,6 +59,7 @@ use buck2_core::cells::external::register_external_cell_origin;
 use buck2_core::cells::name::CellName;
 use buck2_core::fs::project::ProjectRoot;
 use buck2_core::fs::project_rel_path::ProjectRelativePath;
+use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
 use buck2_error::BuckErrorContext;
 use buck2_error::buck2_error;
 use buck2_error::conversion::from_any_with_tag;
@@ -368,11 +370,7 @@ impl BuckConfigBasedCells {
             } else {
                 BazelCompatBazelrcOptions::default()
             };
-            config.with_bazel_compat_cell_defaults(
-                &[],
-                &[],
-                &bazelrc_options,
-            )
+            config.with_bazel_compat_cell_defaults(&[], &[], &bazelrc_options)
         } else {
             config
         };
@@ -539,12 +537,8 @@ impl BuckConfigBasedCells {
                 get_bazelrc_options(&root_path, &mut file_ops).await
             })
             .await?;
-            let root_config = root_config.with_bazel_compat_defaults(
-                &[],
-                &[],
-                &[],
-                &bazelrc_options,
-            );
+            let root_config =
+                root_config.with_bazel_compat_defaults(&[], &[], &[], &bazelrc_options);
             root_config
         } else {
             root_config
@@ -757,11 +751,7 @@ impl BuckConfigBasedCells {
             } else {
                 BazelCompatBazelrcOptions::default()
             };
-            Ok(config.with_bazel_compat_cell_defaults(
-                &[],
-                &[],
-                &bazelrc_options,
-            ))
+            Ok(config.with_bazel_compat_cell_defaults(&[], &[], &bazelrc_options))
         } else {
             Ok(config)
         }
@@ -921,7 +911,10 @@ fn external_cell_origin_from_bazel_module(
                 module_name: Arc::from(module.module_name.as_str()),
                 version: Arc::from(module.version.as_str()),
                 canonical_repo_name: Arc::from(module.canonical_repo_name.as_str()),
-                local_path: module.local_path.as_ref().map(|path| Arc::from(path.as_str())),
+                local_path: module
+                    .local_path
+                    .as_ref()
+                    .map(|path| Arc::from(path.as_str())),
                 url: Arc::from(module.url.as_str()),
                 urls: Arc::new(urls.into_iter().map(Arc::from).collect()),
                 integrity: Arc::from(module.integrity.as_str()),
@@ -1473,14 +1466,33 @@ fn bzlmod_canonical_repo_name_looks_configure(canonical_repo_name: &str) -> bool
         || canonical_repo_name.contains("toolchains")
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash, Allocative, Pagable)]
+#[derive(
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    Hash,
+    Allocative,
+    Pagable
+)]
 struct BazelDep {
     name: String,
     version: String,
     apparent_name: Option<String>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Allocative, Pagable)]
+#[derive(
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    Allocative,
+    Pagable
+)]
 struct DiscoveredBcrModule {
     dep: BazelDep,
     source_json: BcrSourceJson,
@@ -1500,7 +1512,9 @@ static BZLMOD_HTTP_CLIENT: LazyLock<tokio::sync::OnceCell<HttpClient>> =
 
 const BAZEL_TOOLS_MODULE_TOOLS: &str = include_str!("../../../../bazel_tools/MODULE.tools");
 
-#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Allocative, Pagable)]
+#[derive(
+    Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Allocative, Pagable
+)]
 struct RootBzlmodModule {
     name: String,
     version: String,
@@ -1514,7 +1528,17 @@ struct RootBzlmodModule {
 }
 
 #[derive(
-    Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize, Allocative, Pagable,
+    Clone,
+    Debug,
+    Eq,
+    PartialEq,
+    Ord,
+    PartialOrd,
+    Hash,
+    Serialize,
+    Deserialize,
+    Allocative,
+    Pagable
 )]
 struct BzlmodUseRepoImport {
     alias: String,
@@ -1522,7 +1546,17 @@ struct BzlmodUseRepoImport {
 }
 
 #[derive(
-    Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize, Allocative, Pagable,
+    Clone,
+    Debug,
+    Eq,
+    PartialEq,
+    Ord,
+    PartialOrd,
+    Hash,
+    Serialize,
+    Deserialize,
+    Allocative,
+    Pagable
 )]
 struct BzlmodExtensionUsage {
     proxy_name: String,
@@ -1535,7 +1569,17 @@ struct BzlmodExtensionUsage {
 }
 
 #[derive(
-    Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize, Allocative, Pagable,
+    Clone,
+    Debug,
+    Eq,
+    PartialEq,
+    Ord,
+    PartialOrd,
+    Hash,
+    Serialize,
+    Deserialize,
+    Allocative,
+    Pagable
 )]
 struct BzlmodRepoOverride {
     repo_name: String,
@@ -1544,7 +1588,17 @@ struct BzlmodRepoOverride {
 }
 
 #[derive(
-    Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize, Allocative, Pagable,
+    Clone,
+    Debug,
+    Eq,
+    PartialEq,
+    Ord,
+    PartialOrd,
+    Hash,
+    Serialize,
+    Deserialize,
+    Allocative,
+    Pagable
 )]
 struct BzlmodExtensionTag {
     tag_name: String,
@@ -1553,7 +1607,17 @@ struct BzlmodExtensionTag {
 }
 
 #[derive(
-    Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize, Allocative, Pagable,
+    Clone,
+    Debug,
+    Eq,
+    PartialEq,
+    Ord,
+    PartialOrd,
+    Hash,
+    Serialize,
+    Deserialize,
+    Allocative,
+    Pagable
 )]
 struct BzlmodUseRepoRuleInvocation {
     rule_bzl_file: String,
@@ -1562,7 +1626,9 @@ struct BzlmodUseRepoRuleInvocation {
     attrs: Vec<(String, String)>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Allocative, Pagable)]
+#[derive(
+    Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Allocative, Pagable
+)]
 struct BzlmodExtensionId {
     bzl_cell_name: String,
     bzl_path: String,
@@ -1654,7 +1720,17 @@ struct BcrResolution {
 type BzlmodCellAliasMap = StdBuckHashMap<String, String>;
 type BzlmodCellAliasesByCell = StdBuckHashMap<String, BzlmodCellAliasMap>;
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash, Allocative, Pagable)]
+#[derive(
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    Hash,
+    Allocative,
+    Pagable
+)]
 struct BzlmodPatchConfig {
     #[serde(default)]
     url: String,
@@ -1674,20 +1750,48 @@ struct BzlmodRootPatch {
     content: Arc<str>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash, Allocative, Pagable)]
+#[derive(
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    Hash,
+    Allocative,
+    Pagable
+)]
 struct BzlmodOverlayConfig {
     path: String,
     url: String,
     integrity: String,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Allocative, Pagable)]
+#[derive(
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    Allocative,
+    Pagable
+)]
 struct BzlmodModuleExtensionEvaluationConfig {
     root_module_has_non_dev_dependency: bool,
     modules: Vec<BzlmodModuleExtensionModuleConfig>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Allocative, Pagable)]
+#[derive(
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    Allocative,
+    Pagable
+)]
 struct BzlmodModuleExtensionModuleConfig {
     name: String,
     version: String,
@@ -1698,7 +1802,16 @@ struct BzlmodModuleExtensionModuleConfig {
     tags: Vec<BzlmodModuleExtensionTagConfig>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Allocative, Pagable)]
+#[derive(
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    Allocative,
+    Pagable
+)]
 struct BzlmodModuleExtensionTagConfig {
     tag_name: String,
     dev_dependency: bool,
@@ -1766,7 +1879,17 @@ fn empty_bzlmod_lockfile_data() -> BzlmodModuleLockfileData {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash, Allocative, Pagable)]
+#[derive(
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    Hash,
+    Allocative,
+    Pagable
+)]
 struct BcrSourceJson {
     url: String,
     urls: Option<Vec<String>>,
@@ -2151,7 +2274,10 @@ impl Key for BzlmodYankedVersionsKey {
             })
             .await??;
         let client = shared_bzlmod_http_client().await?;
-        let metadata_url = format!("{}/modules/{}/metadata.json", registry.url, self.module_name);
+        let metadata_url = format!(
+            "{}/modules/{}/metadata.json",
+            registry.url, self.module_name
+        );
         let yanked_versions = match http_get_text(&client, &metadata_url).await {
             Ok(metadata) => bzlmod_yanked_versions_from_metadata_json(&metadata).ok(),
             Err(_) => None,
@@ -2313,6 +2439,7 @@ impl Key for BzlmodModuleFileKey {
                 fetch_local_bzlmod_module(dep, local_path_override).await?,
             ));
         }
+        let project_fs = ctx.global_data().get_io_provider().project_root().dupe();
         let client = shared_bzlmod_http_client().await?;
         let archive_override = root.archive_overrides.get(&dep.name).cloned();
         let single_version_override = root.single_version_overrides.get(&dep.name).cloned();
@@ -2324,6 +2451,7 @@ impl Key for BzlmodModuleFileKey {
                 "registry module",
                 "fetching MODULE.bazel",
                 fetch_bcr_module_file(
+                    &project_fs,
                     &registry.url,
                     client,
                     dep,
@@ -2528,6 +2656,7 @@ impl Key for BzlmodRepoSpecKey {
             version: self.version.clone(),
             apparent_name: None,
         };
+        let project_fs = ctx.global_data().get_io_provider().project_root().dupe();
         let client = shared_bzlmod_http_client().await?;
         let repo = format!("{}@{}", dep.name, dep.version);
         Ok(Arc::new(
@@ -2537,6 +2666,7 @@ impl Key for BzlmodRepoSpecKey {
                 "registry repo spec",
                 "fetching source.json",
                 fetch_bcr_module_source_json(
+                    &project_fs,
                     &registry.url,
                     client,
                     &dep,
@@ -2602,8 +2732,7 @@ impl Key for BzlmodDepGraphKey {
             }
         }
         let mut root_module = root.root_module.clone();
-        root_module.lockfile_extension_generated_repos =
-            lockfile.extension_generated_repos.clone();
+        root_module.lockfile_extension_generated_repos = lockfile.extension_generated_repos.clone();
         root_module.lockfile_extension_facts = lockfile.extension_facts.clone();
         Ok(Arc::new(bzlmod_dep_graph_from_selection(
             &root.root_deps,
@@ -3116,11 +3245,9 @@ async fn collect_bzlmod_yanked_versions(
         })
         .await?;
     for (key, value) in yanked_versions {
-        let Some(info) = value
-            .yanked_versions
-            .as_ref()
-            .and_then(|versions| versions.get(selection.selected_versions_for_name(&key.module_name)?))
-        else {
+        let Some(info) = value.yanked_versions.as_ref().and_then(|versions| {
+            versions.get(selection.selected_versions_for_name(&key.module_name)?)
+        }) else {
             continue;
         };
         return Err(buck2_error!(
@@ -3192,7 +3319,9 @@ impl BzlmodSelectionResult {
     fn selected_versions_for_name(&self, name: &str) -> Option<&str> {
         self.selected_keys
             .iter()
-            .find_map(|(selected_name, version)| (selected_name == name).then_some(version.as_str()))
+            .find_map(|(selected_name, version)| {
+                (selected_name == name).then_some(version.as_str())
+            })
     }
 }
 
@@ -3235,9 +3364,9 @@ fn select_bzlmod_modules(
     for (name, version) in discovered.keys() {
         match selected_versions.get(name) {
             Some(existing)
-                if bzlmod_version_cmp(version, existing)
-                    .with_buck_error_context(|| format!("Invalid version for module `{name}`"))?
-                    != Ordering::Greater => {}
+                if bzlmod_version_cmp(version, existing).with_buck_error_context(|| {
+                    format!("Invalid version for module `{name}`")
+                })? != Ordering::Greater => {}
             _ => {
                 selected_versions.insert(name.clone(), version.clone());
             }
@@ -4066,18 +4195,17 @@ fn resolve_bzlmod_extension_usage_generated_repos(
                     }),
             );
     }
-    let extension_usages_json =
-        extension_usages_json_by_id
-            .get(&resolved_extension.id)
-            .ok_or_else(|| {
-                buck2_error!(
-                    buck2_error::ErrorTag::Input,
-                    "bzlmod module extension `{}//{}%{}` has no single-extension usages value",
-                    resolved_extension.id.bzl_cell_name,
-                    resolved_extension.id.bzl_path,
-                    resolved_extension.id.extension_name
-                )
-            })?;
+    let extension_usages_json = extension_usages_json_by_id
+        .get(&resolved_extension.id)
+        .ok_or_else(|| {
+            buck2_error!(
+                buck2_error::ErrorTag::Input,
+                "bzlmod module extension `{}//{}%{}` has no single-extension usages value",
+                resolved_extension.id.bzl_cell_name,
+                resolved_extension.id.bzl_path,
+                resolved_extension.id.extension_name
+            )
+        })?;
     if static_repo_names.is_empty() {
         return Ok(());
     }
@@ -4350,7 +4478,10 @@ async fn bzlmod_vendor_file_data(
             .as_project_relative_path()
             .join(ForwardRelativePath::new("VENDOR.bazel")?),
     );
-    let Some(lines) = file_ops.read_file_lines_if_exists(&vendor_file_path).await? else {
+    let Some(lines) = file_ops
+        .read_file_lines_if_exists(&vendor_file_path)
+        .await?
+    else {
         return Ok(BzlmodVendorFileValue {
             ignored_repos: Vec::new(),
             pinned_repos: Vec::new(),
@@ -5175,7 +5306,83 @@ fn builtin_bazel_tools_module() -> buck2_error::Result<DiscoveredBcrModule> {
     })
 }
 
+fn bzlmod_bcr_discovery_cache_key(registry: &str, dep: &BazelDep, kind: &str) -> String {
+    let mut hasher = Sha256::new();
+    for field in [
+        "buck2-bzlmod-bcr-discovery-v1",
+        kind,
+        registry,
+        dep.name.as_str(),
+        dep.version.as_str(),
+    ] {
+        hasher.update(field.len().to_string().as_bytes());
+        hasher.update(b"\0");
+        hasher.update(field.as_bytes());
+        hasher.update(b"\0");
+    }
+    hex::encode(hasher.finalize())
+}
+
+fn bzlmod_bcr_discovery_cache_path(
+    registry: &str,
+    dep: &BazelDep,
+    kind: &str,
+) -> ProjectRelativePathBuf {
+    ProjectRelativePathBuf::unchecked_new(format!(
+        "buck-out/v2/cache/bzlmod_bcr_discovery/{}/{}",
+        bzlmod_bcr_discovery_cache_key(registry, dep, kind),
+        kind,
+    ))
+}
+
+fn read_bzlmod_bcr_discovery_cache(
+    project_fs: &ProjectRoot,
+    path: &ProjectRelativePathBuf,
+) -> buck2_error::Result<Option<String>> {
+    let path = project_fs.resolve(path);
+    match fs::read_to_string(path.as_path()) {
+        Ok(contents) => Ok(Some(contents)),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error).with_buck_error_context(|| {
+            format!("Error reading bzlmod registry cache `{}`", path.display())
+        }),
+    }
+}
+
+fn write_bzlmod_bcr_discovery_cache(
+    project_fs: &ProjectRoot,
+    path: &ProjectRelativePathBuf,
+    contents: &str,
+) -> buck2_error::Result<()> {
+    let path = project_fs.resolve(path);
+    if let Some(parent) = path.as_path().parent() {
+        fs::create_dir_all(parent).with_buck_error_context(|| {
+            format!(
+                "Error creating parent directory for bzlmod registry cache `{}`",
+                path.display()
+            )
+        })?;
+    }
+    let temp = path
+        .as_path()
+        .with_extension(format!("tmp.{}", std::process::id()));
+    fs::write(&temp, contents).with_buck_error_context(|| {
+        format!(
+            "Error writing temporary bzlmod registry cache `{}`",
+            temp.display()
+        )
+    })?;
+    fs::rename(&temp, path.as_path()).with_buck_error_context(|| {
+        format!(
+            "Error committing bzlmod registry cache `{}`",
+            path.display()
+        )
+    })?;
+    Ok(())
+}
+
 async fn fetch_bcr_module_file(
+    project_fs: &ProjectRoot,
     registry: &str,
     client: HttpClient,
     dep: BazelDep,
@@ -5198,7 +5405,15 @@ async fn fetch_bcr_module_file(
             "{registry}/modules/{}/{}/MODULE.bazel",
             dep.name, dep.version
         );
-        let module_text = http_get_text(&client, &module_url).await?;
+        let cache_path = bzlmod_bcr_discovery_cache_path(registry, &dep, "MODULE.bazel");
+        let module_text =
+            if let Some(module_text) = read_bzlmod_bcr_discovery_cache(project_fs, &cache_path)? {
+                module_text
+            } else {
+                let module_text = http_get_text(&client, &module_url).await?;
+                write_bzlmod_bcr_discovery_cache(project_fs, &cache_path, &module_text)?;
+                module_text
+            };
         (empty_bcr_source_json(), module_text)
     };
     if archive_override.is_none()
@@ -5214,6 +5429,7 @@ async fn fetch_bcr_module_file(
 }
 
 async fn fetch_bcr_module_source_json(
+    project_fs: &ProjectRoot,
     registry: &str,
     client: HttpClient,
     dep: &BazelDep,
@@ -5230,7 +5446,16 @@ async fn fetch_bcr_module_source_json(
         "{registry}/modules/{}/{}/source.json",
         dep.name, dep.version
     );
-    serde_json::from_str(&http_get_text(&client, &source_url).await?)
+    let cache_path = bzlmod_bcr_discovery_cache_path(registry, dep, "source.json");
+    let source_json =
+        if let Some(source_json) = read_bzlmod_bcr_discovery_cache(project_fs, &cache_path)? {
+            source_json
+        } else {
+            let source_json = http_get_text(&client, &source_url).await?;
+            write_bzlmod_bcr_discovery_cache(project_fs, &cache_path, &source_json)?;
+            source_json
+        };
+    serde_json::from_str(&source_json)
         .with_buck_error_context(|| format!("Invalid BCR source metadata at `{source_url}`"))
 }
 

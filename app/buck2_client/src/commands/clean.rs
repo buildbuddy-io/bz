@@ -8,6 +8,7 @@
  * above-listed licenses.
  */
 
+use std::path::Path;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::AtomicBool;
@@ -86,6 +87,12 @@ the specified duration, without killing the daemon",
     )]
     background: bool,
 
+    #[clap(
+        long = "expunge-bzlmod-caches",
+        help = "Also delete bzlmod repository caches. By default, normal clean preserves them like Bazel preserves fetched external repositories."
+    )]
+    expunge_bzlmod_caches: bool,
+
     /// Command doesn't need these flags, but they are used in mode files, so we need to keep them.
     #[clap(flatten)]
     _target_cfg: TargetCfgUnusedOptions,
@@ -114,6 +121,7 @@ impl CleanCommand {
                 InnerCleanCommand {
                     dry_run: self.dry_run,
                     background: self.background,
+                    preserve_bzlmod_caches: !self.expunge_bzlmod_caches,
                     common_opts: self.common_opts,
                 },
                 matches,
@@ -134,6 +142,7 @@ impl CleanCommand {
 struct InnerCleanCommand {
     dry_run: bool,
     background: bool,
+    preserve_bzlmod_caches: bool,
     common_opts: CommonCommandOptions,
 }
 
@@ -161,6 +170,7 @@ impl BuckSubcommand for InnerCleanCommand {
                 self.common_opts.console_opts.console_type,
                 None,
                 self.background,
+                self.preserve_bzlmod_caches,
             )
             .await
             .into();
@@ -184,6 +194,7 @@ impl BuckSubcommand for InnerCleanCommand {
             self.common_opts.console_opts.console_type,
             Some(&lifecycle_lock),
             self.background,
+            self.preserve_bzlmod_caches,
         )
         .await
         .into()
@@ -203,6 +214,7 @@ async fn clean(
     // None means "dry run".
     lifecycle_lock: Option<&BuckdLifecycleLock>,
     background: bool,
+    preserve_bzlmod_caches: bool,
 ) -> buck2_error::Result<()> {
     let paths_to_clean = if background {
         let trash_uuid = Uuid::new_v4();
@@ -221,6 +233,10 @@ async fn clean(
                 trash_target.display()
             ))?;
             fs_util::rename(&buck_out_dir, &trash_target).categorize_internal()?;
+            let trash_target_normalized = AbsNormPathBuf::new(trash_target.to_path_buf())?;
+            if preserve_bzlmod_caches {
+                restore_preserved_bzlmod_caches(&trash_target_normalized, &buck_out_dir)?;
+            }
         }
 
         // Clean the daemon_dir first
@@ -242,11 +258,11 @@ async fn clean(
         let trash_target_normalized = AbsNormPathBuf::new(trash_target.to_path_buf())?;
         if trash_target_normalized.exists() {
             paths_to_clean.extend(
-                collect_paths_to_clean(&trash_target_normalized)?
+                collect_paths_to_clean(&trash_target_normalized, false)?
                     .map(|path| path.display().to_string()),
             );
             tokio::task::spawn_blocking(move || {
-                clean_buck_out_with_retry(&trash_target_normalized, console_type)
+                clean_buck_out_with_retry(&trash_target_normalized, console_type, false)
             })
             .await?
             .buck_error_context("Failed to spawn clean")?;
@@ -256,11 +272,11 @@ async fn clean(
         let mut paths_to_clean = Vec::new();
 
         if buck_out_dir.exists() {
-            paths_to_clean =
-                collect_paths_to_clean(&buck_out_dir)?.map(|path| path.display().to_string());
+            paths_to_clean = collect_paths_to_clean(&buck_out_dir, preserve_bzlmod_caches)?
+                .map(|path| path.display().to_string());
             if lifecycle_lock.is_some() {
                 tokio::task::spawn_blocking(move || {
-                    clean_buck_out_with_retry(&buck_out_dir, console_type)
+                    clean_buck_out_with_retry(&buck_out_dir, console_type, preserve_bzlmod_caches)
                 })
                 .await?
                 .buck_error_context("Failed to spawn clean")?;
@@ -287,8 +303,82 @@ async fn clean(
     Ok(())
 }
 
+const PRESERVED_BZLMOD_CACHE_DIRS: &[&str] = &[
+    "bzlmod_bcr_discovery",
+    "bzlmod_cell_graph_module_extensions",
+    "bzlmod_repo_contents",
+];
+
+fn cache_dir(buck_out_path: &AbsNormPathBuf) -> AbsNormPathBuf {
+    buck_out_path
+        .join(buck2_fs::paths::forward_rel_path::ForwardRelativePath::unchecked_new("cache"))
+}
+
+fn bzlmod_cache_dir(
+    buck_out_path: &AbsNormPathBuf,
+    cache_dir_name: &str,
+) -> buck2_error::Result<AbsNormPathBuf> {
+    Ok(
+        cache_dir(buck_out_path).join(buck2_fs::paths::forward_rel_path::ForwardRelativePath::new(
+            cache_dir_name,
+        )?),
+    )
+}
+
+fn preserved_bzlmod_cache_paths(
+    buck_out_path: &AbsNormPathBuf,
+    preserve_bzlmod_caches: bool,
+) -> buck2_error::Result<Vec<AbsNormPathBuf>> {
+    if !preserve_bzlmod_caches {
+        return Ok(Vec::new());
+    }
+    PRESERVED_BZLMOD_CACHE_DIRS
+        .iter()
+        .map(|cache_dir_name| bzlmod_cache_dir(buck_out_path, cache_dir_name))
+        .collect()
+}
+
+fn is_preserved_path(path: &Path, preserved_paths: &[AbsNormPathBuf]) -> bool {
+    preserved_paths
+        .iter()
+        .any(|preserved| path.starts_with(preserved.as_path()))
+}
+
+fn contains_preserved_path(path: &Path, preserved_paths: &[AbsNormPathBuf]) -> bool {
+    preserved_paths
+        .iter()
+        .any(|preserved| preserved.as_path().starts_with(path))
+}
+
+fn restore_preserved_bzlmod_caches(
+    from_buck_out: &AbsNormPathBuf,
+    to_buck_out: &AbsNormPathBuf,
+) -> buck2_error::Result<()> {
+    let to_cache_dir = cache_dir(to_buck_out);
+    for cache_dir_name in PRESERVED_BZLMOD_CACHE_DIRS {
+        let from = bzlmod_cache_dir(from_buck_out, cache_dir_name)?;
+        if fs_util::symlink_metadata_if_exists(&from)?.is_none() {
+            continue;
+        }
+        fs_util::create_dir_all(&to_cache_dir)?;
+        let to = bzlmod_cache_dir(to_buck_out, cache_dir_name)?;
+        fs_util::remove_all(&to).categorize_internal()?;
+        fs_util::rename(&from, &to).categorize_internal()?;
+    }
+    Ok(())
+}
+
 fn collect_paths_to_clean(
     buck_out_path: &AbsNormPathBuf,
+    preserve_bzlmod_caches: bool,
+) -> buck2_error::Result<Vec<AbsNormPathBuf>> {
+    let preserved_paths = preserved_bzlmod_cache_paths(buck_out_path, preserve_bzlmod_caches)?;
+    collect_paths_to_clean_with_preserved(buck_out_path, &preserved_paths)
+}
+
+fn collect_paths_to_clean_with_preserved(
+    buck_out_path: &AbsNormPathBuf,
+    preserved_paths: &[AbsNormPathBuf],
 ) -> buck2_error::Result<Vec<AbsNormPathBuf>> {
     if !buck_out_path.exists() {
         return Ok(vec![]);
@@ -298,7 +388,18 @@ fn collect_paths_to_clean(
     for entry in dir {
         let entry = entry?;
         let path = entry.path();
-        paths_to_clean.push(path);
+        if is_preserved_path(path.as_path(), &preserved_paths) {
+            continue;
+        }
+        if contains_preserved_path(path.as_path(), &preserved_paths) {
+            let child = path;
+            paths_to_clean.extend(collect_paths_to_clean_with_preserved(
+                &child,
+                preserved_paths,
+            )?);
+        } else {
+            paths_to_clean.push(path);
+        }
     }
 
     Ok(paths_to_clean)
@@ -311,8 +412,9 @@ fn collect_paths_to_clean(
 fn clean_buck_out_with_retry(
     path: &AbsNormPathBuf,
     console_type: ConsoleType,
+    preserve_bzlmod_caches: bool,
 ) -> buck2_error::Result<()> {
-    let mut result = clean_buck_out(path, console_type);
+    let mut result = clean_buck_out(path, console_type, preserve_bzlmod_caches);
     match result {
         Ok(_) => {
             return result;
@@ -322,7 +424,7 @@ fn clean_buck_out_with_retry(
                 "Retrying buck-out clean, first attempted failed with: {:#}",
                 e
             );
-            result = clean_buck_out(path, console_type);
+            result = clean_buck_out(path, console_type, preserve_bzlmod_caches);
         }
     }
     result
@@ -421,7 +523,12 @@ impl Drop for CleanProgressHandle {
     }
 }
 
-fn clean_buck_out(path: &AbsNormPathBuf, console_type: ConsoleType) -> buck2_error::Result<()> {
+fn clean_buck_out(
+    path: &AbsNormPathBuf,
+    console_type: ConsoleType,
+    preserve_bzlmod_caches: bool,
+) -> buck2_error::Result<()> {
+    let preserved_paths = preserved_bzlmod_cache_paths(path, preserve_bzlmod_caches)?;
     let walk = WalkDir::new(path);
     let thread_pool = ThreadPool::new(buck2_util::threads::available_parallelism());
     let error = Arc::new(Mutex::new(None));
@@ -443,7 +550,11 @@ fn clean_buck_out(path: &AbsNormPathBuf, console_type: ConsoleType) -> buck2_err
             .map(|console| CleanProgressHandle::new(state, console)),
     };
 
-    for dir_entry in walk.into_iter().flatten() {
+    for dir_entry in walk
+        .into_iter()
+        .filter_entry(|entry| !is_preserved_path(entry.path(), &preserved_paths))
+        .flatten()
+    {
         let file_type = dir_entry.file_type();
         // As in the daemon, heavily parallel writes to directories in btrfs perform really poorly,
         // so we only parallelize file deletions and do the rest synchronously.
@@ -488,11 +599,26 @@ fn clean_buck_out(path: &AbsNormPathBuf, console_type: ConsoleType) -> buck2_err
     // Buck's cwd is typically the directory that is passed in here, which means that on Windows we
     // often fail to delete this if we don't clean up all our child processes. Leaving zombies
     // around isn't great though...
+    remove_unpreserved_children(path, &preserved_paths)?;
+    Ok(())
+}
+
+fn remove_unpreserved_children(
+    path: &AbsNormPathBuf,
+    preserved_paths: &[AbsNormPathBuf],
+) -> buck2_error::Result<()> {
     let dir = fs_util::read_dir(path).categorize_internal()?;
     for entry in dir {
         let entry = entry?;
-        let path = entry.path();
-        fs_util::remove_dir_all(path).categorize_internal()?;
+        let child = entry.path();
+        if is_preserved_path(child.as_path(), preserved_paths) {
+            continue;
+        }
+        if contains_preserved_path(child.as_path(), preserved_paths) {
+            remove_unpreserved_children(&child, preserved_paths)?;
+        } else {
+            fs_util::remove_all(&child).categorize_internal()?;
+        }
     }
     Ok(())
 }
