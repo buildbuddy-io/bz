@@ -14,6 +14,8 @@ use std::sync::Arc;
 
 use allocative::Allocative;
 use async_trait::async_trait;
+use buck2_common::file_ops::dice::DiceFileComputations;
+use buck2_common::file_ops::error::FileReadErrorContext;
 use buck2_common::package_listing::dice::DicePackageListingResolver;
 use buck2_core::build_file_path::BuildFilePath;
 use buck2_core::bzl::ImportPath;
@@ -81,17 +83,35 @@ pub struct BazelPackageDeclarationsKey(pub PackageLabel);
 #[pagable_typetag(dice::DiceKeyDyn)]
 pub struct BazelNonFinalizerPackagePiecesKey(pub PackageLabel);
 
+/// Bazel `PACKAGE_ERROR`: replays a package loading error as its own graph node.
+#[derive(Clone, Dupe, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable)]
+#[display("PACKAGE_ERROR({})", _0)]
+#[pagable_typetag(dice::DiceKeyDyn)]
+pub struct BazelPackageErrorKey(pub PackageLabel);
+
 /// Bazel `PACKAGE_ERROR_MESSAGE`: summarizes the package loading error, if any.
 #[derive(Clone, Dupe, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable)]
 #[display("PACKAGE_ERROR_MESSAGE({})", _0)]
 #[pagable_typetag(dice::DiceKeyDyn)]
 pub struct BazelPackageErrorMessageKey(pub PackageLabel);
 
+/// Bazel `BZL_COMPILE`: parses a Starlark module and records its direct loads.
+#[derive(Clone, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable)]
+#[display("BZL_COMPILE({})", _0)]
+#[pagable_typetag(dice::DiceKeyDyn)]
+pub struct BazelBzlCompileKey(pub OwnedStarlarkModulePath);
+
 /// Bazel `BZL_LOAD`: loads a single Starlark module.
 #[derive(Clone, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable)]
 #[display("BZL_LOAD({})", _0)]
 #[pagable_typetag(dice::DiceKeyDyn)]
 pub struct BazelBzlLoadKey(pub OwnedStarlarkModulePath);
+
+/// Bazel `STARLARK_BUILTINS`: computes the interpreter's predeclared environment.
+#[derive(Clone, Dupe, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable)]
+#[display("STARLARK_BUILTINS")]
+#[pagable_typetag(dice::DiceKeyDyn)]
+pub struct BazelStarlarkBuiltinsKey;
 
 struct TargetGraphCalculationInstance;
 
@@ -210,6 +230,31 @@ impl Key for BazelPackageDeclarationsKey {
 }
 
 #[async_trait]
+impl Key for BazelPackageErrorKey {
+    type Value = buck2_error::Result<()>;
+    async fn compute(
+        &self,
+        ctx: &mut DiceComputations,
+        _cancellation: &CancellationContext,
+    ) -> Self::Value {
+        ctx.compute(&BazelPackageKey(self.0.dupe())).await??;
+        Ok(())
+    }
+
+    fn equality(_: &Self::Value, _: &Self::Value) -> bool {
+        false
+    }
+
+    fn validity(x: &Self::Value) -> bool {
+        x.is_ok()
+    }
+
+    fn value_serialize() -> impl ValueSerialize<Value = Self::Value> {
+        NoValueSerialize::<Self::Value>::new()
+    }
+}
+
+#[async_trait]
 impl Key for BazelPackageErrorMessageKey {
     type Value = Option<Arc<String>>;
     async fn compute(
@@ -226,6 +271,58 @@ impl Key for BazelPackageErrorMessageKey {
 
     fn equality(x: &Self::Value, y: &Self::Value) -> bool {
         x == y
+    }
+
+    fn value_serialize() -> impl ValueSerialize<Value = Self::Value> {
+        NoValueSerialize::<Self::Value>::new()
+    }
+}
+
+#[async_trait]
+impl Key for BazelBzlCompileKey {
+    type Value = buck2_error::Result<Arc<Vec<OwnedStarlarkModulePath>>>;
+    async fn compute(
+        &self,
+        ctx: &mut DiceComputations,
+        _cancellation: &CancellationContext,
+    ) -> Self::Value {
+        let starlark_path = self.0.borrow();
+        match starlark_path {
+            StarlarkModulePath::JsonFile(_) | StarlarkModulePath::TomlFile(_) => {
+                Ok(Arc::new(Vec::new()))
+            }
+            StarlarkModulePath::LoadFile(_) | StarlarkModulePath::BxlFile(_) => {
+                let content =
+                    DiceFileComputations::read_file(ctx, starlark_path.path().as_ref())
+                        .await
+                        .without_package_context_information()?;
+                let interpreter = ctx
+                    .get_interpreter_calculator(OwnedStarlarkPath::new(
+                        starlark_path.starlark_path(),
+                    ))
+                    .await?;
+                let parse_data =
+                    interpreter.prepare_eval_with_content(starlark_path.starlark_path(), content)??;
+                Ok(Arc::new(
+                    parse_data
+                        .imports
+                        .iter()
+                        .map(|(_span, path)| path.clone())
+                        .collect(),
+                ))
+            }
+        }
+    }
+
+    fn equality(x: &Self::Value, y: &Self::Value) -> bool {
+        match (x, y) {
+            (Ok(x), Ok(y)) => x == y,
+            _ => false,
+        }
+    }
+
+    fn validity(x: &Self::Value) -> bool {
+        x.is_ok()
     }
 
     fn value_serialize() -> impl ValueSerialize<Value = Self::Value> {
@@ -315,6 +412,7 @@ impl Key for BazelBzlLoadKey {
         cancellation: &CancellationContext,
     ) -> Self::Value {
         let starlark_path = self.0.borrow();
+        ctx.compute(&BazelBzlCompileKey(self.0.clone())).await??;
         // We cannot just use the inner default delegate's eval_import because that would not
         // delegate back to this Bazel-shaped key for transitive loads.
         Ok(ctx
@@ -334,6 +432,30 @@ impl Key for BazelBzlLoadKey {
 
     fn value_serialize() -> impl ValueSerialize<Value = Self::Value> {
         OkPagableValueSerialize::<Self::Value>::new()
+    }
+}
+
+#[async_trait]
+impl Key for BazelStarlarkBuiltinsKey {
+    type Value = buck2_error::Result<Globals>;
+    async fn compute(
+        &self,
+        ctx: &mut DiceComputations,
+        _cancellation: &CancellationContext,
+    ) -> Self::Value {
+        Ok(ctx.get_global_interpreter_state().await?.globals().dupe())
+    }
+
+    fn equality(_: &Self::Value, _: &Self::Value) -> bool {
+        false
+    }
+
+    fn validity(x: &Self::Value) -> bool {
+        x.is_ok()
+    }
+
+    fn value_serialize() -> impl ValueSerialize<Value = Self::Value> {
+        NoValueSerialize::<Self::Value>::new()
     }
 }
 
@@ -399,7 +521,7 @@ impl InterpreterCalculationImpl for InterpreterCalculationInstance {
     }
 
     async fn global_env(&self, ctx: &mut DiceComputations<'_>) -> buck2_error::Result<Globals> {
-        Ok(ctx.get_global_interpreter_state().await?.globals().dupe())
+        ctx.compute(&BazelStarlarkBuiltinsKey).await?
     }
 
     async fn prelude_import(

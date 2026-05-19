@@ -2178,7 +2178,7 @@ fn bzlmod_module_extension_evaluation_working_dir(
     allocative::Allocative,
     Pagable
 )]
-#[display("{setup:?}")]
+#[display("SINGLE_EXTENSION_EVAL({setup:?})")]
 #[pagable_typetag(dice::DiceKeyDyn)]
 struct BzlmodSingleExtensionEvalKey {
     setup: BzlmodModuleExtensionRepoSetup,
@@ -2261,7 +2261,7 @@ impl Key for BzlmodSingleExtensionEvalKey {
     allocative::Allocative,
     Pagable
 )]
-#[display("{setup:?}")]
+#[display("SINGLE_EXTENSION({setup:?})")]
 #[pagable_typetag(dice::DiceKeyDyn)]
 struct BzlmodSingleExtensionKey {
     setup: BzlmodModuleExtensionRepoSetup,
@@ -2927,7 +2927,7 @@ struct BzlmodModuleExtensionRepoMappingEntries {
     allocative::Allocative,
     Pagable
 )]
-#[display("{generated_setup:?}")]
+#[display("MODULE_EXTENSION_REPO_MAPPING_ENTRIES({generated_setup:?})")]
 #[pagable_typetag(dice::DiceKeyDyn)]
 struct BzlmodModuleExtensionRepoMappingEntriesKey {
     generated_setup: BzlmodGeneratedCellSetup,
@@ -3227,7 +3227,7 @@ async fn materialize_generated_contents(
     allocative::Allocative,
     Pagable
 )]
-#[display("({}, {})", path, setup)]
+#[display("REPOSITORY_DIRECTORY({}, {})", path, setup)]
 #[pagable_typetag(dice::DiceKeyDyn)]
 struct BzlmodGeneratedCellMaterializationKey {
     path: ProjectRelativePathBuf,
@@ -3730,7 +3730,7 @@ pub(crate) async fn get_file_ops_delegate(
         allocative::Allocative,
         Pagable
     )]
-    #[display("({}, {})", _0, _1)]
+    #[display("REPOSITORY_DIRECTORY({}, {})", _0, _1)]
     #[pagable_typetag(dice::DiceKeyDyn)]
     struct BzlmodFileOpsDelegateKey(CellName, BzlmodCellSetup);
 
@@ -3803,7 +3803,7 @@ pub(crate) async fn get_generated_file_ops_delegate(
         allocative::Allocative,
         Pagable
     )]
-    #[display("({}, {})", _0, _1)]
+    #[display("REPOSITORY_DIRECTORY({}, {})", _0, _1)]
     #[pagable_typetag(dice::DiceKeyDyn)]
     struct BzlmodGeneratedFileOpsDelegateKey(CellName, BzlmodGeneratedCellSetup);
 

@@ -7,6 +7,7 @@
  * You may select, at your option, one of the above-listed licenses.
  */
 
+use std::fmt;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -66,7 +67,6 @@ pub(crate) enum BazelPackageDataRequest {
 
 #[derive(
     Clone,
-    derive_more::Display,
     Debug,
     Eq,
     Hash,
@@ -74,11 +74,19 @@ pub(crate) enum BazelPackageDataRequest {
     allocative::Allocative,
     pagable::Pagable
 )]
-#[display("BazelPackageDataKey({package}, {request:?})")]
 #[pagable_typetag(dice::DiceKeyDyn)]
 pub(crate) struct BazelPackageDataKey {
     pub(crate) package: PackageLabel,
     pub(crate) request: BazelPackageDataRequest,
+}
+
+impl fmt::Display for BazelPackageDataKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self.request {
+            BazelPackageDataRequest::Glob(_) => write!(f, "GLOB({})", self.package),
+            BazelPackageDataRequest::Subpackages => write!(f, "GLOBS({})", self.package),
+        }
+    }
 }
 
 #[async_trait]

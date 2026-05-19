@@ -1980,6 +1980,7 @@ async fn compute_configured_forward_target_node(
 }
 
 #[derive(Clone, Dupe, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable)]
+#[display("CONFIGURED_TARGET({})", _0)]
 #[pagable_typetag(dice::DiceKeyDyn)]
 pub struct ConfiguredTargetNodeKey(pub ConfiguredTargetLabel);
 

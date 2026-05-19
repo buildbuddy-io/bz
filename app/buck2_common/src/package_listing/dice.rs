@@ -41,6 +41,7 @@ use crate::package_listing::resolver::PackageListingResolver;
     Allocative,
     Pagable
 )]
+#[display("PACKAGE_LOOKUP({})", _0)]
 #[pagable_typetag(dice::DiceKeyDyn)]
 pub struct PackageListingKey(pub PackageLabel);
 
@@ -55,7 +56,7 @@ impl std::fmt::Display for PackageListingWithStrategyKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "PackageListingWithStrategyKey({:?}, {:?})",
+            "PACKAGE_LOOKUP({:?}, strategy={:?})",
             self.package, self.strategy
         )
     }

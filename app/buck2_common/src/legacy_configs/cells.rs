@@ -2015,7 +2015,7 @@ pub async fn get_bazel_module_registered_toolchains_on_dice(
 }
 
 #[derive(Clone, Dupe, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable)]
-#[display("BzlmodLockFileKey")]
+#[display("BAZEL_LOCK_FILE")]
 #[pagable_typetag(dice::DiceKeyDyn)]
 struct BzlmodLockFileKey;
 
@@ -2054,7 +2054,7 @@ impl Key for BzlmodLockFileKey {
 }
 
 #[derive(Clone, Dupe, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable)]
-#[display("BzlmodHiddenLockFileKey")]
+#[display("BAZEL_LOCK_FILE(hidden)")]
 #[pagable_typetag(dice::DiceKeyDyn)]
 struct BzlmodHiddenLockFileKey;
 
@@ -2085,7 +2085,7 @@ impl Key for BzlmodHiddenLockFileKey {
 }
 
 #[derive(Clone, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable)]
-#[display("BzlmodRegistryKey({url})")]
+#[display("REGISTRY({url})")]
 #[pagable_typetag(dice::DiceKeyDyn)]
 struct BzlmodRegistryKey {
     url: String,
@@ -2127,7 +2127,7 @@ impl Key for BzlmodRegistryKey {
 }
 
 #[derive(Clone, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable)]
-#[display("BzlmodYankedVersionsKey({module_name}, {registry_url})")]
+#[display("YANKED_VERSIONS({module_name}, {registry_url})")]
 #[pagable_typetag(dice::DiceKeyDyn)]
 struct BzlmodYankedVersionsKey {
     module_name: String,
@@ -2172,7 +2172,7 @@ impl Key for BzlmodYankedVersionsKey {
 }
 
 #[derive(Clone, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable)]
-#[display("BzlmodClientEnvironmentVariableKey({name})")]
+#[display("CLIENT_ENVIRONMENT_VARIABLE({name})")]
 #[pagable_typetag(dice::DiceKeyDyn)]
 struct BzlmodClientEnvironmentVariableKey {
     name: String,
@@ -2209,7 +2209,7 @@ impl Key for BzlmodClientEnvironmentVariableKey {
 }
 
 #[derive(Clone, Dupe, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable)]
-#[display("BzlmodAllowedYankedVersionsKey")]
+#[display("CLIENT_ENVIRONMENT_VARIABLE(BZLMOD_ALLOW_YANKED_VERSIONS)")]
 #[pagable_typetag(dice::DiceKeyDyn)]
 struct BzlmodAllowedYankedVersionsKey;
 
@@ -2249,7 +2249,7 @@ impl Key for BzlmodAllowedYankedVersionsKey {
 }
 
 #[derive(Clone, Dupe, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable)]
-#[display("BzlmodRootModuleKey")]
+#[display("MODULE_FILE(root)")]
 #[pagable_typetag(dice::DiceKeyDyn)]
 struct BzlmodRootModuleKey;
 
@@ -2285,7 +2285,7 @@ impl Key for BzlmodRootModuleKey {
 }
 
 #[derive(Clone, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable)]
-#[display("BzlmodModuleFileKey({}@{})", name, version)]
+#[display("MODULE_FILE({}@{})", name, version)]
 #[pagable_typetag(dice::DiceKeyDyn)]
 struct BzlmodModuleFileKey {
     name: String,
@@ -2353,7 +2353,7 @@ struct BzlmodDiscoveryResult {
 }
 
 #[derive(Clone, Dupe, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable)]
-#[display("BzlmodDiscoveryKey")]
+#[display("BAZEL_DEP_GRAPH(discovery)")]
 #[pagable_typetag(dice::DiceKeyDyn)]
 struct BzlmodDiscoveryKey;
 
@@ -2439,7 +2439,7 @@ struct BzlmodSelectionResult {
 }
 
 #[derive(Clone, Dupe, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable)]
-#[display("BzlmodModuleResolutionKey")]
+#[display("BAZEL_MODULE_RESOLUTION")]
 #[pagable_typetag(dice::DiceKeyDyn)]
 struct BzlmodModuleResolutionKey;
 
@@ -2476,7 +2476,7 @@ impl Key for BzlmodModuleResolutionKey {
 }
 
 #[derive(Clone, Dupe, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable)]
-#[display("BzlmodSelectionKey")]
+#[display("BAZEL_MODULE_RESOLUTION(selection)")]
 #[pagable_typetag(dice::DiceKeyDyn)]
 struct BzlmodSelectionKey;
 
@@ -2505,7 +2505,7 @@ impl Key for BzlmodSelectionKey {
 }
 
 #[derive(Clone, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable)]
-#[display("BzlmodRepoSpecKey({}@{})", name, version)]
+#[display("REPO_SPEC({}@{})", name, version)]
 #[pagable_typetag(dice::DiceKeyDyn)]
 struct BzlmodRepoSpecKey {
     name: String,
@@ -2561,7 +2561,7 @@ impl Key for BzlmodRepoSpecKey {
 }
 
 #[derive(Clone, Dupe, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable)]
-#[display("BzlmodDepGraphKey")]
+#[display("BAZEL_DEP_GRAPH")]
 #[pagable_typetag(dice::DiceKeyDyn)]
 struct BzlmodDepGraphKey;
 
@@ -2626,7 +2626,7 @@ impl Key for BzlmodDepGraphKey {
 }
 
 #[derive(Clone, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable)]
-#[display("BzlmodSingleExtensionUsagesKey({extension_id:?})")]
+#[display("SINGLE_EXTENSION_USAGES({extension_id:?})")]
 #[pagable_typetag(dice::DiceKeyDyn)]
 struct BzlmodSingleExtensionUsagesKey {
     extension_id: BzlmodExtensionId,
@@ -2684,7 +2684,7 @@ impl Key for BzlmodSingleExtensionUsagesKey {
 }
 
 #[derive(Clone, Dupe, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable)]
-#[display("BzlmodResolutionKey")]
+#[display("BAZEL_MODULE_RESOLUTION(full)")]
 #[pagable_typetag(dice::DiceKeyDyn)]
 struct BzlmodResolutionKey;
 
@@ -2759,7 +2759,7 @@ impl Key for BzlmodResolutionKey {
 }
 
 #[derive(Clone, Dupe, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable)]
-#[display("BzlmodModuleInspectionKey")]
+#[display("BAZEL_MODULE_INSPECTION")]
 #[pagable_typetag(dice::DiceKeyDyn)]
 struct BzlmodModuleInspectionKey;
 
@@ -2791,7 +2791,7 @@ impl Key for BzlmodModuleInspectionKey {
 }
 
 #[derive(Clone, Dupe, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable)]
-#[display("BzlmodModTidyKey")]
+#[display("BAZEL_MOD_TIDY")]
 #[pagable_typetag(dice::DiceKeyDyn)]
 struct BzlmodModTidyKey;
 
@@ -2844,7 +2844,7 @@ impl Key for BzlmodModTidyKey {
 }
 
 #[derive(Clone, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable)]
-#[display("BzlmodRepoDefinitionKey({canonical_repo_name})")]
+#[display("REPO_SPEC({canonical_repo_name})")]
 #[pagable_typetag(dice::DiceKeyDyn)]
 struct BzlmodRepoDefinitionKey {
     canonical_repo_name: String,
@@ -2890,7 +2890,7 @@ impl Key for BzlmodRepoDefinitionKey {
 }
 
 #[derive(Clone, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable)]
-#[display("BzlmodRepositoryDirectoryKey({canonical_repo_name})")]
+#[display("REPOSITORY_DIRECTORY({canonical_repo_name})")]
 #[pagable_typetag(dice::DiceKeyDyn)]
 struct BzlmodRepositoryDirectoryKey {
     canonical_repo_name: String,
@@ -2943,7 +2943,7 @@ impl Key for BzlmodRepositoryDirectoryKey {
 }
 
 #[derive(Clone, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable)]
-#[display("BzlmodFetchAllKey(configure={configure})")]
+#[display("BAZEL_FETCH_ALL(configure={configure})")]
 #[pagable_typetag(dice::DiceKeyDyn)]
 struct BzlmodFetchAllKey {
     configure: bool,
@@ -3033,7 +3033,7 @@ impl Key for BzlmodFetchAllKey {
 }
 
 #[derive(Clone, Dupe, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable)]
-#[display("BzlmodVendorFileKey")]
+#[display("VENDOR_FILE")]
 #[pagable_typetag(dice::DiceKeyDyn)]
 struct BzlmodVendorFileKey;
 

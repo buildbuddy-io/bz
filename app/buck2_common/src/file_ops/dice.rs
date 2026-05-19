@@ -766,6 +766,7 @@ struct ReadFileResolvedMetadata {
 }
 
 #[derive(Clone, Dupe, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable)]
+#[display("FILE({})", _0)]
 #[pagable_typetag(dice::DiceKeyDyn)]
 struct ReadFileKey(Arc<CellPath>);
 
@@ -950,7 +951,7 @@ mod tests {
 }
 
 #[derive(Clone, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable)]
-#[display("{}", path)]
+#[display("DIRECTORY_LISTING({})", path)]
 #[pagable_typetag(dice::DiceKeyDyn)]
 struct ReadDirKey {
     path: CellPath,
@@ -958,7 +959,7 @@ struct ReadDirKey {
 }
 
 #[derive(Clone, Dupe, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable)]
-#[display("{}", _0)]
+#[display("FILE({})", _0)]
 #[pagable_typetag(dice::DiceKeyDyn)]
 struct ExternalPathMetadataKey(Arc<ExternalSymlink>);
 
@@ -995,7 +996,7 @@ impl Key for ExternalPathMetadataKey {
 }
 
 #[derive(Clone, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable)]
-#[display("{}", _0)]
+#[display("FILE({})", _0)]
 #[pagable_typetag(dice::DiceKeyDyn)]
 struct PathMetadataForNoWatchFsKey(CellPath);
 
@@ -1037,7 +1038,7 @@ impl Key for PathMetadataForNoWatchFsKey {
 }
 
 #[derive(Clone, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable)]
-#[display("{}", _0)]
+#[display("DIRECTORY_LISTING_STATE({})", _0)]
 #[pagable_typetag(dice::DiceKeyDyn)]
 struct ReadDirForNoWatchFsKey(CellPath);
 
@@ -1118,7 +1119,7 @@ impl Key for ReadDirKey {
 }
 
 #[derive(Clone, Display, Allocative, Debug, Eq, Hash, PartialEq, Pagable)]
-#[display("{}", _0)]
+#[display("FILE({})", _0)]
 #[pagable_typetag(dice::DiceKeyDyn)]
 struct ExistsMatchingExactCaseKey(CellPath);
 
@@ -1157,6 +1158,7 @@ impl Key for ExistsMatchingExactCaseKey {
 }
 
 #[derive(Clone, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable)]
+#[display("FILE({})", _0)]
 #[pagable_typetag(dice::DiceKeyDyn)]
 struct PathMetadataKey(CellPath);
 

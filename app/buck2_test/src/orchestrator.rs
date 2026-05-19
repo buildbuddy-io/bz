@@ -647,7 +647,7 @@ async fn prepare_and_execute_dice(
 
 impl Display for TestExecutionKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "test_target = {}, ", self.test_target)?;
+        write!(f, "TEST_COMPLETION(test_target = {}, ", self.test_target)?;
         fmt_container(f, "cmd = [", "], ", self.cmd.as_ref())?;
         fmt_keyed_container(f, "env = {", "}, ", ",", self.env.as_ref())?;
         fmt_container(
@@ -664,7 +664,7 @@ impl Display for TestExecutionKey {
         fmt_container(f, "pre_create_dirs = [", "], ", self.pre_create_dirs.iter())?;
         write!(
             f,
-            "stage = {}, options = {}, timeout = {}, host_sharing_requirements = {}",
+            "stage = {}, options = {}, timeout = {}, host_sharing_requirements = {})",
             self.stage,
             self.options,
             self.timeout.as_millis(),

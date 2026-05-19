@@ -86,7 +86,7 @@ struct RuleAnalysisCalculationInstance;
     Allocative,
     Pagable
 )]
-#[display("{}", _0)]
+#[display("CONFIGURED_TARGET({})", _0)]
 #[pagable_typetag(dice::DiceKeyDyn)]
 pub struct AnalysisKey(pub ConfiguredTargetLabel);
 

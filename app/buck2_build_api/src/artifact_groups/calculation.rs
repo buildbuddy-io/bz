@@ -265,7 +265,7 @@ impl EnsureArtifactGroupReady {
 #[derive(
     Clone, Dupe, Eq, PartialEq, Hash, Display, Debug, Allocative, RefCast, Pagable
 )]
-#[display("ensure_artifact_group_values({})", _0)]
+#[display("ARTIFACT({})", _0)]
 #[repr(transparent)]
 #[pagable_typetag(dice::DiceKeyDyn)]
 struct EnsureArtifactGroupValuesKey(Artifact);
@@ -349,7 +349,7 @@ async fn dir_artifact_value(
     // that directory now only depends on one `DirArtifactValueKey`, and that `DirArtifactValueKey`
     // depends on the `PathMetadataKey` of every member of the directory.
     #[derive(Clone, Dupe, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable)]
-    #[display("dir_artifact_value({})", _0)]
+    #[display("RECURSIVE_FILESYSTEM_TRAVERSAL({})", _0)]
     #[pagable_typetag(dice::DiceKeyDyn)]
     struct DirArtifactValueKey(Arc<CellPath>);
 
@@ -665,6 +665,7 @@ pub struct EnsureTransitiveSetProjectionKeyActivationData {
 #[derive(
     Clone, Dupe, Eq, PartialEq, Hash, Display, Debug, Allocative, RefCast, Pagable
 )]
+#[display("ARTIFACT_NESTED_SET({})", _0)]
 #[repr(transparent)]
 #[pagable_typetag(dice::DiceKeyDyn)]
 pub struct EnsureTransitiveSetProjectionKey(pub TransitiveSetProjectionKey);

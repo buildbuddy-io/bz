@@ -235,7 +235,7 @@ fn bazel_command_line_option_default(setting: &str) -> Option<&'static str> {
 }
 
 #[derive(Clone, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable)]
-#[display("ConfigurationNode({}, {})", cfg_target, target_cfg)]
+#[display("BUILD_CONFIGURATION({}, {})", cfg_target, target_cfg)]
 #[pagable_typetag(dice::DiceKeyDyn)]
 struct ConfigurationNodeKey {
     target_cfg: ConfigurationData,
@@ -245,7 +245,7 @@ struct ConfigurationNodeKey {
 
 #[derive(Clone, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable)]
 #[display(
-    "ResolvedConfigurationKey(target_cfg: {}, cell: {}, configuration_deps size {})",
+    "BUILD_CONFIGURATION_KEY(target_cfg: {}, cell: {}, configuration_deps size {})",
     target_cfg,
     target_cell,
     configuration_deps.len()

@@ -16,6 +16,7 @@ use std::sync::Arc;
 use allocative::Allocative;
 use async_trait::async_trait;
 use buck2_common::file_ops::trait_::DiceFileOps;
+use buck2_common::file_ops::trait_::FileOps;
 use buck2_common::pattern::package_roots::collect_package_roots;
 use buck2_common::pattern::resolve::ResolvedPattern;
 use buck2_core::cells::cell_path::CellPath;
@@ -50,25 +51,63 @@ use crate::nodes::unconfigured::TargetNode;
 use crate::nodes::unconfigured::TargetNodeRef;
 use crate::super_package::SuperPackage;
 
-#[derive(Debug, buck2_error::Error)]
-#[buck2(tag = Input)]
-enum BuildErrors {
-    #[error("Did not find package with name `{0}`.")]
-    MissingPackage(PackageLabel),
-}
-
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Allocative, Pagable)]
 #[pagable_typetag(dice::DiceKeyDyn)]
-pub struct CollectPackagesUnderDirectoryKey(CellPath);
+struct IgnoredSubdirectoriesKey(CellPath);
 
-impl fmt::Display for CollectPackagesUnderDirectoryKey {
+impl fmt::Display for IgnoredSubdirectoriesKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} -- collect packages under directory", self.0)
+        write!(f, "IGNORED_SUBDIRECTORIES({})", self.0)
     }
 }
 
 #[async_trait]
-impl Key for CollectPackagesUnderDirectoryKey {
+impl Key for IgnoredSubdirectoriesKey {
+    type Value = buck2_error::Result<bool>;
+
+    async fn compute(
+        &self,
+        ctx: &mut DiceComputations,
+        _cancellation: &CancellationContext,
+    ) -> Self::Value {
+        let root = self.0.clone();
+        ctx.with_linear_recompute(|ctx| async move {
+            Ok(DiceFileOps(&ctx)
+                .is_ignored(root.as_ref())
+                .await?
+                .is_ignored())
+        })
+        .await
+    }
+
+    fn equality(x: &Self::Value, y: &Self::Value) -> bool {
+        match (x, y) {
+            (Ok(x), Ok(y)) => x == y,
+            _ => false,
+        }
+    }
+
+    fn validity(x: &Self::Value) -> bool {
+        x.is_ok()
+    }
+
+    fn value_serialize() -> impl ValueSerialize<Value = Self::Value> {
+        NoValueSerialize::<Self::Value>::new()
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Allocative, Pagable)]
+#[pagable_typetag(dice::DiceKeyDyn)]
+struct RecursivePkgKey(CellPath);
+
+impl fmt::Display for RecursivePkgKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "RECURSIVE_PKG({})", self.0)
+    }
+}
+
+#[async_trait]
+impl Key for RecursivePkgKey {
     type Value = buck2_error::Result<Arc<Vec<PackageLabel>>>;
 
     async fn compute(
@@ -76,6 +115,13 @@ impl Key for CollectPackagesUnderDirectoryKey {
         ctx: &mut DiceComputations,
         _cancellation: &CancellationContext,
     ) -> Self::Value {
+        if ctx
+            .compute(&IgnoredSubdirectoriesKey(self.0.clone()))
+            .await??
+        {
+            return Ok(Arc::new(Vec::new()));
+        }
+
         let root = self.0.clone();
         ctx.with_linear_recompute(|ctx| async move {
             let mut packages = Vec::new();
@@ -89,6 +135,82 @@ impl Key for CollectPackagesUnderDirectoryKey {
             Ok(Arc::new(packages))
         })
         .await
+    }
+
+    fn equality(x: &Self::Value, y: &Self::Value) -> bool {
+        match (x, y) {
+            (Ok(x), Ok(y)) => x == y,
+            _ => false,
+        }
+    }
+
+    fn validity(x: &Self::Value) -> bool {
+        x.is_ok()
+    }
+
+    fn value_serialize() -> impl ValueSerialize<Value = Self::Value> {
+        NoValueSerialize::<Self::Value>::new()
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Allocative, Pagable)]
+#[pagable_typetag(dice::DiceKeyDyn)]
+struct PrepareDepsOfTargetsUnderDirectoryKey(CellPath);
+
+impl fmt::Display for PrepareDepsOfTargetsUnderDirectoryKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "PREPARE_DEPS_OF_TARGETS_UNDER_DIRECTORY({})", self.0)
+    }
+}
+
+#[async_trait]
+impl Key for PrepareDepsOfTargetsUnderDirectoryKey {
+    type Value = buck2_error::Result<Arc<Vec<PackageLabel>>>;
+
+    async fn compute(
+        &self,
+        ctx: &mut DiceComputations,
+        _cancellation: &CancellationContext,
+    ) -> Self::Value {
+        ctx.compute(&RecursivePkgKey(self.0.clone())).await?
+    }
+
+    fn equality(x: &Self::Value, y: &Self::Value) -> bool {
+        match (x, y) {
+            (Ok(x), Ok(y)) => x == y,
+            _ => false,
+        }
+    }
+
+    fn validity(x: &Self::Value) -> bool {
+        x.is_ok()
+    }
+
+    fn value_serialize() -> impl ValueSerialize<Value = Self::Value> {
+        NoValueSerialize::<Self::Value>::new()
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Allocative, Pagable)]
+#[pagable_typetag(dice::DiceKeyDyn)]
+pub struct CollectPackagesUnderDirectoryKey(CellPath);
+
+impl fmt::Display for CollectPackagesUnderDirectoryKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "COLLECT_PACKAGES_UNDER_DIRECTORY({})", self.0)
+    }
+}
+
+#[async_trait]
+impl Key for CollectPackagesUnderDirectoryKey {
+    type Value = buck2_error::Result<Arc<Vec<PackageLabel>>>;
+
+    async fn compute(
+        &self,
+        ctx: &mut DiceComputations,
+        _cancellation: &CancellationContext,
+    ) -> Self::Value {
+        ctx.compute(&RecursivePkgKey(self.0.clone())).await?
     }
 
     fn equality(x: &Self::Value, y: &Self::Value) -> bool {
@@ -122,7 +244,7 @@ impl<T: PatternType> fmt::Display for PrepareDepsOfPatternKey<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "{} -- prepare deps of pattern",
+            "PREPARE_DEPS_OF_PATTERN({})",
             self.pattern.parsed_pattern
         )
     }
@@ -142,6 +264,10 @@ impl<T: PatternType> Key for PrepareDepsOfPatternKey<T> {
                 Ok(Arc::new(vec![package.dupe()]))
             }
             ParsedPattern::Recursive(cell_path) => {
+                ctx.compute(&PrepareDepsOfTargetsUnderDirectoryKey(
+                    cell_path.clone(),
+                ))
+                .await??;
                 ctx.compute(&CollectPackagesUnderDirectoryKey(cell_path.clone()))
                     .await?
             }
@@ -179,7 +305,7 @@ impl<T: PatternType> fmt::Display for PrepareDepsOfPatternsKey<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "{} target patterns -- prepare deps of patterns",
+            "PREPARE_DEPS_OF_PATTERNS({} patterns)",
             self.patterns.len()
         )
     }
@@ -242,7 +368,7 @@ impl<T: PatternType> PagableTagged for TargetPatternKey<T> {
 
 impl<T: PatternType> fmt::Display for TargetPatternKey<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} -- target pattern", self.pattern.parsed_pattern)
+        write!(f, "TARGET_PATTERN({})", self.pattern.parsed_pattern)
     }
 }
 
@@ -297,6 +423,100 @@ impl<T: PatternType> Key for TargetPatternKey<T> {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Allocative, Pagable)]
+#[pagable_typetag(dice::DiceKeyDyn)]
+struct TargetPatternErrorKey {
+    message: String,
+}
+
+impl fmt::Display for TargetPatternErrorKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "TARGET_PATTERN_ERROR({})", self.message)
+    }
+}
+
+#[async_trait]
+impl Key for TargetPatternErrorKey {
+    type Value = buck2_error::Result<()>;
+
+    async fn compute(
+        &self,
+        _ctx: &mut DiceComputations,
+        _cancellation: &CancellationContext,
+    ) -> Self::Value {
+        Err(buck2_error::buck2_error!(
+            buck2_error::ErrorTag::Input,
+            "{}",
+            self.message
+        ))
+    }
+
+    fn equality(_: &Self::Value, _: &Self::Value) -> bool {
+        false
+    }
+
+    fn validity(x: &Self::Value) -> bool {
+        x.is_ok()
+    }
+
+    fn value_serialize() -> impl ValueSerialize<Value = Self::Value> {
+        NoValueSerialize::<Self::Value>::new()
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Allocative, Pagable)]
+struct CollectTargetsInPackageKey<T: PatternType> {
+    package: PackageLabelWithModifiers,
+    spec: PackageSpec<T>,
+    skip_missing_targets: MissingTargetBehavior,
+}
+
+impl<T: PatternType> PagableTagged for CollectTargetsInPackageKey<T> {
+    fn pagable_type_tag(&self) -> &'static str {
+        std::any::type_name::<Self>()
+    }
+}
+
+impl<T: PatternType> fmt::Display for CollectTargetsInPackageKey<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "COLLECT_TARGETS_IN_PACKAGE({})", self.package.package)
+    }
+}
+
+#[async_trait]
+impl<T: PatternType> Key for CollectTargetsInPackageKey<T> {
+    type Value = buck2_error::Result<Arc<PackageLoadedPatterns<T>>>;
+
+    async fn compute(
+        &self,
+        ctx: &mut DiceComputations,
+        _cancellation: &CancellationContext,
+    ) -> Self::Value {
+        let package_result = ctx
+            .get_interpreter_results(self.package.package.dupe())
+            .await?;
+
+        Ok(Arc::new(collect_targets_in_package(
+            self.package.dupe(),
+            &package_result,
+            self.spec.clone(),
+            self.skip_missing_targets,
+        )?))
+    }
+
+    fn equality(_: &Self::Value, _: &Self::Value) -> bool {
+        false
+    }
+
+    fn validity(x: &Self::Value) -> bool {
+        x.is_ok()
+    }
+
+    fn value_serialize() -> impl ValueSerialize<Value = Self::Value> {
+        NoValueSerialize::<Self::Value>::new()
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Allocative, Pagable)]
 struct TargetPatternPhaseKey<T: PatternType> {
     patterns: Vec<ParsedPatternWithModifiers<T>>,
     skip_missing_targets: MissingTargetBehavior,
@@ -332,6 +552,16 @@ pagable::register_typetag!(
 pagable::register_typetag!(
     TargetPatternKey<ConfiguredProvidersPatternExtra> as dyn dice::DiceKeyDyn
 );
+pagable::register_typetag!(CollectTargetsInPackageKey<TargetPatternExtra> as dyn dice::DiceKeyDyn);
+pagable::register_typetag!(
+    CollectTargetsInPackageKey<ProvidersPatternExtra> as dyn dice::DiceKeyDyn
+);
+pagable::register_typetag!(
+    CollectTargetsInPackageKey<ConfiguredTargetPatternExtra> as dyn dice::DiceKeyDyn
+);
+pagable::register_typetag!(
+    CollectTargetsInPackageKey<ConfiguredProvidersPatternExtra> as dyn dice::DiceKeyDyn
+);
 pagable::register_typetag!(TargetPatternPhaseKey<TargetPatternExtra> as dyn dice::DiceKeyDyn);
 pagable::register_typetag!(TargetPatternPhaseKey<ProvidersPatternExtra> as dyn dice::DiceKeyDyn);
 pagable::register_typetag!(
@@ -345,7 +575,7 @@ impl<T: PatternType> fmt::Display for TargetPatternPhaseKey<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "{} target patterns -- target pattern phase",
+            "TARGET_PATTERN_PHASE({} patterns)",
             self.patterns.len()
         )
     }
@@ -360,7 +590,7 @@ impl<T: PatternType> Key for TargetPatternPhaseKey<T> {
         ctx: &mut DiceComputations,
         _cancellation: &CancellationContext,
     ) -> Self::Value {
-        let packages = ctx
+        let _prepared_packages = ctx
             .compute(&PrepareDepsOfPatternsKey {
                 patterns: self.patterns.clone(),
             })
@@ -383,28 +613,28 @@ impl<T: PatternType> Key for TargetPatternPhaseKey<T> {
             merge_resolved_pattern(&mut spec, (*resolved?).clone());
         }
 
-        let load_results = ctx
-            .compute_join(packages.iter(), |ctx, package| {
+        let collect_results = ctx
+            .compute_join(spec.specs.iter(), |ctx, (package, package_spec)| {
                 async move {
-                    (
-                        package.dupe(),
-                        ctx.get_interpreter_results(package.dupe()).await,
-                    )
+                    let key = CollectTargetsInPackageKey {
+                        package: package.dupe(),
+                        spec: package_spec.clone(),
+                        skip_missing_targets: self.skip_missing_targets,
+                    };
+                    let result = ctx.compute(&key).await?;
+                    Ok::<_, buck2_error::Error>((package.dupe(), result))
                 }
                 .boxed()
             })
             .await;
 
         let mut results = BTreeMap::new();
-        for (package, result) in load_results {
-            results.insert(package, result);
+        for result in collect_results {
+            let (package, result) = result?;
+            results.insert(package, result.map(|v| (*v).clone()));
         }
 
-        Ok(Arc::new(apply_spec(
-            spec,
-            results,
-            self.skip_missing_targets,
-        )?))
+        Ok(Arc::new(LoadedPatterns { results }))
     }
 
     fn equality(_: &Self::Value, _: &Self::Value) -> bool {
@@ -563,49 +793,28 @@ impl MissingTargetBehavior {
     }
 }
 
-/// Finds all the requested targets in `spec` from a map of loaded targets in `load_result`.
-fn apply_spec<T: PatternType>(
-    spec: ResolvedPattern<T>,
-    load_results: BTreeMap<PackageLabel, buck2_error::Result<Arc<EvaluationResult>>>,
+/// Finds the requested targets in one package.
+fn collect_targets_in_package<T: PatternType>(
+    _package_with_modifiers: PackageLabelWithModifiers,
+    res: &EvaluationResult,
+    pkg_spec: PackageSpec<T>,
     skip_missing_targets: MissingTargetBehavior,
-) -> buck2_error::Result<LoadedPatterns<T>> {
-    let mut all_targets: BTreeMap<_, buck2_error::Result<PackageLoadedPatterns<T>>> =
-        BTreeMap::new();
-    for (package_with_modifiers, pkg_spec) in spec.specs.into_iter() {
-        let result = match load_results.get(&package_with_modifiers.package) {
-            Some(r) => r,
-            None => return Err(BuildErrors::MissingPackage(package_with_modifiers.package).into()),
-        };
-        match result {
-            Ok(res) => {
-                let (label_to_node, missing) = res.apply_spec(pkg_spec);
-                if let Some(missing) = missing {
-                    match skip_missing_targets {
-                        MissingTargetBehavior::Fail => {
-                            return Err(missing.into_first_error().into());
-                        }
-                        MissingTargetBehavior::Warn => {
-                            console_message(missing.missing_targets_warning())
-                        }
-                    }
-                };
-
-                all_targets.insert(
-                    package_with_modifiers,
-                    Ok(PackageLoadedPatterns {
-                        targets: label_to_node,
-                        super_package: res.super_package().dupe(),
-                    }),
-                );
+) -> buck2_error::Result<PackageLoadedPatterns<T>> {
+    let (label_to_node, missing) = res.apply_spec(pkg_spec);
+    if let Some(missing) = missing {
+        match skip_missing_targets {
+            MissingTargetBehavior::Fail => {
+                return Err(missing.into_first_error().into());
             }
-            Err(e) => {
-                all_targets.insert(package_with_modifiers, Err(e.dupe()));
+            MissingTargetBehavior::Warn => {
+                console_message(missing.missing_targets_warning())
             }
         }
-    }
+    };
 
-    Ok(LoadedPatterns {
-        results: all_targets,
+    Ok(PackageLoadedPatterns {
+        targets: label_to_node,
+        super_package: res.super_package().dupe(),
     })
 }
 

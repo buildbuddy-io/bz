@@ -235,7 +235,7 @@ impl ExecutionPlatformConstraints {
 
 #[derive(Clone, Display, Debug, Dupe, Eq, Hash, PartialEq, Allocative, Pagable)]
 #[display(
-        "ToolchainExecutionPlatformCompatibilityKey({}, {})",
+        "SINGLE_TOOLCHAIN_RESOLUTION({}, {})",
         target,
         exec_platform.id()
     )]

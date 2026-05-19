@@ -39,7 +39,7 @@ pub async fn get_outputs_for_top_level_target(
     providers_to_build: &ProvidersToBuild,
 ) -> buck2_error::Result<MaybeCompatible<Arc<Vec<(ArtifactGroup, BuildProviderType)>>>> {
     #[derive(Allocative, Debug, Display, Clone, Eq, PartialEq, Hash, Pagable)]
-    #[display("TopLevelTargetOutputsKey({}, {:?})", &self.0, &self.1)]
+    #[display("TARGET_COMPLETION({}, {:?})", &self.0, &self.1)]
     #[pagable_typetag(dice::DiceKeyDyn)]
     struct TopLevelTargetOutputsKey(ConfiguredProvidersLabel, ProvidersToBuild);
 
