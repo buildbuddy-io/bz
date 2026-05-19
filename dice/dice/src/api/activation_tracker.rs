@@ -15,6 +15,15 @@ use crate::DynKey;
 /// An ActivationTracker can be used to identify which keys were either reused or computed during a
 /// transaction.
 pub trait ActivationTracker: Send + Sync + 'static {
+    /// Whether this tracker wants activations for reused keys.
+    ///
+    /// Reused activations can require materializing the key's dependency list even though the key
+    /// was not evaluated in this transaction. Trackers that only report work performed by the
+    /// current transaction can opt out.
+    fn tracks_reused(&self) -> bool {
+        true
+    }
+
     /// Receives when a key was activated (computed, or reused). The caller will want to downcast
     /// the key and deps to types they care about. The caller also receives whatever the key passed
     /// to `store_evaluation_data` (if any).

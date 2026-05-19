@@ -419,27 +419,19 @@ impl Key for BazelBzlLoadKey {
             StarlarkModulePath::JsonFile(_) | StarlarkModulePath::TomlFile(_)
         ) {
             return Ok(ctx
-                .get_interpreter_calculator(OwnedStarlarkPath::new(
-                    starlark_path.starlark_path(),
-                ))
+                .get_interpreter_calculator(OwnedStarlarkPath::new(starlark_path.starlark_path()))
                 .await?
                 .eval_module_uncached(starlark_path, cancellation)
                 .await?);
         }
 
-        // Bazel only creates separate BZL_COMPILE Skyframe nodes when BZL_LOAD itself is being
-        // inlined. This path still computes BZL_LOAD as a DICE key, so keep parsing local to the
-        // load key and avoid an extra graph node per .bzl.
-        let content = DiceFileComputations::read_file(ctx, starlark_path.path().as_ref())
-            .await
-            .without_package_context_information()?;
+        // Bazel's non-inlined BZL_LOAD path inlines BZL_COMPILE, but keeps a compile cache across
+        // Skyframe restarts so re-evaluating a load does not re-read and recompile the .bzl file.
+        // Use the DICE BZL_COMPILE value as Buck2's equivalent cache.
+        let parse_data = ctx.compute(&BazelBzlCompileKey(self.0.clone())).await??;
         let mut interpreter = ctx
             .get_interpreter_calculator(OwnedStarlarkPath::new(starlark_path.starlark_path()))
             .await?;
-        let parse_data = Arc::new(interpreter.prepare_eval_with_content(
-            starlark_path.starlark_path(),
-            content,
-        )??);
 
         // We cannot just use the inner default delegate's eval_import because that would not
         // delegate back to this Bazel-shaped key for transitive loads.

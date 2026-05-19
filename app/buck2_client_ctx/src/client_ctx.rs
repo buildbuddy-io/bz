@@ -12,6 +12,7 @@ use std::future::Future;
 use std::time::SystemTime;
 
 use buck2_cli_proto::ClientContext;
+use buck2_cli_proto::ClientEnvironmentVariable;
 use buck2_cli_proto::client_context::ExitWhen as GrpcExitWhen;
 use buck2_cli_proto::client_context::HostArchOverride as GrpcHostArchOverride;
 use buck2_cli_proto::client_context::HostPlatformOverride as GrpcHostPlatformOverride;
@@ -21,6 +22,7 @@ use buck2_common::init::DaemonStartupConfig;
 use buck2_common::init::LogDownloadMethod;
 use buck2_common::invocation_paths::InvocationPaths;
 use buck2_common::invocation_paths_result::InvocationPathsResult;
+use buck2_common::legacy_configs::cells::BZLMOD_ALLOWED_YANKED_VERSIONS_ENV;
 use buck2_core::error::buck2_hard_error_env;
 use buck2_core::error::buck2_show_soft_errors_env;
 use buck2_error::BuckErrorContext;
@@ -299,6 +301,10 @@ impl<'a> ClientCommandContext<'a> {
                     value: e.value.clone(),
                 })
                 .collect(),
+            client_environment: vec![ClientEnvironmentVariable {
+                name: BZLMOD_ALLOWED_YANKED_VERSIONS_ENV.to_owned(),
+                value: std::env::var(BZLMOD_ALLOWED_YANKED_VERSIONS_ENV).ok(),
+            }],
         })
     }
 

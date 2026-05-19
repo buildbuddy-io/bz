@@ -444,6 +444,10 @@ impl BuildSignals for BuildSignalSender {
 }
 
 impl ActivationTracker for BuildSignalSender {
+    fn tracks_reused(&self) -> bool {
+        false
+    }
+
     /// We received a DICE key. Check if it's one of the keys we care about (i.e. can we downcast
     /// it to NodeKey?), and then if that's the case, extract its dependencies and activation data
     /// (if any).
@@ -453,6 +457,10 @@ impl ActivationTracker for BuildSignalSender {
         deps: &mut dyn Iterator<Item = &DynKey>,
         activation_data: ActivationData,
     ) {
+        if matches!(&activation_data, ActivationData::Reused) {
+            return;
+        }
+
         let key = match NodeKey::from_dyn_key(key) {
             Some(key) => key,
             None => return,

@@ -317,6 +317,12 @@ impl ActivationInfo {
         activation_data: ActivationData,
     ) -> Option<ActivationInfo> {
         if let Some(activation_tracker) = activation_tracker {
+            if matches!(&activation_data, ActivationData::Reused)
+                && !activation_tracker.tracks_reused()
+            {
+                return None;
+            }
+
             let key = key_index.get(key).dupe();
             let deps = deps.map(|dep| key_index.get(dep).dupe()).collect();
 

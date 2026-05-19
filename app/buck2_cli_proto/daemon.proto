@@ -193,6 +193,14 @@ message ClientContext {
 
   // Agent context key=value pairs passed via --agent-context.
   repeated buck.data.AgentContextEntry agent_context = 27;
+
+  // Client environment variables whose values are Skyframe/DICE inputs.
+  repeated ClientEnvironmentVariable client_environment = 28;
+}
+
+message ClientEnvironmentVariable {
+  string name = 1;
+  optional string value = 2;
 }
 
 message TargetsRequest {

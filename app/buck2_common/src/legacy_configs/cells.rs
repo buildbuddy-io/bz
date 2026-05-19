@@ -77,6 +77,8 @@ use buck2_http::retries::IntoBuck2Error;
 use buck2_http::retries::http_retry;
 use derive_more::Display;
 use dice::DiceComputations;
+use dice::DiceTransactionUpdater;
+use dice::InjectedKey;
 use dice::Key;
 use dice::NoValueSerialize;
 use dice::ValueSerialize;
@@ -751,7 +753,8 @@ impl BuckConfigBasedCells {
         )
         .await?;
 
-        let apply_bazel_project_defaults = should_apply_bazel_compat_defaults(cell_path, file_ops).await?;
+        let apply_bazel_project_defaults =
+            should_apply_bazel_compat_defaults(cell_path, file_ops).await?;
         if apply_bazel_project_defaults {
             let bazelrc_options = if apply_bazel_project_defaults {
                 get_bazelrc_options(cell_path, file_ops).await?
@@ -1881,7 +1884,7 @@ struct BzlmodAllowedYankedVersionsValue {
     modules: BTreeSet<(String, String)>,
 }
 
-const BZLMOD_ALLOWED_YANKED_VERSIONS_ENV: &str = "BZLMOD_ALLOW_YANKED_VERSIONS";
+pub const BZLMOD_ALLOWED_YANKED_VERSIONS_ENV: &str = "BZLMOD_ALLOW_YANKED_VERSIONS";
 
 fn empty_bzlmod_lockfile_data() -> BzlmodModuleLockfileData {
     BzlmodModuleLockfileData {
@@ -2136,8 +2139,6 @@ pub(crate) async fn get_bazel_module_resolution_on_dice(
         return Ok(Arc::new(BazelModuleCellAliases::default()));
     }
     let aliases = ctx.compute(&BzlmodResolutionKey).await??;
-    aliases.register_for_starlark_label_resolution();
-    aliases.register_external_cell_origins()?;
     Ok(aliases)
 }
 
@@ -2317,19 +2318,8 @@ struct BzlmodClientEnvironmentVariableKey {
     name: String,
 }
 
-#[async_trait::async_trait]
-impl Key for BzlmodClientEnvironmentVariableKey {
+impl InjectedKey for BzlmodClientEnvironmentVariableKey {
     type Value = buck2_error::Result<Arc<BzlmodClientEnvironmentVariableValue>>;
-
-    async fn compute(
-        &self,
-        _ctx: &mut DiceComputations,
-        _cancellations: &CancellationContext,
-    ) -> Self::Value {
-        Ok(Arc::new(BzlmodClientEnvironmentVariableValue {
-            value: std::env::var(&self.name).ok(),
-        }))
-    }
 
     fn equality(x: &Self::Value, y: &Self::Value) -> bool {
         match (x, y) {
@@ -2338,12 +2328,30 @@ impl Key for BzlmodClientEnvironmentVariableKey {
         }
     }
 
-    fn validity(_x: &Self::Value) -> bool {
-        false
-    }
-
     fn value_serialize() -> impl ValueSerialize<Value = Self::Value> {
         NoValueSerialize::<Self::Value>::new()
+    }
+}
+
+pub trait SetBzlmodClientEnvironment {
+    fn set_bzlmod_client_environment(
+        &mut self,
+        vars: Vec<(String, Option<String>)>,
+    ) -> buck2_error::Result<()>;
+}
+
+impl SetBzlmodClientEnvironment for DiceTransactionUpdater {
+    fn set_bzlmod_client_environment(
+        &mut self,
+        vars: Vec<(String, Option<String>)>,
+    ) -> buck2_error::Result<()> {
+        let vars = vars.into_iter().map(|(name, value)| {
+            (
+                BzlmodClientEnvironmentVariableKey { name },
+                Ok(Arc::new(BzlmodClientEnvironmentVariableValue { value })),
+            )
+        });
+        Ok(self.changed_to(vars)?)
     }
 }
 
@@ -2378,8 +2386,8 @@ impl Key for BzlmodAllowedYankedVersionsKey {
         }
     }
 
-    fn validity(_x: &Self::Value) -> bool {
-        false
+    fn validity(x: &Self::Value) -> bool {
+        x.is_ok()
     }
 
     fn value_serialize() -> impl ValueSerialize<Value = Self::Value> {
@@ -2886,6 +2894,11 @@ impl Key for BzlmodResolutionKey {
         aliases.cell_aliases = cell_aliases;
         aliases.registered_toolchains.extend(registered_toolchains);
         aliases.normalize();
+        // Bazel keeps repository mappings as Skyframe values and consumers reuse the computed value.
+        // Register Buck2's global lookup side effects with the DICE value computation instead of
+        // repeating them on every accessor of the cached resolution.
+        aliases.register_for_starlark_label_resolution();
+        aliases.register_external_cell_origins()?;
         Ok(Arc::new(aliases))
     }
 

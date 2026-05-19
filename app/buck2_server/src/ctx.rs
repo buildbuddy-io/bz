@@ -39,6 +39,7 @@ use buck2_build_signals::env::FILE_WATCHER_WAIT;
 use buck2_build_signals::env::HasCriticalPathBackend;
 use buck2_certs::validate::CertState;
 use buck2_cli_proto::ClientContext;
+use buck2_cli_proto::ClientEnvironmentVariable;
 use buck2_cli_proto::CommonBuildOptions;
 use buck2_cli_proto::ConfigOverride;
 use buck2_cli_proto::client_context::ExitWhen;
@@ -54,7 +55,9 @@ use buck2_common::file_ops::io::initialize_read_dir_cache;
 use buck2_common::http::SetHttpClient;
 use buck2_common::invocation_paths::InvocationPaths;
 use buck2_common::io::trace::TracingIoProvider;
+use buck2_common::legacy_configs::cells::BZLMOD_ALLOWED_YANKED_VERSIONS_ENV;
 use buck2_common::legacy_configs::cells::BuckConfigBasedCells;
+use buck2_common::legacy_configs::cells::SetBzlmodClientEnvironment;
 use buck2_common::legacy_configs::configs::LegacyBuckConfig;
 use buck2_common::legacy_configs::dice::HasInjectedLegacyConfigs;
 use buck2_common::legacy_configs::file_ops::ConfigPath;
@@ -249,6 +252,9 @@ pub struct ServerCommandContext<'a> {
     /// Agent context key=value pairs from --agent-context.
     pub(crate) agent_context: Vec<buck2_data::AgentContextEntry>,
 
+    /// Client environment variables that are DICE inputs.
+    client_environment: Vec<ClientEnvironmentVariable>,
+
     cancellations: &'a CancellationContext,
 
     preemptible: PreemptibleWhen,
@@ -370,6 +376,7 @@ impl<'a> ServerCommandContext<'a> {
             command_name: client_context.command_name.clone(),
             sanitized_argv: client_context.sanitized_argv.clone(),
             agent_context: client_context.agent_context.clone(),
+            client_environment: client_context.client_environment.clone(),
             debugger_handle,
             cancellations,
             preemptible: client_context.preemptible(),
@@ -812,6 +819,23 @@ impl DiceUpdater for DiceCommandUpdater<'_, '_> {
             .map_or(Vec::new(), |opts| opts.enable_optional_validations.clone());
 
         ctx.set_enabled_optional_validations(optional_validations.clone())?;
+
+        let mut bzlmod_client_environment = self
+            .cmd_ctx
+            .client_environment
+            .iter()
+            .map(|entry| (entry.name.clone(), entry.value.clone()))
+            .collect::<Vec<_>>();
+        if !bzlmod_client_environment
+            .iter()
+            .any(|(name, _value)| name == BZLMOD_ALLOWED_YANKED_VERSIONS_ENV)
+        {
+            bzlmod_client_environment.push((
+                BZLMOD_ALLOWED_YANKED_VERSIONS_ENV.to_owned(),
+                std::env::var(BZLMOD_ALLOWED_YANKED_VERSIONS_ENV).ok(),
+            ));
+        }
+        ctx.set_bzlmod_client_environment(bzlmod_client_environment)?;
 
         let profiler_instrumentation_override =
             &self.cmd_ctx.starlark_profiling_manager.configuration;
