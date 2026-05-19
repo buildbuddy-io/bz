@@ -1700,6 +1700,19 @@ struct BzlmodYankedVersionsValue {
     yanked_versions: Option<BTreeMap<String, String>>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Allocative, Pagable)]
+struct BzlmodClientEnvironmentVariableValue {
+    value: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Allocative, Pagable)]
+struct BzlmodAllowedYankedVersionsValue {
+    allow_all: bool,
+    modules: BTreeSet<(String, String)>,
+}
+
+const BZLMOD_ALLOWED_YANKED_VERSIONS_ENV: &str = "BZLMOD_ALLOW_YANKED_VERSIONS";
+
 fn empty_bzlmod_lockfile_data() -> BzlmodModuleLockfileData {
     BzlmodModuleLockfileData {
         registry_file_hashes: BTreeMap::new(),
@@ -2107,6 +2120,83 @@ impl Key for BzlmodYankedVersionsKey {
             (Ok(x), Ok(y)) => x == y,
             _ => false,
         }
+    }
+
+    fn value_serialize() -> impl ValueSerialize<Value = Self::Value> {
+        NoValueSerialize::<Self::Value>::new()
+    }
+}
+
+#[derive(Clone, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable)]
+#[display("BzlmodClientEnvironmentVariableKey({name})")]
+#[pagable_typetag(dice::DiceKeyDyn)]
+struct BzlmodClientEnvironmentVariableKey {
+    name: String,
+}
+
+#[async_trait::async_trait]
+impl Key for BzlmodClientEnvironmentVariableKey {
+    type Value = buck2_error::Result<Arc<BzlmodClientEnvironmentVariableValue>>;
+
+    async fn compute(
+        &self,
+        _ctx: &mut DiceComputations,
+        _cancellations: &CancellationContext,
+    ) -> Self::Value {
+        Ok(Arc::new(BzlmodClientEnvironmentVariableValue {
+            value: std::env::var(&self.name).ok(),
+        }))
+    }
+
+    fn equality(x: &Self::Value, y: &Self::Value) -> bool {
+        match (x, y) {
+            (Ok(x), Ok(y)) => x == y,
+            _ => false,
+        }
+    }
+
+    fn validity(_x: &Self::Value) -> bool {
+        false
+    }
+
+    fn value_serialize() -> impl ValueSerialize<Value = Self::Value> {
+        NoValueSerialize::<Self::Value>::new()
+    }
+}
+
+#[derive(Clone, Dupe, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable)]
+#[display("BzlmodAllowedYankedVersionsKey")]
+#[pagable_typetag(dice::DiceKeyDyn)]
+struct BzlmodAllowedYankedVersionsKey;
+
+#[async_trait::async_trait]
+impl Key for BzlmodAllowedYankedVersionsKey {
+    type Value = buck2_error::Result<Arc<BzlmodAllowedYankedVersionsValue>>;
+
+    async fn compute(
+        &self,
+        ctx: &mut DiceComputations,
+        _cancellations: &CancellationContext,
+    ) -> Self::Value {
+        let env = ctx
+            .compute(&BzlmodClientEnvironmentVariableKey {
+                name: BZLMOD_ALLOWED_YANKED_VERSIONS_ENV.to_owned(),
+            })
+            .await??;
+        Ok(Arc::new(bzlmod_allowed_yanked_versions_from_env(
+            env.value.as_deref(),
+        )?))
+    }
+
+    fn equality(x: &Self::Value, y: &Self::Value) -> bool {
+        match (x, y) {
+            (Ok(x), Ok(y)) => x == y,
+            _ => false,
+        }
+    }
+
+    fn validity(_x: &Self::Value) -> bool {
+        false
     }
 
     fn value_serialize() -> impl ValueSerialize<Value = Self::Value> {
@@ -2798,6 +2888,7 @@ async fn collect_bzlmod_yanked_versions(
     selection: &BzlmodSelectionResult,
 ) -> buck2_error::Result<()> {
     let registry = ctx.compute(&bzlmod_default_registry_key()).await??;
+    let allowed_yanked_versions = ctx.compute(&BzlmodAllowedYankedVersionsKey).await??;
     let mut keys = Vec::new();
     for (name, version) in &selection.selected_keys {
         if name == "bazel_tools"
@@ -2809,6 +2900,13 @@ async fn collect_bzlmod_yanked_versions(
         if registry
             .selected_yanked_versions
             .contains_key(&(name.clone(), version.clone()))
+        {
+            continue;
+        }
+        if allowed_yanked_versions.allow_all
+            || allowed_yanked_versions
+                .modules
+                .contains(&(name.clone(), version.clone()))
         {
             continue;
         }
@@ -2841,15 +2939,67 @@ async fn collect_bzlmod_yanked_versions(
         };
         return Err(buck2_error!(
             buck2_error::ErrorTag::Input,
-            "Yanked version detected in bzlmod dependency graph: {}@{}, for the reason: {}. Use a newer version of this module or record the allowed yanked version in MODULE.bazel.lock with Bazel.",
+            "Yanked version detected in bzlmod dependency graph: {}@{}, for the reason: {}. Use a newer version of this module, record the allowed yanked version in MODULE.bazel.lock with Bazel, or allow it with {}.",
             key.module_name,
             selection
                 .selected_versions_for_name(&key.module_name)
                 .unwrap_or(""),
-            info
+            info,
+            BZLMOD_ALLOWED_YANKED_VERSIONS_ENV
         ));
     }
     Ok(())
+}
+
+fn bzlmod_allowed_yanked_versions_from_env(
+    value: Option<&str>,
+) -> buck2_error::Result<BzlmodAllowedYankedVersionsValue> {
+    let mut modules = BTreeSet::new();
+    let Some(value) = value else {
+        return Ok(BzlmodAllowedYankedVersionsValue {
+            allow_all: false,
+            modules,
+        });
+    };
+    for module in value.split(',') {
+        if module.is_empty() {
+            continue;
+        }
+        if module == "all" {
+            return Ok(BzlmodAllowedYankedVersionsValue {
+                allow_all: true,
+                modules: BTreeSet::new(),
+            });
+        }
+        let Some((name, version)) = module.split_once('@') else {
+            return Err(buck2_error!(
+                buck2_error::ErrorTag::Input,
+                "Parsing environment variable {}={} failed, module versions must be of the form '<module name>@<version>'",
+                BZLMOD_ALLOWED_YANKED_VERSIONS_ENV,
+                value
+            ));
+        };
+        if !is_valid_bzlmod_module_name(name) {
+            return Err(buck2_error!(
+                buck2_error::ErrorTag::Input,
+                "Parsing environment variable {}={} failed, invalid module name `{}`",
+                BZLMOD_ALLOWED_YANKED_VERSIONS_ENV,
+                value,
+                name
+            ));
+        }
+        parse_bzlmod_version(version).with_buck_error_context(|| {
+            format!(
+                "Parsing environment variable {}={} failed, invalid version specified for module `{}`",
+                BZLMOD_ALLOWED_YANKED_VERSIONS_ENV, value, name
+            )
+        })?;
+        modules.insert((name.to_owned(), version.to_owned()));
+    }
+    Ok(BzlmodAllowedYankedVersionsValue {
+        allow_all: false,
+        modules,
+    })
 }
 
 impl BzlmodSelectionResult {
@@ -6964,6 +7114,25 @@ fn bzlmod_cell_name_for_canonical_repo_name(canonical_repo_name: &str) -> String
     } else {
         bzlmod_cell_name(canonical_repo_name)
     }
+}
+
+fn is_valid_bzlmod_module_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    if !first.is_ascii_lowercase() {
+        return false;
+    }
+    let mut last = first;
+    for ch in chars {
+        if !(ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '.' || ch == '-' || ch == '_')
+        {
+            return false;
+        }
+        last = ch;
+    }
+    last.is_ascii_lowercase() || last.is_ascii_digit()
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
