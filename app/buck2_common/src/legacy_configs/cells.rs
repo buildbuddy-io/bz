@@ -1700,6 +1700,15 @@ struct BzlmodYankedVersionsValue {
     yanked_versions: Option<BTreeMap<String, String>>,
 }
 
+fn empty_bzlmod_lockfile_data() -> BzlmodModuleLockfileData {
+    BzlmodModuleLockfileData {
+        registry_file_hashes: BTreeMap::new(),
+        selected_yanked_versions: BTreeMap::new(),
+        extension_generated_repos: BTreeMap::new(),
+        extension_facts: BTreeSet::new(),
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash, Allocative, Pagable)]
 struct BcrSourceJson {
     url: String,
@@ -1973,6 +1982,37 @@ impl Key for BzlmodLockFileKey {
             })
             .await?,
         ))
+    }
+
+    fn equality(x: &Self::Value, y: &Self::Value) -> bool {
+        match (x, y) {
+            (Ok(x), Ok(y)) => x == y,
+            _ => false,
+        }
+    }
+
+    fn value_serialize() -> impl ValueSerialize<Value = Self::Value> {
+        NoValueSerialize::<Self::Value>::new()
+    }
+}
+
+#[derive(Clone, Dupe, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable)]
+#[display("BzlmodHiddenLockFileKey")]
+#[pagable_typetag(dice::DiceKeyDyn)]
+struct BzlmodHiddenLockFileKey;
+
+#[async_trait::async_trait]
+impl Key for BzlmodHiddenLockFileKey {
+    type Value = buck2_error::Result<Arc<BzlmodModuleLockfileData>>;
+
+    async fn compute(
+        &self,
+        _ctx: &mut DiceComputations,
+        _cancellations: &CancellationContext,
+    ) -> Self::Value {
+        // Bazel keeps this under the output base and only invalidates it on expunge.
+        // Buck does not currently write a hidden bzlmod lockfile, so model the key as absent.
+        Ok(Arc::new(empty_bzlmod_lockfile_data()))
     }
 
     fn equality(x: &Self::Value, y: &Self::Value) -> bool {
@@ -3960,12 +4000,7 @@ async fn bzlmod_lockfile_data(
             .join(ForwardRelativePath::new("MODULE.bazel.lock")?),
     );
     let Some(lines) = file_ops.read_file_lines_if_exists(&lockfile_path).await? else {
-        return Ok(BzlmodModuleLockfileData {
-            registry_file_hashes: BTreeMap::new(),
-            selected_yanked_versions: BTreeMap::new(),
-            extension_generated_repos: BTreeMap::new(),
-            extension_facts: BTreeSet::new(),
-        });
+        return Ok(empty_bzlmod_lockfile_data());
     };
     bzlmod_lockfile_data_from_str(&lines.join("\n"))
 }
