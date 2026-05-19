@@ -158,7 +158,9 @@ pub(crate) fn split_providers_name(s: &str) -> buck2_error::Result<(&str, Provid
     }
 }
 
-#[derive(Dupe, Clone, Ord, PartialOrd, Eq, PartialEq, Hash, Debug)]
+#[derive(
+    Dupe, Clone, Ord, PartialOrd, Eq, PartialEq, Hash, Debug, Allocative, Pagable
+)]
 pub struct Modifiers(Option<Arc<[String]>>);
 
 impl Modifiers {
@@ -459,6 +461,7 @@ impl<T: PatternType> Display for ParsedPattern<T> {
     }
 }
 
+#[derive(Clone, Debug, Hash, Eq, PartialEq, Allocative, Pagable)]
 pub struct ParsedPatternWithModifiers<T: PatternType> {
     pub parsed_pattern: ParsedPattern<T>,
     pub modifiers: Modifiers,
@@ -1311,7 +1314,7 @@ where
     }))
 }
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Allocative, Pagable)]
 pub enum PackageSpec<T: PatternType> {
     /// Given targets in a package.
     Targets(Vec<(TargetName, T)>),

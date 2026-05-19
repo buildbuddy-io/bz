@@ -719,7 +719,7 @@ impl Display for ExecutionPlatformResolutionKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "Resolving execution platform: cell:{}",
+            "TOOLCHAIN_RESOLUTION(cell:{})",
             self.target_node_cell
         )?;
 
@@ -779,7 +779,7 @@ impl Key for ExecutionPlatformResolutionKey {
 }
 
 #[derive(Clone, Dupe, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable)]
-#[display("ExecutionPlatforms")]
+#[display("REGISTERED_EXECUTION_PLATFORMS")]
 #[pagable_typetag(dice::DiceKeyDyn)]
 pub struct ExecutionPlatformsKey;
 

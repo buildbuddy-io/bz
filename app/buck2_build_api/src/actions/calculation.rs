@@ -971,6 +971,7 @@ impl ActionCalculation {
 #[derive(
     Clone, Dupe, Display, Debug, Eq, PartialEq, Hash, Allocative, RefCast, Pagable
 )]
+#[display("ACTION_EXECUTION({})", _0)]
 #[repr(transparent)]
 #[pagable_typetag(dice::DiceKeyDyn)]
 pub struct BuildKey(pub ActionKey);

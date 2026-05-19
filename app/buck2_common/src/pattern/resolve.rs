@@ -8,6 +8,7 @@
  * above-listed licenses.
  */
 
+use allocative::Allocative;
 use buck2_core::package::PackageLabel;
 use buck2_core::package::PackageLabelWithModifiers;
 use buck2_core::pattern::pattern::Modifiers;
@@ -30,7 +31,7 @@ use crate::pattern::package_roots::find_package_roots;
 
 /// Pattern where `foo/...` is expanded to matching packages.
 /// Targets are not validated yet, and `:` is not yet expanded.
-#[derive(Debug)]
+#[derive(Clone, Debug, Allocative)]
 pub struct ResolvedPattern<T: PatternType> {
     pub specs: BuckIndexMap<PackageLabelWithModifiers, PackageSpec<T>>,
 }

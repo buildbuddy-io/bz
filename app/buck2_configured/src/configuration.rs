@@ -446,11 +446,12 @@ pub(crate) async fn get_platform_configuration(
         Allocative,
         Pagable
     )]
+    #[display("PLATFORM({})", _0)]
     #[pagable_typetag(dice::DiceKeyDyn)]
-    struct PlatformConfigurationKey(TargetLabel);
+    struct BazelPlatformKey(TargetLabel);
 
     #[async_trait]
-    impl Key for PlatformConfigurationKey {
+    impl Key for BazelPlatformKey {
         type Value = buck2_error::Result<ConfigurationData>;
 
         async fn compute(
@@ -473,8 +474,7 @@ pub(crate) async fn get_platform_configuration(
         }
     }
 
-    ctx.compute(&PlatformConfigurationKey(target.dupe()))
-        .await?
+    ctx.compute(&BazelPlatformKey(target.dupe())).await?
 }
 
 pub(crate) async fn compute_platform_cfgs(

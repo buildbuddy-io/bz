@@ -1430,7 +1430,7 @@ struct BazelRegisteredToolchain {
 }
 
 #[derive(Clone, Dupe, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable)]
-#[display("registered_bazel_toolchain_nodes")]
+#[display("REGISTERED_TOOLCHAINS")]
 #[pagable_typetag(dice::DiceKeyDyn)]
 struct RegisteredBazelToolchainNodesKey;
 

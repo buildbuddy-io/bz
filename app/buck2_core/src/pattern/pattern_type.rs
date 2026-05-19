@@ -12,6 +12,7 @@ use std::fmt;
 use std::fmt::Debug;
 use std::fmt::Display;
 use std::fmt::Formatter;
+use std::hash::Hash;
 
 use allocative::Allocative;
 use pagable::Pagable;
@@ -46,7 +47,20 @@ enum PatternTypeError {
 /// This is either 'TargetLabel', 'ConfiguredTargetLabel', or
 /// 'ConfiguredProvidersLabel'
 pub trait PatternType:
-    Sized + Clone + Default + Display + Debug + PartialEq + Eq + Ord + Allocative + 'static
+    Sized
+    + Clone
+    + Default
+    + Display
+    + Debug
+    + PartialEq
+    + Eq
+    + Ord
+    + Hash
+    + Allocative
+    + Pagable
+    + Send
+    + Sync
+    + 'static
 {
     const NAME: &'static str;
 
@@ -129,9 +143,11 @@ impl PatternType for TargetPatternExtra {
     Debug,
     Eq,
     PartialEq,
+    Hash,
     Ord,
     PartialOrd,
-    Allocative
+    Allocative,
+    Pagable
 )]
 pub struct ProvidersPatternExtra {
     pub providers: ProvidersName,
@@ -191,9 +207,11 @@ impl PatternType for ProvidersPatternExtra {
     Debug,
     Eq,
     PartialEq,
+    Hash,
     Ord,
     PartialOrd,
     Allocative,
+    Pagable,
     derive_more::Display
 )]
 pub enum ConfigurationPredicate {
@@ -265,7 +283,9 @@ impl ConfigurationPredicate {
     }
 }
 
-#[derive(Debug, Default, Clone, Eq, PartialEq, Ord, PartialOrd, Allocative)]
+#[derive(
+    Debug, Default, Clone, Eq, PartialEq, Hash, Ord, PartialOrd, Allocative, Pagable
+)]
 pub struct ConfiguredTargetPatternExtra {
     /// Configuration part of pattern `foo//bar:baz (cfg#ab01)`.
     pub cfg: ConfigurationPredicate,
@@ -309,7 +329,9 @@ impl PatternType for ConfiguredTargetPatternExtra {
     }
 }
 
-#[derive(Debug, Default, Clone, Eq, PartialEq, Ord, PartialOrd, Allocative)]
+#[derive(
+    Debug, Default, Clone, Eq, PartialEq, Hash, Ord, PartialOrd, Allocative, Pagable
+)]
 pub struct ConfiguredProvidersPatternExtra {
     pub providers: ProvidersName,
     /// Configuration part of pattern `foo//bar:baz[Provider] (cfg#ab01)`.

@@ -95,7 +95,9 @@ impl Serialize for PackageLabel {
     }
 }
 
-#[derive(Dupe, Clone, Eq, PartialEq, Hash, Debug, Ord, PartialOrd)]
+#[derive(
+    Dupe, Clone, Eq, PartialEq, Hash, Debug, Ord, PartialOrd, Allocative, Pagable
+)]
 pub struct PackageLabelWithModifiers {
     pub package: PackageLabel,
     pub modifiers: Modifiers,

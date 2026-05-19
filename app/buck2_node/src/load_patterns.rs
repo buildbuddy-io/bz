@@ -9,30 +9,40 @@
  */
 
 use std::collections::BTreeMap;
+use std::collections::BTreeSet;
+use std::fmt;
 use std::sync::Arc;
 
+use allocative::Allocative;
+use async_trait::async_trait;
 use buck2_common::file_ops::trait_::DiceFileOps;
 use buck2_common::pattern::package_roots::collect_package_roots;
 use buck2_common::pattern::resolve::ResolvedPattern;
+use buck2_core::cells::cell_path::CellPath;
 use buck2_core::package::PackageLabel;
 use buck2_core::package::PackageLabelWithModifiers;
 use buck2_core::pattern::pattern::Modifiers;
+use buck2_core::pattern::pattern::PackageSpec;
 use buck2_core::pattern::pattern::ParsedPattern;
 use buck2_core::pattern::pattern::ParsedPatternWithModifiers;
+use buck2_core::pattern::pattern_type::ConfiguredProvidersPatternExtra;
+use buck2_core::pattern::pattern_type::ConfiguredTargetPatternExtra;
 use buck2_core::pattern::pattern_type::PatternType;
+use buck2_core::pattern::pattern_type::ProvidersPatternExtra;
+use buck2_core::pattern::pattern_type::TargetPatternExtra;
 use buck2_core::target::name::TargetName;
 use buck2_events::dispatch::console_message;
-use buck2_hash::BuckHasherBuilder;
 use dice::DiceComputations;
-use dice::LinearRecomputeDiceComputations;
-use dice_futures::owning_future::OwningFuture;
+use dice::Key;
+use dice::NoValueSerialize;
+use dice::ValueSerialize;
+use dice_futures::cancellation::CancellationContext;
 use dupe::Dupe;
 use futures::FutureExt;
-use futures::Stream;
-use futures::StreamExt;
-use futures::future::BoxFuture;
-use futures::stream::FuturesUnordered;
 use itertools::Itertools;
+use pagable::Pagable;
+use pagable::pagable_typetag;
+use pagable::typetag::PagableTagged;
 
 use crate::nodes::eval_result::EvaluationResult;
 use crate::nodes::frontend::TargetGraphCalculation;
@@ -47,128 +57,401 @@ enum BuildErrors {
     MissingPackage(PackageLabel),
 }
 
-struct Builder<'c, 'd> {
-    ctx: &'c LinearRecomputeDiceComputations<'d>,
-    already_loading: std::collections::HashSet<PackageLabel, BuckHasherBuilder>,
-    load_package_futs:
-        FuturesUnordered<BoxFuture<'c, (PackageLabel, buck2_error::Result<Arc<EvaluationResult>>)>>,
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Allocative, Pagable)]
+#[pagable_typetag(dice::DiceKeyDyn)]
+pub struct CollectPackagesUnderDirectoryKey(CellPath);
+
+impl fmt::Display for CollectPackagesUnderDirectoryKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} -- collect packages under directory", self.0)
+    }
 }
 
-impl Builder<'_, '_> {
-    pub fn new<'c, 'd>(ctx: &'c LinearRecomputeDiceComputations<'d>) -> Builder<'c, 'd> {
-        Builder {
-            ctx,
-            already_loading: std::collections::HashSet::default(),
-            load_package_futs: FuturesUnordered::new(),
+#[async_trait]
+impl Key for CollectPackagesUnderDirectoryKey {
+    type Value = buck2_error::Result<Arc<Vec<PackageLabel>>>;
+
+    async fn compute(
+        &self,
+        ctx: &mut DiceComputations,
+        _cancellation: &CancellationContext,
+    ) -> Self::Value {
+        let root = self.0.clone();
+        ctx.with_linear_recompute(|ctx| async move {
+            let mut packages = Vec::new();
+            collect_package_roots(&DiceFileOps(&ctx), vec![root], |package| {
+                packages.push(package?);
+                buck2_error::Ok(())
+            })
+            .await?;
+            packages.sort();
+            packages.dedup();
+            Ok(Arc::new(packages))
+        })
+        .await
+    }
+
+    fn equality(x: &Self::Value, y: &Self::Value) -> bool {
+        match (x, y) {
+            (Ok(x), Ok(y)) => x == y,
+            _ => false,
         }
     }
 
-    fn load_package(&mut self, package: PackageLabel) {
-        if !self.already_loading.insert(package.dupe()) {
-            return;
-        }
+    fn validity(x: &Self::Value) -> bool {
+        x.is_ok()
+    }
 
-        // it's important that this is not async and the temporary spawn happens when the function is called as we don't immediately start polling these.
-        // so DO NOT USE async move here
-        self.load_package_futs.push(
-            OwningFuture::new(self.ctx.get(), move |ctx| {
-                ctx.get_interpreter_results(package)
-                    .map(move |res| (package, res))
-                    .boxed()
-            })
-            .boxed(),
+    fn value_serialize() -> impl ValueSerialize<Value = Self::Value> {
+        NoValueSerialize::<Self::Value>::new()
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Allocative, Pagable)]
+struct PrepareDepsOfPatternKey<T: PatternType> {
+    pattern: ParsedPatternWithModifiers<T>,
+}
+
+impl<T: PatternType> PagableTagged for PrepareDepsOfPatternKey<T> {
+    fn pagable_type_tag(&self) -> &'static str {
+        std::any::type_name::<Self>()
+    }
+}
+
+impl<T: PatternType> fmt::Display for PrepareDepsOfPatternKey<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{} -- prepare deps of pattern",
+            self.pattern.parsed_pattern
         )
     }
 }
 
-async fn resolve_patterns_and_load_buildfiles<'c, T: PatternType>(
-    ctx: &'c LinearRecomputeDiceComputations<'_>,
-    parsed_patterns: Vec<ParsedPattern<T>>,
-) -> buck2_error::Result<(
-    ResolvedPattern<T>,
-    impl Stream<Item = (PackageLabel, buck2_error::Result<Arc<EvaluationResult>>)> + use<'c, T>,
-)> {
-    let mut spec = ResolvedPattern::<T>::new();
-    let mut recursive_packages = Vec::new();
+#[async_trait]
+impl<T: PatternType> Key for PrepareDepsOfPatternKey<T> {
+    type Value = buck2_error::Result<Arc<Vec<PackageLabel>>>;
 
-    let mut builder = Builder::new(ctx);
-    for pattern in parsed_patterns {
-        match pattern {
-            ParsedPattern::Target(package, target_name, extra) => {
-                spec.add_target(package.dupe(), target_name, extra, Modifiers::new(None));
-                builder.load_package(package.dupe());
+    async fn compute(
+        &self,
+        ctx: &mut DiceComputations,
+        _cancellation: &CancellationContext,
+    ) -> Self::Value {
+        match &self.pattern.parsed_pattern {
+            ParsedPattern::Target(package, ..) | ParsedPattern::Package(package) => {
+                Ok(Arc::new(vec![package.dupe()]))
             }
-            ParsedPattern::Package(package) => {
-                spec.add_package(package.dupe(), Modifiers::new(None));
-                builder.load_package(package.dupe());
-            }
-            ParsedPattern::Recursive(package) => {
-                recursive_packages.push(package);
+            ParsedPattern::Recursive(cell_path) => {
+                ctx.compute(&CollectPackagesUnderDirectoryKey(cell_path.clone()))
+                    .await?
             }
         }
     }
 
-    collect_package_roots(&DiceFileOps(ctx), recursive_packages, |package| {
-        let package = package?;
-        spec.add_package(package.dupe(), Modifiers::new(None));
-        builder.load_package(package);
-        buck2_error::Ok(())
-    })
-    .await?;
+    fn equality(x: &Self::Value, y: &Self::Value) -> bool {
+        match (x, y) {
+            (Ok(x), Ok(y)) => x == y,
+            _ => false,
+        }
+    }
 
-    Ok((spec, builder.load_package_futs))
+    fn validity(x: &Self::Value) -> bool {
+        x.is_ok()
+    }
+
+    fn value_serialize() -> impl ValueSerialize<Value = Self::Value> {
+        NoValueSerialize::<Self::Value>::new()
+    }
 }
 
-async fn resolve_patterns_with_modifiers_and_load_buildfiles<'c, T: PatternType>(
-    ctx: &'c LinearRecomputeDiceComputations<'_>,
-    parsed_patterns_with_modifiers: Vec<ParsedPatternWithModifiers<T>>,
-) -> buck2_error::Result<(
-    ResolvedPattern<T>,
-    impl Stream<Item = (PackageLabel, buck2_error::Result<Arc<EvaluationResult>>)> + use<'c, T>,
-)> {
-    let mut spec = ResolvedPattern::<T>::new();
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Allocative, Pagable)]
+struct PrepareDepsOfPatternsKey<T: PatternType> {
+    patterns: Vec<ParsedPatternWithModifiers<T>>,
+}
 
-    let mut builder = Builder::new(ctx);
-    for pattern_with_modifiers in parsed_patterns_with_modifiers {
-        let ParsedPatternWithModifiers {
-            parsed_pattern,
-            modifiers,
-        } = pattern_with_modifiers;
+impl<T: PatternType> PagableTagged for PrepareDepsOfPatternsKey<T> {
+    fn pagable_type_tag(&self) -> &'static str {
+        std::any::type_name::<Self>()
+    }
+}
 
-        match parsed_pattern {
+impl<T: PatternType> fmt::Display for PrepareDepsOfPatternsKey<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{} target patterns -- prepare deps of patterns",
+            self.patterns.len()
+        )
+    }
+}
+
+#[async_trait]
+impl<T: PatternType> Key for PrepareDepsOfPatternsKey<T> {
+    type Value = buck2_error::Result<Arc<Vec<PackageLabel>>>;
+
+    async fn compute(
+        &self,
+        ctx: &mut DiceComputations,
+        _cancellation: &CancellationContext,
+    ) -> Self::Value {
+        let prepared = ctx
+            .compute_join(self.patterns.iter(), |ctx, pattern| {
+                async move {
+                    let key = PrepareDepsOfPatternKey {
+                        pattern: pattern.clone(),
+                    };
+                    ctx.compute(&key).await?
+                }
+                .boxed()
+            })
+            .await;
+
+        let mut packages = BTreeSet::new();
+        for result in prepared {
+            packages.extend(result?.iter().copied());
+        }
+        Ok(Arc::new(packages.into_iter().collect()))
+    }
+
+    fn equality(x: &Self::Value, y: &Self::Value) -> bool {
+        match (x, y) {
+            (Ok(x), Ok(y)) => x == y,
+            _ => false,
+        }
+    }
+
+    fn validity(x: &Self::Value) -> bool {
+        x.is_ok()
+    }
+
+    fn value_serialize() -> impl ValueSerialize<Value = Self::Value> {
+        NoValueSerialize::<Self::Value>::new()
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Allocative, Pagable)]
+struct TargetPatternKey<T: PatternType> {
+    pattern: ParsedPatternWithModifiers<T>,
+}
+
+impl<T: PatternType> PagableTagged for TargetPatternKey<T> {
+    fn pagable_type_tag(&self) -> &'static str {
+        std::any::type_name::<Self>()
+    }
+}
+
+impl<T: PatternType> fmt::Display for TargetPatternKey<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} -- target pattern", self.pattern.parsed_pattern)
+    }
+}
+
+#[async_trait]
+impl<T: PatternType> Key for TargetPatternKey<T> {
+    type Value = buck2_error::Result<Arc<ResolvedPattern<T>>>;
+
+    async fn compute(
+        &self,
+        ctx: &mut DiceComputations,
+        _cancellation: &CancellationContext,
+    ) -> Self::Value {
+        let mut resolved = ResolvedPattern::new();
+        let modifiers = self.pattern.modifiers.dupe();
+        match &self.pattern.parsed_pattern {
             ParsedPattern::Target(package, target_name, extra) => {
-                spec.add_target(package.dupe(), target_name, extra, modifiers);
-                builder.load_package(package.dupe());
+                resolved.add_target(
+                    package.dupe(),
+                    target_name.clone(),
+                    extra.clone(),
+                    modifiers,
+                );
             }
             ParsedPattern::Package(package) => {
-                spec.add_package(package.dupe(), modifiers);
-                builder.load_package(package.dupe());
+                resolved.add_package(package.dupe(), modifiers);
             }
-            ParsedPattern::Recursive(cell_path) => {
-                let mut roots = Vec::new();
-
-                collect_package_roots(&DiceFileOps(ctx), vec![cell_path], |package| {
-                    let package = package?;
-                    roots.push(package);
-                    buck2_error::Ok(())
-                })
-                .await?;
-
-                for package in roots {
-                    spec.add_package(package.dupe(), modifiers.dupe());
-                    builder.load_package(package);
+            ParsedPattern::Recursive(_) => {
+                let packages = ctx
+                    .compute(&PrepareDepsOfPatternKey {
+                        pattern: self.pattern.clone(),
+                    })
+                    .await??;
+                for package in packages.iter() {
+                    resolved.add_package(package.dupe(), modifiers.dupe());
                 }
             }
         }
+        Ok(Arc::new(resolved))
     }
 
-    Ok((spec, builder.load_package_futs))
+    fn equality(_: &Self::Value, _: &Self::Value) -> bool {
+        false
+    }
+
+    fn validity(x: &Self::Value) -> bool {
+        x.is_ok()
+    }
+
+    fn value_serialize() -> impl ValueSerialize<Value = Self::Value> {
+        NoValueSerialize::<Self::Value>::new()
+    }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Allocative, Pagable)]
+struct TargetPatternPhaseKey<T: PatternType> {
+    patterns: Vec<ParsedPatternWithModifiers<T>>,
+    skip_missing_targets: MissingTargetBehavior,
+}
+
+impl<T: PatternType> PagableTagged for TargetPatternPhaseKey<T> {
+    fn pagable_type_tag(&self) -> &'static str {
+        std::any::type_name::<Self>()
+    }
+}
+
+pagable::register_typetag!(PrepareDepsOfPatternKey<TargetPatternExtra> as dyn dice::DiceKeyDyn);
+pagable::register_typetag!(PrepareDepsOfPatternKey<ProvidersPatternExtra> as dyn dice::DiceKeyDyn);
+pagable::register_typetag!(
+    PrepareDepsOfPatternKey<ConfiguredTargetPatternExtra> as dyn dice::DiceKeyDyn
+);
+pagable::register_typetag!(
+    PrepareDepsOfPatternKey<ConfiguredProvidersPatternExtra> as dyn dice::DiceKeyDyn
+);
+pagable::register_typetag!(PrepareDepsOfPatternsKey<TargetPatternExtra> as dyn dice::DiceKeyDyn);
+pagable::register_typetag!(PrepareDepsOfPatternsKey<ProvidersPatternExtra> as dyn dice::DiceKeyDyn);
+pagable::register_typetag!(
+    PrepareDepsOfPatternsKey<ConfiguredTargetPatternExtra> as dyn dice::DiceKeyDyn
+);
+pagable::register_typetag!(
+    PrepareDepsOfPatternsKey<ConfiguredProvidersPatternExtra> as dyn dice::DiceKeyDyn
+);
+pagable::register_typetag!(TargetPatternKey<TargetPatternExtra> as dyn dice::DiceKeyDyn);
+pagable::register_typetag!(TargetPatternKey<ProvidersPatternExtra> as dyn dice::DiceKeyDyn);
+pagable::register_typetag!(
+    TargetPatternKey<ConfiguredTargetPatternExtra> as dyn dice::DiceKeyDyn
+);
+pagable::register_typetag!(
+    TargetPatternKey<ConfiguredProvidersPatternExtra> as dyn dice::DiceKeyDyn
+);
+pagable::register_typetag!(TargetPatternPhaseKey<TargetPatternExtra> as dyn dice::DiceKeyDyn);
+pagable::register_typetag!(TargetPatternPhaseKey<ProvidersPatternExtra> as dyn dice::DiceKeyDyn);
+pagable::register_typetag!(
+    TargetPatternPhaseKey<ConfiguredTargetPatternExtra> as dyn dice::DiceKeyDyn
+);
+pagable::register_typetag!(
+    TargetPatternPhaseKey<ConfiguredProvidersPatternExtra> as dyn dice::DiceKeyDyn
+);
+
+impl<T: PatternType> fmt::Display for TargetPatternPhaseKey<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{} target patterns -- target pattern phase",
+            self.patterns.len()
+        )
+    }
+}
+
+#[async_trait]
+impl<T: PatternType> Key for TargetPatternPhaseKey<T> {
+    type Value = buck2_error::Result<Arc<LoadedPatterns<T>>>;
+
+    async fn compute(
+        &self,
+        ctx: &mut DiceComputations,
+        _cancellation: &CancellationContext,
+    ) -> Self::Value {
+        let packages = ctx
+            .compute(&PrepareDepsOfPatternsKey {
+                patterns: self.patterns.clone(),
+            })
+            .await??;
+
+        let resolved_patterns = ctx
+            .compute_join(self.patterns.iter(), |ctx, pattern| {
+                async move {
+                    let key = TargetPatternKey {
+                        pattern: pattern.clone(),
+                    };
+                    ctx.compute(&key).await?
+                }
+                .boxed()
+            })
+            .await;
+
+        let mut spec = ResolvedPattern::new();
+        for resolved in resolved_patterns {
+            merge_resolved_pattern(&mut spec, (*resolved?).clone());
+        }
+
+        let load_results = ctx
+            .compute_join(packages.iter(), |ctx, package| {
+                async move {
+                    (
+                        package.dupe(),
+                        ctx.get_interpreter_results(package.dupe()).await,
+                    )
+                }
+                .boxed()
+            })
+            .await;
+
+        let mut results = BTreeMap::new();
+        for (package, result) in load_results {
+            results.insert(package, result);
+        }
+
+        Ok(Arc::new(apply_spec(
+            spec,
+            results,
+            self.skip_missing_targets,
+        )?))
+    }
+
+    fn equality(_: &Self::Value, _: &Self::Value) -> bool {
+        false
+    }
+
+    fn validity(x: &Self::Value) -> bool {
+        x.is_ok()
+    }
+
+    fn value_serialize() -> impl ValueSerialize<Value = Self::Value> {
+        NoValueSerialize::<Self::Value>::new()
+    }
+}
+
+fn merge_resolved_pattern<T: PatternType>(
+    destination: &mut ResolvedPattern<T>,
+    source: ResolvedPattern<T>,
+) {
+    for (package_with_modifiers, spec) in source.specs {
+        match spec {
+            PackageSpec::Targets(targets) => {
+                for (target_name, extra) in targets {
+                    destination.add_target(
+                        package_with_modifiers.package.dupe(),
+                        target_name,
+                        extra,
+                        package_with_modifiers.modifiers.dupe(),
+                    );
+                }
+            }
+            PackageSpec::All() => {
+                destination.add_package(
+                    package_with_modifiers.package,
+                    package_with_modifiers.modifiers,
+                );
+            }
+        }
+    }
+}
+
+#[derive(Clone, Allocative)]
 pub struct LoadedPatterns<T: PatternType> {
     results: BTreeMap<PackageLabelWithModifiers, buck2_error::Result<PackageLoadedPatterns<T>>>,
 }
 
+#[derive(Clone, Allocative)]
 pub struct PackageLoadedPatterns<T: PatternType> {
     targets: BTreeMap<(TargetName, T), TargetNode>,
     super_package: SuperPackage,
@@ -262,7 +545,7 @@ impl<T: PatternType> LoadedPatterns<T> {
 
 /// Option to skip missing targets instead of failing.
 /// This is not a good option to use long term, but we need it now to deal with our legacy setup.
-#[derive(Clone, Dupe, Copy, Eq, PartialEq, Debug)]
+#[derive(Clone, Dupe, Copy, Eq, PartialEq, Hash, Debug, Allocative, Pagable)]
 pub enum MissingTargetBehavior {
     /// Skip missing targets (but error on missing packages or evaluation errors).
     /// When skipping, we emit a warning to the console.
@@ -331,19 +614,14 @@ pub async fn load_patterns<T: PatternType>(
     parsed_patterns: Vec<ParsedPattern<T>>,
     skip_missing_targets: MissingTargetBehavior,
 ) -> buck2_error::Result<LoadedPatterns<T>> {
-    ctx.with_linear_recompute(|ctx| async move {
-        let (spec, mut load_package_futs) =
-            resolve_patterns_and_load_buildfiles(&ctx, parsed_patterns).await?;
-
-        let mut results: BTreeMap<PackageLabel, buck2_error::Result<Arc<EvaluationResult>>> =
-            BTreeMap::new();
-        while let Some((pkg, load_res)) = load_package_futs.next().await {
-            results.insert(pkg, load_res);
-        }
-
-        apply_spec(spec, results, skip_missing_targets)
-    })
-    .await
+    let patterns = parsed_patterns
+        .into_iter()
+        .map(|parsed_pattern| ParsedPatternWithModifiers {
+            parsed_pattern,
+            modifiers: Modifiers::new(None),
+        })
+        .collect();
+    load_patterns_with_modifiers(ctx, patterns, skip_missing_targets).await
 }
 
 pub async fn load_patterns_with_modifiers<T: PatternType>(
@@ -351,17 +629,11 @@ pub async fn load_patterns_with_modifiers<T: PatternType>(
     parsed_patterns: Vec<ParsedPatternWithModifiers<T>>,
     skip_missing_targets: MissingTargetBehavior,
 ) -> buck2_error::Result<LoadedPatterns<T>> {
-    ctx.with_linear_recompute(|ctx| async move {
-        let (spec, mut load_package_futs) =
-            resolve_patterns_with_modifiers_and_load_buildfiles(&ctx, parsed_patterns).await?;
-
-        let mut results: BTreeMap<PackageLabel, buck2_error::Result<Arc<EvaluationResult>>> =
-            BTreeMap::new();
-        while let Some((pkg, load_res)) = load_package_futs.next().await {
-            results.insert(pkg, load_res);
-        }
-
-        apply_spec(spec, results, skip_missing_targets)
-    })
-    .await
+    let result = ctx
+        .compute(&TargetPatternPhaseKey {
+            patterns: parsed_patterns,
+            skip_missing_targets,
+        })
+        .await??;
+    Ok((*result).clone())
 }
