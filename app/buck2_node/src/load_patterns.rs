@@ -15,6 +15,8 @@ use std::sync::Arc;
 
 use allocative::Allocative;
 use async_trait::async_trait;
+use buck2_common::dice::skyframe::BazelSkyframeFunction;
+use buck2_common::dice::skyframe::mark_bazel_skyframe_key;
 use buck2_common::file_ops::trait_::DiceFileOps;
 use buck2_common::file_ops::trait_::FileOps;
 use buck2_common::pattern::package_roots::collect_package_roots;
@@ -264,10 +266,8 @@ impl<T: PatternType> Key for PrepareDepsOfPatternKey<T> {
                 Ok(Arc::new(vec![package.dupe()]))
             }
             ParsedPattern::Recursive(cell_path) => {
-                ctx.compute(&PrepareDepsOfTargetsUnderDirectoryKey(
-                    cell_path.clone(),
-                ))
-                .await??;
+                ctx.compute(&PrepareDepsOfTargetsUnderDirectoryKey(cell_path.clone()))
+                    .await??;
                 ctx.compute(&CollectPackagesUnderDirectoryKey(cell_path.clone()))
                     .await?
             }
@@ -573,11 +573,7 @@ pagable::register_typetag!(
 
 impl<T: PatternType> fmt::Display for TargetPatternPhaseKey<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "TARGET_PATTERN_PHASE({} patterns)",
-            self.patterns.len()
-        )
+        write!(f, "TARGET_PATTERN_PHASE({} patterns)", self.patterns.len())
     }
 }
 
@@ -590,6 +586,8 @@ impl<T: PatternType> Key for TargetPatternPhaseKey<T> {
         ctx: &mut DiceComputations,
         _cancellation: &CancellationContext,
     ) -> Self::Value {
+        mark_bazel_skyframe_key(ctx, BazelSkyframeFunction::PrepareAnalysisPhase).await?;
+
         let _prepared_packages = ctx
             .compute(&PrepareDepsOfPatternsKey {
                 patterns: self.patterns.clone(),
@@ -806,9 +804,7 @@ fn collect_targets_in_package<T: PatternType>(
             MissingTargetBehavior::Fail => {
                 return Err(missing.into_first_error().into());
             }
-            MissingTargetBehavior::Warn => {
-                console_message(missing.missing_targets_warning())
-            }
+            MissingTargetBehavior::Warn => console_message(missing.missing_targets_warning()),
         }
     };
 

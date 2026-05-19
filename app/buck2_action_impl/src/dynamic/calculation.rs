@@ -66,6 +66,7 @@ pub(crate) fn init_dynamic_lambda_calculation() {
     PartialEq,
     Pagable
 )]
+#[display("ACTION_TEMPLATE_EXPANSION({})", _0)]
 #[pagable_typetag(dice::DiceKeyDyn)]
 pub struct DynamicLambdaDiceKey(DynamicLambdaResultsKey);
 

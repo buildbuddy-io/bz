@@ -43,6 +43,8 @@ use pagable::pagable_typetag;
 
 use crate::buildfiles::HasBuildfiles;
 use crate::dice::data::HasIoProvider;
+use crate::dice::skyframe::BazelSkyframeFunction;
+use crate::dice::skyframe::mark_bazel_skyframe_key_with_detail;
 use crate::external_symlink::ExternalSymlink;
 use crate::file_ops::delegate::FileOpsDelegateWithIgnores;
 use crate::file_ops::delegate::get_delegated_file_ops;
@@ -825,6 +827,12 @@ async fn resolve_read_file_metadata(
             }) => {
                 let target = target.as_ref().clone();
                 if !seen.insert(target.clone()) {
+                    mark_bazel_skyframe_key_with_detail(
+                        ctx,
+                        BazelSkyframeFunction::FileSymlinkCycleUniqueness,
+                        target.to_string(),
+                    )
+                    .await?;
                     return Err(internal_error!(
                         "symlink cycle while resolving read-file metadata at `{}`",
                         target

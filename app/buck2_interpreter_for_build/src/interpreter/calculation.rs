@@ -14,6 +14,8 @@ use std::sync::Arc;
 
 use allocative::Allocative;
 use async_trait::async_trait;
+use buck2_common::dice::skyframe::BazelSkyframeFunction;
+use buck2_common::dice::skyframe::mark_bazel_skyframe_key;
 use buck2_common::file_ops::dice::DiceFileComputations;
 use buck2_common::file_ops::error::FileReadErrorContext;
 use buck2_common::package_listing::dice::DicePackageListingResolver;
@@ -177,6 +179,7 @@ impl Key for BazelNonFinalizerPackagePiecesKey {
         ctx: &mut DiceComputations,
         _cancellation: &CancellationContext,
     ) -> Self::Value {
+        mark_bazel_skyframe_key(ctx, BazelSkyframeFunction::MacroInstance).await?;
         ctx.compute(&BazelPackageDeclarationsKey(self.0.dupe()))
             .await?
     }
@@ -202,6 +205,7 @@ impl Key for BazelPackageDeclarationsKey {
         ctx: &mut DiceComputations,
         cancellation: &CancellationContext,
     ) -> Self::Value {
+        mark_bazel_skyframe_key(ctx, BazelSkyframeFunction::EvalMacro).await?;
         let ((time_span, result), spans) = async_record_root_spans(
             compute_interpreter_results_uncached(ctx, self.0.dupe(), cancellation),
         )
@@ -292,17 +296,16 @@ impl Key for BazelBzlCompileKey {
                 Ok(Arc::new(Vec::new()))
             }
             StarlarkModulePath::LoadFile(_) | StarlarkModulePath::BxlFile(_) => {
-                let content =
-                    DiceFileComputations::read_file(ctx, starlark_path.path().as_ref())
-                        .await
-                        .without_package_context_information()?;
+                let content = DiceFileComputations::read_file(ctx, starlark_path.path().as_ref())
+                    .await
+                    .without_package_context_information()?;
                 let interpreter = ctx
                     .get_interpreter_calculator(OwnedStarlarkPath::new(
                         starlark_path.starlark_path(),
                     ))
                     .await?;
-                let parse_data =
-                    interpreter.prepare_eval_with_content(starlark_path.starlark_path(), content)??;
+                let parse_data = interpreter
+                    .prepare_eval_with_content(starlark_path.starlark_path(), content)??;
                 Ok(Arc::new(
                     parse_data
                         .imports
@@ -341,7 +344,11 @@ async fn compute_interpreter_results_uncached(
         ))
         .await
     {
-        Ok(mut interpreter) => interpreter.eval_build_file(package.dupe(), cancellation).await,
+        Ok(mut interpreter) => {
+            interpreter
+                .eval_build_file(package.dupe(), cancellation)
+                .await
+        }
         Err(e) => (TimeSpan::empty_now(), Err(e)),
     }
 }
@@ -466,8 +473,10 @@ impl InterpreterCalculationImpl for InterpreterCalculationInstance {
         ctx: &mut DiceComputations<'_>,
         starlark_path: StarlarkModulePath<'_>,
     ) -> buck2_error::Result<LoadedModule> {
-        ctx.compute(&BazelBzlLoadKey(OwnedStarlarkModulePath::new(starlark_path)))
-            .await?
+        ctx.compute(&BazelBzlLoadKey(OwnedStarlarkModulePath::new(
+            starlark_path,
+        )))
+        .await?
     }
 
     async fn get_module_deps(

@@ -20,6 +20,8 @@ use buck2_artifact::artifact::artifact_type::BaseArtifactKind;
 use buck2_artifact::artifact::build_artifact::BuildArtifact;
 use buck2_artifact::artifact::source_artifact::SourceArtifact;
 use buck2_common::dice::cells::HasCellResolver;
+use buck2_common::dice::skyframe::BazelSkyframeFunction;
+use buck2_common::dice::skyframe::mark_bazel_skyframe_key;
 use buck2_common::file_ops::dice::DiceFileComputations;
 use buck2_common::file_ops::metadata::FileChangeMetadata;
 use buck2_common::file_ops::metadata::RawPathMetadata;
@@ -362,6 +364,8 @@ async fn dir_artifact_value(
             ctx: &mut DiceComputations,
             _cancellation: &CancellationContext,
         ) -> Self::Value {
+            mark_bazel_skyframe_key(ctx, BazelSkyframeFunction::DirectoryTreeDigest).await?;
+
             let files = DiceFileComputations::read_dir(ctx, self.0.as_ref().as_ref())
                 .await?
                 .included;

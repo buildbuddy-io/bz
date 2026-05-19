@@ -14,13 +14,13 @@ Bazel source references:
 | --- | --- |
 | `FILE` | `ReadFileKey` / `PathMetadataKey` |
 | `FILE_STATE` | `PathMetadataForNoWatchFsKey` |
-| `FILE_SYMLINK_CYCLE_UNIQUENESS` | Symlink cycle detection in `resolve_read_file_metadata` |
-| `FILE_SYMLINK_INFINITE_EXPANSION_UNIQUENESS` | Symlink expansion detection in file-op metadata resolution |
+| `FILE_SYMLINK_CYCLE_UNIQUENESS` | `BazelSkyframeMarkerKey::FileSymlinkCycleUniqueness` plus symlink cycle detection in `resolve_read_file_metadata` |
+| `FILE_SYMLINK_INFINITE_EXPANSION_UNIQUENESS` | `BazelSkyframeMarkerKey::FileSymlinkInfiniteExpansionUniqueness` plus symlink expansion detection in file-op metadata resolution |
 | `DIRECTORY_LISTING` | `ReadDirKey` |
 | `DIRECTORY_LISTING_STATE` | `ReadDirForNoWatchFsKey` |
-| `DIRECTORY_TREE_DIGEST` | Directory artifact value keys |
+| `DIRECTORY_TREE_DIGEST` | `BazelSkyframeMarkerKey::DirectoryTreeDigest` plus directory artifact value keys |
 | `PACKAGE_LOOKUP` | `PackageListingKey` / package file lookup |
-| `CONTAINING_PACKAGE_LOOKUP` | Package boundary and package listing keys |
+| `CONTAINING_PACKAGE_LOOKUP` | `BazelSkyframeMarkerKey::ContainingPackageLookup` plus package boundary and package listing keys |
 | `GLOB` | `BazelPackageDataKey` for glob requests |
 | `GLOBS` | `BazelPackageDataKey` for subpackage/package-data requests |
 | `BZL_COMPILE` | `BazelBzlCompileKey` |
@@ -31,8 +31,8 @@ Bazel source references:
 | `NON_FINALIZER_PACKAGE_PIECES` | `BazelNonFinalizerPackagePiecesKey` |
 | `PACKAGE_ERROR` | `BazelPackageErrorKey` |
 | `PACKAGE_ERROR_MESSAGE` | `BazelPackageErrorMessageKey` |
-| `MACRO_INSTANCE` | Package macro expansion folded into `BazelNonFinalizerPackagePiecesKey` |
-| `EVAL_MACRO` | Package macro expansion folded into `BazelPackageDeclarationsKey` |
+| `MACRO_INSTANCE` | `BazelSkyframeMarkerKey::MacroInstance` plus package macro expansion folded into `BazelNonFinalizerPackagePiecesKey` |
+| `EVAL_MACRO` | `BazelSkyframeMarkerKey::EvalMacro` plus package macro expansion folded into `BazelPackageDeclarationsKey` |
 
 ## Target pattern graph
 
@@ -48,9 +48,9 @@ Bazel source references:
 | `COLLECT_PACKAGES_UNDER_DIRECTORY` | `CollectPackagesUnderDirectoryKey` |
 | `IGNORED_SUBDIRECTORIES` | `IgnoredSubdirectoriesKey` |
 | `RECURSIVE_PKG` | `RecursivePkgKey` |
-| `TEST_SUITE_EXPANSION` | Buck2 test-suite expansion in the test command path |
-| `TESTS_IN_SUITE` | Buck2 test-suite expansion in the test command path |
-| `PREPARE_ANALYSIS_PHASE` | Target-pattern phase plus configured graph construction |
+| `TEST_SUITE_EXPANSION` | `BazelSkyframeMarkerKey::TestSuiteExpansion` plus Buck2 test-suite expansion in the test command path |
+| `TESTS_IN_SUITE` | `BazelSkyframeMarkerKey::TestsInSuite` plus Buck2 test-suite expansion in the test command path |
+| `PREPARE_ANALYSIS_PHASE` | `BazelSkyframeMarkerKey::PrepareAnalysisPhase` plus target-pattern phase and configured graph construction |
 
 ## Configuration, platform, and toolchains
 
@@ -58,13 +58,13 @@ Bazel source references:
 | --- | --- |
 | `BUILD_CONFIGURATION` | `ConfigurationNodeKey` |
 | `BUILD_CONFIGURATION_KEY` | `MatchedConfigurationSettingKeysKey` / configured label construction |
-| `PARSED_FLAGS` | Legacy config DICE keys and Bazel command-line build setting application |
-| `BASELINE_OPTIONS` | Legacy config DICE keys |
-| `FLAG_SET` | Legacy config DICE keys and modifier/transition application |
-| `BUILD_OPTIONS_SCOPE` | Target-platform and modifier resolution |
-| `STARLARK_BUILD_SETTINGS_DETAILS` | Configuration rule analysis results |
+| `PARSED_FLAGS` | `BazelSkyframeMarkerKey::ParsedFlags` plus legacy config DICE keys and Bazel command-line build setting application |
+| `BASELINE_OPTIONS` | `BazelSkyframeMarkerKey::BaselineOptions` plus legacy config DICE keys |
+| `FLAG_SET` | `BazelSkyframeMarkerKey::FlagSet` plus legacy config DICE keys and modifier/transition application |
+| `BUILD_OPTIONS_SCOPE` | `BazelSkyframeMarkerKey::BuildOptionsScope` plus target-platform and modifier resolution |
+| `STARLARK_BUILD_SETTINGS_DETAILS` | `BazelSkyframeMarkerKey::StarlarkBuildSettingsDetails` plus configuration rule analysis results |
 | `PLATFORM` | `BazelPlatformKey` |
-| `PLATFORM_MAPPING` | Bazel command-line build setting application |
+| `PLATFORM_MAPPING` | `BazelSkyframeMarkerKey::PlatformMapping` plus Bazel command-line build setting application |
 | `REGISTERED_EXECUTION_PLATFORMS` | `ExecutionPlatformsKey` |
 | `REGISTERED_TOOLCHAINS` | `RegisteredBazelToolchainNodesKey` |
 | `SINGLE_TOOLCHAIN_RESOLUTION` | `ToolchainExecutionPlatformCompatibilityKey` |
@@ -75,41 +75,39 @@ Bazel source references:
 | Bazel SkyFunction | Buck2 DICE surface |
 | --- | --- |
 | `CONFIGURED_TARGET` | `ConfiguredTargetNodeKey` and `AnalysisKey` |
-| `TRANSITIVE_TARGET` | Configured graph traversal from `ConfiguredTargetNodeKey` |
-| `TRANSITIVE_TRAVERSAL` | Configured graph traversal from `ConfiguredTargetNodeKey` |
-| `ASPECT` | Bazel aspect metadata is attached during package evaluation and analyzed through `AnalysisKey` |
-| `TOP_LEVEL_ASPECTS` | Top-level aspect behavior is represented by configured target analysis |
-| `LOAD_ASPECTS` | Aspect definitions load through `BazelBzlLoadKey` |
-| `ACTION_LOOKUP_CONFLICT_FINDING` | Action registry conflict checks during analysis |
-| `ACTION_LOOKUP_CONFLICT_DETECTION` | Action registry conflict checks during analysis |
-| `TOP_LEVEL_ACTION_LOOKUP_CONFLICT_FINDING` | Action registry conflict checks during analysis |
-| `TOP_LEVEL_ACTION_LOOKUP_CONFLICT_DETECTION` | Action registry conflict checks during analysis |
+| `TRANSITIVE_TARGET` | `BazelSkyframeMarkerKey::TransitiveTarget` plus configured graph traversal from `ConfiguredTargetNodeKey` |
+| `TRANSITIVE_TRAVERSAL` | `BazelSkyframeMarkerKey::TransitiveTraversal` plus configured graph traversal from `ConfiguredTargetNodeKey` |
+| `ASPECT` | `BazelSkyframeMarkerKey::Aspect` plus Bazel aspect metadata attached during package evaluation and analyzed through `AnalysisKey` |
+| `TOP_LEVEL_ASPECTS` | `BazelSkyframeMarkerKey::TopLevelAspects` plus top-level aspect behavior represented by configured target analysis |
+| `LOAD_ASPECTS` | `BazelSkyframeMarkerKey::LoadAspects` plus aspect definitions loaded through `BazelBzlLoadKey` |
+| `ACTION_LOOKUP_CONFLICT_DETECTION` | `BazelSkyframeMarkerKey::ActionLookupConflictDetection` plus action registry conflict checks during analysis |
+| `TOP_LEVEL_ACTION_LOOKUP_CONFLICT_DETECTION` | `BazelSkyframeMarkerKey::TopLevelActionLookupConflictDetection` plus action registry conflict checks during analysis |
 | `ACTION_EXECUTION` | `BuildKey` |
 | `ARTIFACT` | `EnsureArtifactGroupValuesKey` / `DirArtifactValueKey` |
 | `ARTIFACT_NESTED_SET` | `EnsureTransitiveSetProjectionKey` |
-| `ACTION_TEMPLATE_EXPANSION` | Dynamic action analysis/execution keys |
+| `ACTION_TEMPLATE_EXPANSION` | `BazelSkyframeMarkerKey::ActionTemplateExpansion` plus dynamic action analysis/execution keys |
 | `RECURSIVE_FILESYSTEM_TRAVERSAL` | `DirArtifactValueKey` |
-| `FILESET_ENTRY` | Fileset traversal is covered by artifact/directory traversal keys |
+| `FILESET_ENTRY` | `BazelSkyframeMarkerKey::FilesetEntry` plus artifact/directory traversal keys |
 | `TARGET_COMPLETION` | `TopLevelTargetOutputsKey` plus `BuildKey` execution |
-| `ASPECT_COMPLETION` | Aspect completion is represented by configured target completion |
+| `ASPECT_COMPLETION` | `BazelSkyframeMarkerKey::AspectCompletion` plus configured target completion |
 | `TEST_COMPLETION` | `TestExecutionKey` |
-| `BUILD_INFO` | Workspace/status action support |
-| `COVERAGE_REPORT` | Buck2 coverage/test reporting |
-| `BUILD_DRIVER` | Command-level build orchestration over `BuildKey` |
-| `GENQUERY_SCOPE` | Query scope evaluation through Buck2 query environments |
-| `INCLUDE_HINTS` | C/C++ include discovery is represented by dep-file and action input tracking |
+| `BUILD_INFO` | `BazelSkyframeMarkerKey::BuildInfo` plus workspace/status action support |
+| `COVERAGE_REPORT` | `BazelSkyframeMarkerKey::CoverageReport` plus Buck2 coverage/test reporting |
+| `BUILD_DRIVER` | `BazelSkyframeMarkerKey::BuildDriver` plus command-level build orchestration over `BuildKey` |
+| `GENQUERY_SCOPE` | `BazelSkyframeMarkerKey::GenqueryScope` plus query scope evaluation through Buck2 query environments |
+| `INCLUDE_HINTS` | `BazelSkyframeMarkerKey::IncludeHints` plus C/C++ include discovery represented by dep-file and action input tracking |
 
 ## Repository and bzlmod
 
 | Bazel SkyFunction | Buck2 DICE surface |
 | --- | --- |
-| `REPOSITORY_ENVIRONMENT_VARIABLE` | Repository evaluation environment reads |
+| `REPOSITORY_ENVIRONMENT_VARIABLE` | `BazelSkyframeMarkerKey::RepositoryEnvironmentVariable` plus repository evaluation environment reads |
 | `REPOSITORY_DIRECTORY` | `BzlmodRepositoryDirectoryKey`, `BzlmodGeneratedCellMaterializationKey`, and bzlmod file-op delegate keys |
-| `LOCAL_REPOSITORY_LOOKUP` | Local repository materialization in bzlmod file-op delegate keys |
-| `REPOSITORY_MAPPING` | Cell alias resolver and bzlmod repo mapping keys |
+| `LOCAL_REPOSITORY_LOOKUP` | `BazelSkyframeMarkerKey::LocalRepositoryLookup` plus local repository materialization in bzlmod file-op delegate keys |
+| `REPOSITORY_MAPPING` | `CellAliasResolverKey` and bzlmod repo mapping keys |
 | `MODULE_FILE` | `BzlmodRootModuleKey` / `BzlmodModuleFileKey` |
-| `REPO_PACKAGE_ARGS` | Repository/package args in bzlmod module resolution |
-| `REPO_FILE` | Repository file parsing during ignored-directory and repo metadata resolution |
+| `REPO_PACKAGE_ARGS` | `BazelSkyframeMarkerKey::RepositoryPackageArgs` plus repository/package args in bzlmod module resolution |
+| `REPO_FILE` | `BazelSkyframeMarkerKey::RepositoryFile` plus repository file parsing during ignored-directory and repo metadata resolution |
 | `BAZEL_MOD_TIDY` | `BzlmodModTidyKey` |
 | `BAZEL_MODULE_RESOLUTION` | `BzlmodModuleResolutionKey` / `BzlmodResolutionKey` |
 | `BAZEL_MODULE_INSPECTION` | `BzlmodModuleInspectionKey` |
@@ -130,8 +128,8 @@ Bazel source references:
 
 | Bazel SkyFunction | Buck2 DICE surface |
 | --- | --- |
-| `PRECOMPUTED` | Injected DICE data |
+| `PRECOMPUTED` | `BazelSkyframeMarkerKey::Precomputed` plus injected DICE data |
 | `CLIENT_ENVIRONMENT_VARIABLE` | Injected/client DICE data and bzlmod env keys |
-| `ACTION_ENVIRONMENT_VARIABLE` | Action execution environment in executor config |
-| `PROJECT` | Buck2 project-level config is represented by legacy config DICE data |
-| `PROJECT_FILES_LOOKUP` | Buck2 project-level config lookup is represented by legacy config DICE data |
+| `ACTION_ENVIRONMENT_VARIABLE` | `BazelSkyframeMarkerKey::ActionEnvironmentVariable` plus action execution environment in executor config |
+| `PROJECT` | `BazelSkyframeMarkerKey::Project` plus Buck2 project-level config represented by legacy config DICE data |
+| `PROJECT_FILES_LOOKUP` | `BazelSkyframeMarkerKey::ProjectFilesLookup` plus Buck2 project-level config lookup represented by legacy config DICE data |

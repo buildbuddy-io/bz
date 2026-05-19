@@ -226,6 +226,7 @@ impl HasExternalCellOrigins for DiceComputations<'_> {
 
 /// Only used for cell alias resolvers parsed within dice, currently those for external cells
 #[derive(Clone, Dupe, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable)]
+#[display("REPOSITORY_MAPPING({})", _0)]
 #[pagable_typetag(dice::DiceKeyDyn)]
 struct CellAliasResolverKey(CellName);
 
