@@ -13,6 +13,9 @@ Bazel source references:
 | Bazel SkyFunction | Buck2 DICE surface |
 | --- | --- |
 | `FILE` | `ReadFileKey` / `PathMetadataKey` |
+| `FILE_STATE` | `PathMetadataForNoWatchFsKey` |
+| `FILE_SYMLINK_CYCLE_UNIQUENESS` | Symlink cycle detection in `resolve_read_file_metadata` |
+| `FILE_SYMLINK_INFINITE_EXPANSION_UNIQUENESS` | Symlink expansion detection in file-op metadata resolution |
 | `DIRECTORY_LISTING` | `ReadDirKey` |
 | `DIRECTORY_LISTING_STATE` | `ReadDirForNoWatchFsKey` |
 | `DIRECTORY_TREE_DIGEST` | Directory artifact value keys |
@@ -78,7 +81,9 @@ Bazel source references:
 | `TOP_LEVEL_ASPECTS` | Top-level aspect behavior is represented by configured target analysis |
 | `LOAD_ASPECTS` | Aspect definitions load through `BazelBzlLoadKey` |
 | `ACTION_LOOKUP_CONFLICT_FINDING` | Action registry conflict checks during analysis |
+| `ACTION_LOOKUP_CONFLICT_DETECTION` | Action registry conflict checks during analysis |
 | `TOP_LEVEL_ACTION_LOOKUP_CONFLICT_FINDING` | Action registry conflict checks during analysis |
+| `TOP_LEVEL_ACTION_LOOKUP_CONFLICT_DETECTION` | Action registry conflict checks during analysis |
 | `ACTION_EXECUTION` | `BuildKey` |
 | `ARTIFACT` | `EnsureArtifactGroupValuesKey` / `DirArtifactValueKey` |
 | `ARTIFACT_NESTED_SET` | `EnsureTransitiveSetProjectionKey` |
@@ -91,6 +96,8 @@ Bazel source references:
 | `BUILD_INFO` | Workspace/status action support |
 | `COVERAGE_REPORT` | Buck2 coverage/test reporting |
 | `BUILD_DRIVER` | Command-level build orchestration over `BuildKey` |
+| `GENQUERY_SCOPE` | Query scope evaluation through Buck2 query environments |
+| `INCLUDE_HINTS` | C/C++ include discovery is represented by dep-file and action input tracking |
 
 ## Repository and bzlmod
 
@@ -114,6 +121,7 @@ Bazel source references:
 | `BAZEL_FETCH_ALL` | `BzlmodFetchAllKey` |
 | `REGISTRY` | `BzlmodRegistryKey` |
 | `REPO_SPEC` | `BzlmodRepoSpecKey` / `BzlmodRepoDefinitionKey` |
+| `REPO_DEFINITION` | `BzlmodRepoDefinitionKey` |
 | `YANKED_VERSIONS` | `BzlmodYankedVersionsKey` |
 | `MODULE_EXTENSION_REPO_MAPPING_ENTRIES` | `BzlmodModuleExtensionRepoMappingEntriesKey` |
 | `VENDOR_FILE` | `BzlmodVendorFileKey` |

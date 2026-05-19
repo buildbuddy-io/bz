@@ -996,7 +996,7 @@ impl Key for ExternalPathMetadataKey {
 }
 
 #[derive(Clone, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable)]
-#[display("FILE({})", _0)]
+#[display("FILE_STATE({})", _0)]
 #[pagable_typetag(dice::DiceKeyDyn)]
 struct PathMetadataForNoWatchFsKey(CellPath);
 

@@ -2844,7 +2844,7 @@ impl Key for BzlmodModTidyKey {
 }
 
 #[derive(Clone, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable)]
-#[display("REPO_SPEC({canonical_repo_name})")]
+#[display("REPO_DEFINITION({canonical_repo_name})")]
 #[pagable_typetag(dice::DiceKeyDyn)]
 struct BzlmodRepoDefinitionKey {
     canonical_repo_name: String,
