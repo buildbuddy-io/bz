@@ -13,6 +13,7 @@ use std::ops::ControlFlow;
 
 use allocative::Allocative;
 use async_trait::async_trait;
+use buck2_artifact::artifact::artifact_type::Artifact;
 use buck2_artifact::artifact::build_artifact::BuildArtifact;
 use buck2_build_api::actions::Action;
 use buck2_build_api::actions::ActionExecutionCtx;
@@ -23,10 +24,14 @@ use buck2_build_api::actions::execute::action_executor::ActionExecutionMetadata;
 use buck2_build_api::actions::execute::action_executor::ActionOutputs;
 use buck2_build_api::actions::execute::error::ExecuteError;
 use buck2_build_api::artifact_groups::ArtifactGroup;
+use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact_like::bazel_artifact_path;
 use buck2_build_signals::env::WaitingData;
 use buck2_common::cas_digest::CasDigestData;
 use buck2_core::category::CategoryRef;
 use buck2_core::content_hash::ContentBasedPathHash;
+use buck2_core::fs::artifact_path_resolver::ArtifactFs;
+use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
+use buck2_error::BuckErrorContext;
 use buck2_error::internal_error;
 use buck2_execute::artifact::artifact_dyn::ArtifactDyn;
 use buck2_execute::artifact_utils::ArtifactValueBuilder;
@@ -38,6 +43,7 @@ use buck2_execute::execute::request::CommandExecutionOutput;
 use buck2_execute::execute::request::ExecutorPreference;
 use buck2_execute::execute::request::LocalActionCacheKey;
 use buck2_execute::materialize::materializer::CopiedArtifact;
+use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
 use buck2_hash::BuckIndexSet;
 use buck2_hash::buck_indexmap;
 use buck2_hash::buck_indexset;
@@ -68,7 +74,30 @@ pub(crate) enum CopyMode {
         // Override the destination executable bit to +x (true) or -x (false)
         executable_bit_override: Option<bool>,
     },
-    Symlink,
+    Symlink {
+        use_exec_root_for_source: bool,
+    },
+}
+
+fn symlink_source_path(
+    artifact_fs: &ArtifactFs,
+    input: &Artifact,
+    src: ProjectRelativePathBuf,
+    use_exec_root_for_source: bool,
+) -> buck2_error::Result<ProjectRelativePathBuf> {
+    if !use_exec_root_for_source || !input.is_source() {
+        return Ok(src);
+    }
+
+    let bazel_path = ForwardRelativePathBuf::try_from(bazel_artifact_path(input.get_path()))
+        .buck_error_context("Invalid Bazel symlink source path")?;
+    Ok(artifact_fs
+        .buck_out_path_resolver()
+        .root()
+        .join(ForwardRelativePathBuf::unchecked_new(
+            "__bazel_execroot".to_owned(),
+        ))
+        .join(bazel_path))
 }
 
 #[derive(Allocative)]
@@ -203,8 +232,11 @@ impl CopyAction {
                     None => action_cache_add_bool(&mut action_key, false),
                 }
             }
-            CopyMode::Symlink => {
+            CopyMode::Symlink {
+                use_exec_root_for_source,
+            } => {
                 action_cache_add_str(&mut action_key, "symlink");
+                action_cache_add_bool(&mut action_key, use_exec_root_for_source);
             }
         }
         fingerprint_command_execution_output(&mut action_key, ctx.fs(), output)?;
@@ -230,6 +262,71 @@ impl CopyAction {
             input_metadata_digest,
             fingerprint,
         })
+    }
+
+    async fn declare_copy_value(
+        &self,
+        ctx: &mut dyn ActionExecutionCtx,
+        input: &Artifact,
+        src_value: &ArtifactValue,
+        value: ArtifactValue,
+    ) -> Result<(), ExecuteError> {
+        let artifact_fs = ctx.fs();
+        let src = input.resolve_path(
+            artifact_fs,
+            if input.path_resolution_requires_artifact_value() {
+                Some(src_value.content_based_path_hash())
+            } else {
+                None
+            }
+            .as_ref(),
+        )?;
+        let copied_src = match self.copy {
+            CopyMode::Copy { .. } => src,
+            CopyMode::Symlink {
+                use_exec_root_for_source,
+            } => symlink_source_path(artifact_fs, input, src, use_exec_root_for_source)?,
+        };
+
+        let tmp_dest = artifact_fs.resolve_build(
+            self.output().get_path(),
+            Some(&ContentBasedPathHash::for_output_artifact()),
+        )?;
+        let dest = if self.output().get_path().is_content_based_path() {
+            artifact_fs.resolve_build(
+                self.output().get_path(),
+                Some(&value.content_based_path_hash()),
+            )?
+        } else {
+            tmp_dest
+        };
+        let configuration_path = ctx
+            .materializer()
+            .maybe_eager_configuration_path(ctx.fs(), self.output().get_path())?;
+
+        ctx.materializer()
+            .declare_copy(
+                dest.clone(),
+                value.dupe(),
+                // FIXME(JakobDegen): This is wrong in cases where the input artifact is a source
+                // directory with ignored paths, as the materializer will incorrectly assume that
+                // the source directory matches the artifact value when it doesn't.
+                vec![CopiedArtifact::new(
+                    copied_src,
+                    dest,
+                    value.entry().dupe().map_dir(|d| d.as_immutable()),
+                    match self.copy {
+                        CopyMode::Copy {
+                            executable_bit_override,
+                        } => executable_bit_override,
+                        CopyMode::Symlink { .. } => None,
+                    },
+                )],
+                configuration_path,
+            )
+            .await?;
+
+        Ok(())
     }
 }
 
@@ -364,14 +461,21 @@ impl Action for CopyAction {
             .await
         {
             ControlFlow::Break(result) => {
-                return ctx.unpack_command_execution_result(
+                let (outputs, metadata) = ctx.unpack_command_execution_result(
                     ExecutorPreference::LocalRequired,
                     result,
                     false,
                     false,
                     None,
                     buck2_data::IncrementalKind::NonIncremental,
-                );
+                )?;
+                let value = outputs
+                    .get(self.output().get_path())
+                    .ok_or_else(|| internal_error!("Copy action cache hit did not produce output"))?
+                    .dupe();
+                self.declare_copy_value(ctx, &input, &src_value, value)
+                    .await?;
+                return Ok((outputs, metadata));
             }
             ControlFlow::Continue(_) => {}
         }
@@ -405,47 +509,23 @@ impl Action for CopyAction {
                         executable_bit_override,
                     )?;
                 }
-                CopyMode::Symlink => {
-                    builder.add_symlinked(&src_value, src.clone(), tmp_dest.as_ref())?;
+                CopyMode::Symlink {
+                    use_exec_root_for_source,
+                } => {
+                    let copied_src = symlink_source_path(
+                        artifact_fs,
+                        &input,
+                        src.clone(),
+                        use_exec_root_for_source,
+                    )?;
+                    builder.add_symlinked(&src_value, copied_src.clone(), tmp_dest.as_ref())?;
                 }
             }
 
             builder.build(tmp_dest.as_ref())?
         };
 
-        let dest = if self.output().get_path().is_content_based_path() {
-            artifact_fs.resolve_build(
-                self.output().get_path(),
-                Some(&value.content_based_path_hash()),
-            )?
-        } else {
-            tmp_dest
-        };
-
-        let configuration_path = ctx
-            .materializer()
-            .maybe_eager_configuration_path(ctx.fs(), self.output().get_path())?;
-
-        ctx.materializer()
-            .declare_copy(
-                dest.clone(),
-                value.dupe(),
-                // FIXME(JakobDegen): This is wrong in cases where the input artifact is a source
-                // directory with ignored paths, as the materializer will incorrectly assume that
-                // the source directory matches the artifact value when it doesn't.
-                vec![CopiedArtifact::new(
-                    src,
-                    dest,
-                    value.entry().dupe().map_dir(|d| d.as_immutable()),
-                    match self.copy {
-                        CopyMode::Copy {
-                            executable_bit_override,
-                        } => executable_bit_override,
-                        CopyMode::Symlink => None,
-                    },
-                )],
-                configuration_path,
-            )
+        self.declare_copy_value(ctx, &input, &src_value, value.dupe())
             .await?;
 
         ctx.insert_unprepared_action_cache_metadata(

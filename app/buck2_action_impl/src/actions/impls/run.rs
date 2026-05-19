@@ -138,6 +138,8 @@ use host_sharing::WeightClass;
 use itertools::Itertools;
 use pagable::Pagable;
 use serde_json::json;
+use sha1::Digest as Sha1Digest;
+use sha1::Sha1;
 use sorted_vector_map::SortedVectorMap;
 use starlark::collections::SmallSet;
 use starlark::values::Freeze;
@@ -1977,12 +1979,57 @@ fn visit_bazel_tool_runfiles_artifacts<'v>(
 }
 
 impl RunAction {
-    fn bazel_worker_execroot(fs: &ArtifactFs) -> ProjectRelativePathBuf {
+    fn outputs_use_bazel_execroot_paths(outputs: &BoxSliceSet<BuildArtifact>) -> bool {
+        outputs
+            .iter()
+            .any(|output| output.get_path().bazel_owner().is_some())
+    }
+
+    fn values_use_bazel_execroot_paths(
+        inner: &UnregisteredRunAction,
+        values: &UnpackedRunActionValues<'_>,
+        outputs: &BoxSliceSet<BuildArtifact>,
+    ) -> bool {
+        inner.bazel_use_default_shell_env.is_some()
+            || inner.bazel_string_args.is_some()
+            || values.bazel_cc_command_line.is_some()
+            || Self::outputs_use_bazel_execroot_paths(outputs)
+    }
+
+    fn uses_bazel_execroot_paths(&self) -> bool {
+        let values = Self::unpack(&self.starlark_values)
+            .expect("RunActionValues were validated when the action was registered");
+        Self::values_use_bazel_execroot_paths(&self.inner, &values, &self.outputs)
+    }
+
+    fn bazel_execroot(fs: &ArtifactFs) -> ProjectRelativePathBuf {
         fs.buck_out_path_resolver()
             .root()
             .join(ForwardRelativePathBuf::unchecked_new(
                 "__bazel_execroot".to_owned(),
             ))
+    }
+
+    fn bazel_action_execroot(
+        &self,
+        fs: &ArtifactFs,
+        target: ActionExecutionTarget<'_>,
+    ) -> buck2_error::Result<ProjectRelativePathBuf> {
+        let values = Self::unpack(&self.starlark_values)?;
+        if values.worker.is_some() || values.remote_worker.is_some() {
+            return Ok(Self::bazel_execroot(fs));
+        }
+
+        let mut hasher = Sha1::new();
+        hasher.update(RunActionKey::from_action_execution_target(target).to_string());
+        for output in &self.outputs {
+            hasher.update(b"\0");
+            hasher.update(output.get_path().to_string());
+        }
+        let digest = hasher.finalize();
+        let id = hex::encode(&digest[..8]);
+
+        Ok(Self::bazel_execroot(fs).join(ForwardRelativePathBuf::unchecked_new(id)))
     }
 
     fn bazel_execroot_path(
@@ -2053,7 +2100,7 @@ impl RunAction {
         artifact_visitor: &mut dyn CommandLineArtifactVisitor<'a>,
     ) -> buck2_error::Result<()> {
         let values = Self::unpack(starlark_values)?;
-        if inner.bazel_use_default_shell_env.is_some() {
+        if Self::values_use_bazel_execroot_paths(inner, &values, outputs) {
             if let Some(bazel_inputs) = values.bazel_inputs {
                 visit_run_action_command_line_artifacts(outputs, bazel_inputs, artifact_visitor)?;
             }
@@ -2093,7 +2140,7 @@ impl RunAction {
         let values = Self::unpack(starlark_values)?;
         visit_run_action_command_line_artifacts(outputs, values.exe, artifact_visitor)?;
         visit_run_action_command_line_artifacts(outputs, values.args, artifact_visitor)?;
-        if inner.bazel_use_default_shell_env.is_some() {
+        if Self::values_use_bazel_execroot_paths(inner, &values, outputs) {
             if let Some(bazel_inputs) = values.bazel_inputs {
                 visit_run_action_command_line_artifacts(outputs, bazel_inputs, artifact_visitor)?;
             }
@@ -2193,7 +2240,7 @@ impl RunAction {
             .transpose()?;
 
         let fs = &action_execution_ctx.executor_fs();
-        let bazel_paths = self.inner.bazel_use_default_shell_env.is_some();
+        let bazel_paths = self.uses_bazel_execroot_paths();
         let base_output = self
             .outputs
             .iter()
@@ -2321,9 +2368,12 @@ impl RunAction {
             )?;
         }
         command_line_digest.push_count();
+        // Bazel actions may execute a pre-expanded command line, but the original args still
+        // carry artifacts whose Bazel exec paths must be materialized.
         if collect_action_inputs
-            && self.inner.bazel_string_args.is_none()
-            && values.bazel_cc_command_line.is_none()
+            && (bazel_paths
+                || (self.inner.bazel_string_args.is_none()
+                    && values.bazel_cc_command_line.is_none()))
         {
             visit_run_action_command_line_artifacts(&self.outputs, values.args, artifact_visitor)?;
         }
@@ -2395,7 +2445,7 @@ impl RunAction {
         Vec<RunActionParamFile>,
     )> {
         let fs = &action_execution_ctx.executor_fs();
-        let bazel_paths = self.inner.bazel_use_default_shell_env.is_some();
+        let bazel_paths = self.uses_bazel_execroot_paths();
         let base_output = self
             .outputs
             .iter()
@@ -2913,7 +2963,7 @@ impl RunAction {
         }
 
         let fs = &action_execution_ctx.executor_fs();
-        let bazel_paths = self.inner.bazel_use_default_shell_env.is_some();
+        let bazel_paths = self.uses_bazel_execroot_paths();
         let base_output = self
             .outputs
             .iter()
@@ -3405,11 +3455,19 @@ impl RunAction {
 
         let executor_fs = ctx.executor_fs();
         let fs = executor_fs.fs();
+        let bazel_paths = self.uses_bazel_execroot_paths();
         let artifact_inputs: Vec<&ArtifactGroupValues> = if collect_action_inputs {
-            visitor
-                .inputs()
-                .map(|group| ctx.artifact_values(group))
-                .collect()
+            if bazel_paths {
+                self.inputs
+                    .iter()
+                    .map(|group| ctx.artifact_values(group))
+                    .collect()
+            } else {
+                visitor
+                    .inputs()
+                    .map(|group| ctx.artifact_values(group))
+                    .collect()
+            }
         } else {
             self.command_inputs
                 .iter()
@@ -3435,7 +3493,6 @@ impl RunAction {
         )
         .await?;
 
-        let bazel_paths = self.inner.bazel_use_default_shell_env.is_some();
         if !bazel_paths {
             let mut ignored_shared_content_based_paths = Vec::new();
             self.prepare_scratch_path(
@@ -3448,7 +3505,7 @@ impl RunAction {
             )?;
         }
         let bazel_execroot = if bazel_paths {
-            Some(Self::bazel_worker_execroot(fs))
+            Some(self.bazel_action_execroot(fs, ctx.target())?)
         } else {
             None
         };
@@ -3518,23 +3575,27 @@ impl RunAction {
         let executor_fs = ctx.executor_fs();
         let fs = executor_fs.fs();
 
-        // TODO (@torozco): At this point, might as well just receive the list already. Finding
-        // those things in a HashMap is just not very useful.
-        let artifact_inputs: Vec<&ArtifactGroupValues> = visitor
-            .inputs()
-            .map(|group| ctx.artifact_values(group))
-            .collect();
+        let bazel_paths = self.uses_bazel_execroot_paths();
+        // Bazel command lines can be pre-expanded into strings. Use the full action input set so
+        // execroot aliases match the action graph even when render-time visits are incomplete.
+        let artifact_inputs: Vec<&ArtifactGroupValues> = if bazel_paths {
+            self.inputs
+                .iter()
+                .map(|group| ctx.artifact_values(group))
+                .collect()
+        } else {
+            visitor
+                .inputs()
+                .map(|group| ctx.artifact_values(group))
+                .collect()
+        };
 
         let mut local_action_cache_inputs: Vec<CommandExecutionInput> =
             artifact_inputs[..].map(|&i| CommandExecutionInput::Artifact(Box::new(i.dupe())));
-        let bazel_paths = self.inner.bazel_use_default_shell_env.is_some();
-        let mut inputs: Vec<CommandExecutionInput> = if bazel_paths {
-            Vec::new()
-        } else {
-            artifact_inputs[..].map(|&i| CommandExecutionInput::Artifact(Box::new(i.dupe())))
-        };
+        let mut inputs: Vec<CommandExecutionInput> =
+            artifact_inputs[..].map(|&i| CommandExecutionInput::Artifact(Box::new(i.dupe())));
         let bazel_execroot = if bazel_paths {
-            Some(Self::bazel_worker_execroot(fs))
+            Some(self.bazel_action_execroot(fs, ctx.target())?)
         } else {
             None
         };
@@ -4292,8 +4353,10 @@ impl RunAction {
             .with_meta_internal_extra_params(self.inner.meta_internal_extra_params.clone())
             .with_outputs_for_error_handler(outputs_for_error_handler);
 
-        if self.inner.bazel_use_default_shell_env.is_some() {
-            req = req.with_working_directory(Self::bazel_worker_execroot(ctx.executor_fs().fs()));
+        if self.uses_bazel_execroot_paths() {
+            req = req.with_working_directory(
+                self.bazel_action_execroot(ctx.executor_fs().fs(), ctx.target())?,
+            );
         }
 
         if let Some(timeout) = self.inner.timeout {
@@ -4592,7 +4655,7 @@ impl Action for RunAction {
     ) -> BuckIndexMap<String, String> {
         let mut cli_rendered = Vec::<String>::new();
         let base_output = self.outputs.iter().next().unwrap();
-        let base_bazel_exec_path = if self.inner.bazel_use_default_shell_env.is_some() {
+        let base_bazel_exec_path = if self.uses_bazel_execroot_paths() {
             let artifact = Artifact::from(base_output.dupe());
             Some(bazel_normalize_buck_owned_exec_paths(&bazel_artifact_path(
                 artifact.get_path(),
@@ -4620,7 +4683,7 @@ impl Action for RunAction {
         );
         let mut ctx = RunActionCommandLineContext::new(
             fs,
-            self.inner.bazel_use_default_shell_env.is_some(),
+            self.uses_bazel_execroot_paths(),
             param_files,
             RunActionParamFileMode::Record,
         );

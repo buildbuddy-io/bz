@@ -123,7 +123,9 @@ pub(crate) fn analysis_actions_methods_copy(methods: &mut MethodsBuilder) {
             this,
             dest,
             src,
-            CopyMode::Symlink,
+            CopyMode::Symlink {
+                use_exec_root_for_source: false,
+            },
             OutputType::FileOrDirectory,
             has_content_based_path.into_option(),
         )?)
@@ -144,11 +146,11 @@ pub(crate) fn analysis_actions_methods_copy(methods: &mut MethodsBuilder) {
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<ValueTyped<'v, StarlarkDeclaredArtifact<'v>>> {
         let _ = progress_message;
-        let _ = use_exec_root_for_source;
         let target_file = target_file.into_option();
         let target_path = target_path.into_option();
         let target_type = target_type.into_option();
         let is_executable = is_executable.into_option().unwrap_or(false);
+        let use_exec_root_for_source = use_exec_root_for_source.into_option().unwrap_or(false);
 
         if target_file.is_some() == target_path.is_some() {
             return Err(buck2_error::buck2_error!(
@@ -205,7 +207,9 @@ pub(crate) fn analysis_actions_methods_copy(methods: &mut MethodsBuilder) {
             this,
             output,
             target_file,
-            CopyMode::Symlink,
+            CopyMode::Symlink {
+                use_exec_root_for_source,
+            },
             OutputType::FileOrDirectory,
             None,
         )?)
@@ -247,7 +251,9 @@ pub(crate) fn analysis_actions_methods_copy(methods: &mut MethodsBuilder) {
             this,
             output,
             srcs,
-            CopyMode::Symlink,
+            CopyMode::Symlink {
+                use_exec_root_for_source: false,
+            },
             has_content_based_path.into_option(),
         )?)
     }

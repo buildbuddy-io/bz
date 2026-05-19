@@ -148,7 +148,7 @@ impl UnregisteredSymlinkedDirAction {
         // Overlapping check make sense for non-copy mode only.
         // When directories are copied into the same destination, the ordering defines how files are overwritten.
         match copy {
-            CopyMode::Symlink => Self::validate_args(&mut args)?,
+            CopyMode::Symlink { .. } => Self::validate_args(&mut args)?,
             CopyMode::Copy { .. } => (),
         };
         Ok(Self {
@@ -265,7 +265,7 @@ impl Action for SymlinkedDirAction {
                     )?;
                     srcs.push((src, relative_dest, dest_entry.map_dir(|d| d.as_immutable())));
                 }
-                CopyMode::Symlink => {
+                CopyMode::Symlink { .. } => {
                     builder.add_symlinked(value, src, temp_dest.as_ref())?;
                 }
             };
@@ -292,7 +292,7 @@ impl Action for SymlinkedDirAction {
                         CopyMode::Copy {
                             executable_bit_override,
                         } => executable_bit_override,
-                        CopyMode::Symlink => None,
+                        CopyMode::Symlink { .. } => None,
                     },
                 )
             })
