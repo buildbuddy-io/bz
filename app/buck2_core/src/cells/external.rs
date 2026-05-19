@@ -129,34 +129,26 @@ where
     let mut aliases_by_cell = BZLMOD_CELL_ALIASES
         .lock()
         .expect("bzlmod cell alias map poisoned");
+    let mut merged = aliases_by_cell
+        .get(cell_name)
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .collect::<StdBuckHashMap<_, _>>();
+    for (alias, cell_name) in aliases.clone() {
+        // Base bzlmod aliases are recomputed often. Dynamic sibling aliases
+        // registered while materializing module-extension repos must not be
+        // wiped by a concurrent base registration.
+        merged.insert(alias.to_owned(), cell_name.to_owned());
+    }
+    let mut merged = merged.into_iter().collect::<Vec<_>>();
+    merged.sort_unstable();
     if let Some(existing) = aliases_by_cell.get(cell_name)
-        && bzlmod_cell_aliases_equal(existing, aliases.clone())
+        && existing == &merged
     {
         return;
     }
-    aliases_by_cell.insert(
-        cell_name.to_owned(),
-        aliases
-            .into_iter()
-            .map(|(alias, cell_name)| (alias.to_owned(), cell_name.to_owned()))
-            .collect(),
-    );
-}
-
-fn bzlmod_cell_aliases_equal<'a, I>(existing: &[(String, String)], aliases: I) -> bool
-where
-    I: IntoIterator<Item = (&'a str, &'a str)>,
-{
-    let mut aliases = aliases.into_iter();
-    for (existing_alias, existing_cell_name) in existing {
-        let Some((alias, cell_name)) = aliases.next() else {
-            return false;
-        };
-        if existing_alias != alias || existing_cell_name != cell_name {
-            return false;
-        }
-    }
-    aliases.next().is_none()
+    aliases_by_cell.insert(cell_name.to_owned(), merged);
 }
 
 pub fn bzlmod_cell_aliases_for_cell(cell_name: &str) -> Vec<(String, String)> {
@@ -322,6 +314,7 @@ pub enum BzlmodGeneratedCellGenerator {
     HostPlatform(BzlmodHostPlatformSetup),
     CcAutoconfToolchains(BzlmodCcAutoconfToolchainsSetup),
     CcAutoconf(BzlmodCcAutoconfSetup),
+    XcodeConfig(BzlmodXcodeConfigSetup),
     ShellConfig(BzlmodShellConfigSetup),
     HttpArchive(BzlmodHttpArchiveSetup),
     PythonHub(BzlmodPythonHubSetup),
@@ -406,6 +399,20 @@ pub struct BzlmodCcAutoconfToolchainsSetup {
     Deserialize
 )]
 pub struct BzlmodCcAutoconfSetup {}
+
+#[derive(
+    Debug,
+    Clone,
+    Dupe,
+    allocative::Allocative,
+    PartialEq,
+    Eq,
+    Hash,
+    Pagable,
+    Serialize,
+    Deserialize
+)]
+pub struct BzlmodXcodeConfigSetup {}
 
 #[derive(
     Debug,

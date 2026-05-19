@@ -15,6 +15,7 @@ use buck2_core::cells::cell_root_path::CellRootPath;
 use buck2_core::cells::external::ExternalCellOrigin;
 use buck2_core::cells::name::CellName;
 use buck2_util::late_binding::LateBinding;
+use dice::CancellationContext;
 use dice::DiceComputations;
 
 use crate::file_ops::delegate::FileOpsDelegate;
@@ -33,6 +34,16 @@ pub trait ExternalCellsImpl: Send + Sync + 'static {
         _ctx: &mut DiceComputations<'_>,
         _cell_name: CellName,
         _origin: ExternalCellOrigin,
+    ) -> buck2_error::Result<()> {
+        Ok(())
+    }
+
+    async fn prepare_cached_cell_root(
+        &self,
+        _ctx: &mut DiceComputations<'_>,
+        _cell_name: CellName,
+        _origin: ExternalCellOrigin,
+        _cancellations: &CancellationContext,
     ) -> buck2_error::Result<()> {
         Ok(())
     }

@@ -1122,6 +1122,32 @@ pub fn bzlmod_repository_rule_invocation_from_setup(
     })
 }
 
+pub fn bzlmod_repository_rule_invocation_to_setup(
+    invocation: &BazelRepositoryRuleInvocation,
+) -> buck2_error::Result<BzlmodRepositoryRuleInvocationSetup> {
+    let BzlOrBxlPath::Bzl(rule_path) = &invocation.rule_id.path else {
+        return Err(buck2_error::buck2_error!(
+            buck2_error::ErrorTag::Input,
+            "bzlmod repository rule invocation `{}` is not backed by a .bzl file",
+            invocation.rule_id
+        ));
+    };
+    Ok(BzlmodRepositoryRuleInvocationSetup {
+        repo_name: Arc::from(invocation.original_name.as_str()),
+        rule_bzl_cell: Arc::from(rule_path.path().cell().as_str()),
+        rule_bzl_path: Arc::from(rule_path.path().path().as_str()),
+        rule_bzl_build_file_cell: Arc::from(rule_path.build_file_cell().name().as_str()),
+        rule_name: Arc::from(invocation.rule_id.name.as_str()),
+        attrs: Arc::new(
+            invocation
+                .attrs
+                .iter()
+                .map(|(key, value)| (Arc::from(key.as_str()), Arc::from(value.as_str())))
+                .collect(),
+        ),
+    })
+}
+
 pub(crate) fn module_extension_from_loaded_module(
     extension_module_path: &ImportPath,
     extension_name: &str,

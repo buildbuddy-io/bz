@@ -2278,6 +2278,7 @@ dependencies = [
  "buck2_external_cells_bundled",
  "buck2_fs",
  "buck2_hash",
+ "buck2_interpreter",
  "buck2_interpreter_for_build",
  "buck2_util",
  "cmp_any",

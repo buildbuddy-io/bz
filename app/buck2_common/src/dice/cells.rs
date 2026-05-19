@@ -36,6 +36,7 @@ use crate::external_cells::EXTERNAL_CELLS_IMPL;
 use crate::legacy_configs::cells::BuckConfigBasedCells;
 use crate::legacy_configs::cells::get_bazel_module_resolution_on_dice;
 use crate::legacy_configs::configs::BazelCompatBazelrcOptions;
+use crate::legacy_configs::configs::LegacyBuckConfig;
 use crate::legacy_configs::dice::HasLegacyConfigs;
 
 #[async_trait]
@@ -276,6 +277,25 @@ impl Key for CellAliasResolverKey {
                 self.0,
                 &resolver,
                 &crate::legacy_configs::configs::LegacyBuckConfig::empty(),
+            );
+        }
+        if (self.0.as_str() == "bazel_tools" || self.0.as_str().starts_with("bzlmod_"))
+            && let Some(module_aliases) = &bzlmod_module_aliases
+        {
+            let config = LegacyBuckConfig::empty().with_bazel_compat_cell_defaults(
+                module_aliases.aliases_for_cell(self.0.as_str()),
+                &[],
+                &BazelCompatBazelrcOptions::default(),
+            );
+            resolver.get(self.0).map_err(|_| {
+                buck2_error::buck2_error!(
+                    buck2_error::ErrorTag::Input,
+                    "Unknown cell `{}`",
+                    self.0
+                )
+            })?;
+            return BuckConfigBasedCells::get_bazel_cell_alias_resolver_from_config(
+                self.0, &resolver, &config,
             );
         }
         let config = ctx.get_legacy_config_for_cell(self.0).await?;

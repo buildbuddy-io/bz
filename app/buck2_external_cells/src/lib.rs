@@ -22,6 +22,7 @@ use buck2_core::cells::cell_root_path::CellRootPath;
 use buck2_core::cells::external::ExternalCellOrigin;
 use buck2_core::cells::name::CellName;
 use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
+use dice::CancellationContext;
 use dice::DiceComputations;
 
 mod bundled;
@@ -70,6 +71,25 @@ impl buck2_common::external_cells::ExternalCellsImpl for ConcreteExternalCellsIm
         match origin {
             ExternalCellOrigin::BzlmodGenerated(setup) => {
                 bzlmod::ensure_generated_cell_alias_resolver_ready(ctx, cell_name, setup).await
+            }
+            _ => Ok(()),
+        }
+    }
+
+    async fn prepare_cached_cell_root(
+        &self,
+        ctx: &mut DiceComputations<'_>,
+        cell_name: CellName,
+        origin: ExternalCellOrigin,
+        cancellations: &CancellationContext,
+    ) -> buck2_error::Result<()> {
+        match origin {
+            ExternalCellOrigin::Bzlmod(setup) => {
+                bzlmod::prepare_cached_cell_root(ctx, cell_name, setup, cancellations).await
+            }
+            ExternalCellOrigin::BzlmodGenerated(setup) => {
+                bzlmod::prepare_cached_generated_cell_root(ctx, cell_name, setup, cancellations)
+                    .await
             }
             _ => Ok(()),
         }

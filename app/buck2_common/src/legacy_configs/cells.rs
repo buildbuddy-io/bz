@@ -47,6 +47,7 @@ use buck2_core::cells::external::BzlmodOverlay;
 use buck2_core::cells::external::BzlmodPatch;
 use buck2_core::cells::external::BzlmodRepositoryRuleInvocationSetup;
 use buck2_core::cells::external::BzlmodShellConfigSetup;
+use buck2_core::cells::external::BzlmodXcodeConfigSetup;
 use buck2_core::cells::external::ExternalCellOrigin;
 use buck2_core::cells::external::GitCellSetup;
 use buck2_core::cells::external::GitObjectFormat;
@@ -727,6 +728,14 @@ impl BuckConfigBasedCells {
         cell_path: &CellRootPath,
     ) -> buck2_error::Result<LegacyBuckConfig> {
         let is_bzlmod_cell = cell_name.starts_with("bzlmod_");
+        if is_bzlmod_cell || cell_name == "bazel_tools" {
+            return Ok(LegacyBuckConfig::empty().with_bazel_compat_cell_defaults(
+                &[],
+                &[],
+                &BazelCompatBazelrcOptions::default(),
+            ));
+        }
+
         let config_paths = if is_bzlmod_cell {
             Vec::new()
         } else {
@@ -742,10 +751,8 @@ impl BuckConfigBasedCells {
         )
         .await?;
 
-        let apply_bazel_project_defaults = !is_bzlmod_cell
-            && cell_name != "bazel_tools"
-            && should_apply_bazel_compat_defaults(cell_path, file_ops).await?;
-        if is_bzlmod_cell || cell_name == "bazel_tools" || apply_bazel_project_defaults {
+        let apply_bazel_project_defaults = should_apply_bazel_compat_defaults(cell_path, file_ops).await?;
+        if apply_bazel_project_defaults {
             let bazelrc_options = if apply_bazel_project_defaults {
                 get_bazelrc_options(cell_path, file_ops).await?
             } else {
@@ -1396,8 +1403,7 @@ impl BazelModuleCellAliases {
             aliases.sort_unstable();
             aliases.dedup();
         }
-        self.registered_toolchains.sort_unstable();
-        self.registered_toolchains.dedup();
+        dedup_preserve_order(&mut self.registered_toolchains);
         self.external_modules
             .sort_unstable_by(|a, b| a.cell_name().cmp(b.cell_name()));
         self.external_modules
@@ -1434,6 +1440,11 @@ impl BazelModuleCellAliases {
     }
 }
 
+fn dedup_preserve_order<T: Ord + Clone>(values: &mut Vec<T>) {
+    let mut seen = BTreeSet::new();
+    values.retain(|value| seen.insert(value.clone()));
+}
+
 fn bzlmod_external_module_is_local(module: &BazelCompatExternalModule) -> bool {
     match module {
         BazelCompatExternalModule::Registry(module) => module.local_path.is_some(),
@@ -1450,6 +1461,7 @@ fn bzlmod_external_module_is_configure_repo(module: &BazelCompatExternalModule) 
                     BzlmodGeneratedCellGenerator::HostPlatform(_)
                     | BzlmodGeneratedCellGenerator::CcAutoconfToolchains(_)
                     | BzlmodGeneratedCellGenerator::CcAutoconf(_)
+                    | BzlmodGeneratedCellGenerator::XcodeConfig(_)
                     | BzlmodGeneratedCellGenerator::ShellConfig(_),
                 ) => true,
                 Ok(_) => bzlmod_canonical_repo_name_looks_configure(&module.canonical_repo_name),
@@ -1646,6 +1658,7 @@ struct BzlmodDepGraph {
     root_module: RootBzlmodModule,
     discovered: DiscoveredBcrModules,
     selected_keys: BTreeSet<(String, String)>,
+    selected_keys_in_bfs_order: Vec<(String, String)>,
     selected_keys_in_dependency_order: Vec<(String, String)>,
     canonical_repo_names_by_key: BTreeMap<(String, String), String>,
     canonical_repo_names_by_cell: BTreeMap<String, String>,
@@ -2562,6 +2575,7 @@ impl Key for BzlmodDiscoveryKey {
 struct BzlmodSelectionResult {
     discovered: DiscoveredBcrModules,
     selected_keys: BTreeSet<(String, String)>,
+    selected_keys_in_bfs_order: Vec<(String, String)>,
     selected_keys_in_dependency_order: Vec<(String, String)>,
     canonical_repo_names_by_key: BTreeMap<(String, String), String>,
 }
@@ -3383,10 +3397,12 @@ fn select_bzlmod_modules(
     if let Some(version) = selected_versions.get("bazel_tools") {
         visit.push_back(("bazel_tools".to_owned(), version.clone()));
     }
+    let mut selected_keys_in_bfs_order = Vec::new();
     while let Some(key) = visit.pop_front() {
         if !selected_keys.insert(key.clone()) {
             continue;
         }
+        selected_keys_in_bfs_order.push(key.clone());
         let Some(module) = discovered.get(&key) else {
             return Err(buck2_error!(
                 buck2_error::ErrorTag::Input,
@@ -3411,6 +3427,7 @@ fn select_bzlmod_modules(
     Ok(BzlmodSelectionResult {
         discovered,
         selected_keys,
+        selected_keys_in_bfs_order,
         selected_keys_in_dependency_order,
         canonical_repo_names_by_key,
     })
@@ -3491,6 +3508,7 @@ fn bzlmod_dep_graph_from_selection(
     selection: &BzlmodSelectionResult,
 ) -> buck2_error::Result<BzlmodDepGraph> {
     let selected_keys = selection.selected_keys.clone();
+    let selected_keys_in_bfs_order = selection.selected_keys_in_bfs_order.clone();
     let selected_keys_in_dependency_order = selection.selected_keys_in_dependency_order.clone();
     let canonical_repo_names_by_key = selection.canonical_repo_names_by_key.clone();
     let selected_versions = selected_keys
@@ -3595,6 +3613,7 @@ fn bzlmod_dep_graph_from_selection(
         root_module,
         discovered,
         selected_keys,
+        selected_keys_in_bfs_order,
         selected_keys_in_dependency_order,
         canonical_repo_names_by_key,
         canonical_repo_names_by_cell,
@@ -3703,7 +3722,7 @@ fn resolve_bcr_modules_from_dep_graph(
     resolved.extend(generated_resolution.external_modules);
     let registered_toolchains = resolve_bzlmod_registered_toolchains(
         discovered,
-        selected_keys,
+        &dep_graph.selected_keys_in_bfs_order,
         canonical_repo_names_by_key,
         &cell_aliases_by_cell,
     )?;
@@ -3944,6 +3963,29 @@ fn resolve_generated_bzlmod_repos(
         &mut generated,
         &mut generated_repo_declaring_cells,
     )?;
+    let local_config_xcode_generator_json = serde_json::to_string(
+        &BzlmodGeneratedCellGenerator::XcodeConfig(BzlmodXcodeConfigSetup {}),
+    )
+    .buck_error_context("Error serializing generated Xcode config repo configuration")?;
+    let local_config_xcode_cell = add_unimported_generated_bzlmod_repo(
+        &mut generated,
+        &mut generated_repo_declaring_cells,
+        "bazel_tools",
+        "local_config_xcode",
+        local_config_xcode_generator_json,
+    );
+    add_bzlmod_cell_alias(
+        cell_aliases_by_cell,
+        "root",
+        "local_config_xcode",
+        &local_config_xcode_cell,
+    );
+    add_bzlmod_cell_alias(
+        cell_aliases_by_cell,
+        "bazel_tools",
+        "local_config_xcode",
+        &local_config_xcode_cell,
+    );
     for key in selected_keys_in_dependency_order {
         let Some(module) = discovered.get(key) else {
             continue;
@@ -5018,7 +5060,7 @@ fn bzlmod_extension_unique_repo_canonical_repo_name(
 
 fn resolve_bzlmod_registered_toolchains(
     discovered: &BTreeMap<(String, String), DiscoveredBcrModule>,
-    selected_keys: &BTreeSet<(String, String)>,
+    selected_keys: &[(String, String)],
     canonical_repo_names_by_key: &BTreeMap<(String, String), String>,
     cell_aliases_by_cell: &BzlmodCellAliasesByCell,
 ) -> buck2_error::Result<Vec<String>> {
@@ -5041,8 +5083,7 @@ fn resolve_bzlmod_registered_toolchains(
             )?);
         }
     }
-    registered_toolchains.sort_unstable();
-    registered_toolchains.dedup();
+    dedup_preserve_order(&mut registered_toolchains);
     Ok(registered_toolchains)
 }
 
@@ -6191,8 +6232,7 @@ fn bzlmod_registered_toolchains_from_lines(
                 .filter_map(|arg| bzl_string_expression_value(arg.trim(), &constants)),
         );
     }
-    toolchains.sort();
-    toolchains.dedup();
+    dedup_preserve_order(&mut toolchains);
     toolchains
 }
 
