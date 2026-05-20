@@ -725,8 +725,16 @@ async fn establish_connection_inner(
         })
         .await;
     if let Ok(connect_before_restart) = res {
-        if let ConnectBeforeRestart::Accepted(client) = connect_before_restart {
-            return Ok(client);
+        match connect_before_restart {
+            ConnectBeforeRestart::Accepted(client) => return Ok(client),
+            ConnectBeforeRestart::Rejected => {}
+            ConnectBeforeRestart::ConstraintMismatch(reason) => {
+                events_ctx
+                    .eprintln(&format!(
+                        "buck2 daemon constraint mismatch: {reason}; waiting for daemon lifecycle lock..."
+                    ))
+                    .await?;
+            }
         };
     }
 
@@ -890,6 +898,7 @@ async fn start_new_buckd_and_connect(
 enum ConnectBeforeRestart {
     Accepted(BootstrapBuckdClient),
     Rejected,
+    ConstraintMismatch(ConstraintUnsatisfiedReason),
 }
 
 /// Connect to buckd before attempt to restart the server.
@@ -908,10 +917,9 @@ async fn try_connect_existing_before_acquiring_lifecycle_lock(
             let Ok(client) = channel.upgrade().await else {
                 return ConnectBeforeRestart::Rejected;
             };
-            if constraints.satisfied(&client.constraints).is_ok() {
-                ConnectBeforeRestart::Accepted(client)
-            } else {
-                ConnectBeforeRestart::Rejected
+            match constraints.satisfied(&client.constraints) {
+                Ok(()) => ConnectBeforeRestart::Accepted(client),
+                Err(reason) => ConnectBeforeRestart::ConstraintMismatch(reason),
             }
         }
         Err(e) => {
