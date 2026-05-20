@@ -1496,9 +1496,9 @@ fn eval_bzlmod_tag_expression<'v>(
         .map_err(Into::into)
 }
 
-fn alloc_coerced_attr_value<'v>(
+fn alloc_coerced_attr_value_on_heap<'v>(
     value: &CoercedAttr,
-    eval: &mut Evaluator<'v, '_, '_>,
+    heap: Heap<'v>,
 ) -> starlark::Result<Value<'v>> {
     match value {
         CoercedAttr::Label(label)
@@ -1506,44 +1506,117 @@ fn alloc_coerced_attr_value<'v>(
         | CoercedAttr::Dep(label)
         | CoercedAttr::ConfigurationDep(label)
         | CoercedAttr::SplitTransitionDep(label) => {
-            return Ok(eval
-                .heap()
-                .alloc(StarlarkProvidersLabel::new(label.clone())));
+            return Ok(heap.alloc(StarlarkProvidersLabel::new(label.clone())));
         }
         CoercedAttr::List(list) => {
             let values = list
                 .iter()
-                .map(|item| alloc_coerced_attr_value(item, eval))
+                .map(|item| alloc_coerced_attr_value_on_heap(item, heap))
                 .collect::<starlark::Result<Vec<_>>>()?;
-            return Ok(eval.heap().alloc(AllocList(values)));
+            return Ok(heap.alloc(AllocList(values)));
         }
         CoercedAttr::Tuple(tuple) => {
             let values = tuple
                 .iter()
-                .map(|item| alloc_coerced_attr_value(item, eval))
+                .map(|item| alloc_coerced_attr_value_on_heap(item, heap))
                 .collect::<starlark::Result<Vec<_>>>()?;
-            return Ok(eval.heap().alloc(AllocList(values)));
+            return Ok(heap.alloc(AllocList(values)));
         }
         CoercedAttr::Dict(dict) => {
             let values = dict
                 .iter()
                 .map(|(key, value)| {
                     Ok((
-                        alloc_coerced_attr_value(key, eval)?,
-                        alloc_coerced_attr_value(value, eval)?,
+                        alloc_coerced_attr_value_on_heap(key, heap)?,
+                        alloc_coerced_attr_value_on_heap(value, heap)?,
                     ))
                 })
                 .collect::<starlark::Result<Vec<_>>>()?;
-            return Ok(eval.heap().alloc(AllocDict(values)));
+            return Ok(heap.alloc(AllocDict(values)));
         }
-        CoercedAttr::OneOf(value, _) => return alloc_coerced_attr_value(value, eval),
+        CoercedAttr::OneOf(value, _) => return alloc_coerced_attr_value_on_heap(value, heap),
         CoercedAttr::None => return Ok(Value::new_none()),
         _ => {}
     }
     let json = value
         .to_json(&AttrFmtContext::NO_CONTEXT)
         .map_err(starlark::Error::from)?;
-    Ok(eval.heap().alloc(json))
+    Ok(heap.alloc(json))
+}
+
+fn ensure_coerced_attr_value_allocable(value: &CoercedAttr) -> starlark::Result<()> {
+    match value {
+        CoercedAttr::Label(_)
+        | CoercedAttr::SourceLabel(_)
+        | CoercedAttr::Dep(_)
+        | CoercedAttr::ConfigurationDep(_)
+        | CoercedAttr::SplitTransitionDep(_)
+        | CoercedAttr::None => Ok(()),
+        CoercedAttr::List(list) => {
+            for item in list.iter() {
+                ensure_coerced_attr_value_allocable(item)?;
+            }
+            Ok(())
+        }
+        CoercedAttr::Tuple(tuple) => {
+            for item in tuple.iter() {
+                ensure_coerced_attr_value_allocable(item)?;
+            }
+            Ok(())
+        }
+        CoercedAttr::Dict(dict) => {
+            for (key, value) in dict.iter() {
+                ensure_coerced_attr_value_allocable(key)?;
+                ensure_coerced_attr_value_allocable(value)?;
+            }
+            Ok(())
+        }
+        CoercedAttr::OneOf(value, _) => ensure_coerced_attr_value_allocable(value),
+        _ => {
+            value
+                .to_json(&AttrFmtContext::NO_CONTEXT)
+                .map_err(starlark::Error::from)?;
+            Ok(())
+        }
+    }
+}
+
+fn alloc_coerced_attr_value<'v>(
+    value: &CoercedAttr,
+    eval: &mut Evaluator<'v, '_, '_>,
+) -> starlark::Result<Value<'v>> {
+    alloc_coerced_attr_value_on_heap(value, eval.heap())
+}
+
+fn coerce_attr_value<'v>(
+    attr_name: &str,
+    attr: &Attribute,
+    attr_coercion_ctx: &BuildAttrCoercionContext,
+    raw_value: Value<'v>,
+) -> starlark::Result<CoercedAttr> {
+    let value = match attr
+        .coerce(
+            attr_name,
+            AttrIsConfigurable::No,
+            attr_coercion_ctx,
+            raw_value,
+        )
+        .map_err(starlark::Error::from)?
+    {
+        CoercedValue::Custom(value) => value,
+        CoercedValue::Default => {
+            let default = attr.default().ok_or_else(|| {
+                buck2_error::buck2_error!(
+                    buck2_error::ErrorTag::Tier0,
+                    "attribute `{}` selected a default but has no default value",
+                    attr_name
+                )
+            })?;
+            default.as_ref().clone()
+        }
+    };
+    ensure_coerced_attr_value_allocable(&value)?;
+    Ok(value)
 }
 
 fn alloc_attr_value<'v>(
@@ -1553,27 +1626,8 @@ fn alloc_attr_value<'v>(
     raw_value: Value<'v>,
     eval: &mut Evaluator<'v, '_, '_>,
 ) -> starlark::Result<Value<'v>> {
-    match attr
-        .coerce(
-            attr_name,
-            AttrIsConfigurable::No,
-            attr_coercion_ctx,
-            raw_value,
-        )
-        .map_err(starlark::Error::from)?
-    {
-        CoercedValue::Custom(value) => alloc_coerced_attr_value(&value, eval),
-        CoercedValue::Default => {
-            let default = attr.default().ok_or_else(|| {
-                buck2_error::buck2_error!(
-                    buck2_error::ErrorTag::Tier0,
-                    "attribute `{}` selected a default but has no default value",
-                    attr_name
-                )
-            })?;
-            alloc_coerced_attr_value(default, eval)
-        }
-    }
+    let value = coerce_attr_value(attr_name, attr, attr_coercion_ctx, raw_value)?;
+    alloc_coerced_attr_value(&value, eval)
 }
 
 fn bzlmod_module_cell_name(
@@ -1786,7 +1840,7 @@ pub(crate) fn alloc_bzlmod_repository_context<'v>(
         .collect::<BTreeMap<String, String>>();
     let attr_coercion_ctx =
         bzlmod_current_attr_coercion_context(eval).map_err(starlark::Error::from)?;
-    let mut attrs = Vec::new();
+    let mut attrs = SmallMap::new();
     for (attr_name, attr) in repository_rule.attributes.attributes() {
         let value = match explicit_attrs.remove(attr_name) {
             Some(expression) => {
@@ -1794,10 +1848,14 @@ pub(crate) fn alloc_bzlmod_repository_context<'v>(
                 expression_index += 1;
                 let raw_value =
                     eval_bzlmod_tag_expression(&expression, &[], &value_name, globals, eval)?;
-                alloc_attr_value(attr_name, attr, &attr_coercion_ctx, raw_value, eval)?
+                coerce_attr_value(attr_name, attr, &attr_coercion_ctx, raw_value)?
             }
             None => match attr.default() {
-                Some(default) => alloc_coerced_attr_value(default, eval)?,
+                Some(default) => {
+                    let value = default.as_ref().clone();
+                    ensure_coerced_attr_value_allocable(&value)?;
+                    value
+                }
                 None => {
                     return Err(buck2_error::buck2_error!(
                         buck2_error::ErrorTag::Input,
@@ -1810,7 +1868,7 @@ pub(crate) fn alloc_bzlmod_repository_context<'v>(
                 }
             },
         };
-        attrs.push((attr_name.as_str(), value));
+        attrs.insert(attr_name.clone(), value);
     }
     if let Some((attr, _)) = explicit_attrs.into_iter().next() {
         return Err(buck2_error::Error::from(
@@ -1821,15 +1879,14 @@ pub(crate) fn alloc_bzlmod_repository_context<'v>(
         )
         .into());
     }
-    attrs.push((
-        NAME_ATTRIBUTE_FIELD,
-        eval.heap().alloc_str(&invocation.name).to_value(),
-    ));
-    let attr = eval.heap().alloc(AllocStruct(attrs));
+    let attrs = BazelRepositoryAttrValues {
+        attrs,
+        name: invocation.name.clone(),
+    };
     let repository_ctx = StarlarkRepositoryContext::new(
         invocation.name.clone(),
         invocation.original_name.clone(),
-        attr,
+        attrs,
         working_dir.to_owned(),
         repository_ctx_workspace_root(working_dir),
         repo_env,
@@ -1843,6 +1900,27 @@ pub(crate) fn alloc_bzlmod_repository_context<'v>(
         );
     }
     Ok(eval.heap().alloc(repository_ctx))
+}
+
+#[derive(Debug, Clone, Allocative)]
+struct BazelRepositoryAttrValues {
+    attrs: SmallMap<String, CoercedAttr>,
+    name: String,
+}
+
+impl BazelRepositoryAttrValues {
+    fn alloc<'v>(&self, heap: Heap<'v>) -> Value<'v> {
+        let mut attrs = Vec::with_capacity(self.attrs.len() + 1);
+        for (name, value) in &self.attrs {
+            attrs.push((
+                name.as_str(),
+                alloc_coerced_attr_value_on_heap(value, heap)
+                    .expect("repository rule attributes were already coerced"),
+            ));
+        }
+        attrs.push((NAME_ATTRIBUTE_FIELD, heap.alloc_str(&self.name).to_value()));
+        heap.alloc(AllocStruct(attrs))
+    }
 }
 
 fn repository_ctx_workspace_root(working_dir: &str) -> String {
@@ -2875,7 +2953,7 @@ fn repository_path_for_write(path: &str) -> buck2_error::Result<PathBuf> {
 pub(crate) struct StarlarkRepositoryContext<'v> {
     name: String,
     original_name: String,
-    attr: Value<'v>,
+    attrs: BazelRepositoryAttrValues,
     working_dir: String,
     workspace_root: String,
     #[trace(unsafe_ignore)]
@@ -2890,13 +2968,14 @@ pub(crate) struct StarlarkRepositoryContext<'v> {
     #[trace(unsafe_ignore)]
     #[allocative(skip)]
     recorded_inputs: Arc<Mutex<Vec<BazelRepositoryRecordedInput>>>,
+    _marker: std::marker::PhantomData<&'v ()>,
 }
 
 impl<'v> StarlarkRepositoryContext<'v> {
     fn new(
         name: String,
         original_name: String,
-        attr: Value<'v>,
+        attrs: BazelRepositoryAttrValues,
         working_dir: String,
         workspace_root: String,
         repo_env: Arc<BTreeMap<String, String>>,
@@ -2905,13 +2984,14 @@ impl<'v> StarlarkRepositoryContext<'v> {
         Self {
             name,
             original_name,
-            attr,
+            attrs,
             working_dir,
             workspace_root,
             repo_env,
             files: Mutex::new(Vec::new()),
             path_label_deps: Mutex::new(Vec::new()),
             recorded_inputs,
+            _marker: std::marker::PhantomData,
         }
     }
 
@@ -2964,7 +3044,7 @@ impl<'v> StarlarkValue<'v> for StarlarkRepositoryContext<'v> {
 
     fn get_attr(&self, attribute: &str, heap: Heap<'v>) -> Option<Value<'v>> {
         match attribute {
-            "attr" => Some(self.attr),
+            "attr" => Some(self.attrs.alloc(heap)),
             "name" => Some(heap.alloc_str(&self.name).to_value()),
             "original_name" => Some(heap.alloc_str(&self.original_name).to_value()),
             "os" => Some(heap.alloc(StarlarkRepositoryOs::new(
@@ -2987,11 +3067,11 @@ impl<'v> StarlarkValue<'v> for StarlarkRepositoryContext<'v> {
 impl<'v> Freeze for StarlarkRepositoryContext<'v> {
     type Frozen = FrozenStarlarkRepositoryContext;
 
-    fn freeze(self, freezer: &Freezer) -> FreezeResult<Self::Frozen> {
+    fn freeze(self, _freezer: &Freezer) -> FreezeResult<Self::Frozen> {
         Ok(FrozenStarlarkRepositoryContext {
             name: self.name,
             original_name: self.original_name,
-            attr: self.attr.freeze(freezer)?,
+            attrs: self.attrs,
             working_dir: self.working_dir,
             workspace_root: self.workspace_root,
             repo_env: self.repo_env,
@@ -3014,7 +3094,7 @@ impl<'v> Freeze for StarlarkRepositoryContext<'v> {
 pub(crate) struct FrozenStarlarkRepositoryContext {
     name: String,
     original_name: String,
-    attr: FrozenValue,
+    attrs: BazelRepositoryAttrValues,
     working_dir: String,
     workspace_root: String,
     #[allocative(skip)]
@@ -3051,7 +3131,7 @@ impl<'v> StarlarkValue<'v> for FrozenStarlarkRepositoryContext {
 
     fn get_attr(&self, attribute: &str, heap: Heap<'v>) -> Option<Value<'v>> {
         match attribute {
-            "attr" => Some(self.attr.to_value()),
+            "attr" => Some(self.attrs.alloc(heap)),
             "name" => Some(heap.alloc_str(&self.name).to_value()),
             "original_name" => Some(heap.alloc_str(&self.original_name).to_value()),
             "os" => Some(heap.alloc(FrozenStarlarkRepositoryOs::new(
@@ -3605,18 +3685,16 @@ fn repository_ctx_external_input_ready(path: &Path) -> bool {
     path.exists()
 }
 
-fn repository_ctx_download_error<'v>(
+fn repository_ctx_download_error_result(
     allow_fail: bool,
     error: buck2_error::Error,
-    eval: &mut Evaluator<'v, '_, '_>,
-) -> starlark::Result<Value<'v>> {
+) -> starlark::Result<ModuleCtxDownloadResult> {
     if allow_fail {
-        Ok(module_ctx_download_result(
+        Ok(ModuleCtxDownloadResult::new(
             false,
             None,
             None,
             Some(&error.to_string()),
-            eval,
         ))
     } else {
         Err(error.into())
@@ -3816,7 +3894,7 @@ fn module_ctx_download_headers_from_entries(
     Ok(headers)
 }
 
-fn repository_ctx_download_to_path<'v>(
+fn repository_ctx_download_to_path(
     urls: Vec<String>,
     output_path: String,
     sha256: &str,
@@ -3826,13 +3904,12 @@ fn repository_ctx_download_to_path<'v>(
     canonical_id: &str,
     headers: &[(String, String)],
     auth_headers: &[ModuleCtxDownloadAuthHeader],
-    eval: &mut Evaluator<'v, '_, '_>,
-) -> starlark::Result<(Value<'v>, bool)> {
+) -> starlark::Result<(ModuleCtxDownloadResult, bool)> {
     let expected_checksum = match module_ctx_expected_checksum(sha256, integrity) {
         Ok(expected_checksum) => expected_checksum,
         Err(error) => {
             return Ok((
-                repository_ctx_download_error(allow_fail, error, eval)?,
+                repository_ctx_download_error_result(allow_fail, error)?,
                 false,
             ));
         }
@@ -3841,7 +3918,7 @@ fn repository_ctx_download_to_path<'v>(
         Ok(path) => path,
         Err(error) => {
             return Ok((
-                repository_ctx_download_error(allow_fail, error, eval)?,
+                repository_ctx_download_error_result(allow_fail, error)?,
                 false,
             ));
         }
@@ -3858,19 +3935,13 @@ fn repository_ctx_download_to_path<'v>(
         Ok(checksums) => checksums,
         Err(error) => {
             return Ok((
-                repository_ctx_download_error(allow_fail, error, eval)?,
+                repository_ctx_download_error_result(allow_fail, error)?,
                 false,
             ));
         }
     };
     Ok((
-        module_ctx_download_result(
-            true,
-            got_sha256.as_deref(),
-            Some(&got_integrity),
-            None,
-            eval,
-        ),
+        ModuleCtxDownloadResult::new(true, got_sha256.as_deref(), Some(&got_integrity), None),
         true,
     ))
 }
@@ -4506,7 +4577,6 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
             canonical_id,
             &download_headers,
             &auth_headers,
-            eval,
         )?;
         Ok(module_ctx_pending_download(block, result, eval))
     }
@@ -4566,7 +4636,6 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
             canonical_id,
             &download_headers,
             &auth_headers,
-            eval,
         )?;
         if !success {
             return Ok(module_ctx_pending_download(block, result, eval));
@@ -4589,7 +4658,7 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
             &rename_files,
         ) {
             Ok(()) => result,
-            Err(error) => repository_ctx_download_error(allow_fail, error, eval)?,
+            Err(error) => repository_ctx_download_error_result(allow_fail, error)?,
         };
         Ok(module_ctx_pending_download(block, result, eval))
     }
@@ -5158,7 +5227,8 @@ fn module_ctx_download_retry_delay(attempt: usize) -> Duration {
 }
 
 const MODULE_CTX_HTTP_MAX_PARALLEL_DOWNLOADS: usize = 8;
-const MODULE_CTX_HTTP_CONNECT_TIMEOUT: Duration = Duration::from_secs(1);
+const MODULE_CTX_HTTP_MAX_REDIRECTS: usize = 40;
+const MODULE_CTX_HTTP_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const MODULE_CTX_HTTP_READ_TIMEOUT: Duration = Duration::from_secs(20);
 const MODULE_CTX_HTTP_WRITE_TIMEOUT: Duration = Duration::from_secs(20);
 
@@ -5411,7 +5481,7 @@ async fn module_ctx_download_to_path_uncached(
 
     let client = buck2_http::HttpClientBuilder::oss()
         .await?
-        .with_max_redirects(10)
+        .with_max_redirects(MODULE_CTX_HTTP_MAX_REDIRECTS)
         .with_connect_timeout(Some(MODULE_CTX_HTTP_CONNECT_TIMEOUT))
         .with_read_timeout(Some(MODULE_CTX_HTTP_READ_TIMEOUT))
         .with_write_timeout(Some(MODULE_CTX_HTTP_WRITE_TIMEOUT))
@@ -6048,31 +6118,51 @@ fn module_ctx_download_stage_label(urls: &[String], destination: &Path) -> Strin
     }
 }
 
-fn module_ctx_download_result<'v>(
+#[derive(Debug, Clone, Allocative)]
+struct ModuleCtxDownloadResult {
     success: bool,
-    sha256: Option<&str>,
-    integrity: Option<&str>,
-    error: Option<&str>,
-    eval: &mut Evaluator<'v, '_, '_>,
-) -> Value<'v> {
-    let success = eval.heap().alloc(success);
-    let mut fields = Vec::new();
-    fields.push(("success", success));
-    if let Some(sha256) = sha256 {
-        fields.push(("sha256", eval.heap().alloc_str(sha256).to_value()));
+    sha256: Option<String>,
+    integrity: Option<String>,
+    error: Option<String>,
+}
+
+impl ModuleCtxDownloadResult {
+    fn new(
+        success: bool,
+        sha256: Option<&str>,
+        integrity: Option<&str>,
+        error: Option<&str>,
+    ) -> Self {
+        Self {
+            success,
+            sha256: sha256.map(str::to_owned),
+            integrity: integrity.map(str::to_owned),
+            error: error.map(str::to_owned),
+        }
     }
-    if let Some(integrity) = integrity {
-        fields.push(("integrity", eval.heap().alloc_str(integrity).to_value()));
+
+    fn alloc<'v>(&self, heap: Heap<'v>) -> Value<'v> {
+        let success = heap.alloc(self.success);
+        let mut fields = Vec::new();
+        fields.push(("success", success));
+        if let Some(sha256) = &self.sha256 {
+            fields.push(("sha256", heap.alloc_str(sha256).to_value()));
+        }
+        if let Some(integrity) = &self.integrity {
+            fields.push(("integrity", heap.alloc_str(integrity).to_value()));
+        }
+        if let Some(error) = &self.error {
+            fields.push(("error", heap.alloc_str(error).to_value()));
+        }
+        heap.alloc(AllocStruct(fields))
     }
-    if let Some(error) = error {
-        fields.push(("error", eval.heap().alloc_str(error).to_value()));
-    }
-    eval.heap().alloc(AllocStruct(fields))
 }
 
 #[derive(Debug, ProvidesStaticType, Trace, NoSerialize, Allocative)]
 struct StarlarkPendingDownload<'v> {
-    result: Value<'v>,
+    #[trace(unsafe_ignore)]
+    result: ModuleCtxDownloadResult,
+    _marker: std::marker::PhantomData<&'v ()>,
 }
 
 impl<'v> AllocValue<'v> for StarlarkPendingDownload<'v> {
@@ -6084,9 +6174,9 @@ impl<'v> AllocValue<'v> for StarlarkPendingDownload<'v> {
 impl<'v> Freeze for StarlarkPendingDownload<'v> {
     type Frozen = FrozenStarlarkPendingDownload;
 
-    fn freeze(self, freezer: &Freezer) -> FreezeResult<Self::Frozen> {
+    fn freeze(self, _freezer: &Freezer) -> FreezeResult<Self::Frozen> {
         Ok(FrozenStarlarkPendingDownload {
-            result: self.result.freeze(freezer)?,
+            result: self.result,
         })
     }
 }
@@ -6107,7 +6197,7 @@ impl<'v> StarlarkValue<'v> for StarlarkPendingDownload<'v> {
 
 #[derive(Debug, ProvidesStaticType, NoSerialize, Allocative)]
 struct FrozenStarlarkPendingDownload {
-    result: FrozenValue,
+    result: ModuleCtxDownloadResult,
 }
 
 impl Display for FrozenStarlarkPendingDownload {
@@ -6132,23 +6222,27 @@ impl<'v> StarlarkValue<'v> for FrozenStarlarkPendingDownload {
 fn pending_download_methods(builder: &mut MethodsBuilder) {
     fn wait<'v>(
         this: ValueTypedComplex<'v, StarlarkPendingDownload<'v>>,
+        eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {
         Ok(match this.unpack() {
-            either::Either::Left(download) => download.result,
-            either::Either::Right(download) => download.result.to_value(),
+            either::Either::Left(download) => download.result.alloc(eval.heap()),
+            either::Either::Right(download) => download.result.alloc(eval.heap()),
         })
     }
 }
 
 fn module_ctx_pending_download<'v>(
     block: bool,
-    result: Value<'v>,
+    result: ModuleCtxDownloadResult,
     eval: &mut Evaluator<'v, '_, '_>,
 ) -> Value<'v> {
     if block {
-        result
+        result.alloc(eval.heap())
     } else {
-        eval.heap().alloc(StarlarkPendingDownload { result })
+        eval.heap().alloc(StarlarkPendingDownload {
+            result,
+            _marker: std::marker::PhantomData,
+        })
     }
 }
 
@@ -6158,26 +6252,8 @@ fn module_ctx_download_error_with_block<'v>(
     error: buck2_error::Error,
     eval: &mut Evaluator<'v, '_, '_>,
 ) -> starlark::Result<Value<'v>> {
-    let result = module_ctx_download_error(allow_fail, error, eval)?;
+    let result = repository_ctx_download_error_result(allow_fail, error)?;
     Ok(module_ctx_pending_download(block, result, eval))
-}
-
-fn module_ctx_download_error<'v>(
-    allow_fail: bool,
-    error: buck2_error::Error,
-    eval: &mut Evaluator<'v, '_, '_>,
-) -> starlark::Result<Value<'v>> {
-    if allow_fail {
-        Ok(module_ctx_download_result(
-            false,
-            None,
-            None,
-            Some(&error.to_string()),
-            eval,
-        ))
-    } else {
-        Err(error.into())
-    }
 }
 
 fn module_ctx_working_dir<'v>(
@@ -6472,13 +6548,8 @@ fn module_extension_context_methods(builder: &mut MethodsBuilder) {
             }
         };
 
-        let result = module_ctx_download_result(
-            true,
-            got_sha256.as_deref(),
-            Some(&got_integrity),
-            None,
-            eval,
-        );
+        let result =
+            ModuleCtxDownloadResult::new(true, got_sha256.as_deref(), Some(&got_integrity), None);
         Ok(module_ctx_pending_download(block, result, eval))
     }
 

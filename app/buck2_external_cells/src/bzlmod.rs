@@ -17,8 +17,10 @@ use std::io::Read;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::LazyLock;
 use std::sync::Mutex;
 use std::sync::OnceLock;
+use std::time::Duration;
 
 use base64::Engine;
 use buck2_build_api::actions::artifact::get_artifact_fs::GetArtifactFs;
@@ -34,7 +36,6 @@ use buck2_common::file_ops::metadata::RawDirEntry;
 use buck2_common::file_ops::metadata::RawPathMetadata;
 use buck2_common::file_ops::metadata::RawPathMetadataForNoWatchFs;
 use buck2_common::file_ops::metadata::RawSymlink;
-use buck2_common::http::HasHttpClient;
 use buck2_common::io::IoProvider;
 use buck2_common::io::NoWatchFsMetadataCache;
 use buck2_common::io::fs::FsIoProvider;
@@ -95,6 +96,8 @@ use buck2_fs::error::IoResultExt;
 use buck2_fs::fs_util;
 use buck2_fs::paths::abs_norm_path::AbsNormPath;
 use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
+use buck2_http::HttpClient;
+use buck2_http::HttpClientBuilder;
 use buck2_interpreter_for_build::bazel_repository::BazelRepositoryRuleProgress;
 use buck2_interpreter_for_build::bazel_repository::bzlmod_module_extension_bzl_transitive_digest;
 use buck2_interpreter_for_build::bazel_repository::bzlmod_repository_rule_invocation_from_setup;
@@ -121,6 +124,14 @@ static BZLMOD_MATERIALIZATION_LOCKS: OnceLock<
     Mutex<BTreeMap<String, Arc<tokio::sync::Mutex<()>>>>,
 > = OnceLock::new();
 static BZLMOD_HIDDEN_LOCKFILE_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+static BZLMOD_DOWNLOAD_HTTP_CLIENT: LazyLock<tokio::sync::OnceCell<HttpClient>> =
+    LazyLock::new(tokio::sync::OnceCell::new);
+
+const BZLMOD_DOWNLOAD_MAX_PARALLEL_DOWNLOADS: usize = 8;
+const BZLMOD_DOWNLOAD_MAX_REDIRECTS: usize = 40;
+const BZLMOD_DOWNLOAD_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+const BZLMOD_DOWNLOAD_READ_TIMEOUT: Duration = Duration::from_secs(20);
+const BZLMOD_DOWNLOAD_WRITE_TIMEOUT: Duration = Duration::from_secs(20);
 
 #[derive(buck2_error::Error, Debug)]
 #[buck2(tag = Tier0)]
@@ -3289,7 +3300,7 @@ async fn download_impl(
     let io_provider = ctx.global_data().get_io_provider();
     let project_root = io_provider.project_root();
     let digest_config = ctx.global_data().get_digest_config();
-    let client = ctx.per_transaction_data().get_http_client();
+    let client = shared_bzlmod_download_http_client().await?;
     let bazel_download_headers = bazel_repository_download_headers(std::iter::empty());
     let archive_checksum = checksum_from_integrity(&setup.integrity)?;
     let archive_urls = bzlmod_cell_setup_urls(setup);
@@ -3399,7 +3410,7 @@ async fn prepare_bzlmod_external_cell_root_from_source(
 }
 
 async fn http_download_any_with_headers(
-    client: &buck2_http::HttpClient,
+    client: &HttpClient,
     fs: &ProjectRoot,
     digest_config: buck2_execute::digest_config::DigestConfig,
     path: &ProjectRelativePath,
@@ -3433,6 +3444,24 @@ async fn http_download_any_with_headers(
             .unwrap_or_else(|| "no URL provided".to_owned()),
     }
     .into())
+}
+
+async fn bzlmod_download_http_client() -> buck2_error::Result<HttpClient> {
+    let mut builder = HttpClientBuilder::oss().await?;
+    builder
+        .with_max_redirects(BZLMOD_DOWNLOAD_MAX_REDIRECTS)
+        .with_connect_timeout(Some(BZLMOD_DOWNLOAD_CONNECT_TIMEOUT))
+        .with_read_timeout(Some(BZLMOD_DOWNLOAD_READ_TIMEOUT))
+        .with_write_timeout(Some(BZLMOD_DOWNLOAD_WRITE_TIMEOUT))
+        .with_max_concurrent_requests(Some(BZLMOD_DOWNLOAD_MAX_PARALLEL_DOWNLOADS));
+    Ok(builder.build())
+}
+
+async fn shared_bzlmod_download_http_client() -> buck2_error::Result<HttpClient> {
+    Ok(BZLMOD_DOWNLOAD_HTTP_CLIENT
+        .get_or_try_init(bzlmod_download_http_client)
+        .await?
+        .dupe())
 }
 
 async fn declare_existing_directory(
@@ -3984,7 +4013,7 @@ async fn materialize_generated_contents(
             let io_provider = ctx.global_data().get_io_provider();
             let project_root = io_provider.project_root();
             let digest_config = ctx.global_data().get_digest_config();
-            let client = ctx.per_transaction_data().get_http_client();
+            let client = shared_bzlmod_download_http_client().await?;
             let bazel_download_headers = bazel_repository_download_headers(std::iter::empty());
             let archive_checksum = Checksum::new(None, Some(&*http_archive.sha256))?;
             http_download_with_headers(
