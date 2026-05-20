@@ -408,6 +408,21 @@ impl BazelBuildSettingValue {
             }
         }
     }
+
+    pub fn matches_config_setting_value(&self, expected: &str) -> bool {
+        if self.as_config_setting_value() == expected {
+            return true;
+        }
+        match self {
+            BazelBuildSettingValue::StringList(values) => {
+                values.iter().any(|value| value == expected)
+            }
+            BazelBuildSettingValue::LabelList(values) => {
+                values.iter().any(|value| value.to_string() == expected)
+            }
+            _ => false,
+        }
+    }
 }
 
 /// A set of values used in configuration-related contexts.
@@ -552,6 +567,7 @@ mod tests {
     use crate::configuration::bound_id::BoundConfigurationId;
     use crate::configuration::constraints::ConstraintKey;
     use crate::configuration::constraints::ConstraintValue;
+    use crate::configuration::data::BazelBuildSettingValue;
     use crate::configuration::data::ConfigurationData;
     use crate::configuration::data::ConfigurationDataData;
 
@@ -616,5 +632,14 @@ mod tests {
             ConfigurationData::lookup_bound(BoundConfigurationId::parse(expected_cfg_str).unwrap())
                 .unwrap();
         assert_eq!(configuration, looked_up);
+    }
+
+    #[test]
+    fn test_bazel_string_list_build_setting_matches_single_expected_value() {
+        let value =
+            BazelBuildSettingValue::StringList(vec!["clang".to_owned(), "llvm-nm".to_owned()]);
+        assert!(value.matches_config_setting_value("clang"));
+        assert!(value.matches_config_setting_value("llvm-nm"));
+        assert!(!value.matches_config_setting_value("lld"));
     }
 }

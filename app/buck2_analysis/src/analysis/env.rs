@@ -30,6 +30,7 @@ use buck2_build_api::interpreter::rule_defs::provider::builtin::bazel_output_fil
 use buck2_build_api::interpreter::rule_defs::provider::builtin::default_info::DefaultInfo;
 use buck2_build_api::interpreter::rule_defs::provider::builtin::default_info::FrozenDefaultInfo;
 use buck2_build_api::interpreter::rule_defs::provider::builtin::template_placeholder_info::FrozenTemplatePlaceholderInfo;
+use buck2_build_api::interpreter::rule_defs::provider::builtin::template_variable_info::FrozenTemplateVariableInfo;
 use buck2_build_api::interpreter::rule_defs::provider::builtin::toolchain_info::FrozenToolchainInfo;
 use buck2_build_api::interpreter::rule_defs::provider::builtin::validation_info::FrozenValidationInfo;
 use buck2_build_api::interpreter::rule_defs::provider::collection::FrozenProviderCollection;
@@ -40,6 +41,7 @@ use buck2_build_api::interpreter::rule_defs::provider::dependency::Dependency;
 use buck2_build_api::keep_going::KeepGoing;
 use buck2_build_api::validation::transitive_validations::TransitiveValidations;
 use buck2_build_api::validation::transitive_validations::TransitiveValidationsData;
+use buck2_common::dice::cells::HasCellResolver;
 use buck2_common::legacy_configs::dice::HasLegacyConfigs;
 use buck2_common::legacy_configs::key::BuckconfigKeyRef;
 use buck2_common::legacy_configs::view::LegacyBuckConfigView;
@@ -68,6 +70,7 @@ use buck2_interpreter::factory::StarlarkEvaluatorProvider;
 use buck2_interpreter::print_handler::EventDispatcherPrintHandler;
 use buck2_interpreter::soft_error::Buck2StarlarkSoftErrorHandler;
 use buck2_interpreter::types::configured_providers_label::StarlarkConfiguredProvidersLabel;
+use buck2_interpreter::types::label_context::StarlarkLabelResolutionContext;
 use buck2_interpreter::types::rule::FROZEN_BAZEL_ASPECT_INFO_GET_IMPL;
 use buck2_interpreter::types::rule::FROZEN_BAZEL_ATTR_ASPECTS_GET_IMPL;
 use buck2_interpreter::types::rule::FROZEN_PROMISE_ARTIFACT_MAPPINGS_GET_IMPL;
@@ -637,6 +640,7 @@ fn declare_bazel_predeclared_outputs<'v>(
     ValueOfUnchecked<'v, StructRef<'static>>,
     Option<Value<'v>>,
     Vec<Value<'v>>,
+    Vec<(String, Value<'v>)>,
 )> {
     let owned_node = node.to_owned();
     let target_node = owned_node.target_node();
@@ -675,13 +679,19 @@ fn declare_bazel_predeclared_outputs<'v>(
         .iter()
         .map(|(_, artifact)| *artifact)
         .collect::<Vec<_>>();
+    let predeclared_output_files = output_file_targets.clone();
     let output_file_info = if output_file_targets.is_empty() {
         None
     } else {
         let info = new_bazel_output_file_info(output_file_targets, eval);
         Some(eval.heap().alloc(info))
     };
-    Ok((outputs_struct, output_file_info, predeclared_outputs))
+    Ok((
+        outputs_struct,
+        output_file_info,
+        predeclared_outputs,
+        predeclared_output_files,
+    ))
 }
 
 fn configured_node_build_file_path(node: ConfiguredTargetNodeRef<'_>) -> String {
@@ -1014,6 +1024,96 @@ fn collect_configured_attr_dep_labels(
         ConfiguredAttr::OneOf(box attr, _) => collect_configured_attr_dep_labels(attr, labels),
         _ => {}
     }
+}
+
+const BAZEL_DEFAULT_MAKE_VARIABLE_ATTRIBUTES: &[&str] = &[
+    "toolchains",
+    ":cc_toolchain",
+    "$toolchains",
+    "$cc_toolchain",
+];
+
+fn collect_bazel_make_variable_label_attr_template_variables<'v>(
+    attr: &ConfiguredAttr,
+    dep_analysis_results: &StdBuckHashMap<ConfiguredTargetLabel, FrozenProviderCollectionValue>,
+    module: &Module<'v>,
+    variables: &mut Vec<Value<'v>>,
+) -> buck2_error::Result<()> {
+    match attr {
+        ConfiguredAttr::Label(label) => {
+            let provider_collection = get_dep(dep_analysis_results, label, module)?;
+            if let Some(template_variable_info) = provider_collection
+                .as_ref()
+                .builtin_provider::<FrozenTemplateVariableInfo>()
+            {
+                variables.push(template_variable_info.to_value());
+            }
+        }
+        ConfiguredAttr::List(list) => {
+            for item in list.iter() {
+                collect_bazel_make_variable_label_attr_template_variables(
+                    item,
+                    dep_analysis_results,
+                    module,
+                    variables,
+                )?;
+            }
+        }
+        ConfiguredAttr::Tuple(tuple) => {
+            for item in tuple.iter() {
+                collect_bazel_make_variable_label_attr_template_variables(
+                    item,
+                    dep_analysis_results,
+                    module,
+                    variables,
+                )?;
+            }
+        }
+        ConfiguredAttr::Dict(dict) => {
+            for (key, value) in dict.iter() {
+                collect_bazel_make_variable_label_attr_template_variables(
+                    key,
+                    dep_analysis_results,
+                    module,
+                    variables,
+                )?;
+                collect_bazel_make_variable_label_attr_template_variables(
+                    value,
+                    dep_analysis_results,
+                    module,
+                    variables,
+                )?;
+            }
+        }
+        ConfiguredAttr::OneOf(box attr, _) => {
+            collect_bazel_make_variable_label_attr_template_variables(
+                attr,
+                dep_analysis_results,
+                module,
+                variables,
+            )?;
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn collect_bazel_make_variable_attr_template_variables<'v>(
+    node: ConfiguredTargetNodeRef<'_>,
+    resolution_ctx: &RuleAnalysisAttrResolutionContext<'_, 'v>,
+) -> buck2_error::Result<Vec<Value<'v>>> {
+    let mut variables = Vec::new();
+    for attr_name in BAZEL_DEFAULT_MAKE_VARIABLE_ATTRIBUTES {
+        if let Some(attr) = node.get(attr_name, AttrInspectOptions::All) {
+            collect_bazel_make_variable_label_attr_template_variables(
+                &attr.value,
+                &resolution_ctx.dep_analysis_results,
+                resolution_ctx.module,
+                &mut variables,
+            )?;
+        }
+    }
+    Ok(variables)
 }
 
 fn bazel_aspect_actual_dep_node<'a>(
@@ -1653,6 +1753,20 @@ async fn run_analysis_with_env_underlying(
     let bazel_cpp_options = bazel_cpp_options(dice).await?;
     BuckStarlarkModule::with_profiling_async(async move |env| {
         let print = EventDispatcherPrintHandler(get_dispatcher());
+        let label_resolution_context = if node.is_bazel_rule() {
+            let package = node.label().pkg();
+            let cell_name = package.cell_name();
+            let cell_resolver = dice.get_cell_resolver().await?;
+            let cell_alias_resolver = dice.get_cell_alias_resolver(cell_name).await?;
+            Some(StarlarkLabelResolutionContext::new(
+                cell_name,
+                cell_resolver,
+                cell_alias_resolver,
+                Some(package),
+            ))
+        } else {
+            None
+        };
 
         let validations_from_deps = analysis_env
             .deps
@@ -1671,6 +1785,9 @@ async fn run_analysis_with_env_underlying(
             let mut reentrant_eval =
                 eval_provider.make_reentrant_evaluator(&env, analysis_env.cancellation.into())?;
             reentrant_eval.with_evaluator(|eval| {
+                if let Some(label_resolution_context) = &label_resolution_context {
+                    eval.extra = Some(label_resolution_context);
+                }
                 collect_bazel_aspect_analysis_deps(eval, analysis_env.rule_spec, node)
             })?
         } else {
@@ -1705,6 +1822,7 @@ async fn run_analysis_with_env_underlying(
         let attributes = node_to_attrs_struct(node, &mut &resolution_ctx)?;
         let plugins = plugins_to_starlark_value(node, &mut &resolution_ctx)?;
         let mut resolved_toolchains = SmallMap::new();
+        let mut resolved_toolchain_template_variables = Vec::new();
         for resolved in node.bazel_resolved_toolchains() {
             let provider_collection = get_dep(
                 &resolution_ctx.dep_analysis_results,
@@ -1718,7 +1836,16 @@ async fn run_analysis_with_env_underlying(
                 resolved_toolchains
                     .insert(resolved.toolchain_type.clone(), toolchain_info.to_value());
             }
+            if let Some(template_variable_info) = provider_collection
+                .as_ref()
+                .builtin_provider::<FrozenTemplateVariableInfo>()
+            {
+                resolved_toolchain_template_variables.push(template_variable_info.to_value());
+            }
         }
+        resolved_toolchain_template_variables.extend(
+            collect_bazel_make_variable_attr_template_variables(node, &resolution_ctx)?,
+        );
 
         let registry = AnalysisRegistry::new_from_owner_and_deferred(
             analysis_env.execution_platform.dupe(),
@@ -1735,11 +1862,14 @@ async fn run_analysis_with_env_underlying(
 
         let (ctx, list_res, output_file_info, predeclared_outputs) = reentrant_eval
             .with_evaluator(|eval| {
+                if let Some(label_resolution_context) = &label_resolution_context {
+                    eval.extra = Some(label_resolution_context);
+                }
                 eval.set_print_handler(&print);
                 eval.set_soft_error_handler(&Buck2StarlarkSoftErrorHandler);
 
                 let mut registry = registry;
-                let (outputs, output_file_info, predeclared_outputs) =
+                let (outputs, output_file_info, predeclared_outputs, predeclared_output_files) =
                     declare_bazel_predeclared_outputs(eval, &mut registry, attributes, node)?;
                 let build_file_path = configured_node_build_file_path(node);
                 let split_attributes = if node.is_bazel_rule() {
@@ -1757,10 +1887,12 @@ async fn run_analysis_with_env_underlying(
                     Some(attributes),
                     split_attributes,
                     Some(outputs),
+                    predeclared_output_files,
                     Some(analysis_env.label),
                     Some(plugins.into()),
                     node.bazel_toolchains().to_vec(),
                     resolved_toolchains,
+                    resolved_toolchain_template_variables,
                     bazel_cpp_options,
                     if node.bazel_output_to_genfiles() {
                         BazelOutputRoot::Genfiles
@@ -1829,6 +1961,9 @@ async fn run_analysis_with_env_underlying(
 
         // TODO: Convert the ValueError from `try_from_value` better than just printing its Debug
         let mut res_typed = reentrant_eval.with_evaluator(|eval| {
+            if let Some(label_resolution_context) = &label_resolution_context {
+                eval.extra = Some(label_resolution_context);
+            }
             let res_typed = if node.is_bazel_rule() {
                 ProviderCollection::try_from_value_bazel_rule(
                     list_res,

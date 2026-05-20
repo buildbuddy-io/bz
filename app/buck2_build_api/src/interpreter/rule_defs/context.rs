@@ -182,6 +182,7 @@ pub struct BazelActionsContextOverride<'v> {
 pub struct AnalysisToolchains<'v> {
     toolchains: Vec<String>,
     resolved: SmallMap<String, Value<'v>>,
+    template_variable_infos: Vec<Value<'v>>,
 }
 
 #[derive(Clone, Debug, Default, Trace, Allocative)]
@@ -233,7 +234,11 @@ impl Display for AnalysisToolchains<'_> {
 }
 
 impl<'v> AnalysisToolchains<'v> {
-    fn new(toolchains: Vec<String>, resolved: SmallMap<String, Value<'v>>) -> Self {
+    fn new(
+        toolchains: Vec<String>,
+        resolved: SmallMap<String, Value<'v>>,
+        template_variable_infos: Vec<Value<'v>>,
+    ) -> Self {
         let toolchains = toolchains
             .into_iter()
             .map(|toolchain| Self::normalize_key(&toolchain))
@@ -241,11 +246,12 @@ impl<'v> AnalysisToolchains<'v> {
         Self {
             toolchains,
             resolved,
+            template_variable_infos,
         }
     }
 
     pub fn empty(heap: Heap<'v>) -> ValueTyped<'v, AnalysisToolchains<'v>> {
-        heap.alloc_typed(Self::new(Vec::new(), SmallMap::new()))
+        heap.alloc_typed(Self::new(Vec::new(), SmallMap::new(), Vec::new()))
     }
 
     fn normalize_key(key: &str) -> String {
@@ -294,7 +300,11 @@ impl<'v> AnalysisToolchains<'v> {
         toolchains: impl IntoIterator<Item = Value<'v>>,
     ) -> ValueTyped<'v, AnalysisToolchains<'v>> {
         let toolchains = toolchains.into_iter().map(Self::key_from_value).collect();
-        heap.alloc_typed(Self::new(toolchains, self.resolved.clone()))
+        heap.alloc_typed(Self::new(
+            toolchains,
+            self.resolved.clone(),
+            self.template_variable_infos.clone(),
+        ))
     }
 
     fn contains_value(&self, value: Value<'_>) -> bool {
@@ -641,6 +651,7 @@ pub struct AnalysisContext<'v> {
     attrs: RefCell<Option<ValueOfUnchecked<'v, StructRef<'static>>>>,
     split_attrs: Option<ValueOfUnchecked<'v, StructRef<'static>>>,
     outputs: Option<ValueOfUnchecked<'v, StructRef<'static>>>,
+    predeclared_output_files: Vec<(String, Value<'v>)>,
     pub actions: ValueTyped<'v, AnalysisActions<'v>>,
     /// Only `None` when running a `dynamic_output` action from Bxl.
     label: Option<ValueTyped<'v, StarlarkConfiguredProvidersLabel>>,
@@ -682,10 +693,12 @@ impl<'v> AnalysisContext<'v> {
         attrs: Option<ValueOfUnchecked<'v, StructRef<'static>>>,
         split_attrs: Option<ValueOfUnchecked<'v, StructRef<'static>>>,
         outputs: Option<ValueOfUnchecked<'v, StructRef<'static>>>,
+        predeclared_output_files: Vec<(String, Value<'v>)>,
         label: Option<ValueTyped<'v, StarlarkConfiguredProvidersLabel>>,
         plugins: Option<ValueTypedComplex<'v, AnalysisPlugins<'v>>>,
         toolchains: Vec<String>,
         resolved_toolchains: SmallMap<String, Value<'v>>,
+        resolved_toolchain_template_variables: Vec<Value<'v>>,
         bazel_cpp_options: BazelCppOptions,
         bazel_output_root: BazelOutputRoot,
         is_bazel_build_setting: bool,
@@ -694,7 +707,11 @@ impl<'v> AnalysisContext<'v> {
         registry: AnalysisRegistry<'v>,
         digest_config: DigestConfig,
     ) -> Self {
-        let toolchains = heap.alloc_typed(AnalysisToolchains::new(toolchains, resolved_toolchains));
+        let toolchains = heap.alloc_typed(AnalysisToolchains::new(
+            toolchains,
+            resolved_toolchains,
+            resolved_toolchain_template_variables,
+        ));
         let actions = heap.alloc_typed(AnalysisActions {
             state: RefCell::new(Some(registry)),
             label,
@@ -712,6 +729,7 @@ impl<'v> AnalysisContext<'v> {
             attrs: RefCell::new(attrs),
             split_attrs,
             outputs,
+            predeclared_output_files,
             actions,
             label,
             plugins,
@@ -731,10 +749,12 @@ impl<'v> AnalysisContext<'v> {
         attrs: Option<ValueOfUnchecked<'v, StructRef<'static>>>,
         split_attrs: Option<ValueOfUnchecked<'v, StructRef<'static>>>,
         outputs: Option<ValueOfUnchecked<'v, StructRef<'static>>>,
+        predeclared_output_files: Vec<(String, Value<'v>)>,
         label: Option<ConfiguredTargetLabel>,
         plugins: Option<ValueTypedComplex<'v, AnalysisPlugins<'v>>>,
         toolchains: Vec<String>,
         resolved_toolchains: SmallMap<String, Value<'v>>,
+        resolved_toolchain_template_variables: Vec<Value<'v>>,
         bazel_cpp_options: BazelCppOptions,
         bazel_output_root: BazelOutputRoot,
         is_bazel_build_setting: bool,
@@ -753,10 +773,12 @@ impl<'v> AnalysisContext<'v> {
             attrs,
             split_attrs,
             outputs,
+            predeclared_output_files,
             label,
             plugins,
             toolchains,
             resolved_toolchains,
+            resolved_toolchain_template_variables,
             bazel_cpp_options,
             bazel_output_root,
             is_bazel_build_setting,
@@ -2181,8 +2203,21 @@ fn bazel_location_label_keys_for_target<'v>(
     let cell = package.cell_name().as_str();
     let name = target.name().as_str();
 
+    bazel_location_label_keys_for_parts(ctx, cell, package_path, name)
+}
+
+fn bazel_location_label_keys_for_parts<'v>(
+    ctx: &AnalysisContext<'v>,
+    cell: &str,
+    package_path: &str,
+    name: &str,
+) -> Vec<String> {
     let mut keys = Vec::new();
-    let full = target.to_string();
+    let full = if package_path.is_empty() {
+        format!("{cell}//:{name}")
+    } else {
+        format!("{cell}//{package_path}:{name}")
+    };
     keys.push(full.clone());
     if let Some(root_relative) = full.strip_prefix("root") {
         if root_relative.starts_with("//") {
@@ -2443,6 +2478,42 @@ fn bazel_collect_location_targets_from_attrs<'v>(
         bazel_collect_location_targets(ctx, value, short_paths, prefer_executable, heap, targets)?;
     }
     Ok(())
+}
+
+fn bazel_collect_predeclared_output_location_targets<'v>(
+    ctx: &AnalysisContext<'v>,
+    short_paths: bool,
+    heap: Heap<'v>,
+    targets: &mut SmallMap<String, BazelLocationTarget>,
+) -> starlark::Result<()> {
+    let Some(current) = ctx.label else {
+        return Ok(());
+    };
+    let package = current.label().target().pkg();
+    let cell = package.cell_name().as_str();
+    let package_path = package.cell_relative_path().as_str();
+    for (output_path, output) in &ctx.predeclared_output_files {
+        let Some(artifact) = <&dyn StarlarkArtifactLike<'v>>::unpack_value(*output)? else {
+            continue;
+        };
+        let target = bazel_location_target_for_artifact(artifact, short_paths, heap)?;
+        for key in bazel_location_label_keys_for_parts(ctx, cell, package_path, output_path) {
+            if !targets.contains_key(&key) {
+                targets.insert(key, target.clone());
+            }
+        }
+    }
+    Ok(())
+}
+
+fn bazel_collect_location_targets_from_rule_context<'v>(
+    ctx: &AnalysisContext<'v>,
+    short_paths: bool,
+    heap: Heap<'v>,
+    targets: &mut SmallMap<String, BazelLocationTarget>,
+) -> starlark::Result<()> {
+    bazel_collect_location_targets_from_attrs(ctx, short_paths, heap, targets)?;
+    bazel_collect_predeclared_output_location_targets(ctx, short_paths, heap, targets)
 }
 
 fn bazel_expand_location_macro(
@@ -2760,6 +2831,10 @@ fn collect_template_variables_from_value<'v>(
     if value.is_none() {
         return Ok(());
     }
+    if let Some(info) = value.downcast_ref::<FrozenTemplateVariableInfo>() {
+        collect_template_variables_from_info(info, variables)?;
+        return Ok(());
+    }
     if let Some(dep) = value.downcast_ref::<Dependency<'v>>() {
         if let Some(info) = dep.template_variable_info() {
             collect_template_variables_from_info(info.as_ref(), variables)?;
@@ -2791,6 +2866,15 @@ fn analysis_context_template_make_variables<'v>(
         if let Some(value) = struct_field(attrs, attr) {
             collect_template_variables_from_value(value, &mut variables)?;
         }
+    }
+    for value in &this
+        .actions
+        .as_ref()
+        .bazel_toolchains()
+        .as_ref()
+        .template_variable_infos
+    {
+        collect_template_variables_from_value(*value, &mut variables)?;
     }
     Ok(variables)
 }
@@ -3386,7 +3470,12 @@ fn analysis_context_methods(builder: &mut MethodsBuilder) {
         heap: Heap<'v>,
     ) -> starlark::Result<String> {
         let mut target_map = SmallMap::new();
-        bazel_collect_location_targets_from_attrs(this.0, short_paths, heap, &mut target_map)?;
+        bazel_collect_location_targets_from_rule_context(
+            this.0,
+            short_paths,
+            heap,
+            &mut target_map,
+        )?;
         for target in targets.items {
             bazel_collect_location_targets(
                 this.0,
@@ -3422,7 +3511,7 @@ fn analysis_context_methods(builder: &mut MethodsBuilder) {
 
         if expand_locations {
             let mut target_map = SmallMap::new();
-            bazel_collect_location_targets_from_attrs(this.0, false, heap, &mut target_map)?;
+            bazel_collect_location_targets_from_rule_context(this.0, false, heap, &mut target_map)?;
             if let Some(label_dict) = label_dict.into_option() {
                 bazel_collect_location_targets_from_label_dict(
                     this.0,

@@ -232,18 +232,15 @@ pub(crate) fn analysis_actions_methods_unsorted(builder: &mut MethodsBuilder) {
         }
 
         let path = bazel_shareable_output_path(this, path)?;
-        let artifact = this
-            .state()?
-            .declare_output_with_bazel_owner_and_output_root(
-                None,
-                &path,
-                OutputType::File,
-                eval.call_stack_top_location(),
-                BuckOutPathKind::Configuration,
-                this.bazel_owner(),
-                this.bazel_output_root,
-                eval.heap(),
-            )?;
+        let artifact = this.state()?.declare_bazel_shareable_output(
+            &path,
+            OutputType::File,
+            eval.call_stack_top_location(),
+            BuckOutPathKind::Configuration,
+            this.bazel_owner(),
+            this.bazel_output_root,
+            eval.heap(),
+        )?;
 
         Ok(StarlarkDeclaredArtifact::new(
             eval.call_stack_top_location(),

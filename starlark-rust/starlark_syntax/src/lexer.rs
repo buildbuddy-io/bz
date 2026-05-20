@@ -396,9 +396,7 @@ impl<'a> Lexer<'a> {
                     if raw {
                         match it.next() {
                             Some(c) => {
-                                if c != '\'' && c != '"' {
-                                    res.push('\\');
-                                }
+                                res.push('\\');
                                 res.push(c);
                             }
                             _ => break, // Out of chars

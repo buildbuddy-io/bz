@@ -775,6 +775,13 @@ pub(crate) struct GatheredDeps {
     pub(crate) plugin_lists: PluginLists,
 }
 
+fn is_bazel_default_make_variable_attribute(name: &str) -> bool {
+    matches!(
+        name,
+        "toolchains" | ":cc_toolchain" | "$toolchains" | "$cc_toolchain"
+    )
+}
+
 pub(crate) async fn gather_deps(
     target_label: &TargetConfiguredTargetLabel,
     target_node: TargetNodeRef<'_>,
@@ -804,6 +811,36 @@ pub(crate) async fn gather_deps(
                 .entry(dep.dupe())
                 .or_insert_with(|| self.current_visibility_check.clone())
                 .merge(&self.current_visibility_check);
+        }
+
+        fn insert_bazel_make_variable_label_deps(
+            &mut self,
+            attr: &ConfiguredAttr,
+        ) -> buck2_error::Result<()> {
+            match attr {
+                ConfiguredAttr::Label(label) => self.dep(label),
+                ConfiguredAttr::List(list) => {
+                    for item in list.iter() {
+                        self.insert_bazel_make_variable_label_deps(item)?;
+                    }
+                    Ok(())
+                }
+                ConfiguredAttr::Tuple(tuple) => {
+                    for item in tuple.iter() {
+                        self.insert_bazel_make_variable_label_deps(item)?;
+                    }
+                    Ok(())
+                }
+                ConfiguredAttr::Dict(dict) => {
+                    for (key, value) in dict.iter() {
+                        self.insert_bazel_make_variable_label_deps(key)?;
+                        self.insert_bazel_make_variable_label_deps(value)?;
+                    }
+                    Ok(())
+                }
+                ConfiguredAttr::OneOf(attr, _) => self.insert_bazel_make_variable_label_deps(attr),
+                _ => Ok(()),
+            }
         }
     }
 
@@ -850,9 +887,17 @@ pub(crate) async fn gather_deps(
     let mut traversal = Traversal::default();
     for a in target_node.attrs(AttrInspectOptions::All) {
         traversal.current_visibility_check = CheckVisibility::for_bazel_attr(target_node, a.name)?;
-        a.configure(attr_cfg_ctx)?
+        let configured_attr = a.configure(attr_cfg_ctx)?;
+        configured_attr
             .traverse(target_node.label().pkg(), &mut traversal)
             .with_buck_error_context(|| format!("traversing attribute `{}`", a.name))?;
+        if target_node.is_bazel_rule() && is_bazel_default_make_variable_attribute(a.name) {
+            traversal
+                .insert_bazel_make_variable_label_deps(&configured_attr.value)
+                .with_buck_error_context(|| {
+                    format!("traversing Bazel make variable attribute `{}`", a.name)
+                })?;
+        }
     }
 
     let dep_results = ctx

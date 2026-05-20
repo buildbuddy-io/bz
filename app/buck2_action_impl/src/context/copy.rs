@@ -63,6 +63,13 @@ fn copy_file_impl<'v>(
     let mut this = this.state()?;
     let (declaration, output_artifact) =
         this.get_or_declare_output(eval, dest, output_type, has_content_based_path)?;
+    if output_artifact.is_bound() && this.is_bazel_shareable_output(&output_artifact) {
+        return Ok(declaration.into_declared_artifact(
+            associated_artifacts
+                .duped()
+                .unwrap_or_else(AssociatedArtifacts::new),
+        ));
+    }
 
     this.register_action(
         buck_indexset![output_artifact],

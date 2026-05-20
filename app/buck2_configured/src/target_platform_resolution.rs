@@ -107,13 +107,33 @@ async fn get_target_platform_detector(
 async fn get_default_platform(
     ctx: &mut DiceComputations<'_>,
     target: &TargetLabel,
+    use_bazel_host_platform_default: bool,
 ) -> buck2_error::Result<ConfigurationData> {
     let detector = get_target_platform_detector(ctx).await?;
     if let Some(target) = detector.detect(target) {
         return get_platform_configuration(ctx, target).await;
     }
+    if use_bazel_host_platform_default {
+        // Bazel treats an empty --platforms value as the host platform.
+        return get_bazel_host_platform_configuration(ctx).await;
+    }
     // TODO(cjhopman): This needs to implement buck1's approach to determining target platform, it's currently missing the fallback to buckconfig parser.target_platform.
     Ok(ConfigurationData::unspecified())
+}
+
+async fn get_bazel_host_platform_configuration(
+    ctx: &mut DiceComputations<'_>,
+) -> buck2_error::Result<ConfigurationData> {
+    let cell_resolver = ctx.get_cell_resolver().await?;
+    let root_cell = cell_resolver.root_cell();
+    let cell_alias_resolver = ctx.get_cell_alias_resolver(root_cell).await?;
+    let host_platform = TargetLabel::parse(
+        "platforms//host:host",
+        root_cell,
+        &cell_resolver,
+        &cell_alias_resolver,
+    )?;
+    get_platform_configuration(ctx, &host_platform).await
 }
 
 struct ConfiguredTargetCalculationInstance;
@@ -145,7 +165,7 @@ impl ConfiguredTargetCalculationImpl for ConfiguredTargetCalculationInstance {
                 }
                 None => match node.get_default_target_platform() {
                     Some(target) => get_platform_configuration(ctx, target).await?,
-                    None => get_default_platform(ctx, target).await?,
+                    None => get_default_platform(ctx, target, node.is_bazel_rule()).await?,
                 },
             };
 

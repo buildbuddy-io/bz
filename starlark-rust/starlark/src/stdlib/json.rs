@@ -300,9 +300,16 @@ pub(crate) fn json(globals: &mut GlobalsBuilder) {
 
         fn decode<'v>(
             #[starlark(require = pos)] x: &str,
+            #[starlark(require = named)] default: Option<Value<'v>>,
             heap: Heap<'v>,
         ) -> anyhow::Result<Value<'v>> {
-            Ok(heap.alloc(serde_json::from_str::<serde_json::Value>(x)?))
+            match serde_json::from_str::<serde_json::Value>(x) {
+                Ok(x) => Ok(heap.alloc(x)),
+                Err(e) => match default {
+                    Some(default) => Ok(default),
+                    None => Err(e.into()),
+                },
+            }
         }
     }
 
@@ -340,6 +347,11 @@ mod tests {
         a.eq(
             "123456789123456789123456789",
             "json.decode('123456789123456789123456789')",
+        );
+        a.eq("None", "json.decode('not json', default = None)");
+        a.eq(
+            "'fallback'",
+            "json.decode('not json', default = 'fallback')",
         );
     }
 

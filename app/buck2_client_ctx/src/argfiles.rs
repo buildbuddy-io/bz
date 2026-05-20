@@ -136,7 +136,7 @@ fn expand_argfiles_with_context(
                 // TODO: We want to detect cyclic inclusion
                 resolve_and_expand_argfile(expanded_args, &flagfile, context, cwd)?;
             }
-            next_arg if next_arg.starts_with('@') => {
+            next_arg if is_at_argfile_arg(next_arg) => {
                 let flagfile = next_arg.strip_prefix('@').unwrap();
                 if flagfile.is_empty() {
                     return Err(ArgExpansionError::MissingFlagFilePathInArgfile.into());
@@ -150,6 +150,10 @@ fn expand_argfiles_with_context(
     }
 
     Ok(())
+}
+
+fn is_at_argfile_arg(arg: &str) -> bool {
+    arg.starts_with('@') && !arg.starts_with("@@") && !arg[1..].contains("//")
 }
 
 // Resolves a path argument to an absolute path, reads the flag file and expands
@@ -395,6 +399,38 @@ mod tests {
             context.resolve_argfile_kind(AbsNormPathBuf::new(mode_file.into_path_buf())?, None)?;
         let lines = expand_argfile_contents(&context, &kind)?;
         assert_eq!(vec!["a".to_owned(), "b".to_owned()], lines);
+        Ok(())
+    }
+
+    #[test]
+    fn test_bazel_external_label_not_argfile() -> buck2_error::Result<()> {
+        let tempdir = tempfile::tempdir()?;
+        let root = AbsPath::new(tempdir.path())?;
+        let cwd = AbsWorkingDir::unchecked_new(AbsNormPathBuf::new(root.to_path_buf())?);
+        let mut context = ImmediateConfigContext::new(&cwd);
+
+        let mut expanded = ExpandedArgvBuilder::new();
+        expand_argfiles_with_context(
+            &mut expanded,
+            vec![
+                "build".to_owned(),
+                "@llvm-project//llvm".to_owned(),
+                "@@rules_go+0.57.0//go:sdk".to_owned(),
+                "@@rules_go+0.57.0".to_owned(),
+            ],
+            &mut context,
+            &cwd,
+        )?;
+
+        assert_eq!(
+            expanded.build().args().collect::<Vec<_>>(),
+            vec![
+                "build",
+                "@llvm-project//llvm",
+                "@@rules_go+0.57.0//go:sdk",
+                "@@rules_go+0.57.0",
+            ]
+        );
         Ok(())
     }
 

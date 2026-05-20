@@ -102,6 +102,7 @@ pub struct AnalysisRegistry<'v> {
     pub anon_targets: Box<DynStarlark<'v, dyn AnonTargetsRegistryDyn<'v>>>,
     pub analysis_value_storage: AnalysisValueStorage<'v>,
     bazel_predeclared_outputs: SmallMap<String, DeclaredArtifact<'v>>,
+    bazel_shareable_outputs: SmallMap<String, DeclaredArtifact<'v>>,
     pub short_path_assertions: HashMap<PromiseArtifactId, ForwardRelativePathBuf>,
     pub content_based_path_assertions: HashSet<PromiseArtifactId>,
 }
@@ -139,6 +140,7 @@ impl<'v> AnalysisRegistry<'v> {
             anon_targets: (ANON_TARGET_REGISTRY_NEW.get()?)(PhantomData, execution_platform),
             analysis_value_storage: AnalysisValueStorage::new(self_key),
             bazel_predeclared_outputs: SmallMap::new(),
+            bazel_shareable_outputs: SmallMap::new(),
             short_path_assertions: HashMap::new(),
             content_based_path_assertions: HashSet::new(),
         })
@@ -327,6 +329,47 @@ impl<'v> AnalysisRegistry<'v> {
         Ok(artifact)
     }
 
+    pub fn declare_bazel_shareable_output(
+        &mut self,
+        filename: &str,
+        output_type: OutputType,
+        declaration_location: Option<FileSpan>,
+        path_resolution_method: BuckOutPathKind,
+        bazel_owner: Option<ConfiguredTargetLabel>,
+        bazel_output_root: BazelOutputRoot,
+        heap: Heap<'v>,
+    ) -> buck2_error::Result<DeclaredArtifact<'v>> {
+        let path = ForwardRelativePath::new(filename)?;
+        let key = Self::bazel_predeclared_output_key(
+            path.as_str(),
+            bazel_output_root,
+            BazelOutputPathKind::PackageRelative,
+        );
+        if let Some(artifact) = self.bazel_shareable_outputs.get(&key) {
+            if artifact.output_type() == output_type {
+                return Ok(artifact.dupe());
+            }
+        }
+        let artifact = self.declare_output_with_bazel_owner_and_output_root(
+            None,
+            filename,
+            output_type,
+            declaration_location,
+            path_resolution_method,
+            bazel_owner,
+            bazel_output_root,
+            heap,
+        )?;
+        self.bazel_shareable_outputs.insert(key, artifact.dupe());
+        Ok(artifact)
+    }
+
+    pub fn is_bazel_shareable_output(&self, output: &OutputArtifact<'v>) -> bool {
+        self.bazel_shareable_outputs
+            .values()
+            .any(|artifact| artifact == &**output)
+    }
+
     /// Takes a string or artifact/output artifact and converts it into an output artifact
     ///
     /// This is handy for functions like `ctx.actions.write` where it's nice to just let
@@ -490,6 +533,7 @@ impl<'v> AnalysisRegistry<'v> {
             anon_targets: _,
             analysis_value_storage,
             bazel_predeclared_outputs: _,
+            bazel_shareable_outputs: _,
             short_path_assertions: _,
             content_based_path_assertions: _,
         } = self;

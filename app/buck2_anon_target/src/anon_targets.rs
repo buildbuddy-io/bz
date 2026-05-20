@@ -527,6 +527,7 @@ impl AnonTargetKey {
                     Some(attributes),
                     None,
                     None,
+                    Vec::new(),
                     Some(self.0.configured_label()),
                     // FIXME(JakobDegen): There should probably be a way to pass plugins
                     // into anon targets
@@ -537,6 +538,7 @@ impl AnonTargetKey {
                     ),
                     Vec::new(),
                     SmallMap::new(),
+                    Vec::new(),
                     BazelCppOptions::default(),
                     BazelOutputRoot::Bin,
                     false,
