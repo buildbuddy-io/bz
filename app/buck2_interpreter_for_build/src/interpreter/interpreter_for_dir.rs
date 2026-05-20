@@ -654,8 +654,23 @@ impl InterpreterForDir {
                     internal_error!(
                         "Should've had an env for the prelude import `{prelude_import}`"
                     )
-                })?;
+            })?;
             env.import_public_symbols(prelude_env.env());
+            if let Ok(Some(native)) = prelude_env.env().get_option("native") {
+                // Keep `native` from the prelude as an explicit build-file binding.
+                // Safe because `import_public_symbols` above retained the prelude module heap.
+                let native = unsafe { native.unchecked_frozen_value() };
+                env.set("native", native.to_value());
+            }
+            if let Ok(Some(bazel_native_rules)) =
+                prelude_env.env().get_option("buck2_bazel_native_rules")
+            {
+                // NativeRuleCallable resolves its backing through the caller's public module
+                // bindings, while implicit prelude imports are private.
+                // Safe because `import_public_symbols` above retained the prelude module heap.
+                let bazel_native_rules = unsafe { bazel_native_rules.unchecked_frozen_value() };
+                env.set("buck2_bazel_native_rules", bazel_native_rules.to_value());
+            }
             if let StarlarkPath::BuildFile(_) = starlark_path {
                 for (name, value) in prelude_env.extra_globals_from_prelude_for_buck_files()? {
                     env.set(name, value.to_value());

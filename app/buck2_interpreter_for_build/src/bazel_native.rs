@@ -295,3 +295,7 @@ pub(crate) fn register_bazel_native(builder: &mut GlobalsBuilder) {
     });
     bazel_build_setting_rules(builder);
 }
+
+pub(crate) fn register_bazel_native_toplevels(builder: &mut GlobalsBuilder) {
+    bazel_build_setting_rules(builder);
+}

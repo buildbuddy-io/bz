@@ -33,6 +33,7 @@ use crate::bazel_aspect::register_bazel_aspect;
 use crate::bazel_config::register_bazel_config;
 use crate::bazel_configuration_field::register_bazel_configuration_field;
 use crate::bazel_native::register_bazel_native;
+use crate::bazel_native::register_bazel_native_toplevels;
 use crate::bazel_package::register_bazel_package_globals;
 use crate::bazel_proto::register_bazel_proto_common;
 use crate::bazel_python::register_bazel_python_globals;
@@ -69,7 +70,7 @@ fn from_late_binding(l: &LateBinding<fn(&mut GlobalsBuilder)>, builder: &mut Glo
 // and `starlark_library_extensions_for_buck2` are all the same, since all symbols are available
 // everywhere. However, we distinguish between them for the purpose of generating documentation.
 
-pub fn register_load_natives(builder: &mut GlobalsBuilder) {
+fn register_load_natives_impl(builder: &mut GlobalsBuilder, register_bazel_native_module: bool) {
     from_late_binding(&REGISTER_BUCK2_CFG_CONSTRUCTOR_GLOBALS, builder);
     from_late_binding(&REGISTER_BUCK2_TRANSITION_GLOBALS, builder);
     register_module_natives(builder);
@@ -85,7 +86,11 @@ pub fn register_load_natives(builder: &mut GlobalsBuilder) {
     register_rule_function(builder);
     register_bazel_aspect(builder);
     register_bazel_repository_globals(builder);
-    register_bazel_native(builder);
+    if register_bazel_native_module {
+        register_bazel_native(builder);
+    } else {
+        register_bazel_native_toplevels(builder);
+    }
     register_bazel_apple_common(builder);
     register_bazel_config(builder);
     register_bazel_configuration_field(builder);
@@ -107,6 +112,10 @@ pub fn register_load_natives(builder: &mut GlobalsBuilder) {
     register_sha256(builder);
     register_dedupe(builder);
     register_set_starlark_peak_allocated_byte_limit(builder);
+}
+
+pub fn register_load_natives(builder: &mut GlobalsBuilder) {
+    register_load_natives_impl(builder, true);
 }
 
 pub fn register_analysis_natives(builder: &mut GlobalsBuilder) {
@@ -143,13 +152,21 @@ pub fn starlark_library_extensions_for_buck2() -> &'static [LibraryExtension] {
     ]
 }
 
-fn register_all_natives(builder: &mut GlobalsBuilder) {
-    register_load_natives(builder);
+fn register_all_natives_impl(builder: &mut GlobalsBuilder, register_bazel_native_module: bool) {
+    register_load_natives_impl(builder, register_bazel_native_module);
     register_analysis_natives(builder);
     register_bxl_natives(builder);
     for ext in starlark_library_extensions_for_buck2() {
         ext.add(builder);
     }
+}
+
+fn register_all_natives(builder: &mut GlobalsBuilder) {
+    register_all_natives_impl(builder, true);
+}
+
+fn register_all_natives_without_bazel_native_module(builder: &mut GlobalsBuilder) {
+    register_all_natives_impl(builder, false);
 }
 
 fn register_all_internals(builder: &mut GlobalsBuilder) {
@@ -168,7 +185,8 @@ fn register_all_internals(builder: &mut GlobalsBuilder) {
 /// correctness that this be called just once. The result should be accessed via
 /// `ctx.get_global_interpreter_state()`
 pub(crate) fn base_globals() -> GlobalsBuilder {
-    let mut global_env = GlobalsBuilder::standard().with(register_all_natives);
+    let mut global_env =
+        GlobalsBuilder::standard().with(register_all_natives_without_bazel_native_module);
     global_env.namespace("__internal__", |x| {
         register_all_internals(x);
     });
