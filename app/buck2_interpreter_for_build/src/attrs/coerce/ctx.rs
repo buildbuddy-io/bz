@@ -227,7 +227,9 @@ impl BuildAttrCoercionContext {
         } else {
             value
         };
-        if let Some(label) = parse_bazel_canonical_providers_label(value)? {
+        if let Some(label) =
+            parse_bazel_canonical_providers_label(value, self.cell_resolver.root_cell())?
+        {
             return Ok(label);
         }
         let pattern = match self.parse_pattern::<ProvidersPatternExtra>(value) {
@@ -397,7 +399,7 @@ impl BuildAttrCoercionContext {
                 return Ok(None);
             };
             let cell_name = if repo.is_empty() {
-                CellName::unchecked_new("root")?
+                self.cell_resolver.root_cell()
             } else {
                 match self.cell_alias_resolver.resolve(repo) {
                     Ok(cell_name) => cell_name,
@@ -413,7 +415,7 @@ impl BuildAttrCoercionContext {
             if !cell.is_empty()
                 && !cell.contains(['@', '/', ':', '[', ']'])
                 && let Ok(cell_name) = if cell == "root" {
-                    CellName::unchecked_new("root")
+                    Ok(self.cell_resolver.root_cell())
                 } else if cell == "bazel_tools" {
                     CellName::unchecked_new("bazel_tools")
                 } else {

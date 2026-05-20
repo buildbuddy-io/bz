@@ -34,6 +34,7 @@ pub(crate) fn bazel_absolute_label_parts(label: &str) -> Option<(String, String)
 
 pub(crate) fn parse_bazel_canonical_providers_label(
     label: &str,
+    root_cell: CellName,
 ) -> buck2_error::Result<Option<ProvidersLabel>> {
     let Some(label) = label.strip_prefix("@@") else {
         return Ok(None);
@@ -46,7 +47,7 @@ pub(crate) fn parse_bazel_canonical_providers_label(
     };
 
     let cell_name = if repo_name.is_empty() || repo_name == "root" {
-        CellName::unchecked_new("root")?
+        root_cell
     } else if repo_name == "bazel_tools" {
         CellName::unchecked_new("bazel_tools")?
     } else {
@@ -66,8 +67,11 @@ mod tests {
 
     #[test]
     fn parses_bazel_canonical_label() -> buck2_error::Result<()> {
-        let label =
-            parse_bazel_canonical_providers_label("@@rules_uv+//uv/private:uv.lock.json")?.unwrap();
+        let label = parse_bazel_canonical_providers_label(
+            "@@rules_uv+//uv/private:uv.lock.json",
+            CellName::unchecked_new("root")?,
+        )?
+        .unwrap();
         assert_eq!(
             "bzlmod_rules_uv_//uv/private:uv.lock.json",
             label.to_string()
@@ -77,7 +81,9 @@ mod tests {
 
     #[test]
     fn parses_bazel_canonical_root_label() -> buck2_error::Result<()> {
-        let label = parse_bazel_canonical_providers_label("@@//foo/bar")?.unwrap();
+        let label =
+            parse_bazel_canonical_providers_label("@@//foo/bar", CellName::unchecked_new("root")?)?
+                .unwrap();
         assert_eq!("root//foo/bar:bar", label.to_string());
         Ok(())
     }

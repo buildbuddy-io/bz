@@ -56,6 +56,7 @@ enum LabelCreatorError {
 }
 
 struct LabelParseContext {
+    root_cell: CellName,
     cell_name: CellName,
     cell_alias_resolver: CellAliasResolver,
     package: Option<PackageLabel>,
@@ -74,6 +75,7 @@ fn is_bazel_compat_cell(cell_name: CellName) -> bool {
 
 fn default_label_parse_context(c: &BuildContext<'_>) -> LabelParseContext {
     LabelParseContext {
+        root_cell: c.cell_info().cell_resolver().root_cell(),
         cell_name: c.cell_info().name().name(),
         cell_alias_resolver: c.cell_info().cell_alias_resolver().dupe(),
         package: c.require_package().ok(),
@@ -87,8 +89,14 @@ fn bzlmod_cell_alias_resolver(
     let mut aliases = StdBuckHashMap::default();
     for alias in ["root", "prelude", "bazel_tools"] {
         let alias = NonEmptyCellAlias::new(alias.to_owned())?;
-        let destination = CellName::unchecked_new(alias.as_str())?;
-        cell_resolver.get(destination)?;
+        let destination = if alias.as_str() == "root" {
+            cell_resolver.root_cell()
+        } else {
+            CellName::unchecked_new(alias.as_str())?
+        };
+        if cell_resolver.get(destination).is_err() {
+            continue;
+        }
         aliases.insert(alias, destination);
     }
     for (alias, destination) in bzlmod_cell_aliases_for_cell(cell_name.as_str()) {
@@ -125,6 +133,7 @@ fn label_parse_context_from_callsite<'v>(
     };
 
     Ok(LabelParseContext {
+        root_cell: default.root_cell,
         cell_name,
         cell_alias_resolver,
         package,
@@ -148,6 +157,7 @@ fn analysis_label_parse_context<'v>(
 ) -> buck2_error::Result<LabelParseContext> {
     label_parse_context_from_callsite(
         LabelParseContext {
+            root_cell: c.cell_resolver.root_cell(),
             cell_name: c.cell_name,
             cell_alias_resolver: c.cell_alias_resolver.dupe(),
             package: c.package.dupe(),
@@ -207,7 +217,9 @@ fn parse_providers_label<'v>(
             },
         };
         format!("{}{}", package, s)
-    } else if let Some(canonical_label) = parse_bazel_canonical_providers_label(s)? {
+    } else if let Some(canonical_label) =
+        parse_bazel_canonical_providers_label(s, label_context.root_cell)?
+    {
         return Ok(StarlarkProvidersLabel::new(canonical_label));
     } else if let Some(root_label) = s.strip_prefix("@@root//") {
         format!("root//{root_label}")
@@ -364,7 +376,7 @@ fn bazel_compat_label(
             return Ok(None);
         };
         let cell_name = if repo.is_empty() {
-            CellName::unchecked_new("root")?
+            label_context.root_cell
         } else {
             match label_context.cell_alias_resolver.resolve(repo) {
                 Ok(cell_name) => cell_name,
@@ -378,7 +390,7 @@ fn bazel_compat_label(
         if !cell.is_empty()
             && !cell.contains(['@', '/', ':', '[', ']'])
             && let Ok(cell_name) = if cell == "root" {
-                CellName::unchecked_new("root")
+                Ok(label_context.root_cell)
             } else if cell == "bazel_tools" {
                 CellName::unchecked_new("bazel_tools")
             } else {

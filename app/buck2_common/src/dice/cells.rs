@@ -34,6 +34,7 @@ use pagable::pagable_typetag;
 
 use crate::external_cells::EXTERNAL_CELLS_IMPL;
 use crate::legacy_configs::cells::BuckConfigBasedCells;
+use crate::legacy_configs::cells::bzlmod_resolution_enabled_on_dice;
 use crate::legacy_configs::cells::get_bazel_module_resolution_on_dice;
 use crate::legacy_configs::configs::BazelCompatBazelrcOptions;
 use crate::legacy_configs::configs::LegacyBuckConfig;
@@ -242,9 +243,10 @@ impl Key for CellAliasResolverKey {
     ) -> Self::Value {
         let resolver = ctx.get_cell_resolver().await?;
         let root_aliases = resolver.root_cell_cell_alias_resolver();
-        let bzlmod_module_aliases = if self.0 == resolver.root_cell()
+        let bzlmod_module_aliases = if (self.0 == resolver.root_cell()
             || self.0.as_str() == "bazel_tools"
-            || self.0.as_str().starts_with("bzlmod_")
+            || self.0.as_str().starts_with("bzlmod_"))
+            && bzlmod_resolution_enabled_on_dice(ctx).await?
         {
             Some(get_bazel_module_resolution_on_dice(ctx).await?)
         } else {
@@ -288,11 +290,7 @@ impl Key for CellAliasResolverKey {
                 &BazelCompatBazelrcOptions::default(),
             );
             resolver.get(self.0).map_err(|_| {
-                buck2_error::buck2_error!(
-                    buck2_error::ErrorTag::Input,
-                    "Unknown cell `{}`",
-                    self.0
-                )
+                buck2_error::buck2_error!(buck2_error::ErrorTag::Input, "Unknown cell `{}`", self.0)
             })?;
             return BuckConfigBasedCells::get_bazel_cell_alias_resolver_from_config(
                 self.0, &resolver, &config,

@@ -656,8 +656,14 @@ impl BuckConfigBasedCells {
         let mut aliases = StdBuckHashMap::default();
         for alias in ["root", "prelude", "bazel_tools"] {
             let alias = NonEmptyCellAlias::new(alias.to_owned())?;
-            let destination = CellName::unchecked_new(alias.as_str())?;
-            cell_resolver.get(destination)?;
+            let destination = if alias.as_str() == "root" {
+                cell_resolver.root_cell()
+            } else {
+                CellName::unchecked_new(alias.as_str())?
+            };
+            if cell_resolver.get(destination).is_err() {
+                continue;
+            }
             aliases.insert(alias, destination);
         }
         for (alias, destination) in Self::get_cell_aliases_from_config(config)? {
@@ -2215,7 +2221,7 @@ async fn read_bazel_module_resolution_inputs(
     })
 }
 
-async fn bzlmod_resolution_enabled_on_dice(
+pub(crate) async fn bzlmod_resolution_enabled_on_dice(
     ctx: &mut DiceComputations<'_>,
 ) -> buck2_error::Result<bool> {
     let root_cell = ctx.get_cell_resolver().await?.root_cell();
@@ -9385,6 +9391,38 @@ mod tests {
         )?;
 
         assert_eq!("bazel_tools", resolver.resolve("bazel_tools")?.as_str());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_bazel_cell_alias_resolver_uses_actual_root_cell() -> buck2_error::Result<()> {
+        let mut file_ops = TestConfigParserFileOps::new(&[(
+            ".buckconfig",
+            indoc!(
+                r#"
+                    [cells]
+                        gh_facebook_buck2 = .
+                        prelude = prelude
+
+                    [cell_aliases]
+                        root = gh_facebook_buck2
+                "#
+            ),
+        )])?;
+        let cells = BuckConfigBasedCells::testing_parse_with_file_ops(&mut file_ops, &[]).await?;
+        let root_cell = cells.cell_resolver.root_cell();
+        let config = cells
+            .parse_single_cell_with_file_ops(root_cell, &mut file_ops)
+            .await?;
+        let resolver = BuckConfigBasedCells::get_bazel_cell_alias_resolver_from_config(
+            root_cell,
+            &cells.cell_resolver,
+            &config,
+        )?;
+
+        assert_eq!("gh_facebook_buck2", resolver.resolve("root")?.as_str());
+        assert!(resolver.resolve("bazel_tools").is_err());
 
         Ok(())
     }
