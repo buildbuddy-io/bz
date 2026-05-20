@@ -29,15 +29,23 @@ impl DiceEventDispatcher {
     }
 
     pub(crate) fn started(&self, k: DiceKey) {
-        let desc = self.dice.key_index.get(k).key_type_name();
+        let key = self.dice.key_index.get(k);
+        let desc = key.key_type_name();
 
-        self.tracker.event(DiceEvent::Started { key_type: desc })
+        self.tracker.event(DiceEvent::Started {
+            key_type: desc,
+            key: key.to_string(),
+        })
     }
 
     pub(crate) fn finished(&self, k: DiceKey) {
-        let desc = self.dice.key_index.get(k).key_type_name();
+        let key = self.dice.key_index.get(k);
+        let desc = key.key_type_name();
 
-        self.tracker.event(DiceEvent::Finished { key_type: desc })
+        self.tracker.event(DiceEvent::Finished {
+            key_type: desc,
+            key: key.to_string(),
+        })
     }
 
     pub(crate) fn check_deps_started(&self, k: DiceKey) {

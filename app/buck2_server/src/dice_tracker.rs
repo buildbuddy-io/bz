@@ -14,6 +14,7 @@ use allocative::Allocative;
 use buck2_core::buck2_env;
 use buck2_data::*;
 use buck2_events::dispatch::EventDispatcher;
+use buck2_events::dispatch::Span;
 use buck2_events::dispatch::with_dispatcher_async;
 use buck2_hash::StdBuckHashMap;
 use buck2_util::threads::thread_spawn;
@@ -45,6 +46,8 @@ impl BuckDiceTracker {
         let snapshot_interval =
             buck2_env!("BUCK2_DICE_SNAPSHOT_INTERVAL_MS", type=u64, default = 500)
                 .map(Duration::from_millis)?;
+        let show_dice_key_progress_spans =
+            buck2_env!("BUCK2_DICE_PROGRESS_KEY_SPANS", type=bool, default=false)?;
 
         thread_spawn("buck2-dice-tracker", move || {
             let runtime = tokio::runtime::Builder::new_current_thread()
@@ -53,7 +56,12 @@ impl BuckDiceTracker {
                 .unwrap();
             runtime.block_on(with_dispatcher_async(
                 events.dupe(),
-                Self::run_task(events, receiver, snapshot_interval),
+                Self::run_task(
+                    events,
+                    receiver,
+                    snapshot_interval,
+                    show_dice_key_progress_spans,
+                ),
             ))
         })
         .unwrap();
@@ -65,9 +73,12 @@ impl BuckDiceTracker {
         events: EventDispatcher,
         mut receiver: UnboundedReceiver<DiceEvent>,
         snapshot_interval: Duration,
+        show_dice_key_progress_spans: bool,
     ) {
         let mut needs_update = false;
         let mut states = StdBuckHashMap::default();
+        let mut active_key_spans: StdBuckHashMap<(&'static str, String), Vec<Span>> =
+            StdBuckHashMap::default();
         let mut interval = tokio::time::interval(snapshot_interval);
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         // This will loop until the sender side of the channel is dropped.
@@ -76,11 +87,24 @@ impl BuckDiceTracker {
                 ev = receiver.next() => {
                     needs_update = true;
                     match ev {
-                        Some(DiceEvent::Started{key_type}) => {
+                        Some(DiceEvent::Started{key_type, key}) => {
                             states.entry(key_type).or_insert_with(DiceKeyState::default).started += 1;
+                            if let Some(stage) = dice_key_progress_stage(show_dice_key_progress_spans, key_type, &key) {
+                                let span = events.create_span(DiceStateUpdateStageStart { stage });
+                                active_key_spans.entry((key_type, key)).or_default().push(span);
+                            }
                         }
-                        Some(DiceEvent::Finished{key_type}) => {
+                        Some(DiceEvent::Finished{key_type, key}) => {
                             states.entry(key_type).or_insert_with(DiceKeyState::default).finished += 1;
+                            let active_key = (key_type, key);
+                            if let Some(spans) = active_key_spans.get_mut(&active_key) {
+                                if let Some(span) = spans.pop() {
+                                    span.end(DiceStateUpdateStageEnd {});
+                                }
+                                if spans.is_empty() {
+                                    active_key_spans.remove(&active_key);
+                                }
+                            }
                         }
                         Some(DiceEvent::CheckDepsStarted{key_type}) => {
                             states.entry(key_type).or_insert_with(DiceKeyState::default).check_deps_started += 1;
@@ -116,8 +140,41 @@ impl BuckDiceTracker {
     }
 }
 
+fn dice_key_progress_stage(
+    show_all_key_spans: bool,
+    key_type: &'static str,
+    key: &str,
+) -> Option<String> {
+    // Domain-level leaf work already has better progress spans: action execution,
+    // repository/download work, package loading, file watcher sync, and buckconfig stages.
+    // Keep every DICE key in the aggregate snapshot, but do not promote graph-plumbing
+    // keys like configured targets and package declarations into visible rows by default.
+    show_all_key_spans.then(|| format!("{key} ({key_type}) -- computing DICE key"))
+}
+
 impl DiceEventListener for BuckDiceTracker {
     fn event(&self, event: DiceEvent) {
         let _ = self.event_forwarder.unbounded_send(event);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dice_key_progress_spans_are_hidden_by_default() {
+        assert_eq!(
+            dice_key_progress_stage(false, "BazelPackageKey", "PACKAGE(root//foo)"),
+            None
+        );
+    }
+
+    #[test]
+    fn dice_key_progress_spans_can_be_enabled_for_debugging() {
+        assert_eq!(
+            dice_key_progress_stage(true, "BazelPackageKey", "PACKAGE(root//foo)"),
+            Some("PACKAGE(root//foo) (BazelPackageKey) -- computing DICE key".to_owned())
+        );
     }
 }

@@ -13,10 +13,10 @@ use allocative::Allocative;
 #[derive(Allocative, PartialEq, Eq, Debug)]
 pub enum DiceEvent {
     /// Key evaluation started.
-    Started { key_type: &'static str },
+    Started { key_type: &'static str, key: String },
 
     /// Key evaluation finished.
-    Finished { key_type: &'static str },
+    Finished { key_type: &'static str, key: String },
 
     /// Checking dependencies has started.
     CheckDepsStarted { key_type: &'static str },

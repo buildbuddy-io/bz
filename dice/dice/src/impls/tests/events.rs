@@ -132,14 +132,26 @@ async fn test_events_impl(builder: DiceDataBuilder) -> anyhow::Result<()> {
         assert_eq!(
             &*tracker.state.lock().unwrap(),
             &[
-                DiceEvent::Started { key_type: "Stage1" },
+                DiceEvent::Started {
+                    key_type: "Stage1",
+                    key: "Stage1".to_owned(),
+                },
                 DiceEvent::ComputeStarted { key_type: "Stage1" },
-                DiceEvent::Started { key_type: "Stage0" },
+                DiceEvent::Started {
+                    key_type: "Stage0",
+                    key: "Stage0".to_owned(),
+                },
                 DiceEvent::ComputeStarted { key_type: "Stage0" },
                 DiceEvent::ComputeFinished { key_type: "Stage0" },
-                DiceEvent::Finished { key_type: "Stage0" },
+                DiceEvent::Finished {
+                    key_type: "Stage0",
+                    key: "Stage0".to_owned(),
+                },
                 DiceEvent::ComputeFinished { key_type: "Stage1" },
-                DiceEvent::Finished { key_type: "Stage1" },
+                DiceEvent::Finished {
+                    key_type: "Stage1",
+                    key: "Stage1".to_owned(),
+                },
             ]
         );
     }
@@ -162,16 +174,28 @@ async fn test_events_impl(builder: DiceDataBuilder) -> anyhow::Result<()> {
         assert_eq!(
             &*tracker.state.lock().unwrap(),
             &[
-                DiceEvent::Started { key_type: "Stage1" },
+                DiceEvent::Started {
+                    key_type: "Stage1",
+                    key: "Stage1".to_owned(),
+                },
                 DiceEvent::CheckDepsStarted { key_type: "Stage1" },
-                DiceEvent::Started { key_type: "Stage0" },
+                DiceEvent::Started {
+                    key_type: "Stage0",
+                    key: "Stage0".to_owned(),
+                },
                 DiceEvent::CheckDepsStarted { key_type: "Stage0" },
                 DiceEvent::CheckDepsFinished { key_type: "Stage0" },
                 DiceEvent::ComputeStarted { key_type: "Stage0" },
                 DiceEvent::ComputeFinished { key_type: "Stage0" },
-                DiceEvent::Finished { key_type: "Stage0" },
+                DiceEvent::Finished {
+                    key_type: "Stage0",
+                    key: "Stage0".to_owned(),
+                },
                 DiceEvent::CheckDepsFinished { key_type: "Stage1" },
-                DiceEvent::Finished { key_type: "Stage1" },
+                DiceEvent::Finished {
+                    key_type: "Stage1",
+                    key: "Stage1".to_owned(),
+                },
             ]
         );
     }
