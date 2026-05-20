@@ -159,6 +159,23 @@ pub(crate) struct BazelCompatCellAlias {
     pub cell_name: String,
 }
 
+impl BazelCompatCellAlias {
+    pub(crate) fn actual_root_cell_name<'a>(&'a self, root_cell_name: &'a str) -> &'a str {
+        if self.cell_name == "root" {
+            root_cell_name
+        } else {
+            self.cell_name.as_str()
+        }
+    }
+
+    pub(crate) fn with_actual_root_cell(&self, root_cell_name: &str) -> Self {
+        Self {
+            alias: self.alias.clone(),
+            cell_name: self.actual_root_cell_name(root_cell_name).to_owned(),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Allocative, Pagable)]
 pub(crate) struct BazelCompatRegistryModule {
     pub cell_name: String,
@@ -430,6 +447,37 @@ impl LegacyBuckConfig {
             }
         }
 
+        let configured_root_cell = {
+            let cells = self
+                .get_section("cells")
+                .or_else(|| self.get_section("repositories"));
+            let root_alias = self
+                .get(BuckconfigKeyRef {
+                    section: "cell_aliases",
+                    property: "root",
+                })
+                .or_else(|| {
+                    self.get(BuckconfigKeyRef {
+                        section: "repository_aliases",
+                        property: "root",
+                    })
+                });
+            root_alias
+                .filter(|root_alias| {
+                    cells
+                        .map(|cells| cells.iter().any(|(name, _)| name == *root_alias))
+                        .unwrap_or(false)
+                })
+                .map(str::to_owned)
+                .or_else(|| {
+                    cells.and_then(|cells| {
+                        cells.iter().find_map(|(name, path)| {
+                            (path.as_str() == ".").then(|| name.to_owned())
+                        })
+                    })
+                })
+        };
+
         let mut values: BTreeMap<String, LegacyBuckConfigSection> = self
             .0
             .values
@@ -445,9 +493,21 @@ impl LegacyBuckConfig {
                 .map(|(key, value)| (key.clone(), value.clone()))
                 .collect();
             for (key, value) in *section_defaults {
+                if *section_name == "cells" && *key == "root" && configured_root_cell.is_some() {
+                    continue;
+                }
+                let value = if *section_name == "parser" && *key == "target_platform_detector_spec"
+                {
+                    format!(
+                        "target:{}//...->platforms//host:host",
+                        configured_root_cell.as_deref().unwrap_or("root")
+                    )
+                } else {
+                    (*value).to_owned()
+                };
                 section_values
                     .entry((*key).to_owned())
-                    .or_insert_with(|| synthetic_config_value(value));
+                    .or_insert_with(|| synthetic_config_value(&value));
             }
             if *section_name == "cells" {
                 for module in external_modules {
@@ -462,6 +522,13 @@ impl LegacyBuckConfig {
                 }
             }
             if is_cell_aliases {
+                if let Some(root_cell) = configured_root_cell.as_deref()
+                    && root_cell != "root"
+                {
+                    section_values
+                        .entry("root".to_owned())
+                        .or_insert_with(|| synthetic_config_value(root_cell));
+                }
                 for alias in current_cell_aliases {
                     section_values.insert(
                         alias.alias.clone(),

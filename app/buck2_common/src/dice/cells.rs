@@ -284,8 +284,10 @@ impl Key for CellAliasResolverKey {
         if (self.0.as_str() == "bazel_tools" || self.0.as_str().starts_with("bzlmod_"))
             && let Some(module_aliases) = &bzlmod_module_aliases
         {
+            let current_cell_aliases =
+                module_aliases.aliases_for_cell(self.0.as_str(), resolver.root_cell().as_str());
             let config = LegacyBuckConfig::empty().with_bazel_compat_cell_defaults(
-                module_aliases.aliases_for_cell(self.0.as_str()),
+                &current_cell_aliases,
                 &[],
                 &BazelCompatBazelrcOptions::default(),
             );
@@ -298,8 +300,10 @@ impl Key for CellAliasResolverKey {
         }
         let config = ctx.get_legacy_config_for_cell(self.0).await?;
         let config = if let Some(module_aliases) = &bzlmod_module_aliases {
+            let current_cell_aliases =
+                module_aliases.aliases_for_cell(self.0.as_str(), resolver.root_cell().as_str());
             config.with_bazel_compat_cell_defaults(
-                module_aliases.aliases_for_cell(self.0.as_str()),
+                &current_cell_aliases,
                 &[],
                 &BazelCompatBazelrcOptions::default(),
             )

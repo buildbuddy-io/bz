@@ -125,7 +125,8 @@ use crate::legacy_configs::path::ExternalConfigSource;
 use crate::legacy_configs::path::ProjectConfigSource;
 
 const PRIMARY_BUCKCONFIG: &str = ".buckconfig";
-const BAZEL_PROJECT_ROOT_MARKERS: &[&str] = &["MODULE.bazel", "WORKSPACE.bazel", "WORKSPACE"];
+const BAZEL_MODULE_FILE: &str = "MODULE.bazel";
+const BAZEL_PROJECT_ROOT_MARKERS: &[&str] = &["WORKSPACE.bazel", "WORKSPACE"];
 
 async fn buckconfig_load_stage<T, Fut>(stage: impl Into<String>, fut: Fut) -> buck2_error::Result<T>
 where
@@ -1004,6 +1005,10 @@ async fn should_apply_bazel_compat_defaults(
     cell_path: &CellRootPath,
     file_ops: &mut dyn ConfigParserFileOps,
 ) -> buck2_error::Result<bool> {
+    if config_file_exists(cell_path, file_ops, BAZEL_MODULE_FILE).await? {
+        return Ok(true);
+    }
+
     if config_file_exists(cell_path, file_ops, PRIMARY_BUCKCONFIG).await? {
         return Ok(false);
     }
@@ -1425,15 +1430,23 @@ impl BazelModuleCellAliases {
             && self.registered_toolchains == other.registered_toolchains
     }
 
-    pub(crate) fn aliases_for_cell(&self, cell_name: &str) -> &[BazelCompatCellAlias] {
-        if cell_name == "root" {
-            &self.root_aliases
+    pub(crate) fn aliases_for_cell(
+        &self,
+        cell_name: &str,
+        root_cell_name: &str,
+    ) -> Vec<BazelCompatCellAlias> {
+        let aliases = if cell_name == root_cell_name {
+            self.root_aliases.as_slice()
         } else {
             self.cell_aliases
                 .get(cell_name)
                 .map(Vec::as_slice)
                 .unwrap_or(&[])
-        }
+        };
+        aliases
+            .iter()
+            .map(|alias| alias.with_actual_root_cell(root_cell_name))
+            .collect()
     }
 
     fn normalize(&mut self) {
@@ -1450,19 +1463,25 @@ impl BazelModuleCellAliases {
             .dedup_by(|a, b| a.cell_name() == b.cell_name());
     }
 
-    fn register_for_starlark_label_resolution(&self) {
+    fn register_for_starlark_label_resolution(&self, root_cell_name: &str) {
         register_bzlmod_cell_aliases_from_refs(
-            "root",
-            self.root_aliases
-                .iter()
-                .map(|alias| (alias.alias.as_str(), alias.cell_name.as_str())),
+            root_cell_name,
+            self.root_aliases.iter().map(|alias| {
+                (
+                    alias.alias.as_str(),
+                    alias.actual_root_cell_name(root_cell_name),
+                )
+            }),
         );
         for (cell_name, aliases) in &self.cell_aliases {
             register_bzlmod_cell_aliases_from_refs(
                 cell_name,
-                aliases
-                    .iter()
-                    .map(|alias| (alias.alias.as_str(), alias.cell_name.as_str())),
+                aliases.iter().map(|alias| {
+                    (
+                        alias.alias.as_str(),
+                        alias.actual_root_cell_name(root_cell_name),
+                    )
+                }),
             );
         }
     }
@@ -2653,10 +2672,26 @@ impl GetBzlmodModuleExtensionRepoMappingBase for DiceComputations<'_> {
                     .map(|(alias, target)| (alias.clone(), target.clone()))
             })
             .collect::<Vec<_>>();
+        let root_cell_name = self
+            .get_cell_resolver()
+            .await?
+            .root_cell()
+            .as_str()
+            .to_owned();
+        for (_alias, target) in &mut host_aliases {
+            if target == "root" {
+                *target = root_cell_name.clone();
+            }
+        }
         host_aliases.sort_unstable();
         host_aliases.dedup();
-        let repo_overrides =
+        let mut repo_overrides =
             bzlmod_module_extension_repo_overrides_for_extension(&dep_graph, &extension_id)?;
+        for (_alias, target) in &mut repo_overrides {
+            if target == "root" {
+                *target = root_cell_name.clone();
+            }
+        }
         Ok(Arc::new(BzlmodModuleExtensionRepoMappingBase {
             host_aliases,
             repo_overrides,
@@ -3266,10 +3301,17 @@ impl Key for BzlmodResolutionKey {
         aliases.cell_aliases = cell_aliases;
         aliases.registered_toolchains.extend(registered_toolchains);
         aliases.normalize();
+        let root_cell_name = ctx
+            .get_cell_resolver()
+            .await?
+            .root_cell()
+            .as_str()
+            .to_owned();
+        register_bzlmod_cell_canonical_repo_name_for_cell(&root_cell_name, "");
         // Bazel keeps repository mappings as Skyframe values and consumers reuse the computed value.
         // Register Buck2's global lookup side effects with the DICE value computation instead of
         // repeating them on every accessor of the cached resolution.
-        aliases.register_for_starlark_label_resolution();
+        aliases.register_for_starlark_label_resolution(&root_cell_name);
         aliases.register_external_cell_origins()?;
         Ok(Arc::new(aliases))
     }
@@ -9344,6 +9386,87 @@ mod tests {
         let root_config = cells
             .parse_single_cell_with_file_ops(CellName::testing_new("root"), &mut file_ops)
             .await?;
+        assert_eq!(
+            root_config.get(BuckconfigKeyRef {
+                section: "buildfile",
+                property: "name_v2",
+            }),
+            Some("BUILD.bazel,BUILD"),
+        );
+        assert_eq!(
+            root_config.get(BuckconfigKeyRef {
+                section: "buildfile",
+                property: "includes",
+            }),
+            Some("prelude//bazel/prelude.bzl"),
+        );
+        assert_eq!(
+            root_config.get(BuckconfigKeyRef {
+                section: "parser",
+                property: "target_platform_detector_spec",
+            }),
+            Some("target:gh_facebook_buck2//...->platforms//host:host"),
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_module_bazel_enables_bazel_compat_defaults_with_buckconfig()
+    -> buck2_error::Result<()> {
+        let mut file_ops = TestConfigParserFileOps::new(&[
+            (
+                ".buckconfig",
+                indoc!(
+                    r#"
+                    [cells]
+                        gh_facebook_buck2 = .
+                        prelude = prelude
+
+                    [cell_aliases]
+                        root = gh_facebook_buck2
+                "#
+                ),
+            ),
+            (
+                "MODULE.bazel",
+                indoc!(
+                    r#"
+                    module(name = "hello", repo_name = "hello_root")
+                "#
+                ),
+            ),
+        ])?;
+
+        let cells = BuckConfigBasedCells::testing_parse_with_file_ops(&mut file_ops, &[]).await?;
+        let root_config = cells
+            .parse_single_cell_with_file_ops(
+                CellName::testing_new("gh_facebook_buck2"),
+                &mut file_ops,
+            )
+            .await?;
+
+        assert_eq!(
+            root_config.get(BuckconfigKeyRef {
+                section: "cells",
+                property: "root",
+            }),
+            None,
+        );
+        assert_eq!(
+            root_config.get(BuckconfigKeyRef {
+                section: "cell_aliases",
+                property: "root",
+            }),
+            Some("gh_facebook_buck2"),
+        );
+        assert_eq!(
+            root_config.get(BuckconfigKeyRef {
+                section: "bazel",
+                property: "compatibility",
+            }),
+            Some("true"),
+        );
         assert_eq!(
             root_config.get(BuckconfigKeyRef {
                 section: "buildfile",

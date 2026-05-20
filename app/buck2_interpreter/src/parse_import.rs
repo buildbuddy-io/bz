@@ -69,14 +69,17 @@ enum ImportCell<'a> {
 
 fn parse_import_cell(alias: &str, repo_is_canonical: bool) -> Option<ImportCell<'_>> {
     if repo_is_canonical {
-        let cell = if alias.is_empty() || alias == "root" {
-            CellName::unchecked_new("root").ok()?
+        if alias.is_empty() || alias == "root" {
+            Some(ImportCell::Alias("root"))
         } else if alias == "bazel_tools" {
-            CellName::unchecked_new("bazel_tools").ok()?
+            Some(ImportCell::Canonical(
+                CellName::unchecked_new("bazel_tools").ok()?,
+            ))
         } else {
-            CellName::unchecked_new(&bzlmod_cell_name(alias)).ok()?
-        };
-        Some(ImportCell::Canonical(cell))
+            Some(ImportCell::Canonical(
+                CellName::unchecked_new(&bzlmod_cell_name(alias)).ok()?,
+            ))
+        }
     } else {
         Some(ImportCell::Alias(alias))
     }

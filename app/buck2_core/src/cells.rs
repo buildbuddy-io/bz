@@ -334,6 +334,16 @@ impl CellResolver {
 
     /// Get a `Cell` from the `CellMap`
     pub fn get(&self, cell: CellName) -> buck2_error::Result<&CellInstance> {
+        let cell = if cell.as_str() == "root"
+            && !self.0.cells.contains_key(&cell)
+            && matches!(
+                self.0.root_cell_alias_resolver.resolve("root"),
+                Ok(root_alias) if root_alias == self.0.root_cell
+            ) {
+            self.0.root_cell
+        } else {
+            cell
+        };
         self.0
             .cells
             .get(&cell)
@@ -621,6 +631,25 @@ mod tests {
                 ForwardRelativePathBuf::unchecked_new("fake/cell3".to_owned()).into()
             )
         );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_root_cell_name_falls_back_to_root_alias() -> buck2_error::Result<()> {
+        let cell_resolver = CellResolver::testing_with_names_and_paths_with_alias(
+            &[(
+                CellName::testing_new("actual_root"),
+                CellRootPathBuf::testing_new(""),
+            )],
+            StdBuckHashMap::from_iter([(
+                NonEmptyCellAlias::new("root".to_owned())?,
+                CellName::testing_new("actual_root"),
+            )]),
+        );
+
+        let cell = cell_resolver.get(CellName::testing_new("root"))?;
+        assert_eq!(CellName::testing_new("actual_root"), cell.name());
 
         Ok(())
     }

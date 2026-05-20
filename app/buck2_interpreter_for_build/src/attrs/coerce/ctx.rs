@@ -122,7 +122,11 @@ impl Debug for BuildAttrCoercionContext {
 impl BuildAttrCoercionContext {
     fn is_bazel_compat_cell(&self) -> bool {
         let cell = self.cell_name.as_str();
-        cell == "root" || cell == "bazel_tools" || cell.starts_with("bzlmod_")
+        cell == "root"
+            || cell == "bazel_tools"
+            || cell.starts_with("bzlmod_")
+            || (self.cell_name == self.cell_resolver.root_cell()
+                && self.cell_alias_resolver.resolve("bazel_tools").is_ok())
     }
 
     fn new(
