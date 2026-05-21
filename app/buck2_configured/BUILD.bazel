@@ -37,6 +37,7 @@ rust_library(
         "//app/buck2_error:buck2_error",
         "//app/buck2_node:buck2_node",
         "//app/buck2_util:buck2_util",
+        "//shed/buck2_hash:buck2_hash",
         "//dice/dice:dice",
         "//dice/dice_futures:dice_futures",
         "//gazebo/dupe:dupe",

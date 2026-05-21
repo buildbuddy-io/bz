@@ -99,38 +99,61 @@ async fn legacy_execution_platform(
     )
 }
 
+async fn bazel_host_platform_target(
+    ctx: &mut DiceComputations<'_>,
+) -> buck2_error::Result<TargetLabel> {
+    let cell_resolver = ctx.get_cell_resolver().await?;
+    let root_cell = cell_resolver.root_cell();
+    let alias_resolver = ctx.get_cell_alias_resolver(root_cell).await?;
+    TargetLabel::parse(
+        "platforms//host:host",
+        root_cell,
+        &cell_resolver,
+        &alias_resolver,
+    )
+}
+
+async fn bazel_host_execution_platform(
+    ctx: &mut DiceComputations<'_>,
+) -> buck2_error::Result<ExecutionPlatform> {
+    let host_platform = bazel_host_platform_target(ctx).await?;
+    let cfg = get_platform_configuration(ctx, &host_platform).await?;
+    Ok(ExecutionPlatform::platform(
+        host_platform,
+        cfg,
+        ctx.get_fallback_executor_config().clone(),
+    ))
+}
+
 async fn legacy_execution_platform_for_node(
     ctx: &mut DiceComputations<'_>,
     node: TargetNodeRef<'_>,
     cfg: &ConfigurationNoExec,
 ) -> buck2_error::Result<ExecutionPlatform> {
-    let cfg = if node.is_bazel_rule() {
-        let cell_resolver = ctx.get_cell_resolver().await?;
-        let root_cell = cell_resolver.root_cell();
-        let alias_resolver = ctx.get_cell_alias_resolver(root_cell).await?;
-        let host_platform = TargetLabel::parse(
-            "platforms//host:host",
-            root_cell,
-            &cell_resolver,
-            &alias_resolver,
-        )?;
-        ConfigurationNoExec::new(get_platform_configuration(ctx, &host_platform).await?)
+    if node.is_bazel_rule() {
+        bazel_host_execution_platform(ctx).await
     } else {
-        cfg.dupe()
-    };
-    Ok(legacy_execution_platform(ctx, &cfg).await)
+        Ok(legacy_execution_platform(ctx, cfg).await)
+    }
 }
 
 pub async fn find_execution_platform_by_configuration(
     ctx: &mut DiceComputations<'_>,
     exec_cfg: &ConfigurationData,
     cfg: &ConfigurationData,
+    search_bazel_host_platform: bool,
 ) -> buck2_error::Result<ExecutionPlatform> {
     match ctx.get_execution_platforms().await? {
         Some(platforms) if exec_cfg != &ConfigurationData::unbound_exec() => {
             for c in platforms.candidates() {
                 if c.cfg() == exec_cfg {
                     return Ok(c.dupe());
+                }
+            }
+            if search_bazel_host_platform {
+                let host = bazel_host_execution_platform(ctx).await?;
+                if host.cfg() == exec_cfg {
+                    return Ok(host);
                 }
             }
             Err(buck2_error::Error::from(
@@ -222,12 +245,14 @@ impl ExecutionPlatformConstraints {
         self,
         ctx: &mut DiceComputations<'_>,
         cell: CellNameForConfigurationResolution,
+        append_bazel_host_platform: bool,
     ) -> buck2_error::Result<ExecutionPlatformResolutionPartial> {
         ctx.compute(&ExecutionPlatformResolutionKey {
             target_node_cell: cell,
             exec_compatible_with: self.exec_compatible_with,
             exec_deps: self.exec_deps,
             toolchain_deps: self.toolchain_deps,
+            append_bazel_host_platform,
         })
         .await?
     }
@@ -420,6 +445,7 @@ pub(crate) async fn resolve_execution_platform(
         .one_for_cell(
             ctx,
             CellNameForConfigurationResolution(node.label().pkg().cell_name()),
+            node.is_bazel_rule(),
         )
         .await
 }
@@ -663,9 +689,35 @@ async fn resolve_execution_platform_from_constraints(
     exec_compatible_with: &[ConfigurationSettingKey],
     exec_deps: &[TargetLabel],
     toolchain_deps: &[TargetConfiguredTargetLabel],
+    append_bazel_host_platform: bool,
 ) -> buck2_error::Result<ExecutionPlatformResolutionPartial> {
     let mut skipped = Vec::new();
     let execution_platforms = get_execution_platforms_enabled(ctx).await?;
+    if append_bazel_host_platform {
+        // Buck execution platforms are not Bazel-registered execution platforms.
+        // Until register_execution_platforms is modeled separately, Bazel rules
+        // should use Bazel's host execution platform rather than an unrelated
+        // Buck execution platform that happens to satisfy exec_compatible_with.
+        let host = bazel_host_execution_platform(ctx).await?;
+        match check_execution_platform(
+            ctx,
+            target_node_cell,
+            exec_compatible_with,
+            exec_deps,
+            &host,
+            toolchain_deps,
+        )
+        .await?
+        {
+            Ok(()) => {
+                return Ok(ExecutionPlatformResolutionPartial::new(Some(host), skipped));
+            }
+            Err(reason) => {
+                skipped.push((host.id(), reason));
+            }
+        }
+    }
+
     for exec_platform in execution_platforms.candidates() {
         match check_execution_platform(
             ctx,
@@ -690,8 +742,11 @@ async fn resolve_execution_platform_from_constraints(
     }
 
     match execution_platforms.fallback() {
-        ExecutionPlatformFallback::UseUnspecifiedExec => {
+        ExecutionPlatformFallback::UseUnspecifiedExec if !append_bazel_host_platform => {
             Ok(ExecutionPlatformResolutionPartial::new(None, skipped))
+        }
+        ExecutionPlatformFallback::UseUnspecifiedExec => {
+            Err(ExecutionPlatformError::NoCompatiblePlatform(Arc::new(skipped)).into())
         }
         ExecutionPlatformFallback::Error => {
             Err(ExecutionPlatformError::NoCompatiblePlatform(Arc::new(skipped)).into())
@@ -713,6 +768,7 @@ pub(crate) struct ExecutionPlatformResolutionKey {
     exec_compatible_with: Arc<[ConfigurationSettingKey]>,
     exec_deps: Arc<[TargetLabel]>,
     toolchain_deps: Arc<[TargetConfiguredTargetLabel]>,
+    append_bazel_host_platform: bool,
 }
 
 impl Display for ExecutionPlatformResolutionKey {
@@ -739,6 +795,10 @@ impl Display for ExecutionPlatformResolutionKey {
             )?;
         }
 
+        if self.append_bazel_host_platform {
+            write!(f, ", append_bazel_host_platform=true")?;
+        }
+
         Ok(())
     }
 }
@@ -758,6 +818,7 @@ impl Key for ExecutionPlatformResolutionKey {
             &self.exec_compatible_with,
             &self.exec_deps,
             &self.toolchain_deps,
+            self.append_bazel_host_platform,
         )
         .await
     }
@@ -824,7 +885,7 @@ impl GetExecutionPlatformsImpl for GetExecutionPlatformsInstance {
             toolchain_deps,
             exec_compatible_with,
         )
-        .one_for_cell(dice, cell)
+        .one_for_cell(dice, cell, false)
         .await
     }
 }

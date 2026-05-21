@@ -209,8 +209,13 @@ def toolchain_type_impl(ctx):
 
 def _raw_target(label):
     if hasattr(label, "raw_target"):
-        return str(label.raw_target())
+        return _target_key(label.raw_target())
+    if hasattr(label, "label") and hasattr(label.label, "raw_target"):
+        return _target_key(label.label.raw_target())
     return str(label)
+
+def _target_key(label):
+    return "{}//{}:{}".format(label.cell, label.package, label.name)
 
 def _raw_targets(labels):
     return [_raw_target(label) for label in labels]

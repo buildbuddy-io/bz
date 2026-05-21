@@ -1596,6 +1596,7 @@ struct RootBzlmodModule {
     constants: Vec<(String, String)>,
     extension_usages: Vec<BzlmodExtensionUsage>,
     use_repo_rule_invocations: Vec<BzlmodUseRepoRuleInvocation>,
+    registered_toolchains: Vec<String>,
 }
 
 #[derive(
@@ -4202,6 +4203,7 @@ fn resolve_bcr_modules_from_dep_graph(
     )?;
     resolved.extend(generated_resolution.external_modules);
     let registered_toolchains = resolve_bzlmod_registered_toolchains(
+        root_module,
         discovered,
         &dep_graph.selected_keys_in_bfs_order,
         canonical_repo_names_by_key,
@@ -5614,12 +5616,20 @@ fn bzlmod_extension_unique_repo_canonical_repo_name(
 }
 
 fn resolve_bzlmod_registered_toolchains(
+    root_module: &RootBzlmodModule,
     discovered: &BTreeMap<(String, String), DiscoveredBcrModule>,
     selected_keys: &[(String, String)],
     canonical_repo_names_by_key: &BTreeMap<(String, String), String>,
     cell_aliases_by_cell: &BzlmodCellAliasesByCell,
 ) -> buck2_error::Result<Vec<String>> {
     let mut registered_toolchains = Vec::new();
+    for pattern in &root_module.registered_toolchains {
+        registered_toolchains.push(qualify_bzlmod_registered_toolchain(
+            pattern,
+            "root",
+            cell_aliases_by_cell,
+        )?);
+    }
     for key in selected_keys {
         let Some(module) = discovered.get(key) else {
             continue;
@@ -6691,6 +6701,7 @@ fn bzlmod_root_module_from_lines(lines: &[String]) -> buck2_error::Result<RootBz
     let extension_usages = bzlmod_extension_usages_from_lines(lines, &constants, false);
     let use_repo_rule_invocations =
         bzlmod_use_repo_rule_invocations_from_lines(lines, &constants, false)?;
+    let registered_toolchains = bzlmod_registered_toolchains_from_lines(lines, false);
     Ok(RootBzlmodModule {
         name,
         version,
@@ -6701,6 +6712,7 @@ fn bzlmod_root_module_from_lines(lines: &[String]) -> buck2_error::Result<RootBz
         constants,
         extension_usages,
         use_repo_rule_invocations,
+        registered_toolchains,
     })
 }
 
@@ -10222,6 +10234,7 @@ mod tests {
             constants: Vec::new(),
             extension_usages: vec![usage.clone()],
             use_repo_rule_invocations: Vec::new(),
+            registered_toolchains: Vec::new(),
         };
 
         let mut cell_aliases_by_cell = super::BzlmodCellAliasesByCell::default();
@@ -10312,6 +10325,7 @@ mod tests {
             constants: Vec::new(),
             extension_usages: vec![usage.clone()],
             use_repo_rule_invocations: Vec::new(),
+            registered_toolchains: Vec::new(),
         };
 
         let mut cell_aliases_by_cell = super::BzlmodCellAliasesByCell::default();
@@ -10395,6 +10409,7 @@ mod tests {
             constants: Vec::new(),
             extension_usages: Vec::new(),
             use_repo_rule_invocations: Vec::new(),
+            registered_toolchains: Vec::new(),
         };
 
         let mut cell_aliases_by_cell = super::BzlmodCellAliasesByCell::default();
@@ -10577,6 +10592,48 @@ mod tests {
                 &cell_aliases_by_cell,
             )?,
             "bzlmod_rules_go_0_57_0//:all"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_bzlmod_registered_toolchains_include_root_module() -> buck2_error::Result<()> {
+        let root_module = super::RootBzlmodModule {
+            name: "root".to_owned(),
+            version: String::new(),
+            repo_name: "root".to_owned(),
+            canonical_repo_name: String::new(),
+            lockfile_extension_generated_repos: std::collections::BTreeMap::new(),
+            lockfile_extension_facts: std::collections::BTreeSet::new(),
+            constants: Vec::new(),
+            extension_usages: Vec::new(),
+            use_repo_rule_invocations: Vec::new(),
+            registered_toolchains: vec![
+                "@rust_toolchains//:all".to_owned(),
+                "//tools:toolchain".to_owned(),
+            ],
+        };
+        let mut cell_aliases_by_cell = super::BzlmodCellAliasesByCell::default();
+        super::add_bzlmod_cell_alias(
+            &mut cell_aliases_by_cell,
+            "root",
+            "rust_toolchains",
+            "bzlmod_rules_rust__rust_rust_toolchains",
+        );
+
+        assert_eq!(
+            super::resolve_bzlmod_registered_toolchains(
+                &root_module,
+                &std::collections::BTreeMap::new(),
+                &[],
+                &std::collections::BTreeMap::new(),
+                &cell_aliases_by_cell,
+            )?,
+            vec![
+                "bzlmod_rules_rust__rust_rust_toolchains//:all",
+                "root//tools:toolchain",
+            ]
         );
 
         Ok(())

@@ -430,11 +430,11 @@ async fn apply_bazel_platform_build_setting_to_cfg(
     }
 
     let data = cfg.data()?.clone();
-    let Some(platforms) = data.build_settings.get(BAZEL_PLATFORMS_OPTION) else {
-        return Ok(cfg);
-    };
 
-    let mut platform_targets = bazel_platform_targets_from_setting(ctx, platforms).await?;
+    let mut platform_targets = match data.build_settings.get(BAZEL_PLATFORMS_OPTION) {
+        Some(platforms) => bazel_platform_targets_from_setting(ctx, platforms).await?,
+        None => Vec::new(),
+    };
     if platform_targets.is_empty() {
         platform_targets.push(bazel_host_platform_target(ctx).await?);
     }

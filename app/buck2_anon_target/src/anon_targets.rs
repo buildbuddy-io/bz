@@ -432,6 +432,7 @@ impl AnonTargetKey {
                     dice,
                     self.0.exec_cfg().cfg(),
                     self.0.exec_cfg().cfg(),
+                    true,
                 )
                 .await?,
             ),

@@ -11,6 +11,8 @@
 //! Calculations relating to 'TargetNode's that runs on Dice
 
 use std::collections::BTreeSet;
+use std::hash::Hash;
+use std::hash::Hasher;
 use std::iter;
 use std::sync::Arc;
 
@@ -19,6 +21,7 @@ use async_trait::async_trait;
 use buck2_build_api::analysis::calculation::RuleAnalysisCalculation;
 use buck2_build_api::interpreter::rule_defs::provider::builtin::dep_only_incompatible_info::DepOnlyIncompatibleCustomSoftErrors;
 use buck2_build_api::interpreter::rule_defs::provider::builtin::dep_only_incompatible_info::FrozenDepOnlyIncompatibleInfo;
+use buck2_build_api::interpreter::rule_defs::provider::builtin::platform_info::FrozenPlatformInfo;
 use buck2_build_api::transition::TRANSITION_ATTRS_PROVIDER;
 use buck2_build_api::transition::TRANSITION_CALCULATION;
 use buck2_build_api::transition::TransitionAttrs;
@@ -35,7 +38,9 @@ use buck2_core::configuration::compatibility::IncompatiblePlatformReason;
 use buck2_core::configuration::compatibility::IncompatiblePlatformReasonCause;
 use buck2_core::configuration::compatibility::MaybeCompatible;
 use buck2_core::configuration::compatibility::ResultMaybeCompatible;
+use buck2_core::configuration::data::BazelBuildSettingValue;
 use buck2_core::configuration::data::ConfigurationData;
+use buck2_core::configuration::pair::Configuration;
 use buck2_core::configuration::pair::ConfigurationNoExec;
 use buck2_core::configuration::pair::ConfigurationWithExec;
 use buck2_core::configuration::transition::applied::TransitionApplied;
@@ -60,6 +65,7 @@ use buck2_core::target::label::label::TargetLabel;
 use buck2_core::target::target_configured_target_label::TargetConfiguredTargetLabel;
 use buck2_error::BuckErrorContext;
 use buck2_error::internal_error;
+use buck2_hash::BuckHasher;
 use buck2_node::attrs::coerced_attr::CoercedAttr;
 use buck2_node::attrs::configuration_context::AttrConfigurationContext;
 use buck2_node::attrs::configuration_context::AttrConfigurationContextImpl;
@@ -99,6 +105,7 @@ use dice::OkPagableValueSerialize;
 use dice::ValueSerialize;
 use dice_futures::cancellation::CancellationContext;
 use dupe::Dupe;
+use dupe::OptionDupedExt;
 use futures::FutureExt;
 use futures::future::BoxFuture;
 use itertools::Itertools;
@@ -158,6 +165,10 @@ enum NodeCalculationError {
         ConfigurationData,
         ConfigurationData,
     ),
+    #[error("unsupported value for Bazel build setting `//command_line_option:platforms`: `{0}`")]
+    UnsupportedBazelPlatformsValue(String),
+    #[error("Expected `{0}` to be a `platform()` target, but it had no `PlatformInfo` provider.")]
+    MissingPlatformInfo(TargetLabel),
 }
 
 enum CompatibilityConstraints {
@@ -555,6 +566,9 @@ async fn target_node_dependency_is_visible(
     target_label: &TargetConfiguredTargetLabel,
     check_visibility: &CheckVisibility,
 ) -> buck2_error::Result<bool> {
+    if dep.bazel_package_group().is_some() {
+        return Ok(true);
+    }
     if dep.is_visible_to(target_label.unconfigured())? {
         return Ok(true);
     }
@@ -1337,6 +1351,14 @@ fn bazel_toolchain_keys_match(declared: &str, candidate: &str) -> bool {
             })
 }
 
+fn bazel_rule_kind_is(node: &TargetNode, kind: &str) -> bool {
+    let rule_type = node.rule_type().name();
+    rule_type == kind
+        || rule_type
+            .rsplit_once(':')
+            .is_some_and(|(_, name)| name == kind)
+}
+
 fn attr_target_label(attr: &CoercedAttr) -> Option<&TargetLabel> {
     match attr {
         CoercedAttr::Label(label)
@@ -1433,6 +1455,135 @@ fn parse_bazel_nodep_label(
     }
 }
 
+const BAZEL_PLATFORMS_OPTION: &str = "//command_line_option:platforms";
+
+fn bazel_transitioned_label(
+    data: &buck2_core::configuration::data::ConfigurationDataData,
+    is_marked_as_exec_platform: bool,
+) -> String {
+    let mut hasher = BuckHasher::default();
+    "bazel_transition".hash(&mut hasher);
+    data.hash(&mut hasher);
+    is_marked_as_exec_platform.hash(&mut hasher);
+    format!("bazeltr-{:016x}", hasher.finish())
+}
+
+async fn parse_bazel_platform_target(
+    ctx: &mut DiceComputations<'_>,
+    label: &str,
+) -> buck2_error::Result<TargetLabel> {
+    let cell_resolver = ctx.get_cell_resolver().await?;
+    let cell_alias_resolver = ctx
+        .get_cell_alias_resolver(cell_resolver.root_cell())
+        .await?;
+    TargetLabel::parse(
+        label,
+        cell_resolver.root_cell(),
+        &cell_resolver,
+        &cell_alias_resolver,
+    )
+}
+
+async fn bazel_platform_targets_from_setting(
+    ctx: &mut DiceComputations<'_>,
+    value: &BazelBuildSettingValue,
+) -> buck2_error::Result<Vec<TargetLabel>> {
+    match value {
+        BazelBuildSettingValue::Label(label) => Ok(vec![label.target().dupe()]),
+        BazelBuildSettingValue::LabelList(labels) => {
+            Ok(labels.iter().map(|label| label.target().dupe()).collect())
+        }
+        BazelBuildSettingValue::String(label) => Ok(vec![
+            parse_bazel_platform_target(ctx, label)
+                .await
+                .with_buck_error_context(|| format!("Parsing Bazel platform label `{label}`"))?,
+        ]),
+        BazelBuildSettingValue::StringList(labels) => {
+            let mut targets = Vec::with_capacity(labels.len());
+            for label in labels {
+                targets.push(
+                    parse_bazel_platform_target(ctx, label)
+                        .await
+                        .with_buck_error_context(|| {
+                            format!("Parsing Bazel platform label `{label}`")
+                        })?,
+                );
+            }
+            Ok(targets)
+        }
+        BazelBuildSettingValue::Bool(_) | BazelBuildSettingValue::Int(_) => Err(
+            NodeCalculationError::UnsupportedBazelPlatformsValue(value.as_config_setting_value())
+                .into(),
+        ),
+    }
+}
+
+async fn bazel_host_platform_target(
+    ctx: &mut DiceComputations<'_>,
+) -> buck2_error::Result<TargetLabel> {
+    parse_bazel_platform_target(ctx, "platforms//host:host").await
+}
+
+async fn bazel_platform_configuration(
+    ctx: &mut DiceComputations<'_>,
+    target: &TargetLabel,
+    is_marked_as_exec_platform: bool,
+) -> buck2_error::Result<ConfigurationData> {
+    ctx.get_configuration_analysis_result(&ProvidersLabel::default_for(target.dupe()))
+        .await?
+        .provider_collection()
+        .builtin_provider::<FrozenPlatformInfo>()
+        .ok_or_else(|| NodeCalculationError::MissingPlatformInfo(target.dupe()))?
+        .to_configuration(is_marked_as_exec_platform)
+}
+
+async fn apply_bazel_platform_cfg_to_bazel_rule(
+    ctx: &mut DiceComputations<'_>,
+    cfg: &ConfigurationData,
+) -> buck2_error::Result<ConfigurationData> {
+    if !cfg.is_bound() {
+        return Ok(cfg.dupe());
+    }
+
+    let data = cfg.data()?.clone();
+    let mut platform_targets = match data.build_settings.get(BAZEL_PLATFORMS_OPTION) {
+        Some(platforms) => bazel_platform_targets_from_setting(ctx, platforms).await?,
+        None => Vec::new(),
+    };
+    if platform_targets.is_empty() {
+        platform_targets.push(bazel_host_platform_target(ctx).await?);
+    }
+    platform_targets.truncate(1);
+
+    let platform_cfg =
+        bazel_platform_configuration(ctx, &platform_targets[0], cfg.is_marked_as_exec_platform())
+            .await?;
+
+    let mut new_data = platform_cfg.data()?.clone();
+    for (key, value) in data.build_settings {
+        new_data.build_settings.insert(key, value);
+    }
+    new_data.build_settings.insert(
+        BAZEL_PLATFORMS_OPTION.to_owned(),
+        BazelBuildSettingValue::LabelList(
+            platform_targets
+                .into_iter()
+                .map(ProvidersLabel::default_for)
+                .collect(),
+        ),
+    );
+
+    if cfg.data()? == &new_data {
+        return Ok(cfg.dupe());
+    }
+
+    ConfigurationData::from_platform(
+        bazel_transitioned_label(&new_data, cfg.is_marked_as_exec_platform()),
+        new_data,
+        cfg.is_marked_as_exec_platform(),
+    )
+}
+
 async fn configuration_settings_match(
     ctx: &mut DiceComputations<'_>,
     cfg: &ConfigurationData,
@@ -1469,14 +1620,14 @@ fn platform_constraints_contain_label(
         .any(|actual| actual.0 == expected)
 }
 
-async fn resolve_constraint_value_alias(
+async fn resolve_bazel_alias(
     ctx: &mut DiceComputations<'_>,
-    constraint_value: &TargetLabel,
+    label: &TargetLabel,
 ) -> buck2_error::Result<TargetLabel> {
-    let mut current = constraint_value.dupe();
+    let mut current = label.dupe();
     for _ in 0..16 {
         let node = ctx.get_target_node(&current).await?;
-        if node.rule_type().name() != "alias" {
+        if !bazel_rule_kind_is(&node, "alias") {
             return Ok(current);
         }
         let Some(actual) = node
@@ -1492,6 +1643,13 @@ async fn resolve_constraint_value_alias(
     }
 
     Ok(current)
+}
+
+async fn resolve_constraint_value_alias(
+    ctx: &mut DiceComputations<'_>,
+    constraint_value: &TargetLabel,
+) -> buck2_error::Result<TargetLabel> {
+    resolve_bazel_alias(ctx, constraint_value).await
 }
 
 async fn platform_contains_constraint_values(
@@ -1658,17 +1816,18 @@ async fn compute_registered_bazel_toolchain_nodes(
             return Err(missing.into_first_error().into());
         }
         for node in targets.into_values() {
-            if node.rule_type().name() != "toolchain" {
+            if !bazel_rule_kind_is(&node, "toolchain") {
                 continue;
             }
             let Some(toolchain_type) = node
                 .attr_or_none("toolchain_type", AttrInspectOptions::All)
-                .and_then(|attr| attr_target_label(&attr.value).map(|label| label.to_string()))
+                .and_then(|attr| attr_target_label(&attr.value).map(|label| label.dupe()))
             else {
                 continue;
             };
+            let toolchain_type = resolve_bazel_alias(ctx, &toolchain_type).await?;
             toolchains.push(BazelRegisteredToolchain {
-                toolchain_type: normalize_bazel_toolchain_key(&toolchain_type),
+                toolchain_type: normalize_bazel_toolchain_key(&toolchain_type.to_string()),
                 node,
             });
         }
@@ -1947,6 +2106,7 @@ async fn compute_configured_target_node_no_transition(
                     ctx,
                     exec_cfg,
                     resolved_configuration.cfg().cfg(),
+                    target_node.is_bazel_rule(),
                 )
                 .await?,
             ),
@@ -2131,6 +2291,23 @@ async fn compute_configured_target_node(
     if let Some(transition_id) = transition_id {
         compute_configured_forward_target_node(key, &target_node, &transition_id, ctx).await
     } else {
+        if target_node.is_bazel_rule() {
+            let cfg = apply_bazel_platform_cfg_to_bazel_rule(ctx, key.0.cfg()).await?;
+            if &cfg != key.0.cfg() {
+                let target_label_after_transition = key
+                    .0
+                    .unconfigured()
+                    .configure_pair(Configuration::new(cfg, key.0.exec_cfg().duped()));
+                let transitioned_node = ctx
+                    .get_internal_configured_target_node(&target_label_after_transition)
+                    .await?;
+                return ResultMaybeCompatible::Compatible(ConfiguredTargetNode::new_forward(
+                    key.0.dupe(),
+                    transitioned_node,
+                )?);
+            }
+        }
+
         // We are not caching `ConfiguredTransitionedNodeKey` because this is cheap,
         // and no need to fetch `target_node` again.
         compute_configured_target_node_no_transition(&key.0.dupe(), target_node, ctx).await
