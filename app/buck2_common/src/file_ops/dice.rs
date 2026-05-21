@@ -21,6 +21,7 @@ use buck2_core::cells::cell_path::CellPath;
 use buck2_core::cells::cell_path::CellPathRef;
 use buck2_core::cells::external::ExternalCellOrigin;
 use buck2_core::cells::name::CellName;
+use buck2_core::cells::paths::CellRelativePath;
 use buck2_error::internal_error;
 use buck2_fs::paths::file_name::FileNameBuf;
 use buck2_hash::StdBuckHashMap;
@@ -58,6 +59,7 @@ use crate::file_ops::metadata::RawPathMetadataForNoWatchFs;
 use crate::file_ops::metadata::RawSymlink;
 use crate::file_ops::metadata::ReadDirOutput;
 use crate::ignores::file_ignores::FileIgnoreResult;
+use crate::invocation_paths::InvocationPaths;
 use crate::io::IoProvider;
 use crate::io::NoWatchFsMetadataCache;
 use crate::io::ReadDirError;
@@ -336,6 +338,14 @@ pub async fn invalidate_changed_file_state(
             ReadDirForNoWatchFsKey,
             PathMetadataForNoWatchFsKey,
         >();
+    let read_dirs = read_dirs
+        .into_iter()
+        .filter(|(key, _)| !is_bazel_output_or_external_file_state_path(&key.0))
+        .collect::<Vec<_>>();
+    let path_metadata_for_no_watchfs = path_metadata_for_no_watchfs
+        .into_iter()
+        .filter(|(key, _)| !is_bazel_output_or_external_file_state_path(&key.0))
+        .collect::<Vec<_>>();
     let introspection_us = total_start.elapsed().as_micros() as u64;
 
     let mut dice = ctx.existing_state().await;
@@ -507,6 +517,9 @@ fn push_no_watchfs_file_change_event(
     path: &CellPath,
     kind: buck2_data::FileWatcherKind,
 ) {
+    if is_bazel_output_or_external_file_state_path(path) {
+        return;
+    }
     if events.len() < MAX_NO_WATCHFS_FILE_CHANGE_RECORDS {
         events.push(buck2_data::FileWatcherEvent {
             event: buck2_data::FileWatcherEventType::Modify as i32,
@@ -514,6 +527,13 @@ fn push_no_watchfs_file_change_event(
             path: path.to_string(),
         });
     }
+}
+
+fn is_bazel_output_or_external_file_state_path(path: &CellPath) -> bool {
+    path.cell().as_str().starts_with("bzlmod_")
+        || path.path().starts_with(CellRelativePath::unchecked_new(
+            InvocationPaths::buck_out_dir_prefix().as_str(),
+        ))
 }
 
 fn no_watchfs_file_watcher_kind(

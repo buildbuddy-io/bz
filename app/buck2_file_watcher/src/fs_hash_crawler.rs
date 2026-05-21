@@ -80,7 +80,8 @@ impl FsHashCrawler {
                 .await??;
         let mut guard = self.snapshot.lock().unwrap();
         let old_snapshot = mem::replace(&mut *guard, new_snapshot);
-        let (stats, changes) = old_snapshot.get_updates_for_dice(&guard, &self.ignore_specs)?;
+        let (stats, changes) =
+            old_snapshot.get_updates_for_dice(&guard, &self.ignore_specs, &self.cells)?;
         changes.write_to_dice(&mut dice)?;
         Ok((stats, dice))
     }
@@ -232,12 +233,18 @@ impl FsSnapshot {
         &self,
         new_snapshot: &FsSnapshot,
         ignore_specs: &StdBuckHashMap<CellName, IgnoreSet>,
+        cells: &CellResolver,
     ) -> buck2_error::Result<(buck2_data::FileWatcherStats, FileChangeTracker)> {
         let events = self.get_updates(new_snapshot)?;
         let mut changed = FileChangeTracker::new();
         let mut stats = FileWatcherStats::new(Default::default(), events.len());
         let mut ignored = 0;
         for event in events.into_iter() {
+            if crate::is_bzlmod_external_cell_path(cells, &event.cell_path) {
+                ignored += 1;
+                continue;
+            }
+
             let ignore = ignore_specs
                 .get(&event.cell_path.cell())
                 .is_some_and(|i| i.is_match(event.cell_path.path()));
@@ -310,6 +317,9 @@ impl FsSnapshot {
             if rel_path.starts_with(InvocationPaths::buck_out_dir_prefix())
                 || rel_path.starts_with(ProjectRelativePath::unchecked_new(".hg"))
             {
+                continue;
+            }
+            if crate::is_bzlmod_external_cell_path(cells, &cell_path) {
                 continue;
             }
             if ignore_specs

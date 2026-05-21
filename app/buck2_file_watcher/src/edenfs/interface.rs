@@ -16,6 +16,7 @@ use allocative::Allocative;
 use async_trait::async_trait;
 use buck2_common::file_ops::dice::FileChangeTracker;
 use buck2_common::ignores::ignore_set::IgnoreSet;
+use buck2_common::invocation_paths::InvocationPaths;
 use buck2_common::legacy_configs::configs::LegacyBuckConfig;
 use buck2_common::legacy_configs::key::BuckconfigKeyRef;
 use buck2_core::cells::CellResolver;
@@ -480,8 +481,17 @@ impl EdenFsFileWatcher {
             stats.add_ignored(1);
             return Ok(());
         }
+        if project_rel_path.starts_with(InvocationPaths::buck_out_dir_prefix()) {
+            stats.add_ignored(1);
+            return Ok(());
+        }
 
         let cell_path = self.cells.get_cell_path(project_rel_path);
+
+        if crate::is_bzlmod_external_cell_path(&self.cells, &cell_path) {
+            stats.add_ignored(1);
+            return Ok(());
+        }
 
         let ignore = self
             .ignore_specs

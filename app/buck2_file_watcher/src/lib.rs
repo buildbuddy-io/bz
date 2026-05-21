@@ -11,6 +11,9 @@
 #![feature(error_generic_member_access)]
 #![feature(used_with_arg)]
 
+use buck2_core::cells::CellResolver;
+use buck2_core::cells::cell_path::CellPath;
+use buck2_core::cells::external::ExternalCellOrigin;
 use buck2_core::fs::project_rel_path::ProjectRelativePath;
 
 pub mod dep_files;
@@ -33,4 +36,24 @@ mod watchman;
 pub(crate) fn is_watchman_cookie(path: &ProjectRelativePath) -> bool {
     path.file_name()
         .is_some_and(|f| f.as_str().starts_with(".watchman-cookie-"))
+}
+
+/// Bazel treats generated external repository contents as repository state, not
+/// as ordinary source files. Ignore their filesystem notifications here and let
+/// the repository materialization keys decide whether the repo is current.
+pub(crate) fn is_bzlmod_external_cell_path(cells: &CellResolver, cell_path: &CellPath) -> bool {
+    if matches!(
+        cells
+            .get(cell_path.cell())
+            .ok()
+            .and_then(|cell| cell.external()),
+        Some(ExternalCellOrigin::Bzlmod(_) | ExternalCellOrigin::BzlmodGenerated(_))
+    ) {
+        return true;
+    }
+
+    // The fs_hash_crawler snapshots already-resolved CellPaths, so bzlmod
+    // generated repositories may reach this point as declared cells even though
+    // they are still output-base repository state from Bazel's perspective.
+    cell_path.cell().as_str().starts_with("bzlmod_")
 }

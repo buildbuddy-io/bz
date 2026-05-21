@@ -100,6 +100,11 @@ impl NotifyFileData {
             }
 
             let cell_path = cells.get_cell_path(&path);
+            if crate::is_bzlmod_external_cell_path(cells, &cell_path) {
+                self.ignored += 1;
+                continue;
+            }
+
             let ignore = ignore_specs
                 .get(&cell_path.cell())
                 // See the comment on the analogous code in `watchman/interface.rs`
