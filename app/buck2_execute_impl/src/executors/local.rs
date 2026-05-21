@@ -2187,7 +2187,19 @@ fn create_or_replace_symlink(source: &Path, dest: &AbsNormPath) -> buck2_error::
     if let Some(parent) = dest.parent() {
         fs_util::create_dir_all(parent)?;
     }
-    fs_util::symlink(source, dest).categorize_internal()
+    match fs_util::symlink(source, dest).categorize_internal() {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            if fs_util::read_link(dest)
+                .map(|target| target == source)
+                .unwrap_or(false)
+            {
+                Ok(())
+            } else {
+                Err(e)
+            }
+        }
+    }
 }
 
 pub struct MaterializedInputPaths {

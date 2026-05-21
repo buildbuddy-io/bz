@@ -59,6 +59,7 @@ use buck2_build_api::interpreter::rule_defs::cmd_args::param_file::bazel_param_f
 use buck2_build_api::interpreter::rule_defs::cmd_args::param_file::visit_bazel_param_file_content;
 use buck2_build_api::interpreter::rule_defs::cmd_args::space_separated::SpaceSeparatedCommandLineBuilder;
 use buck2_build_api::interpreter::rule_defs::cmd_args::value_as::ValueAsCommandLineLike;
+use buck2_build_api::interpreter::rule_defs::context::bazel_runfiles_prefix;
 use buck2_build_api::interpreter::rule_defs::provider::builtin::cc_info::BazelCcCompileCommandLine;
 use buck2_build_api::interpreter::rule_defs::provider::builtin::cc_info::FrozenBazelCcCompileCommandLine;
 use buck2_build_api::interpreter::rule_defs::provider::builtin::worker_info::FrozenWorkerInfo;
@@ -3366,8 +3367,19 @@ impl RunAction {
         };
 
         let mut aliases = BuckIndexSet::new();
+        let mut saw_workspace_runfiles_entry = false;
+        let mut workspace_anchor = None;
+        let workspace_runfiles_prefix = bazel_runfiles_prefix();
         for entry in bazel_runfiles_entries(runfiles)? {
             let entry = entry?;
+            let normalized_entry_path = entry.path.strip_prefix("../").unwrap_or(entry.path);
+            if normalized_entry_path == workspace_runfiles_prefix
+                || normalized_entry_path
+                    .strip_prefix(workspace_runfiles_prefix)
+                    .is_some_and(|suffix| suffix.starts_with('/'))
+            {
+                saw_workspace_runfiles_entry = true;
+            }
             let artifact = ValueAsInputArtifactLike::unpack_value(entry.target_file)?
                 .ok_or_else(|| {
                     internal_error!("Bazel executable runfiles target_file should be File")
@@ -3390,14 +3402,37 @@ impl RunAction {
                         .as_ref(),
                     )
                     .buck_error_context("Invalid Bazel runfiles source path")?;
+                let source_requires_materialization =
+                    artifact.requires_materialization(artifact_fs);
+                if workspace_anchor.is_none() {
+                    workspace_anchor =
+                        Some((source_path.clone(), source_requires_materialization, value.dupe()));
+                }
                 if source_path == alias {
                     continue;
                 }
                 inputs.push(CommandExecutionInput::ArtifactPathAlias {
                     source_path,
-                    source_requires_materialization: artifact.requires_materialization(artifact_fs),
+                    source_requires_materialization,
                     path: alias,
                     value: value.dupe(),
+                });
+            }
+        }
+        if !saw_workspace_runfiles_entry
+            && let Some((source_path, source_requires_materialization, value)) = workspace_anchor
+        {
+            let alias = Self::bazel_runfiles_alias_path(
+                bazel_execroot,
+                executable_path,
+                &format!("{workspace_runfiles_prefix}/.runfile"),
+            )?;
+            if aliases.insert(alias.clone()) && source_path != alias {
+                inputs.push(CommandExecutionInput::ArtifactPathAlias {
+                    source_path,
+                    source_requires_materialization,
+                    path: alias,
+                    value,
                 });
             }
         }
