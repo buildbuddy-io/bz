@@ -100,6 +100,7 @@ use crate::attrs::starlark_attribute::BazelComputedDefault;
 use crate::attrs::starlark_attribute::FrozenBazelComputedDefault;
 use crate::attrs::starlark_attribute::StarlarkAttribute;
 use crate::bazel_aspect::collect_bazel_aspect_hidden_attributes;
+use crate::bazel_aspect::collect_bazel_aspect_toolchains;
 use crate::bazel_aspect::frozen_aspect_implementation;
 use crate::bazel_aspect::frozen_aspect_info;
 use crate::interpreter::build_context::BuildContext;
@@ -394,6 +395,8 @@ pub struct StarlarkRuleCallable<'v> {
     uses_plugins: Vec<PluginKind>,
     /// Bazel toolchain types declared by `rule(toolchains = ...)`.
     bazel_toolchains: Vec<BazelToolchainRequirement>,
+    /// Bazel toolchain types declared by aspects attached to this rule's attrs.
+    bazel_aspect_toolchains: Vec<BazelToolchainRequirement>,
     /// Bazel explicit output attrs declared by `attr.output()` / `attr.output_list()`.
     bazel_output_attrs: Vec<BazelOutputAttr>,
     /// Bazel implicit outputs declared by `rule(outputs = {...})`.
@@ -874,6 +877,18 @@ impl<'v> StarlarkRuleCallable<'v> {
         for (name, aspects) in &bazel_attr_aspects {
             collect_bazel_aspect_hidden_attributes(name, aspects, &mut sorted_validated_attrs);
         }
+        let mut bazel_aspect_toolchains = Vec::new();
+        for aspects in bazel_attr_aspects.values() {
+            collect_bazel_aspect_toolchains(aspects, &mut bazel_aspect_toolchains);
+        }
+        let bazel_aspect_toolchains = bazel_aspect_toolchains
+            .into_iter()
+            .map(|toolchain| {
+                let mut toolchain = bazel_toolchain_requirement_from_value(toolchain)?;
+                toolchain.mandatory = false;
+                Ok(toolchain)
+            })
+            .collect::<buck2_error::Result<Vec<_>>>()?;
         let is_bazel_build_setting = build_setting.is_some();
         let build_setting_attrs = bazel_build_setting_attrs(build_setting)?;
         if !build_setting_attrs.is_empty() {
@@ -941,6 +956,7 @@ impl<'v> StarlarkRuleCallable<'v> {
             rule_kind,
             uses_plugins,
             bazel_toolchains,
+            bazel_aspect_toolchains,
             bazel_output_attrs,
             bazel_implicit_outputs,
             bazel_output_to_genfiles,
@@ -1180,6 +1196,7 @@ impl<'v> Freeze for StarlarkRuleCallable<'v> {
                 rule_kind: self.rule_kind,
                 uses_plugins: self.uses_plugins,
                 bazel_toolchains: self.bazel_toolchains,
+                bazel_aspect_toolchains: self.bazel_aspect_toolchains,
                 bazel_output_attrs: self.bazel_output_attrs,
                 bazel_implicit_outputs: self.bazel_implicit_outputs,
                 bazel_output_to_genfiles: self.bazel_output_to_genfiles,

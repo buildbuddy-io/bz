@@ -227,6 +227,10 @@ impl TargetNode {
         self.as_ref().bazel_toolchains()
     }
 
+    pub fn bazel_aspect_toolchains(&self) -> &[BazelToolchainRequirement] {
+        self.as_ref().bazel_aspect_toolchains()
+    }
+
     pub fn is_bazel_rule(&self) -> bool {
         self.as_ref().is_bazel_rule()
     }
@@ -793,6 +797,10 @@ impl<'a> TargetNodeRef<'a> {
         &self.0.get().rule.bazel_toolchains
     }
 
+    pub fn bazel_aspect_toolchains(self) -> &'a [BazelToolchainRequirement] {
+        &self.0.get().rule.bazel_aspect_toolchains
+    }
+
     pub fn is_bazel_rule(self) -> bool {
         self.0.get().rule.is_bazel_rule
     }
@@ -896,6 +904,7 @@ pub mod testing {
                     cfg: RuleIncomingTransition::None,
                     uses_plugins: Vec::new(),
                     bazel_toolchains: Vec::new(),
+                    bazel_aspect_toolchains: Vec::new(),
                     bazel_output_attrs: Vec::new(),
                     bazel_implicit_outputs: Vec::new(),
                     bazel_output_to_genfiles: false,

@@ -75,6 +75,8 @@ pub struct Rule {
     pub uses_plugins: Vec<PluginKind>,
     /// Bazel toolchain types declared by `rule(toolchains = ...)`.
     pub bazel_toolchains: Vec<BazelToolchainRequirement>,
+    /// Bazel toolchain types declared by aspects attached to this rule's attrs.
+    pub bazel_aspect_toolchains: Vec<BazelToolchainRequirement>,
     /// Bazel explicit output attrs declared with `attr.output()` or `attr.output_list()`.
     pub bazel_output_attrs: Vec<BazelOutputAttr>,
     /// Bazel implicit outputs declared with `rule(outputs = {...})`.
