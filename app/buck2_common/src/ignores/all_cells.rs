@@ -67,13 +67,14 @@ impl HasCellFileIgnores for DiceComputations<'_> {
             let ignore_spec = read_bazelignore_spec(self, cell_name).await?;
             let cell_ignores = CellFileIgnores::new_for_interpreter(
                 &ignore_spec,
-                instance.nested_cells().clone(),
+                NestedCells::empty(),
                 cells.is_root_cell(cell_name),
             )?;
             return Ok(Arc::new(cell_ignores));
         }
 
         let config = self.get_legacy_config_on_dice(cell_name).await?;
+        let bazel_compat = bazel_compat_enabled(self, &config)?;
 
         let ignore_spec = config.lookup(
             self,
@@ -83,16 +84,21 @@ impl HasCellFileIgnores for DiceComputations<'_> {
             },
         )?;
         let ignore_spec = ignore_spec.as_ref().map_or("", |s| &**s);
-        let ignore_spec = if bazel_compat_enabled(self, &config)? {
+        let ignore_spec = if bazel_compat {
             let bazelignore_spec = read_bazelignore_spec(self, cell_name).await?;
             merge_ignore_specs(ignore_spec, &bazelignore_spec)
         } else {
             ignore_spec.to_owned()
         };
+        let nested_cells = if bazel_compat {
+            NestedCells::empty()
+        } else {
+            instance.nested_cells().clone()
+        };
 
         let cell_ignores = CellFileIgnores::new_for_interpreter(
             &ignore_spec,
-            instance.nested_cells().clone(),
+            nested_cells,
             cells.is_root_cell(cell_name),
         )?;
 

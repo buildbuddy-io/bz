@@ -114,11 +114,14 @@ fn populate_bazel_package_groups(package: &Arc<Package>, recorder: &TargetsRecor
 }
 
 fn is_bazel_compat_build_file(buildfile_path: &BuildFilePath) -> bool {
+    let filename = buildfile_path.filename().as_str();
+    if filename == "BUILD.bazel" {
+        return true;
+    }
+
     let cell = buildfile_path.cell();
     let cell = cell.as_str();
-    let filename = buildfile_path.filename().as_str();
-    (cell == "root" || cell == "bazel_tools" || cell.starts_with("bzlmod_"))
-        && (filename == "BUILD" || filename == "BUILD.bazel")
+    filename == "BUILD" && (cell == "root" || cell == "bazel_tools" || cell.starts_with("bzlmod_"))
 }
 
 fn populate_bazel_input_file_targets(

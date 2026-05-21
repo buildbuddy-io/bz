@@ -92,7 +92,9 @@ impl<'v> StarlarkValue<'v> for BazelPyInternal {
 }
 
 fn bazel_repo_name_for_cell(cell: &str) -> String {
-    if cell == "root" {
+    if cell == "root"
+        || bzlmod_canonical_repo_name_for_cell(cell).is_some_and(|repo| repo.is_empty())
+    {
         return String::new();
     }
     bzlmod_canonical_repo_name_for_cell(cell).unwrap_or_else(|| cell.to_owned())
@@ -101,7 +103,9 @@ fn bazel_repo_name_for_cell(cell: &str) -> String {
 fn label_repo_runfiles_path(package: PackageLabel) -> String {
     let cell = package.cell_name();
     let package_path = package.cell_relative_path().as_str();
-    if cell.as_str() == "root" {
+    if cell.as_str() == "root"
+        || bzlmod_canonical_repo_name_for_cell(cell.as_str()).is_some_and(|repo| repo.is_empty())
+    {
         return package_path.to_owned();
     }
     let repo = bazel_repo_name_for_cell(cell.as_str());
@@ -129,7 +133,9 @@ fn label_value_repo_runfiles_path(label: Value<'_>) -> buck2_error::Result<Strin
 }
 
 fn repo_mapping_source_repo_name_for_cell(cell: &str) -> String {
-    if cell == "root" {
+    if cell == "root"
+        || bzlmod_canonical_repo_name_for_cell(cell).is_some_and(|repo| repo.is_empty())
+    {
         String::new()
     } else {
         bazel_repo_name_for_cell(cell)
@@ -137,7 +143,9 @@ fn repo_mapping_source_repo_name_for_cell(cell: &str) -> String {
 }
 
 fn repo_mapping_target_repo_directory_for_cell(cell: &str) -> String {
-    if cell == "root" {
+    if cell == "root"
+        || bzlmod_canonical_repo_name_for_cell(cell).is_some_and(|repo| repo.is_empty())
+    {
         "_main".to_owned()
     } else {
         bazel_repo_name_for_cell(cell)

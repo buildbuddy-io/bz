@@ -485,7 +485,7 @@ impl LoadResolver for InterpreterLoadResolver {
             .global_state
             .cell_resolver
             .get_cell_path(&project_path);
-        if reformed_path.cell() != path.cell() {
+        if reformed_path.cell() != path.cell() && !self.config.bazel_compat_prelude_enabled() {
             // We actually call resolve_load twice for each loadable - once with all load's up front,
             // then again on each one when we are loading. The second time we don't have a location,
             // so just omit the soft_error that time. Once it is a real error, we should real error on either.
@@ -654,7 +654,7 @@ impl InterpreterForDir {
                     internal_error!(
                         "Should've had an env for the prelude import `{prelude_import}`"
                     )
-            })?;
+                })?;
             env.import_public_symbols(prelude_env.env());
             if let Ok(Some(native)) = prelude_env.env().get_option("native") {
                 // Keep `native` from the prelude as an explicit build-file binding.

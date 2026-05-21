@@ -16,6 +16,7 @@ use std::hash::Hasher;
 
 use buck2_artifact::artifact::artifact_type::Artifact;
 use buck2_core::cells::external::ExternalCellOrigin;
+use buck2_core::cells::external::bzlmod_canonical_repo_name_for_cell;
 use buck2_core::cells::external::external_cell_origin_for_cell;
 use buck2_core::deferred::base_deferred_key::BaseDeferredKey;
 use buck2_core::fs::buck_out_path::BazelOutputPathKind;
@@ -52,6 +53,11 @@ fn bazel_external_repo_name<'a>(cell: &'a str, origin: &'a ExternalCellOrigin) -
         ExternalCellOrigin::Bzlmod(setup) => setup.canonical_repo_name.as_ref(),
         ExternalCellOrigin::BzlmodGenerated(setup) => setup.canonical_repo_name.as_ref(),
     }
+}
+
+fn bazel_cell_is_main(cell: &str) -> bool {
+    cell == "root"
+        || bzlmod_canonical_repo_name_for_cell(cell).is_some_and(|repo| repo.is_empty())
 }
 
 fn push_bazel_path_component(path: &mut String, component: &str) {
@@ -342,7 +348,7 @@ fn bazel_package_exec_path(owner: &BaseDeferredKey) -> String {
     if let Some(origin) = external_cell_origin_for_cell(cell.as_str()) {
         push_bazel_path_component(&mut path, "external");
         push_bazel_path_component(&mut path, bazel_external_repo_name(cell.as_str(), &origin));
-    } else if cell.as_str() != "root" {
+    } else if !bazel_cell_is_main(cell.as_str()) {
         push_bazel_path_component(&mut path, cell.as_str());
     }
     push_bazel_path_component(&mut path, package_path.as_str());
@@ -360,7 +366,7 @@ fn bazel_package_runfiles_path(owner: &BaseDeferredKey) -> String {
     if let Some(origin) = external_cell_origin_for_cell(cell.as_str()) {
         push_bazel_path_component(&mut path, "..");
         push_bazel_path_component(&mut path, bazel_external_repo_name(cell.as_str(), &origin));
-    } else if cell.as_str() != "root" {
+    } else if !bazel_cell_is_main(cell.as_str()) {
         push_bazel_path_component(&mut path, cell.as_str());
     }
     push_bazel_path_component(&mut path, package_path.as_str());
@@ -533,7 +539,7 @@ pub fn bazel_artifact_path(path: ArtifactPath<'_>) -> String {
             if let Some(path) = bazel_external_cells_exec_path(source_path.as_str()) {
                 return path;
             }
-            if cell.as_str() == "root" {
+            if bazel_cell_is_main(cell.as_str()) {
                 source_path.to_string()
             } else if source_path.is_empty() {
                 cell.as_str().to_owned()
@@ -572,7 +578,7 @@ pub fn bazel_artifact_short_path(path: ArtifactPath<'_>) -> String {
             if let Some(path) = bazel_external_cells_runfiles_path(source_path.as_str()) {
                 return path;
             }
-            if cell.as_str() == "root" {
+            if bazel_cell_is_main(cell.as_str()) {
                 source_path.to_string()
             } else if source_path.is_empty() {
                 cell.as_str().to_owned()

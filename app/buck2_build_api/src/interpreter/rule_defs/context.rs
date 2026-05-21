@@ -512,18 +512,24 @@ fn bazel_build_file_path_from_label(
 }
 
 pub fn bazel_workspace_name_for_cell(cell: &str) -> String {
-    if cell == "root" {
-        "_main".to_owned()
+    if cell == "root"
+        || bzlmod_canonical_repo_name_for_cell(cell).is_some_and(|repo| repo.is_empty())
+    {
+        bazel_runfiles_prefix().to_owned()
     } else {
         bzlmod_canonical_repo_name_for_cell(cell).unwrap_or_else(|| cell.to_owned())
     }
+}
+
+pub fn bazel_runfiles_prefix() -> &'static str {
+    "_main"
 }
 
 pub fn bazel_workspace_name_for_label(
     label: Option<ValueTyped<'_, StarlarkConfiguredProvidersLabel>>,
 ) -> String {
     let Some(label) = label else {
-        return "_main".to_owned();
+        return bazel_runfiles_prefix().to_owned();
     };
     let cell = label.label().target().pkg().cell_name();
     bazel_workspace_name_for_cell(cell.as_str())
@@ -630,7 +636,8 @@ fn analysis_actions_methods_context(builder: &mut MethodsBuilder) {
 
     #[starlark(attribute)]
     fn workspace_name<'v>(this: &AnalysisActions<'v>) -> starlark::Result<String> {
-        Ok(bazel_workspace_name_for_label(this.bazel_label()))
+        let _ = this;
+        Ok(bazel_runfiles_prefix().to_owned())
     }
 
     #[starlark(attribute)]
@@ -2022,8 +2029,7 @@ pub fn analysis_actions_to_bazel_ctx_with_overrides<'v>(
         ("version_file", Value::new_none()),
         (
             "workspace_name",
-            heap.alloc_str(&bazel_workspace_name_for_label(label))
-                .to_value(),
+            heap.alloc_str(bazel_runfiles_prefix()).to_value(),
         ),
     ]))
 }
@@ -3232,7 +3238,8 @@ fn analysis_context_methods(builder: &mut MethodsBuilder) {
     /// Bazel workspace/runfiles prefix.
     #[starlark(attribute)]
     fn workspace_name<'v>(this: RefAnalysisContext<'v>) -> starlark::Result<String> {
-        Ok(bazel_workspace_name_for_label(this.0.label))
+        let _ = this;
+        Ok(bazel_runfiles_prefix().to_owned())
     }
 
     /// Enabled Bazel features for this rule.
