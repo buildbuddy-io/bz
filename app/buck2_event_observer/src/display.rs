@@ -462,6 +462,7 @@ pub fn display_analysis_stage(stage: &buck2_data::analysis_stage_start::Stage) -
 
 pub fn display_file_watcher_end(file_watcher_end: &buck2_data::FileWatcherEnd) -> Vec<String> {
     const MAX_PRINT_MESSAGES: usize = 3;
+    const MAX_ADDITIONAL_PATHS: usize = 3;
     let mut res = Vec::new();
 
     if let Some(stats) = &file_watcher_end.stats {
@@ -497,12 +498,27 @@ pub fn display_file_watcher_end(file_watcher_end: &buck2_data::FileWatcherEnd) -
                 // plus those we didn't get the names for
                 (stats.events_processed as usize).saturating_sub(stats.events.len());
         if unprinted_paths > 0 {
+            let additional_paths = to_print
+                .iter()
+                .skip(MAX_PRINT_MESSAGES)
+                .map(|(path, _)| path.as_str())
+                .take(MAX_ADDITIONAL_PATHS)
+                .collect::<Vec<_>>()
+                .join(", ");
+            let additional_paths = if additional_paths.is_empty() {
+                String::new()
+            } else {
+                format!(": {additional_paths}")
+            };
+
             if is_fresh_instance {
                 res.push(format!(
-                    "{unprinted_paths} additional file change events (since mergebase)"
+                    "{unprinted_paths} additional file change events (since mergebase){additional_paths}"
                 ));
             } else {
-                res.push(format!("{unprinted_paths} additional file change events"));
+                res.push(format!(
+                    "{unprinted_paths} additional file change events{additional_paths}"
+                ));
             }
         }
 
@@ -1167,6 +1183,93 @@ impl<'a> CriticalPathEntryDisplay<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn file_watcher_event(path: &str) -> buck2_data::FileWatcherEvent {
+        buck2_data::FileWatcherEvent {
+            event: buck2_data::FileWatcherEventType::Modify as i32,
+            kind: FileWatcherKind::File as i32,
+            path: path.to_owned(),
+        }
+    }
+
+    #[test]
+    fn displays_sample_paths_for_additional_file_changes() {
+        let file_watcher_end = buck2_data::FileWatcherEnd {
+            stats: Some(buck2_data::FileWatcherStats {
+                events_processed: 5,
+                events: vec![
+                    file_watcher_event("first"),
+                    file_watcher_event("second"),
+                    file_watcher_event("third"),
+                    file_watcher_event("fourth"),
+                    file_watcher_event("fifth"),
+                ],
+                ..Default::default()
+            }),
+        };
+
+        assert_eq!(
+            display_file_watcher_end(&file_watcher_end),
+            vec![
+                "File changed: first".to_owned(),
+                "File changed: second".to_owned(),
+                "File changed: third".to_owned(),
+                "2 additional file change events: fourth, fifth".to_owned(),
+            ]
+        );
+    }
+
+    #[test]
+    fn omits_sample_paths_when_only_unknown_file_changes_are_unprinted() {
+        let file_watcher_end = buck2_data::FileWatcherEnd {
+            stats: Some(buck2_data::FileWatcherStats {
+                events_processed: 5,
+                events: vec![
+                    file_watcher_event("first"),
+                    file_watcher_event("second"),
+                    file_watcher_event("third"),
+                ],
+                ..Default::default()
+            }),
+        };
+
+        assert_eq!(
+            display_file_watcher_end(&file_watcher_end),
+            vec![
+                "File changed: first".to_owned(),
+                "File changed: second".to_owned(),
+                "File changed: third".to_owned(),
+                "2 additional file change events".to_owned(),
+            ]
+        );
+    }
+
+    #[test]
+    fn displays_sample_paths_for_fresh_instance_file_changes() {
+        let file_watcher_end = buck2_data::FileWatcherEnd {
+            stats: Some(buck2_data::FileWatcherStats {
+                fresh_instance: true,
+                events_processed: 4,
+                events: vec![
+                    file_watcher_event("first"),
+                    file_watcher_event("second"),
+                    file_watcher_event("third"),
+                    file_watcher_event("fourth"),
+                ],
+                ..Default::default()
+            }),
+        };
+
+        assert_eq!(
+            display_file_watcher_end(&file_watcher_end),
+            vec![
+                "File changed (since mergebase): first".to_owned(),
+                "File changed (since mergebase): second".to_owned(),
+                "File changed (since mergebase): third".to_owned(),
+                "1 additional file change events (since mergebase): fourth".to_owned(),
+            ]
+        );
+    }
 
     #[test]
     fn removes_color_characters() {
