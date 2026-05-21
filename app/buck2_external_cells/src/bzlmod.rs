@@ -65,7 +65,7 @@ use buck2_core::cells::external::ExternalCellOrigin;
 use buck2_core::cells::external::bzlmod_canonical_repo_name_for_cell;
 use buck2_core::cells::external::bzlmod_cell_aliases_for_cell;
 use buck2_core::cells::external::bzlmod_cell_name;
-use buck2_core::cells::external::extend_bzlmod_cell_aliases;
+use buck2_core::cells::external::register_bzlmod_cell_aliases;
 use buck2_core::cells::external::register_bzlmod_cell_canonical_repo_name_for_cell;
 use buck2_core::cells::external::register_external_cell_origin;
 use buck2_core::cells::name::CellName;
@@ -78,6 +78,7 @@ use buck2_directory::directory::directory::Directory;
 use buck2_error::BuckErrorContext;
 use buck2_error::internal_error;
 use buck2_events::dispatch::span_async_simple;
+use buck2_events::dispatch::span_simple;
 use buck2_execute::artifact_value::ArtifactValue;
 use buck2_execute::digest_config::HasDigestConfig;
 use buck2_execute::directory::ActionDirectoryEntry;
@@ -124,6 +125,9 @@ static BZLMOD_MATERIALIZATION_LOCKS: OnceLock<
     Mutex<BTreeMap<String, Arc<tokio::sync::Mutex<()>>>>,
 > = OnceLock::new();
 static BZLMOD_HIDDEN_LOCKFILE_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+static BZLMOD_MODULE_EXTENSION_REPO_MAPPING_REGISTRATIONS: OnceLock<
+    Mutex<BTreeMap<String, [u8; 32]>>,
+> = OnceLock::new();
 static BZLMOD_DOWNLOAD_HTTP_CLIENT: LazyLock<tokio::sync::OnceCell<HttpClient>> =
     LazyLock::new(tokio::sync::OnceCell::new);
 
@@ -3747,8 +3751,30 @@ fn bzlmod_module_extension_unique_name(
 
 #[derive(Clone, Debug, PartialEq, Eq, allocative::Allocative, Pagable)]
 struct BzlmodModuleExtensionRepoMappingEntries {
+    registration_key: Option<String>,
     sibling_origins: Vec<(String, String, BzlmodGeneratedCellSetup)>,
     cell_aliases: Vec<(String, Vec<(String, String)>)>,
+    fingerprint: [u8; 32],
+}
+
+impl BzlmodModuleExtensionRepoMappingEntries {
+    fn new(
+        registration_key: Option<String>,
+        sibling_origins: Vec<(String, String, BzlmodGeneratedCellSetup)>,
+        cell_aliases: Vec<(String, Vec<(String, String)>)>,
+    ) -> Self {
+        let fingerprint = bzlmod_module_extension_repo_mapping_entries_fingerprint(
+            &registration_key,
+            &sibling_origins,
+            &cell_aliases,
+        );
+        Self {
+            registration_key,
+            sibling_origins,
+            cell_aliases,
+            fingerprint,
+        }
+    }
 }
 
 #[derive(
@@ -3761,10 +3787,10 @@ struct BzlmodModuleExtensionRepoMappingEntries {
     allocative::Allocative,
     Pagable
 )]
-#[display("MODULE_EXTENSION_REPO_MAPPING_ENTRIES({generated_setup:?})")]
+#[display("MODULE_EXTENSION_REPO_MAPPING_ENTRIES({module_extension:?})")]
 #[pagable_typetag(dice::DiceKeyDyn)]
 struct BzlmodModuleExtensionRepoMappingEntriesKey {
-    generated_setup: BzlmodGeneratedCellSetup,
+    extension_unique_name: String,
     module_extension: BzlmodModuleExtensionRepoSetup,
     working_dir: ProjectRelativePathBuf,
 }
@@ -3792,7 +3818,7 @@ impl Key for BzlmodModuleExtensionRepoMappingEntriesKey {
             )
             .await?;
         Ok(Arc::new(bzlmod_module_extension_repo_mapping_entries(
-            &self.generated_setup,
+            &self.extension_unique_name,
             &self.module_extension,
             &evaluation,
             &mapping_base,
@@ -3801,7 +3827,7 @@ impl Key for BzlmodModuleExtensionRepoMappingEntriesKey {
 
     fn equality(x: &Self::Value, y: &Self::Value) -> bool {
         match (x, y) {
-            (Ok(x), Ok(y)) => x == y,
+            (Ok(x), Ok(y)) => x.fingerprint == y.fingerprint,
             _ => false,
         }
     }
@@ -3816,19 +3842,18 @@ impl Key for BzlmodModuleExtensionRepoMappingEntriesKey {
 }
 
 fn bzlmod_module_extension_repo_mapping_entries(
-    generated_setup: &BzlmodGeneratedCellSetup,
+    extension_unique_name: &str,
     module_extension: &BzlmodModuleExtensionRepoSetup,
     evaluation: &BazelModuleExtensionEvaluationResult,
     mapping_base: &BzlmodModuleExtensionRepoMappingBase,
 ) -> buck2_error::Result<BzlmodModuleExtensionRepoMappingEntries> {
-    let Some(extension_unique_name) =
-        bzlmod_module_extension_unique_name(generated_setup, module_extension)
-    else {
-        return Ok(BzlmodModuleExtensionRepoMappingEntries {
-            sibling_origins: Vec::new(),
-            cell_aliases: Vec::new(),
-        });
-    };
+    if extension_unique_name.is_empty() {
+        return Ok(BzlmodModuleExtensionRepoMappingEntries::new(
+            None,
+            Vec::new(),
+            Vec::new(),
+        ));
+    }
 
     let mut visible_aliases = mapping_base
         .host_aliases
@@ -3852,7 +3877,7 @@ fn bzlmod_module_extension_repo_mapping_entries(
     let mut cell_aliases = Vec::new();
     for (repo_name, (cell_name, canonical_repo_name)) in sibling_cells {
         let mut sibling_module_extension = module_extension.dupe();
-        sibling_module_extension.extension_unique_name = Arc::from(extension_unique_name.as_str());
+        sibling_module_extension.extension_unique_name = Arc::from(extension_unique_name);
         sibling_module_extension.repo_name = Arc::from(repo_name);
         let sibling_setup = BzlmodGeneratedCellSetup {
             canonical_repo_name: Arc::from(canonical_repo_name.clone()),
@@ -3862,26 +3887,132 @@ fn bzlmod_module_extension_repo_mapping_entries(
         cell_aliases.push((cell_name, visible_aliases.clone()));
     }
 
-    Ok(BzlmodModuleExtensionRepoMappingEntries {
+    Ok(BzlmodModuleExtensionRepoMappingEntries::new(
+        Some(extension_unique_name.to_owned()),
         sibling_origins,
         cell_aliases,
-    })
+    ))
+}
+
+fn bzlmod_module_extension_repo_mapping_entries_fingerprint(
+    registration_key: &Option<String>,
+    sibling_origins: &[(String, String, BzlmodGeneratedCellSetup)],
+    cell_aliases: &[(String, Vec<(String, String)>)],
+) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new();
+    update_bzlmod_repo_contents_cache_key(
+        &mut hasher,
+        "buck2-bzlmod-module-extension-repo-mapping-entries-v1",
+    );
+    update_bzlmod_repo_contents_cache_key_opt(&mut hasher, registration_key.as_deref());
+    update_bzlmod_repo_contents_cache_key(&mut hasher, &sibling_origins.len().to_string());
+    for (cell_name, canonical_repo_name, setup) in sibling_origins {
+        update_bzlmod_repo_contents_cache_key(&mut hasher, cell_name);
+        update_bzlmod_repo_contents_cache_key(&mut hasher, canonical_repo_name);
+        update_bzlmod_repo_contents_cache_key(&mut hasher, &setup.canonical_repo_name);
+        match &setup.generator {
+            BzlmodGeneratedCellGenerator::ModuleExtensionRepo(module_extension) => {
+                update_bzlmod_repo_contents_cache_key(&mut hasher, "module_extension_repo");
+                update_bzlmod_repo_contents_cache_key(
+                    &mut hasher,
+                    &module_extension.parent_canonical_repo_name,
+                );
+                update_bzlmod_repo_contents_cache_key(
+                    &mut hasher,
+                    &module_extension.parent_is_root.to_string(),
+                );
+                update_bzlmod_repo_contents_cache_key(
+                    &mut hasher,
+                    &module_extension.extension_bzl_file,
+                );
+                update_bzlmod_repo_contents_cache_key(
+                    &mut hasher,
+                    &module_extension.extension_bzl_cell,
+                );
+                update_bzlmod_repo_contents_cache_key(
+                    &mut hasher,
+                    &module_extension.extension_bzl_path,
+                );
+                update_bzlmod_repo_contents_cache_key(
+                    &mut hasher,
+                    &module_extension.extension_unique_name,
+                );
+                update_bzlmod_repo_contents_cache_key(
+                    &mut hasher,
+                    &module_extension.extension_name,
+                );
+                update_bzlmod_repo_contents_cache_key(&mut hasher, &module_extension.repo_name);
+                update_bzlmod_repo_contents_cache_key(
+                    &mut hasher,
+                    &module_extension.extension_usages_key,
+                );
+            }
+            generator => {
+                update_bzlmod_repo_contents_cache_key(&mut hasher, &format!("{generator:?}"));
+            }
+        }
+    }
+    update_bzlmod_repo_contents_cache_key(&mut hasher, &cell_aliases.len().to_string());
+    for (cell_name, aliases) in cell_aliases {
+        update_bzlmod_repo_contents_cache_key(&mut hasher, cell_name);
+        update_bzlmod_repo_contents_cache_key(&mut hasher, &aliases.len().to_string());
+        for (alias, cell_name) in aliases {
+            update_bzlmod_repo_contents_cache_key(&mut hasher, alias);
+            update_bzlmod_repo_contents_cache_key(&mut hasher, cell_name);
+        }
+    }
+    *hasher.finalize().as_bytes()
 }
 
 fn register_bzlmod_module_extension_repo_mapping_entries(
     entries: &BzlmodModuleExtensionRepoMappingEntries,
 ) -> buck2_error::Result<()> {
-    for (cell_name, canonical_repo_name, setup) in &entries.sibling_origins {
-        register_bzlmod_cell_canonical_repo_name_for_cell(cell_name, canonical_repo_name);
-        register_external_cell_origin(
-            CellName::unchecked_new(cell_name)?,
-            ExternalCellOrigin::BzlmodGenerated(setup.dupe()),
-        );
+    if let Some(registration_key) = &entries.registration_key {
+        let registrations = BZLMOD_MODULE_EXTENSION_REPO_MAPPING_REGISTRATIONS
+            .get_or_init(|| Mutex::new(BTreeMap::new()));
+        let mut registrations = registrations
+            .lock()
+            .expect("bzlmod module extension repo mapping registrations poisoned");
+        if matches!(
+            registrations.get(registration_key),
+            Some(existing) if existing == &entries.fingerprint
+        ) {
+            return Ok(());
+        }
+        register_bzlmod_module_extension_repo_mapping_entries_uncached(entries)?;
+        registrations.insert(registration_key.clone(), entries.fingerprint);
+        return Ok(());
     }
-    for (cell_name, aliases) in &entries.cell_aliases {
-        extend_bzlmod_cell_aliases(cell_name, aliases.clone());
-    }
-    Ok(())
+
+    register_bzlmod_module_extension_repo_mapping_entries_uncached(entries)
+}
+
+fn register_bzlmod_module_extension_repo_mapping_entries_uncached(
+    entries: &BzlmodModuleExtensionRepoMappingEntries,
+) -> buck2_error::Result<()> {
+    span_simple(
+        buck2_data::DiceStateUpdateStageStart {
+            stage: format!(
+                "registering bzlmod repo mappings ({} repos, {} alias maps)",
+                entries.sibling_origins.len(),
+                entries.cell_aliases.len()
+            ),
+        },
+        || {
+            for (cell_name, canonical_repo_name, setup) in &entries.sibling_origins {
+                register_bzlmod_cell_canonical_repo_name_for_cell(cell_name, canonical_repo_name);
+                register_external_cell_origin(
+                    CellName::unchecked_new(cell_name)?,
+                    ExternalCellOrigin::BzlmodGenerated(setup.dupe()),
+                );
+            }
+            for (cell_name, aliases) in &entries.cell_aliases {
+                register_bzlmod_cell_aliases(cell_name, aliases.iter().cloned());
+            }
+            Ok(())
+        },
+        buck2_data::DiceStateUpdateStageEnd {},
+    )
 }
 
 async fn compute_bzlmod_module_extension_repo_mapping_entries(
@@ -3890,10 +4021,20 @@ async fn compute_bzlmod_module_extension_repo_mapping_entries(
     module_extension: &BzlmodModuleExtensionRepoSetup,
     _generated_repo_path: &ProjectRelativePath,
 ) -> buck2_error::Result<Arc<BzlmodModuleExtensionRepoMappingEntries>> {
-    let working_dir = bzlmod_module_extension_evaluation_working_dir(module_extension);
+    let Some(extension_unique_name) = bzlmod_module_extension_unique_name(setup, module_extension)
+    else {
+        return Ok(Arc::new(BzlmodModuleExtensionRepoMappingEntries::new(
+            None,
+            Vec::new(),
+            Vec::new(),
+        )));
+    };
+    let mut module_extension = module_extension.dupe();
+    module_extension.repo_name = Arc::from("");
+    let working_dir = bzlmod_module_extension_evaluation_working_dir(&module_extension);
     ctx.compute(&BzlmodModuleExtensionRepoMappingEntriesKey {
-        generated_setup: setup.dupe(),
-        module_extension: module_extension.dupe(),
+        extension_unique_name,
+        module_extension,
         working_dir,
     })
     .await?

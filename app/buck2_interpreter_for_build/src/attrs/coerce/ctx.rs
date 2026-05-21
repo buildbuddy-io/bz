@@ -322,7 +322,11 @@ impl BuildAttrCoercionContext {
             if repo.is_empty() || repo.contains(['/', ':', '[', ']']) {
                 return Ok(None);
             }
-            (repo, self.cell_alias_resolver.resolve(repo)?)
+            let cell_name = match self.cell_alias_resolver.resolve(repo) {
+                Ok(cell_name) => cell_name,
+                Err(_) => self.bazel_non_visible_repo_cell_name(repo)?,
+            };
+            (repo, cell_name)
         } else {
             return Ok(None);
         };
