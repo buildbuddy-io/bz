@@ -21,6 +21,7 @@ filegroup(
         "//bazel_tools/tools/proto:pkg_sources",
         "//bazel_tools/tools/python:pkg_sources",
         "//bazel_tools/tools/python/runfiles:pkg_sources",
+        "//bazel_tools/tools/sh:pkg_sources",
         "//bazel_tools/tools/test:pkg_sources",
         "//bazel_tools/tools/zip:pkg_sources",
     ],
