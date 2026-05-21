@@ -17,6 +17,7 @@ use crate::digest_config::DigestConfig;
 use crate::directory::ActionDirectoryBuilder;
 use crate::directory::ActionDirectoryMember;
 use crate::directory::LazyActionDirectoryBuilder;
+use crate::directory::finalize_lazy_action_directory;
 use crate::directory::insert_artifact_lazy;
 use crate::execute::request::CommandExecutionInput;
 
@@ -71,5 +72,5 @@ pub fn inputs_directory(
             },
         };
     }
-    builder.finalize()
+    finalize_lazy_action_directory(builder)
 }

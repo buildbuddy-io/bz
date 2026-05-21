@@ -2365,7 +2365,14 @@ fn materialize_artifact_path_alias(
 
     match value.entry() {
         ActionDirectoryEntry::Leaf(ActionDirectoryMember::Symlink(symlink)) => {
-            let target = artifact_path_alias_symlink_target(&source, symlink.target().as_str())?;
+            let target = if value.deps().is_some() {
+                // Bazel's SymlinkAction.toArtifact writes a symlink to the action input path in the
+                // execroot. Buck stores target-file symlink outputs relative to their private
+                // artifact location, so rebase them when exposing the output at another exec path.
+                artifact_path_alias_resolved_symlink_target(&source, symlink.target().as_str())?
+            } else {
+                symlink.target().as_str().into()
+            };
             create_or_replace_symlink(target.as_path(), &dest).with_buck_error_context(|| {
                 format!("Error creating symlink artifact path alias `{path}` -> `{source_path}`")
             })?;
@@ -2493,7 +2500,7 @@ fn create_artifact_path_alias_symlink(
     }
 }
 
-fn artifact_path_alias_symlink_target(
+fn artifact_path_alias_resolved_symlink_target(
     source: &AbsNormPathBuf,
     target: &str,
 ) -> buck2_error::Result<PathBuf> {
@@ -2512,26 +2519,7 @@ fn artifact_path_alias_symlink_target(
         return Ok(target_path.to_owned());
     };
 
-    if artifact_path_alias_symlink_target_escapes_private_artifact_tree(source, &resolved_target) {
-        Ok(resolved_target.as_path().to_owned())
-    } else {
-        Ok(target_path.to_owned())
-    }
-}
-
-fn artifact_path_alias_symlink_target_escapes_private_artifact_tree(
-    source: &AbsNormPathBuf,
-    resolved_target: &AbsNormPathBuf,
-) -> bool {
-    let source = source.as_path().to_string_lossy();
-    let Some((project_root, _)) = source.split_once("/buck-out/v2/art/") else {
-        return false;
-    };
-    let private_artifact_root = format!("{project_root}/buck-out/v2/art/");
-    !resolved_target
-        .as_path()
-        .to_string_lossy()
-        .starts_with(private_artifact_root.as_str())
+    Ok(resolved_target.as_path().to_owned())
 }
 
 fn create_artifact_path_alias_file(

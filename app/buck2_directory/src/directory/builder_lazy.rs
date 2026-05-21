@@ -14,7 +14,9 @@ use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
 use crate::directory::builder::DirectoryBuilder;
 use crate::directory::builder::DirectoryInsertError;
 use crate::directory::builder::DirectoryMergeError;
+use crate::directory::directory::Directory;
 use crate::directory::entry::DirectoryEntry;
+use crate::directory::find::find;
 use crate::directory::shared_directory::SharedDirectory;
 
 pub trait DirectoryBuilderLike<D, L> {
@@ -94,6 +96,13 @@ where
     }
 
     pub fn finalize(self) -> buck2_error::Result<DirectoryBuilder<L, H>> {
+        self.finalize_with_insert_conflict_handler(|_| false)
+    }
+
+    pub fn finalize_with_insert_conflict_handler(
+        self,
+        mut ignore_insert_conflict: impl FnMut(&L) -> bool,
+    ) -> buck2_error::Result<DirectoryBuilder<L, H>> {
         let mut to_merge = self.to_merge;
         to_merge.sort_by_key(|d| std::cmp::Reverse(d.size()));
         to_merge.dedup();
@@ -110,11 +119,34 @@ where
         }
 
         for (p, e) in to_insert {
-            builder.insert(&p, e.map_dir(|d| d.into_builder()))?;
+            if let Err(error) = builder.insert(&p, e.map_dir(|d| d.into_builder())) {
+                if lazy_insert_conflict_is_covered(&builder, &error, &mut ignore_insert_conflict) {
+                    continue;
+                }
+                return Err(error.into());
+            }
         }
 
         Ok(builder)
     }
+}
+
+fn lazy_insert_conflict_is_covered<L, H>(
+    builder: &DirectoryBuilder<L, H>,
+    error: &DirectoryInsertError,
+    ignore_insert_conflict: &mut impl FnMut(&L) -> bool,
+) -> bool
+where
+    H: DirectoryDigest,
+{
+    let DirectoryInsertError::CannotTraverseLeaf { path } = error else {
+        return false;
+    };
+
+    matches!(
+        find(builder.as_ref(), path),
+        Ok(Some(DirectoryEntry::Leaf(leaf))) if ignore_insert_conflict(leaf)
+    )
 }
 
 impl<L, H> DirectoryBuilderLike<SharedDirectory<L, H>, L> for LazyDirectoryBuilder<L, H>

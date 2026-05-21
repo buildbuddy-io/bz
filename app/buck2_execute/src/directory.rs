@@ -26,6 +26,7 @@ use buck2_common::file_ops::metadata::TrackedFileDigest;
 use buck2_core::fs::project_rel_path::ProjectRelativePath;
 use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
 use buck2_directory::directory::builder::DirectoryBuilder;
+use buck2_directory::directory::builder::DirectoryInsertError;
 use buck2_directory::directory::builder_lazy::DirectoryBuilderLike;
 use buck2_directory::directory::builder_lazy::LazyDirectoryBuilder;
 use buck2_directory::directory::dashmap_directory_interner::DashMapDirectoryInterner;
@@ -627,18 +628,26 @@ pub fn insert_entry<D>(
         // path is `bar`, and we can't infer that the path must actually be `bar` and that the
         // symlink should be `/home/blah/xxx` (so in this case we keep the rest).
 
-        // NOTE (torozco): I think we *could* perhaps make this work by using `path` as-is if we
-        // can't "fix" it, and using the full symlink destination instead of
-        // `s.without_remaining_path()`, but considering this doesn't seem to be something very
-        // widespread and I might be missing something, I did not do it.
-        let fixed_source_path = s.fix_source_path(path.as_ref()).ok_or_else(|| {
-            internal_error!("Error locating source path for symlink at {path}: {s}")
-        })?;
-        let path = ProjectRelativePath::unchecked_new(fixed_source_path.as_str()).to_buf();
-        let entry = DirectoryEntry::Leaf(ActionDirectoryMember::ExternalSymlink(
-            s.without_remaining_path(),
-        ));
-        builder.insert(path.into(), entry)?;
+        // Bazel execroot/runfiles aliases can expose the same file at a path that does not end in
+        // `remaining_path`; in that case the alias has to point at the full external target.
+        let (path, symlink) = if let Some(fixed_source_path) = s.fix_source_path(path.as_ref()) {
+            (
+                ProjectRelativePath::unchecked_new(fixed_source_path.as_str()).to_buf(),
+                s.without_remaining_path(),
+            )
+        } else {
+            (path, s.with_full_target()?)
+        };
+        let entry = DirectoryEntry::Leaf(ActionDirectoryMember::ExternalSymlink(symlink));
+        match builder.insert(path.into(), entry) {
+            Ok(()) => {}
+            Err(DirectoryInsertError::CannotTraverseLeaf { .. }) => {
+                // A parent external symlink already covers this path. Bazel's input map can expose
+                // a repository root once while many runfiles underneath it resolve through that
+                // same root.
+            }
+            Err(error) => return Err(error.into()),
+        }
     } else {
         builder.insert(path.into(), entry)?;
     }
@@ -659,7 +668,9 @@ pub fn insert_artifact(
         value.entry().dupe().map_dir(|d| d.into_builder()),
     )?;
     // add input's deps
-    if let Some(deps) = value.deps() {
+    if artifact_value_needs_deps(value)
+        && let Some(deps) = value.deps()
+    {
         builder.merge(deps.dupe().into_builder())?;
     }
     Ok(())
@@ -672,10 +683,30 @@ pub fn insert_artifact_lazy(
 ) -> buck2_error::Result<()> {
     insert_entry(builder, path, value.entry().dupe())?;
     // add input's deps
-    if let Some(deps) = value.deps() {
+    if artifact_value_needs_deps(value)
+        && let Some(deps) = value.deps()
+    {
         builder.merge(deps.dupe())?;
     }
     Ok(())
+}
+
+fn artifact_value_needs_deps(value: &ArtifactValue) -> bool {
+    matches!(
+        value.entry(),
+        DirectoryEntry::Dir(_) | DirectoryEntry::Leaf(ActionDirectoryMember::Symlink(_))
+    )
+}
+
+pub fn finalize_lazy_action_directory(
+    builder: LazyActionDirectoryBuilder,
+) -> buck2_error::Result<ActionDirectoryBuilder> {
+    builder.finalize_with_insert_conflict_handler(|leaf| {
+        // Bazel expands spawn inputs and runfiles into a flat path map
+        // (`SpawnInputExpander#getInputMapping`), so a symlinked runfiles root can cover all
+        // descendant paths without making the descendants traverse through it.
+        matches!(leaf, ActionDirectoryMember::ExternalSymlink(_))
+    })
 }
 
 pub fn insert_file<D>(
