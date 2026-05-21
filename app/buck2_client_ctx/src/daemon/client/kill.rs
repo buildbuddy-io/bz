@@ -31,9 +31,9 @@ use crate::daemon::client::connect::BuckdProcessInfo;
 use crate::daemon::client::connect::buckd_startup_timeout;
 use crate::startup_deadline::StartupDeadline;
 
-const GRACEFUL_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(4);
-/// Kill request does not wait for the process to exit.
-const KILL_REQUEST_TIMEOUT: Duration = Duration::from_secs(3);
+const GRACEFUL_SHUTDOWN_TIMEOUT: Duration = Duration::from_millis(500);
+const CONSTRAINT_MISMATCH_GRACEFUL_SHUTDOWN_TIMEOUT: Duration = Duration::from_millis(50);
+const KILL_REQUEST_TIMEOUT: Duration = Duration::from_millis(500);
 const FORCE_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub async fn kill_command_impl(
@@ -109,6 +109,29 @@ pub(crate) async fn kill(
     info: &DaemonProcessInfo,
     reason: &str,
 ) -> buck2_error::Result<()> {
+    kill_with_timeouts(client, info, reason, GRACEFUL_SHUTDOWN_TIMEOUT).await
+}
+
+pub(crate) async fn kill_for_constraints_mismatch(
+    client: &mut DaemonApiClient<InterceptedService<Channel, BuckAddAuthTokenInterceptor>>,
+    info: &DaemonProcessInfo,
+    reason: &str,
+) -> buck2_error::Result<()> {
+    kill_with_timeouts(
+        client,
+        info,
+        reason,
+        CONSTRAINT_MISMATCH_GRACEFUL_SHUTDOWN_TIMEOUT,
+    )
+    .await
+}
+
+async fn kill_with_timeouts(
+    client: &mut DaemonApiClient<InterceptedService<Channel, BuckAddAuthTokenInterceptor>>,
+    info: &DaemonProcessInfo,
+    reason: &str,
+    graceful_shutdown_timeout: Duration,
+) -> buck2_error::Result<()> {
     let pid = Pid::from_i64(info.pid)?;
     let callers = get_callers_for_kill();
 
@@ -116,28 +139,37 @@ pub(crate) async fn kill(
 
     let request_fut = client.kill(Request::new(KillRequest {
         reason: reason.to_owned(),
-        timeout: Some(GRACEFUL_SHUTDOWN_TIMEOUT.try_into()?),
+        timeout: Some(graceful_shutdown_timeout.try_into()?),
         callers,
     }));
-    let time_to_kill = GRACEFUL_SHUTDOWN_TIMEOUT + FORCE_SHUTDOWN_TIMEOUT;
+    let time_to_kill = graceful_shutdown_timeout + FORCE_SHUTDOWN_TIMEOUT;
     let time_req_sent = Instant::now();
     // First we send a Kill request
     match tokio::time::timeout(KILL_REQUEST_TIMEOUT, request_fut).await {
         Ok(inner_result) => {
             match inner_result {
-                Ok(_) => loop {
-                    if !kill::process_exists(pid)? {
-                        return Ok(());
+                Ok(_) => {
+                    if !graceful_shutdown_timeout.is_zero() {
+                        loop {
+                            if !kill::process_exists(pid)? {
+                                return Ok(());
+                            }
+                            let elapsed = Instant::now() - time_req_sent;
+                            if elapsed >= graceful_shutdown_timeout {
+                                crate::eprintln!(
+                                    "Timed out waiting for graceful shutdown of buck2 daemon pid {}",
+                                    pid
+                                )?;
+                                break;
+                            }
+                            tokio::time::sleep(
+                                Duration::from_millis(100)
+                                    .min(graceful_shutdown_timeout.saturating_sub(elapsed)),
+                            )
+                            .await;
+                        }
                     }
-                    if Instant::now() - time_req_sent > GRACEFUL_SHUTDOWN_TIMEOUT {
-                        crate::eprintln!(
-                            "Timed out waiting for graceful shutdown of buck2 daemon pid {}",
-                            pid
-                        )?;
-                        break;
-                    }
-                    tokio::time::sleep(Duration::from_millis(100)).await;
-                },
+                }
                 Err(e) => {
                     // The kill request can fail if the server is in a bad state and we cannot
                     // authenticate to it.

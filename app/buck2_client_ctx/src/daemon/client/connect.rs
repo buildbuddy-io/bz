@@ -625,8 +625,13 @@ impl BootstrapBuckdClient {
     }
 
     async fn kill_for_constraints_mismatch(&mut self) -> buck2_error::Result<Pid> {
-        self.kill("client expected different buckd constraints")
-            .await
+        kill::kill_for_constraints_mismatch(
+            &mut self.client,
+            &self.info,
+            "client expected different buckd constraints",
+        )
+        .await?;
+        Pid::from_i64(self.info.pid)
     }
 
     pub fn pid(&self) -> i64 {
