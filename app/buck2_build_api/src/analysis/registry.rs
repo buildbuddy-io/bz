@@ -103,6 +103,7 @@ pub struct AnalysisRegistry<'v> {
     pub analysis_value_storage: AnalysisValueStorage<'v>,
     bazel_predeclared_outputs: SmallMap<String, DeclaredArtifact<'v>>,
     bazel_shareable_outputs: SmallMap<String, DeclaredArtifact<'v>>,
+    bazel_shareable_action_signatures: SmallMap<String, String>,
     pub short_path_assertions: HashMap<PromiseArtifactId, ForwardRelativePathBuf>,
     pub content_based_path_assertions: HashSet<PromiseArtifactId>,
 }
@@ -116,6 +117,14 @@ enum DeclaredArtifactError {
         "Artifact `{0}` was declared with `has_content_based_path = {1}`, but is now being used with `has_content_based_path = {2}`"
     )]
     AlreadyDeclaredWithDifferentContentBasedPathHashing(String, bool, bool),
+    #[error(
+        "Bazel shareable output `{path}` was registered with conflicting actions: `{previous}` and `{current}`"
+    )]
+    BazelShareableActionConflict {
+        path: String,
+        previous: String,
+        current: String,
+    },
 }
 
 impl<'v> AnalysisRegistry<'v> {
@@ -141,6 +150,7 @@ impl<'v> AnalysisRegistry<'v> {
             analysis_value_storage: AnalysisValueStorage::new(self_key),
             bazel_predeclared_outputs: SmallMap::new(),
             bazel_shareable_outputs: SmallMap::new(),
+            bazel_shareable_action_signatures: SmallMap::new(),
             short_path_assertions: HashMap::new(),
             content_based_path_assertions: HashSet::new(),
         })
@@ -337,20 +347,21 @@ impl<'v> AnalysisRegistry<'v> {
         path_resolution_method: BuckOutPathKind,
         bazel_owner: Option<ConfiguredTargetLabel>,
         bazel_output_root: BazelOutputRoot,
+        bazel_output_path_kind: BazelOutputPathKind,
         heap: Heap<'v>,
     ) -> buck2_error::Result<DeclaredArtifact<'v>> {
         let path = ForwardRelativePath::new(filename)?;
         let key = Self::bazel_predeclared_output_key(
             path.as_str(),
             bazel_output_root,
-            BazelOutputPathKind::PackageRelative,
+            bazel_output_path_kind,
         );
         if let Some(artifact) = self.bazel_shareable_outputs.get(&key) {
             if artifact.output_type() == output_type {
                 return Ok(artifact.dupe());
             }
         }
-        let artifact = self.declare_output_with_bazel_owner_and_output_root(
+        let artifact = self.declare_output_with_bazel_owner_output_root_and_path_kind(
             None,
             filename,
             output_type,
@@ -358,16 +369,47 @@ impl<'v> AnalysisRegistry<'v> {
             path_resolution_method,
             bazel_owner,
             bazel_output_root,
+            bazel_output_path_kind,
             heap,
         )?;
         self.bazel_shareable_outputs.insert(key, artifact.dupe());
         Ok(artifact)
     }
 
-    pub fn is_bazel_shareable_output(&self, output: &OutputArtifact<'v>) -> bool {
+    fn bazel_shareable_output_key(&self, output: &OutputArtifact<'v>) -> Option<&str> {
         self.bazel_shareable_outputs
-            .values()
-            .any(|artifact| artifact == &**output)
+            .iter()
+            .find_map(|(key, artifact)| (artifact == &**output).then_some(key.as_str()))
+    }
+
+    /// Returns whether a Bazel shareable action should be registered.
+    ///
+    /// Bazel interns derived artifacts by path during analysis and then allows duplicate
+    /// shareable actions when their action keys match. Buck binds outputs immediately, so for
+    /// the Bazel action surface we track a compact action signature before binding and skip an
+    /// identical second registration.
+    pub fn should_register_bazel_shareable_action(
+        &mut self,
+        output: &OutputArtifact<'v>,
+        signature: String,
+    ) -> buck2_error::Result<bool> {
+        let Some(key) = self.bazel_shareable_output_key(output).map(str::to_owned) else {
+            return Ok(true);
+        };
+        match self.bazel_shareable_action_signatures.get(&key) {
+            Some(previous) if previous == &signature => Ok(false),
+            Some(previous) => Err(DeclaredArtifactError::BazelShareableActionConflict {
+                path: key,
+                previous: previous.to_owned(),
+                current: signature,
+            }
+            .into()),
+            None => {
+                self.bazel_shareable_action_signatures
+                    .insert(key, signature);
+                Ok(true)
+            }
+        }
     }
 
     /// Takes a string or artifact/output artifact and converts it into an output artifact
@@ -534,6 +576,7 @@ impl<'v> AnalysisRegistry<'v> {
             analysis_value_storage,
             bazel_predeclared_outputs: _,
             bazel_shareable_outputs: _,
+            bazel_shareable_action_signatures: _,
             short_path_assertions: _,
             content_based_path_assertions: _,
         } = self;

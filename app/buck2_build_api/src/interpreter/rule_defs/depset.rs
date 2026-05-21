@@ -16,6 +16,7 @@ use allocative::Allocative;
 use starlark::any::ProvidesStaticType;
 use starlark::coerce::Coerce;
 use starlark::collections::Hashed;
+use starlark::collections::SmallMap;
 use starlark::collections::SmallSet;
 use starlark::collections::StarlarkHashValue;
 use starlark::collections::StarlarkHasher;
@@ -36,6 +37,7 @@ use starlark::values::Trace;
 use starlark::values::Tracer;
 use starlark::values::UnpackValue;
 use starlark::values::Value;
+use starlark::values::ValueIdentity;
 use starlark::values::ValueLike;
 use starlark::values::dict::DictRef;
 use starlark::values::list::ListRef;
@@ -69,6 +71,11 @@ struct BazelDepsetCachedValue {
 struct BazelDepsetCollectedValue<'v> {
     hash: StarlarkHashValue,
     value: Value<'v>,
+}
+
+#[derive(Default)]
+struct BazelDepsetHashCache<'v> {
+    hashes: SmallMap<ValueIdentity<'v>, Option<StarlarkHashValue>>,
 }
 
 #[derive(Debug, Allocative)]
@@ -233,15 +240,16 @@ impl<'v, V: ValueLike<'v>> BazelDepsetGen<'v, V> {
         values: &mut Vec<BazelDepsetCollectedValue<'v>>,
         seen_values: &mut SmallSet<Value<'v>>,
         seen_depsets: &mut SmallSet<Value<'v>>,
+        hash_cache: &mut BazelDepsetHashCache<'v>,
     ) -> starlark::Result<()> {
         match self.order {
             BazelDepsetOrder::Default | BazelDepsetOrder::Postorder => {
-                self.collect_transitive(values, seen_values, seen_depsets)?;
-                self.collect_direct(values, seen_values)?;
+                self.collect_transitive(values, seen_values, seen_depsets, hash_cache)?;
+                self.collect_direct(values, seen_values, hash_cache)?;
             }
             BazelDepsetOrder::Preorder | BazelDepsetOrder::Topological => {
-                self.collect_direct(values, seen_values)?;
-                self.collect_transitive(values, seen_values, seen_depsets)?;
+                self.collect_direct(values, seen_values, hash_cache)?;
+                self.collect_transitive(values, seen_values, seen_depsets, hash_cache)?;
             }
         }
         Ok(())
@@ -252,6 +260,7 @@ impl<'v, V: ValueLike<'v>> BazelDepsetGen<'v, V> {
         values: &mut Vec<BazelDepsetCollectedValue<'v>>,
         seen_values: &mut SmallSet<Value<'v>>,
         seen_depsets: &mut SmallSet<Value<'v>>,
+        hash_cache: &mut BazelDepsetHashCache<'v>,
     ) -> starlark::Result<()> {
         for transitive in &self.transitive {
             let transitive = transitive.to_value();
@@ -267,7 +276,7 @@ impl<'v, V: ValueLike<'v>> BazelDepsetGen<'v, V> {
                         }),
                     )?;
                 } else {
-                    transitive.collect_to_list(values, seen_values, seen_depsets)?;
+                    transitive.collect_to_list(values, seen_values, seen_depsets, hash_cache)?;
                 }
             }
         }
@@ -278,11 +287,13 @@ impl<'v, V: ValueLike<'v>> BazelDepsetGen<'v, V> {
         &self,
         values: &mut Vec<BazelDepsetCollectedValue<'v>>,
         seen: &mut SmallSet<Value<'v>>,
+        hash_cache: &mut BazelDepsetHashCache<'v>,
     ) -> starlark::Result<()> {
         Self::collect_values(
             values,
             seen,
             self.direct.iter().map(|value| value.to_value()),
+            hash_cache,
         )
     }
 
@@ -290,9 +301,10 @@ impl<'v, V: ValueLike<'v>> BazelDepsetGen<'v, V> {
         values: &mut Vec<BazelDepsetCollectedValue<'v>>,
         seen: &mut SmallSet<Value<'v>>,
         iter: impl IntoIterator<Item = Value<'v>>,
+        hash_cache: &mut BazelDepsetHashCache<'v>,
     ) -> starlark::Result<()> {
         for value in iter {
-            let hash = bazel_depset_hash(value)?;
+            let hash = bazel_depset_hash(value, hash_cache)?;
             if seen.insert_hashed(Hashed::new_unchecked(hash, value)) {
                 values.push(BazelDepsetCollectedValue { hash, value });
             }
@@ -321,7 +333,13 @@ impl<'v, V: ValueLike<'v>> BazelDepsetGen<'v, V> {
         let mut values = Vec::new();
         let mut seen_values = SmallSet::new();
         let mut seen_depsets = SmallSet::new();
-        self.collect_to_list(&mut values, &mut seen_values, &mut seen_depsets)?;
+        let mut hash_cache = BazelDepsetHashCache::default();
+        self.collect_to_list(
+            &mut values,
+            &mut seen_values,
+            &mut seen_depsets,
+            &mut hash_cache,
+        )?;
         if let Some(frozen_values) = values
             .iter()
             .map(|value| {
@@ -390,11 +408,15 @@ impl<'v, V: ValueLike<'v>> BazelDepsetGen<'v, V> {
         count: &mut usize,
         seen_values: &mut SmallSet<Value<'v>>,
         seen_depsets: &mut SmallSet<Value<'v>>,
+        hash_cache: &mut BazelDepsetHashCache<'v>,
         limit: usize,
     ) -> starlark::Result<()> {
         for value in &self.direct {
             let value = value.to_value();
-            if seen_values.insert_hashed(Hashed::new_unchecked(bazel_depset_hash(value)?, value)) {
+            if seen_values.insert_hashed(Hashed::new_unchecked(
+                bazel_depset_hash(value, hash_cache)?,
+                value,
+            )) {
                 *count += 1;
                 if *count > limit {
                     return Ok(());
@@ -409,6 +431,7 @@ impl<'v, V: ValueLike<'v>> BazelDepsetGen<'v, V> {
                     count,
                     seen_values,
                     seen_depsets,
+                    hash_cache,
                     limit,
                 )?;
                 if *count > limit {
@@ -556,25 +579,44 @@ fn bazel_depset_identity_hash<'v>(value: Value<'v>) -> Hashed<Value<'v>> {
     Hashed::new_unchecked(StarlarkHashValue::new(&value.identity()), value)
 }
 
-fn bazel_depset_hash<'v>(value: Value<'v>) -> starlark::Result<StarlarkHashValue> {
+fn bazel_depset_hash<'v>(
+    value: Value<'v>,
+    cache: &mut BazelDepsetHashCache<'v>,
+) -> starlark::Result<StarlarkHashValue> {
+    let identity = value.identity();
+    if let Some(hash) = cache.hashes.get(&identity) {
+        return Ok(hash.unwrap_or_else(|| bazel_depset_identity_hash_value(value)));
+    }
+
+    cache.hashes.insert(identity, None);
+    let hash = bazel_depset_hash_uncached(value, cache)?;
+    cache.hashes.insert(identity, Some(hash));
+    Ok(hash)
+}
+
+fn bazel_depset_hash_uncached<'v>(
+    value: Value<'v>,
+    cache: &mut BazelDepsetHashCache<'v>,
+) -> starlark::Result<StarlarkHashValue> {
     if let Ok(hash) = value.get_hashed() {
         return Ok(hash.hash());
     }
 
     let mut hasher = StarlarkHasher::new();
-    bazel_depset_write_hash(value, &mut hasher)?;
+    bazel_depset_write_hash(value, &mut hasher, cache)?;
     Ok(hasher.finish_small())
 }
 
 fn bazel_depset_write_hash<'v>(
     value: Value<'v>,
     hasher: &mut StarlarkHasher,
+    cache: &mut BazelDepsetHashCache<'v>,
 ) -> starlark::Result<()> {
     if let Some(list) = ListRef::from_value(value) {
         "bazel_depset_list".hash(hasher);
         list.content().len().hash(hasher);
         for item in list.iter() {
-            bazel_depset_hash(item)?.get().hash(hasher);
+            bazel_depset_hash(item, cache)?.get().hash(hasher);
         }
         return Ok(());
     }
@@ -583,7 +625,7 @@ fn bazel_depset_write_hash<'v>(
         "bazel_depset_tuple".hash(hasher);
         tuple.content().len().hash(hasher);
         for item in tuple.iter() {
-            bazel_depset_hash(item)?.get().hash(hasher);
+            bazel_depset_hash(item, cache)?.get().hash(hasher);
         }
         return Ok(());
     }
@@ -593,8 +635,8 @@ fn bazel_depset_write_hash<'v>(
         let mut entries = Vec::new();
         for (key, value) in dict.iter() {
             entries.push((
-                bazel_depset_hash(key)?.get(),
-                bazel_depset_hash(value)?.get(),
+                bazel_depset_hash(key, cache)?.get(),
+                bazel_depset_hash(value, cache)?.get(),
             ));
         }
         entries.sort_unstable();
@@ -607,7 +649,7 @@ fn bazel_depset_write_hash<'v>(
         "bazel_depset_struct".hash(hasher);
         let mut entries = Vec::new();
         for (name, value) in st.iter() {
-            entries.push((name.as_str(), bazel_depset_hash(value)?.get()));
+            entries.push((name.as_str(), bazel_depset_hash(value, cache)?.get()));
         }
         entries.sort_unstable();
         entries.len().hash(hasher);
@@ -620,7 +662,7 @@ fn bazel_depset_write_hash<'v>(
         provider.0.id().hash(hasher);
         let mut entries = Vec::new();
         for (name, value) in provider.0.items() {
-            entries.push((name, bazel_depset_hash(value)?.get()));
+            entries.push((name, bazel_depset_hash(value, cache)?.get()));
         }
         entries.sort_unstable();
         entries.len().hash(hasher);
@@ -629,8 +671,12 @@ fn bazel_depset_write_hash<'v>(
     }
 
     "bazel_depset_identity".hash(hasher);
-    value.identity().hash(hasher);
+    bazel_depset_identity_hash_value(value).get().hash(hasher);
     Ok(())
+}
+
+fn bazel_depset_identity_hash_value<'v>(value: Value<'v>) -> StarlarkHashValue {
+    StarlarkHashValue::new(&value.identity())
 }
 
 pub fn bazel_depset_to_list<'v>(value: Value<'v>) -> starlark::Result<Vec<Value<'v>>> {
@@ -642,10 +688,12 @@ pub fn bazel_depset_is_singleton<'v>(value: Value<'v>) -> starlark::Result<bool>
     let mut seen_values = SmallSet::new();
     let mut seen_depsets = SmallSet::new();
     seen_depsets.insert_hashed(bazel_depset_identity_hash(value));
+    let mut hash_cache = BazelDepsetHashCache::default();
     depset_from_value(value)?.count_unique_values_up_to(
         &mut count,
         &mut seen_values,
         &mut seen_depsets,
+        &mut hash_cache,
         1,
     )?;
     Ok(count == 1)
@@ -675,13 +723,20 @@ pub(crate) fn bazel_depset_from_direct<'v>(
     direct: Vec<Value<'v>>,
 ) -> starlark::Result<BazelDepset<'v>> {
     let mut element_type = None;
+    let mut deduped = Vec::with_capacity(direct.len());
+    let mut seen = SmallSet::new();
+    let mut hash_cache = BazelDepsetHashCache::default();
 
-    for value in &direct {
-        check_element_type(&mut element_type, *value)?;
+    for value in direct {
+        check_element_type(&mut element_type, value)?;
+        let hash = bazel_depset_hash(value, &mut hash_cache)?;
+        if seen.insert_hashed(Hashed::new_unchecked(hash, value)) {
+            deduped.push(value);
+        }
     }
 
     Ok(BazelDepset {
-        direct: direct.into_boxed_slice(),
+        direct: deduped.into_boxed_slice(),
         transitive: Vec::new().into_boxed_slice(),
         order: BazelDepsetOrder::Default,
         element_type,

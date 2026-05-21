@@ -4448,7 +4448,7 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
         this: ValueTypedComplex<'v, StarlarkRepositoryContext<'v>>,
         #[starlark(require = pos)] arguments: UnpackListOrTuple<Value<'v>>,
         #[starlark(require = named, default = UnpackDictEntries::default())]
-        environment: UnpackDictEntries<&'v str, &'v str>,
+        environment: UnpackDictEntries<&'v str, NoneOr<&'v str>>,
         #[starlark(require = named, default = 600)] timeout: i32,
         #[starlark(require = named, default = true)] quiet: bool,
         #[starlark(require = named)] working_directory: Option<Value<'v>>,
@@ -4471,11 +4471,11 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
         let environment = environment
             .entries
             .into_iter()
+            .map(|(key, value)| (key, value.into_option()))
             .map(|(key, value)| {
-                (
-                    key,
-                    repository_ctx_command_env(value, &repository_working_dir),
-                )
+                let value =
+                    value.map(|value| repository_ctx_command_env(value, &repository_working_dir));
+                (key, value)
             })
             .collect::<Vec<_>>();
         repository_ctx_validate_external_inputs_ready(
@@ -4494,7 +4494,14 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
         );
         command.args(arguments);
         for (key, value) in environment {
-            command.env(key, value);
+            match value {
+                Some(value) => {
+                    command.env(key, value);
+                }
+                None => {
+                    command.env_remove(key);
+                }
+            }
         }
         let working_directory = match working_directory {
             Some(working_directory) => repository_path_from_value_relative_to(
@@ -6382,7 +6389,7 @@ fn module_extension_context_methods(builder: &mut MethodsBuilder) {
         this: ValueTypedComplex<'v, StarlarkModuleExtensionContext<'v>>,
         #[starlark(require = pos)] arguments: UnpackListOrTuple<Value<'v>>,
         #[starlark(require = named, default = UnpackDictEntries::default())]
-        environment: UnpackDictEntries<&'v str, &'v str>,
+        environment: UnpackDictEntries<&'v str, NoneOr<&'v str>>,
         #[starlark(require = named, default = 600)] timeout: i32,
         #[starlark(require = named, default = true)] quiet: bool,
         #[starlark(require = named)] working_directory: Option<Value<'v>>,
@@ -6405,11 +6412,11 @@ fn module_extension_context_methods(builder: &mut MethodsBuilder) {
         let environment = environment
             .entries
             .into_iter()
+            .map(|(key, value)| (key, value.into_option()))
             .map(|(key, value)| {
-                (
-                    key,
-                    repository_ctx_command_env(value, &repository_working_dir),
-                )
+                let value =
+                    value.map(|value| repository_ctx_command_env(value, &repository_working_dir));
+                (key, value)
             })
             .collect::<Vec<_>>();
         repository_ctx_validate_external_inputs_ready(
@@ -6428,7 +6435,14 @@ fn module_extension_context_methods(builder: &mut MethodsBuilder) {
         );
         command.args(arguments);
         for (key, value) in environment {
-            command.env(key, value);
+            match value {
+                Some(value) => {
+                    command.env(key, value);
+                }
+                None => {
+                    command.env_remove(key);
+                }
+            }
         }
         let working_directory = match working_directory {
             Some(working_directory) => {

@@ -73,7 +73,7 @@ use crate::interpreter::rule_defs::artifact::starlark_artifact_like::ValueIsInpu
 use crate::interpreter::rule_defs::artifact_tagging::ArtifactTag;
 use crate::interpreter::rule_defs::cmd_args::CommandLineArtifactVisitor;
 use crate::interpreter::rule_defs::cmd_args::value_as::ValueAsCommandLineLike;
-use crate::interpreter::rule_defs::context::bazel_workspace_name_for_label;
+use crate::interpreter::rule_defs::context::bazel_runfiles_prefix;
 use crate::interpreter::rule_defs::depset::BazelDepset;
 use crate::interpreter::rule_defs::depset::FrozenBazelDepset;
 use crate::interpreter::rule_defs::depset::bazel_depset_empty;
@@ -197,6 +197,27 @@ fn bazel_runfiles_from_depsets<'v>(
         empty_filenames: ValueOfUnchecked::new(empty_filenames),
         _marker: PhantomData,
     }
+}
+
+fn bazel_runfiles_with_file<'v>(
+    heap: Heap<'v>,
+    runfiles: Value<'v>,
+    file: Value<'v>,
+) -> starlark::Result<Value<'v>> {
+    let runfiles = BazelRunfiles::from_value(runfiles).ok_or_else(|| {
+        buck2_error::internal_error!("DefaultInfo runfiles should be a runfiles object")
+    })?;
+    let files = bazel_depset_from_direct_and_transitive(
+        heap,
+        vec![file],
+        vec![runfiles.files.get().to_value()],
+    )?;
+    Ok(heap.alloc(bazel_runfiles_from_depsets(
+        files,
+        runfiles.symlinks.get().to_value(),
+        runfiles.root_symlinks.get().to_value(),
+        runfiles.empty_filenames.get().to_value(),
+    )))
 }
 
 fn bazel_runfiles_empty_value<'v>(heap: Heap<'v>) -> Value<'v> {
@@ -391,7 +412,7 @@ fn bazel_runfiles_prefixed_path(path: &str) -> String {
     if let Some(external_path) = path.strip_prefix("../") {
         external_path.to_owned()
     } else {
-        path_join(&bazel_workspace_name_for_label(None), path)
+        path_join(bazel_runfiles_prefix(), path)
     }
 }
 
@@ -1176,6 +1197,7 @@ fn default_info_creator(builder: &mut GlobalsBuilder) {
             .as_ref()
             .map(|executable| executable.value)
             .unwrap_or_else(Value::new_none);
+        let executable_value = files_to_run_executable;
 
         // support both list and singular options for now until we migrate all the rules.
         let (valid_default_outputs, valid_files): (
@@ -1230,6 +1252,8 @@ fn default_info_creator(builder: &mut GlobalsBuilder) {
         let runfiles = runfiles.into_option();
         let data_runfiles = data_runfiles.into_option();
         let default_runfiles = default_runfiles.into_option();
+        let no_runfiles_arguments =
+            runfiles.is_none() && data_runfiles.is_none() && default_runfiles.is_none();
         if runfiles.is_some() && (data_runfiles.is_some() || default_runfiles.is_some()) {
             return Err(buck2_error::buck2_error!(
                 buck2_error::ErrorTag::Input,
@@ -1237,17 +1261,27 @@ fn default_info_creator(builder: &mut GlobalsBuilder) {
             )
             .into());
         }
-        let valid_data_runfiles = ValueOfUnchecked::<FrozenBazelRunfiles>::new(
-            data_runfiles
-                .map(|data_runfiles| data_runfiles.value)
-                .unwrap_or_else(|| bazel_runfiles_empty_value(heap)),
-        );
-        let valid_default_runfiles = ValueOfUnchecked::<FrozenBazelRunfiles>::new(
-            default_runfiles
-                .map(|default_runfiles| default_runfiles.value)
-                .or_else(|| runfiles.map(|runfiles| runfiles.value))
-                .unwrap_or_else(|| bazel_runfiles_empty_value(heap)),
-        );
+        let mut valid_data_runfiles = data_runfiles
+            .map(|data_runfiles| data_runfiles.value)
+            .or_else(|| runfiles.map(|runfiles| runfiles.value))
+            .unwrap_or_else(|| bazel_runfiles_empty_value(heap));
+        let mut valid_default_runfiles = default_runfiles
+            .map(|default_runfiles| default_runfiles.value)
+            .or_else(|| runfiles.map(|runfiles| runfiles.value))
+            .unwrap_or_else(|| bazel_runfiles_empty_value(heap));
+
+        if !executable_value.is_none() {
+            valid_default_runfiles =
+                bazel_runfiles_with_file(heap, valid_default_runfiles, executable_value)?;
+            if no_runfiles_arguments || runfiles.is_some() {
+                valid_data_runfiles =
+                    bazel_runfiles_with_file(heap, valid_data_runfiles, executable_value)?;
+            }
+        }
+
+        let valid_data_runfiles = ValueOfUnchecked::<FrozenBazelRunfiles>::new(valid_data_runfiles);
+        let valid_default_runfiles =
+            ValueOfUnchecked::<FrozenBazelRunfiles>::new(valid_default_runfiles);
 
         let valid_sub_targets = sub_targets
             .entries

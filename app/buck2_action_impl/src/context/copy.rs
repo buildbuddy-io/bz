@@ -63,7 +63,8 @@ fn copy_file_impl<'v>(
     let mut this = this.state()?;
     let (declaration, output_artifact) =
         this.get_or_declare_output(eval, dest, output_type, has_content_based_path)?;
-    if output_artifact.is_bound() && this.is_bazel_shareable_output(&output_artifact) {
+    let action_signature = format!("{output_type:?}:{copy:?}:{artifact:?}");
+    if !this.should_register_bazel_shareable_action(&output_artifact, action_signature)? {
         return Ok(declaration.into_declared_artifact(
             associated_artifacts
                 .duped()
@@ -189,6 +190,15 @@ pub(crate) fn analysis_actions_methods_copy(methods: &mut MethodsBuilder) {
             let mut this = this.state()?;
             let (declaration, output_artifact) =
                 this.get_or_declare_output(eval, output, OutputType::Symlink, None)?;
+            let action_signature = format!(
+                "{:?}:{:?}:{}",
+                OutputType::Symlink,
+                target_type,
+                target_path
+            );
+            if !this.should_register_bazel_shareable_action(&output_artifact, action_signature)? {
+                return Ok(declaration.into_declared_artifact(AssociatedArtifacts::new()));
+            }
             this.register_action(
                 buck_indexset![output_artifact],
                 UnregisteredSymlinkAction::new(target_path.to_owned()),
