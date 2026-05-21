@@ -351,8 +351,9 @@ impl<'v> AnalysisRegistry<'v> {
         heap: Heap<'v>,
     ) -> buck2_error::Result<DeclaredArtifact<'v>> {
         let path = ForwardRelativePath::new(filename)?;
-        let key = Self::bazel_predeclared_output_key(
+        let key = Self::bazel_shareable_output_path_key(
             path.as_str(),
+            bazel_owner.as_ref(),
             bazel_output_root,
             bazel_output_path_kind,
         );
@@ -376,7 +377,22 @@ impl<'v> AnalysisRegistry<'v> {
         Ok(artifact)
     }
 
-    fn bazel_shareable_output_key(&self, output: &OutputArtifact<'v>) -> Option<&str> {
+    fn bazel_shareable_output_path_key(
+        path: &str,
+        bazel_owner: Option<&ConfiguredTargetLabel>,
+        bazel_output_root: BazelOutputRoot,
+        bazel_output_path_kind: BazelOutputPathKind,
+    ) -> String {
+        format!(
+            "{}:{}",
+            bazel_owner
+                .map(|owner| owner.to_string())
+                .unwrap_or_else(|| "<no-bazel-owner>".to_owned()),
+            Self::bazel_predeclared_output_key(path, bazel_output_root, bazel_output_path_kind)
+        )
+    }
+
+    fn bazel_shareable_output_key_for_artifact(&self, output: &OutputArtifact<'v>) -> Option<&str> {
         self.bazel_shareable_outputs
             .iter()
             .find_map(|(key, artifact)| (artifact == &**output).then_some(key.as_str()))
@@ -393,7 +409,10 @@ impl<'v> AnalysisRegistry<'v> {
         output: &OutputArtifact<'v>,
         signature: String,
     ) -> buck2_error::Result<bool> {
-        let Some(key) = self.bazel_shareable_output_key(output).map(str::to_owned) else {
+        let Some(key) = self
+            .bazel_shareable_output_key_for_artifact(output)
+            .map(str::to_owned)
+        else {
             return Ok(true);
         };
         match self.bazel_shareable_action_signatures.get(&key) {
