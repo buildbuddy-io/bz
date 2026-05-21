@@ -1750,6 +1750,62 @@ mod tests {
             Checksum::None
         ));
     }
+
+    fn hidden_lockfile_evaluation(
+        repo_name: &str,
+    ) -> BzlmodHiddenLockfileModuleExtensionEvaluation {
+        BzlmodHiddenLockfileModuleExtensionEvaluation {
+            bzl_transitive_digest: "bzl-digest".to_owned(),
+            usages_digest: "usages-digest".to_owned(),
+            recorded_inputs: Vec::new(),
+            generated_repo_specs: BTreeMap::from([(
+                repo_name.to_owned(),
+                BzlmodRepositoryRuleInvocationSetup {
+                    repo_name: Arc::from(repo_name),
+                    rule_bzl_cell: Arc::from("root"),
+                    rule_bzl_path: Arc::from("repo.bzl"),
+                    rule_bzl_build_file_cell: Arc::from("root"),
+                    rule_name: Arc::from("repo_rule"),
+                    attrs: Arc::new(Vec::new()),
+                },
+            )]),
+            module_extension_metadata: Some(BzlmodHiddenLockfileModuleExtensionMetadata {
+                reproducible: true,
+            }),
+        }
+    }
+
+    #[test]
+    fn hidden_lockfile_update_skips_unchanged_logical_value() -> buck2_error::Result<()> {
+        let extension_key = "//:extensions.bzl%extension";
+        let contents = bzlmod_update_hidden_lockfile_json(
+            None,
+            extension_key,
+            Some(hidden_lockfile_evaluation("repo")),
+        )?
+        .expect("new reproducible extension should write hidden lockfile");
+
+        assert!(
+            bzlmod_update_hidden_lockfile_json(
+                Some(contents),
+                extension_key,
+                Some(hidden_lockfile_evaluation("repo")),
+            )?
+            .is_none()
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn hidden_lockfile_update_skips_empty_non_reproducible_extension() -> buck2_error::Result<()> {
+        assert!(
+            bzlmod_update_hidden_lockfile_json(None, "//:extensions.bzl%extension", None)?
+                .is_none()
+        );
+
+        Ok(())
+    }
 }
 
 fn bazel_feature_global_is_available(current: &str, min_version: &str, max_version: &str) -> bool {
@@ -2753,7 +2809,7 @@ fn bzlmod_update_hidden_lockfile_json(
     contents: Option<String>,
     extension_key: &str,
     evaluation: Option<BzlmodHiddenLockfileModuleExtensionEvaluation>,
-) -> buck2_error::Result<String> {
+) -> buck2_error::Result<Option<String>> {
     let mut lockfile: serde_json::Value = match contents {
         Some(contents) => serde_json::from_str(&contents)
             .buck_error_context("Error parsing hidden bzlmod lockfile")?,
@@ -2762,15 +2818,16 @@ fn bzlmod_update_hidden_lockfile_json(
     if !lockfile.is_object() {
         lockfile = serde_json::json!({});
     }
+    let old_lockfile = lockfile.clone();
     let lockfile_object = lockfile.as_object_mut().expect("checked object");
-    let module_extensions = lockfile_object
-        .entry("moduleExtensions".to_owned())
-        .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
-    if !module_extensions.is_object() {
-        *module_extensions = serde_json::Value::Object(serde_json::Map::new());
-    }
-    let module_extensions = module_extensions.as_object_mut().expect("checked object");
     if let Some(evaluation) = evaluation {
+        let module_extensions = lockfile_object
+            .entry("moduleExtensions".to_owned())
+            .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
+        if !module_extensions.is_object() {
+            *module_extensions = serde_json::Value::Object(serde_json::Map::new());
+        }
+        let module_extensions = module_extensions.as_object_mut().expect("checked object");
         let extension = module_extensions
             .entry(extension_key.to_owned())
             .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
@@ -2783,7 +2840,11 @@ fn bzlmod_update_hidden_lockfile_json(
             serde_json::to_value(evaluation)
                 .buck_error_context("Error serializing hidden bzlmod extension value")?,
         );
-    } else {
+    } else if let Some(module_extensions) = lockfile_object.get_mut("moduleExtensions") {
+        if !module_extensions.is_object() {
+            *module_extensions = serde_json::Value::Object(serde_json::Map::new());
+        }
+        let module_extensions = module_extensions.as_object_mut().expect("checked object");
         let remove_extension = if let Some(extension) = module_extensions.get_mut(extension_key) {
             if let Some(extension) = extension.as_object_mut() {
                 extension.remove("");
@@ -2798,7 +2859,11 @@ fn bzlmod_update_hidden_lockfile_json(
             module_extensions.remove(extension_key);
         }
     }
+    if lockfile == old_lockfile {
+        return Ok(None);
+    }
     serde_json::to_string_pretty(&lockfile)
+        .map(Some)
         .buck_error_context("Error serializing hidden bzlmod lockfile")
 }
 
@@ -2827,8 +2892,11 @@ async fn write_bzlmod_hidden_lockfile_extension(
         .execute_io_inline(move || {
             let lockfile_path = project_root.resolve(&bzlmod_hidden_lockfile_path());
             let contents = fs_util::read_to_string_if_exists(&lockfile_path)?;
-            let lockfile_json =
-                bzlmod_update_hidden_lockfile_json(contents, &extension_key, lockfile_evaluation)?;
+            let Some(lockfile_json) =
+                bzlmod_update_hidden_lockfile_json(contents, &extension_key, lockfile_evaluation)?
+            else {
+                return Ok(());
+            };
             if let Some(parent) = lockfile_path.parent() {
                 fs::create_dir_all(parent).with_buck_error_context(|| {
                     format!(
