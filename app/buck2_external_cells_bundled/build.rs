@@ -12,6 +12,7 @@
 
 use std::collections::BTreeSet;
 use std::io;
+use std::path::Component;
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -286,6 +287,8 @@ fn write_include_file_from_cargo_manifest_args(
     write_include_header(&mut include_file)?;
 
     let args = std::fs::read_to_string(manifest_args)?;
+    let logical_out_dir = logical_out_dir_from_cargo_manifest_args(&args);
+    let include_out_dir = logical_out_dir.as_deref().unwrap_or(out_dir);
     for (module, sentinel) in [
         ("prelude", "prelude.bzl"),
         ("bazel_tools", "tools/cpp/toolchain_utils.bzl"),
@@ -294,11 +297,14 @@ fn write_include_file_from_cargo_manifest_args(
             let line = line.trim_matches('\'');
             let (runfile_path, contents_path) = line.split_once('=')?;
             let path = runfile_path.strip_prefix(&format!("{module}/"))?;
-            Some((
-                path.to_owned(),
-                include_path_from_out_dir(out_dir, runfile_path),
-                runfiles_root.join(contents_path),
-            ))
+            let contents_path = runfiles_root.join(contents_path);
+            let contents_include_path = if use_buck_generated_out_dir_include_paths(out_dir) {
+                buck_generated_out_dir_include_path(runfile_path)
+            } else {
+                include_path_from_out_dir_to_existing_path(include_out_dir, &contents_path)
+                    .unwrap_or_else(|| include_path_from_out_dir(include_out_dir, runfile_path))
+            };
+            Some((path.to_owned(), contents_include_path, contents_path))
         });
 
         write_include_module_from_collected(&mut include_file, module, sentinel, files)?;
@@ -307,7 +313,22 @@ fn write_include_file_from_cargo_manifest_args(
     Ok(())
 }
 
+fn logical_out_dir_from_cargo_manifest_args(args: &str) -> Option<PathBuf> {
+    let runfiles_dir = Path::new(args.lines().next()?.trim_matches('\''));
+    Some(runfiles_dir.parent()?.join("build_script.out_dir"))
+}
+
 fn include_path_from_out_dir(out_dir: &Path, runfile_path: &str) -> PathBuf {
+    if let Some(contents_path) = find_existing_runfile_path(runfile_path)
+        && let Some(path) = include_path_from_out_dir_to_existing_path(out_dir, &contents_path)
+    {
+        return path;
+    }
+
+    syntactic_include_path_from_out_dir(out_dir, runfile_path)
+}
+
+fn syntactic_include_path_from_out_dir(out_dir: &Path, runfile_path: &str) -> PathBuf {
     let cwd = std::env::current_dir().ok();
     let out_dir = cwd
         .as_deref()
@@ -315,10 +336,100 @@ fn include_path_from_out_dir(out_dir: &Path, runfile_path: &str) -> PathBuf {
         .unwrap_or(out_dir);
 
     let mut path = PathBuf::new();
-    for _ in out_dir.components() {
+    let mut parent_count = out_dir.components().count();
+    if out_dir
+        .to_str()
+        .is_some_and(|path| path.contains("__bazel_execroot"))
+    {
+        // Buck exposes OUT_DIR through an execroot symlink. Filesystem resolution applies `..`
+        // after following that symlink, so the syntactic fallback needs fewer parents than the
+        // execroot spelling itself.
+        parent_count = parent_count.saturating_sub(2);
+    }
+    for _ in 0..parent_count {
         path.push("..");
     }
     path.push(runfile_path);
+    path
+}
+
+fn use_buck_generated_out_dir_include_paths(out_dir: &Path) -> bool {
+    out_dir.to_str().is_some_and(|path| {
+        path.starts_with("buck-out/")
+            || path.contains("/buck-out/")
+            || path.contains("__bazel_execroot")
+            || path.contains("__build_script__")
+    })
+}
+
+fn buck_generated_out_dir_include_path(runfile_path: &str) -> PathBuf {
+    let mut path = PathBuf::new();
+    for _ in 0..9 {
+        path.push("..");
+    }
+    path.push(runfile_path);
+    path
+}
+
+fn find_existing_runfile_path(runfile_path: &str) -> Option<PathBuf> {
+    for base in [
+        std::env::current_dir().ok(),
+        std::env::var_os("CARGO_MANIFEST_DIR").map(PathBuf::from),
+        std::env::current_exe().ok(),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        for ancestor in base.ancestors() {
+            let path = ancestor.join(runfile_path);
+            if path.exists() {
+                return Some(path);
+            }
+        }
+    }
+
+    None
+}
+
+fn include_path_from_out_dir_to_existing_path(
+    out_dir: &Path,
+    contents_path: &Path,
+) -> Option<PathBuf> {
+    // `OUT_DIR` may be a symlink planted in an execroot. Paths inside `include_bytes!` are
+    // resolved by the filesystem through that symlink, so compute from canonical paths.
+    let out_dir = out_dir.canonicalize().ok()?;
+    let contents_path = contents_path.canonicalize().ok()?;
+    Some(relative_path(&out_dir, &contents_path))
+}
+
+fn relative_path(from_dir: &Path, to: &Path) -> PathBuf {
+    let from_components = from_dir.components().collect::<Vec<_>>();
+    let to_components = to.components().collect::<Vec<_>>();
+
+    let mut common = 0;
+    while common < from_components.len()
+        && common < to_components.len()
+        && from_components[common] == to_components[common]
+    {
+        common += 1;
+    }
+
+    if common == 0 {
+        return to.to_owned();
+    }
+
+    let mut path = PathBuf::new();
+    for component in &from_components[common..] {
+        match component {
+            Component::Normal(_) => path.push(".."),
+            Component::CurDir => {}
+            Component::ParentDir => path.push(".."),
+            Component::RootDir | Component::Prefix(_) => {}
+        }
+    }
+    for component in &to_components[common..] {
+        path.push(component.as_os_str());
+    }
     path
 }
 

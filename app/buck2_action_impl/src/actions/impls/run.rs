@@ -3266,7 +3266,15 @@ impl RunAction {
                     artifact.get_path(),
                 ));
                 let bazel_alias = Self::bazel_execroot_path(bazel_execroot, bazel_path)?;
-                if aliases.insert(bazel_alias.clone()) && source_path != bazel_alias {
+                if aliases.insert(bazel_alias.clone())
+                    && source_path != bazel_alias
+                    && !Self::bazel_execroot_source_forest_covers_alias(
+                        source_path.as_ref(),
+                        source_requires_materialization,
+                        bazel_execroot,
+                        bazel_alias.as_ref(),
+                    )
+                {
                     inputs.push(CommandExecutionInput::ArtifactPathAlias {
                         source_path: source_path.clone(),
                         source_requires_materialization,
@@ -3277,7 +3285,15 @@ impl RunAction {
 
                 let source_alias =
                     Self::bazel_execroot_path(bazel_execroot, source_path.as_str().to_owned())?;
-                if aliases.insert(source_alias.clone()) && source_path != source_alias {
+                if aliases.insert(source_alias.clone())
+                    && source_path != source_alias
+                    && !Self::bazel_execroot_source_forest_covers_alias(
+                        source_path.as_ref(),
+                        source_requires_materialization,
+                        bazel_execroot,
+                        source_alias.as_ref(),
+                    )
+                {
                     inputs.push(CommandExecutionInput::ArtifactPathAlias {
                         source_path: source_path.clone(),
                         source_requires_materialization,
@@ -3289,6 +3305,21 @@ impl RunAction {
         }
 
         Ok(())
+    }
+
+    fn bazel_execroot_source_forest_covers_alias(
+        source_path: &ProjectRelativePath,
+        source_requires_materialization: bool,
+        bazel_execroot: &ProjectRelativePath,
+        alias_path: &ProjectRelativePath,
+    ) -> bool {
+        if source_requires_materialization {
+            return false;
+        }
+
+        alias_path
+            .strip_prefix_opt(bazel_execroot)
+            .is_some_and(|relative| relative.as_str() == source_path.as_str())
     }
 
     fn bazel_runfiles_alias_path(

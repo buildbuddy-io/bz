@@ -995,23 +995,7 @@ impl LocalExecutor {
             );
         }
 
-        self.cleanup_bazel_private_execroot(request);
-
         result
-    }
-
-    fn cleanup_bazel_private_execroot(&self, request: &CommandExecutionRequest) {
-        let working_directory = self.root.join_cow(request.working_directory());
-        if !is_bazel_private_execroot_working_directory(&working_directory) {
-            return;
-        }
-
-        if let Err(e) = fs_util::remove_all(&*working_directory)
-            .categorize_internal()
-            .buck_error_context("Error cleaning Bazel private execroot working directory")
-        {
-            let _unused = soft_error!("bazel_private_execroot_cleanup_failed", e);
-        }
     }
 
     async fn calculate_and_declare_output_values(
@@ -1970,7 +1954,7 @@ impl<'a> StrOrOsStr<'a> {
 }
 
 fn prepare_bazel_execroot_working_directory(
-    _project_root: &AbsNormPathBuf,
+    project_root: &AbsNormPathBuf,
     working_directory: &AbsNormPath,
 ) -> buck2_error::Result<()> {
     if !is_bazel_execroot_working_directory(working_directory) {
@@ -1979,6 +1963,36 @@ fn prepare_bazel_execroot_working_directory(
 
     fs_util::create_dir_all(working_directory)
         .buck_error_context("Error creating Bazel execroot working directory")?;
+
+    for entry in fs_util::read_dir(project_root).categorize_internal()? {
+        let entry = entry?;
+        let file_name = entry.file_name();
+        let file_name = file_name.to_string_lossy();
+        // Match Bazel's single-package-path symlink forest: source-tree entries live at
+        // execroot top level, while convenience links and external repos are not planted.
+        // Buck keeps a private output tree under the execroot, so do not mirror project buck-out.
+        if file_name.starts_with("bazel-") || file_name == "buck-out" || file_name == "external" {
+            continue;
+        }
+        let source = entry.path();
+        let dest =
+            AbsNormPathBuf::unchecked_new(working_directory.as_path().join(file_name.as_ref()));
+        if let Err(e) = create_or_replace_symlink(source.as_path(), &dest) {
+            if fs_util::read_link(&dest)
+                .map(|target| target == source.as_path())
+                .unwrap_or(false)
+            {
+                continue;
+            }
+            return Err(e).with_buck_error_context(|| {
+                format!(
+                    "Error creating Bazel execroot source symlink `{}` -> `{}`",
+                    dest.display(),
+                    source.display()
+                )
+            });
+        }
+    }
 
     // Bazel local actions share a durable execroot. Keep a Buck-local buck-out under it so
     // execroot-relative generated paths do not race the project buck-out tree.
@@ -1993,13 +2007,6 @@ fn is_bazel_execroot_working_directory(working_directory: &AbsNormPath) -> bool 
         || path
             .parent()
             .is_some_and(|parent| parent.ends_with("__bazel_execroot"))
-}
-
-fn is_bazel_private_execroot_working_directory(working_directory: &AbsNormPath) -> bool {
-    working_directory
-        .as_path()
-        .parent()
-        .is_some_and(|parent| parent.ends_with("__bazel_execroot"))
 }
 
 fn output_entry_contains_symlink(entry: &ActionDirectoryEntry<ActionDirectoryBuilder>) -> bool {
@@ -2221,12 +2228,7 @@ fn bazel_execroot_prefix(path: &ProjectRelativePath) -> Option<String> {
     let path = path.as_str();
     let (prefix, rest) = path.split_once("__bazel_execroot/")?;
     let (first_component, _) = rest.split_once('/')?;
-    if first_component.len() == 16
-        && first_component
-            .as_bytes()
-            .iter()
-            .all(u8::is_ascii_hexdigit)
-    {
+    if first_component.len() == 16 && first_component.as_bytes().iter().all(u8::is_ascii_hexdigit) {
         return Some(format!("{prefix}__bazel_execroot/{first_component}"));
     }
     Some(format!("{prefix}__bazel_execroot"))
