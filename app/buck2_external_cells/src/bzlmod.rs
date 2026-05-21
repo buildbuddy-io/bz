@@ -96,6 +96,7 @@ use buck2_execute::materialize::materializer::HasMaterializer;
 use buck2_execute::materialize::materializer::Materializer;
 use buck2_fs::error::IoResultExt;
 use buck2_fs::fs_util;
+use buck2_fs::paths::abs_path::AbsPath;
 use buck2_fs::paths::abs_norm_path::AbsNormPath;
 use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
 use buck2_http::HttpClient;
@@ -4938,6 +4939,30 @@ impl BzlmodGeneratedFileOpsDelegate {
     fn get_base_path(&self) -> ProjectRelativePathBuf {
         self.resolve(CellRelativePath::empty())
     }
+
+    fn get_backing_base_path(&self) -> buck2_error::Result<ProjectRelativePathBuf> {
+        let base_path = self.get_base_path();
+        let base_abs = self.io.project_root().resolve(&base_path);
+        let Some(metadata) = fs_util::symlink_metadata_if_exists(&base_abs)? else {
+            return Ok(base_path);
+        };
+        if !metadata.file_type().is_symlink() {
+            return Ok(base_path);
+        }
+
+        let target = fs_util::read_link(&base_abs).categorize_internal()?;
+        let target = if target.has_root() {
+            target
+        } else if let Some(parent) = base_abs.as_abs_path().parent() {
+            parent.join(&target).into_path_buf()
+        } else {
+            target
+        };
+        Ok(self
+            .io
+            .project_root()
+            .relativize_any(AbsPath::new(&target)?)?)
+    }
 }
 
 fn follow_bzlmod_symlinked_directory_entries(
@@ -5066,7 +5091,8 @@ impl FileOpsDelegate for BzlmodGeneratedFileOpsDelegate {
         path: &'async_trait CellRelativePath,
     ) -> buck2_error::Result<Option<RawPathMetadata>> {
         ensure_generated_materialized(ctx, self.get_base_path(), self.setup.dupe()).await?;
-        let project_path = self.resolve(path);
+        let backing_base_path = self.get_backing_base_path()?;
+        let project_path = backing_base_path.join(path.as_forward_relative_path());
         let Some(metadata) = (&self.io as &dyn IoProvider)
             .read_path_metadata_if_exists(project_path.clone())
             .await
@@ -5074,17 +5100,17 @@ impl FileOpsDelegate for BzlmodGeneratedFileOpsDelegate {
         else {
             return Ok(None);
         };
-        declare_observed_source_artifact(ctx, project_path, &metadata).await?;
-        Ok(Some(metadata.try_map(
-            |path| match path.strip_prefix_opt(self.get_base_path()) {
+        declare_observed_source_artifact(ctx, self.resolve(path), &metadata).await?;
+        Ok(Some(metadata.try_map(|path| {
+            match path.strip_prefix_opt(backing_base_path.as_ref() as &ProjectRelativePath) {
                 Some(path) => Ok(Arc::new(CellPath::new(self.cell, path.to_owned().into()))),
                 None => Err(internal_error!(
                     "Non-cell internal symlink at `{}` in cell `{}`",
                     path,
                     self.cell
                 )),
-            },
-        )?))
+            }
+        })?))
     }
 
     async fn read_path_metadata_if_exists_for_no_watchfs(
@@ -5093,7 +5119,8 @@ impl FileOpsDelegate for BzlmodGeneratedFileOpsDelegate {
         path: &'async_trait CellRelativePath,
     ) -> buck2_error::Result<Option<RawPathMetadata>> {
         ensure_generated_materialized(ctx, self.get_base_path(), self.setup.dupe()).await?;
-        let project_path = self.resolve(path);
+        let backing_base_path = self.get_backing_base_path()?;
+        let project_path = backing_base_path.join(path.as_forward_relative_path());
         let Some(metadata) = (&self.io as &dyn IoProvider)
             .read_path_metadata_if_exists(project_path)
             .await
@@ -5101,16 +5128,16 @@ impl FileOpsDelegate for BzlmodGeneratedFileOpsDelegate {
         else {
             return Ok(None);
         };
-        Ok(Some(metadata.try_map(
-            |path| match path.strip_prefix_opt(self.get_base_path()) {
+        Ok(Some(metadata.try_map(|path| {
+            match path.strip_prefix_opt(backing_base_path.as_ref() as &ProjectRelativePath) {
                 Some(path) => Ok(Arc::new(CellPath::new(self.cell, path.to_owned().into()))),
                 None => Err(internal_error!(
                     "Non-cell internal symlink at `{}` in cell `{}`",
                     path,
                     self.cell
                 )),
-            },
-        )?))
+            }
+        })?))
     }
 
     async fn read_path_metadata_for_no_watchfs_if_exists(
@@ -5194,8 +5221,9 @@ impl BzlmodGeneratedFileOpsDelegate {
         cache: Option<Arc<NoWatchFsMetadataCache>>,
         path: &CellRelativePath,
     ) -> buck2_error::Result<Option<RawPathMetadataForNoWatchFs>> {
-        let project_path = self.resolve(path);
-        let metadata = loop {
+        let (backing_base_path, metadata) = loop {
+            let backing_base_path = self.get_backing_base_path()?;
+            let project_path = backing_base_path.join(path.as_forward_relative_path());
             let metadata = (&self.io as &dyn IoProvider)
                 .read_path_metadata_if_exists_for_no_watchfs_with_cache(
                     project_path.clone(),
@@ -5206,22 +5234,22 @@ impl BzlmodGeneratedFileOpsDelegate {
                     format!("Error accessing metadata for path `{path}`")
                 })?;
             if metadata.is_some() || !self.wait_for_materialization_if_in_progress().await? {
-                break metadata;
+                break (backing_base_path, metadata);
             }
         };
         let Some(metadata) = metadata else {
             return Ok(None);
         };
-        Ok(Some(metadata.try_map(
-            |path| match path.strip_prefix_opt(self.get_base_path()) {
+        Ok(Some(metadata.try_map(|path| {
+            match path.strip_prefix_opt(backing_base_path.as_ref() as &ProjectRelativePath) {
                 Some(path) => Ok(Arc::new(CellPath::new(self.cell, path.to_owned().into()))),
                 None => Err(internal_error!(
                     "Non-cell internal symlink at `{}` in cell `{}`",
                     path,
                     self.cell
                 )),
-            },
-        )?))
+            }
+        })?))
     }
 }
 
