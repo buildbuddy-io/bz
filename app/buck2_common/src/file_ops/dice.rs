@@ -66,6 +66,7 @@ use crate::io::fs::read_external_path_metadata_for_no_watchfs;
 pub struct DiceFileComputations;
 
 const NO_WATCHFS_METADATA_CHECK_CONCURRENCY: usize = 200;
+const MAX_NO_WATCHFS_FILE_CHANGE_RECORDS: usize = 100;
 const MAX_EXTERNAL_SYMLINK_EXPANSIONS: usize = 256;
 static EXTERNAL_FILE_STATE_SEEN: AtomicBool = AtomicBool::new(false);
 
@@ -222,6 +223,7 @@ pub struct KnownFileStateInvalidationStats {
     pub read_dirs: usize,
     pub paths: usize,
     pub exists_matching_exact_case: usize,
+    pub events: Vec<buck2_data::FileWatcherEvent>,
     pub timings: KnownFileStateInvalidationTimings,
 }
 
@@ -434,6 +436,12 @@ pub async fn invalidate_changed_file_state(
         paths: changed_path_metadata_for_no_watchfs.len()
             + changed_path_metadata_for_no_watchfs_to_value.len(),
         exists_matching_exact_case: 0,
+        events: no_watchfs_file_change_events(
+            &changed_read_dirs,
+            &changed_read_dirs_to_value,
+            &changed_path_metadata_for_no_watchfs,
+            &changed_path_metadata_for_no_watchfs_to_value,
+        ),
         timings: KnownFileStateInvalidationTimings {
             introspection_us,
             file_ops_us,
@@ -450,6 +458,76 @@ pub async fn invalidate_changed_file_state(
     ctx.changed_to(changed_read_dirs_to_value)?;
 
     Ok(stats)
+}
+
+fn no_watchfs_file_change_events(
+    changed_read_dirs: &[ReadDirForNoWatchFsKey],
+    changed_read_dirs_to_value: &[(
+        ReadDirForNoWatchFsKey,
+        buck2_error::Result<Arc<[RawDirEntry]>>,
+    )],
+    changed_path_metadata_for_no_watchfs: &[PathMetadataForNoWatchFsKey],
+    changed_path_metadata_for_no_watchfs_to_value: &[(
+        PathMetadataForNoWatchFsKey,
+        buck2_error::Result<Option<RawPathMetadataForNoWatchFs>>,
+    )],
+) -> Vec<buck2_data::FileWatcherEvent> {
+    let total = changed_read_dirs.len()
+        + changed_read_dirs_to_value.len()
+        + changed_path_metadata_for_no_watchfs.len()
+        + changed_path_metadata_for_no_watchfs_to_value.len();
+    let mut events = Vec::with_capacity(total.min(MAX_NO_WATCHFS_FILE_CHANGE_RECORDS));
+
+    for key in changed_read_dirs {
+        push_no_watchfs_file_change_event(
+            &mut events,
+            &key.0,
+            buck2_data::FileWatcherKind::Directory,
+        );
+    }
+    for (key, _) in changed_read_dirs_to_value {
+        push_no_watchfs_file_change_event(
+            &mut events,
+            &key.0,
+            buck2_data::FileWatcherKind::Directory,
+        );
+    }
+    for key in changed_path_metadata_for_no_watchfs {
+        push_no_watchfs_file_change_event(&mut events, &key.0, buck2_data::FileWatcherKind::File);
+    }
+    for (key, value) in changed_path_metadata_for_no_watchfs_to_value {
+        push_no_watchfs_file_change_event(&mut events, &key.0, no_watchfs_file_watcher_kind(value));
+    }
+
+    events
+}
+
+fn push_no_watchfs_file_change_event(
+    events: &mut Vec<buck2_data::FileWatcherEvent>,
+    path: &CellPath,
+    kind: buck2_data::FileWatcherKind,
+) {
+    if events.len() < MAX_NO_WATCHFS_FILE_CHANGE_RECORDS {
+        events.push(buck2_data::FileWatcherEvent {
+            event: buck2_data::FileWatcherEventType::Modify as i32,
+            kind: kind as i32,
+            path: path.to_string(),
+        });
+    }
+}
+
+fn no_watchfs_file_watcher_kind(
+    value: &buck2_error::Result<Option<RawPathMetadataForNoWatchFs>>,
+) -> buck2_data::FileWatcherKind {
+    match value {
+        Ok(Some(RawPathMetadataForNoWatchFs::Directory)) => buck2_data::FileWatcherKind::Directory,
+        Ok(Some(RawPathMetadataForNoWatchFs::Symlink { .. })) => {
+            buck2_data::FileWatcherKind::Symlink
+        }
+        Ok(Some(RawPathMetadataForNoWatchFs::File(_))) | Ok(None) | Err(_) => {
+            buck2_data::FileWatcherKind::File
+        }
+    }
 }
 
 pub async fn invalidate_changed_external_file_state(
@@ -1227,5 +1305,31 @@ async fn read_dir_ext(
             Some(e) => Err(e),
             None => Err(e.into()),
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn no_watchfs_file_change_events_include_sample_paths() {
+        let read_dir = ReadDirForNoWatchFsKey(CellPath::testing_new("root//pkg"));
+        let path_metadata =
+            PathMetadataForNoWatchFsKey(CellPath::testing_new("root//pkg/file.txt"));
+
+        let events = no_watchfs_file_change_events(&[read_dir], &[], &[path_metadata], &[]);
+
+        assert_eq!(events.len(), 2);
+        assert_eq!(
+            buck2_data::FileWatcherKind::try_from(events[0].kind).unwrap(),
+            buck2_data::FileWatcherKind::Directory
+        );
+        assert_eq!(events[0].path, "root//pkg");
+        assert_eq!(
+            buck2_data::FileWatcherKind::try_from(events[1].kind).unwrap(),
+            buck2_data::FileWatcherKind::File
+        );
+        assert_eq!(events[1].path, "root//pkg/file.txt");
     }
 }

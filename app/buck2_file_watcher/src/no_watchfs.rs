@@ -59,6 +59,7 @@ fn no_watchfs_file_watcher_stats(
     buck2_data::FileWatcherStats {
         events_total: total,
         events_processed: total,
+        events: stats.events,
         incomplete_events_reason: Some(format!(
             "no-watchfs invalidated keys: read_files={}, read_dirs={}, paths={}, exists_matching_exact_case={}; timings_us: introspection={}, file_ops={}, file_state={}, read_dirs={}, metadata={}, full_check={}",
             stats.read_files,
