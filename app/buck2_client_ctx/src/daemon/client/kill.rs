@@ -32,7 +32,7 @@ use crate::daemon::client::connect::buckd_startup_timeout;
 use crate::startup_deadline::StartupDeadline;
 
 const GRACEFUL_SHUTDOWN_TIMEOUT: Duration = Duration::from_millis(500);
-const CONSTRAINT_MISMATCH_GRACEFUL_SHUTDOWN_TIMEOUT: Duration = Duration::from_millis(50);
+const CONSTRAINT_MISMATCH_GRACEFUL_SHUTDOWN_TIMEOUT: Duration = Duration::ZERO;
 const KILL_REQUEST_TIMEOUT: Duration = Duration::from_millis(500);
 const FORCE_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(10);
 

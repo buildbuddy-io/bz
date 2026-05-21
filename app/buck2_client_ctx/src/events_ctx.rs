@@ -660,7 +660,12 @@ impl EventsCtx {
             // TODO(nga): this is not a tailer.
             s.handle_tailer_stderr(message)
         })
-        .await
+        .await?;
+
+        // Client-side startup messages need to be visible in program order. The
+        // superconsole queues emitted lines until a render tick, while some
+        // daemon-lifecycle errors write directly to stderr.
+        self.tick(&Tick::now()).await
     }
 
     pub async fn finalize(self) -> Vec<String> {
