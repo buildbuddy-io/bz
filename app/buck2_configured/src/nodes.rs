@@ -1949,6 +1949,25 @@ async fn resolve_bazel_single_toolchain(
     .await?
 }
 
+async fn resolve_bazel_toolchain_type_alias(
+    ctx: &mut DiceComputations<'_>,
+    toolchain_type: &str,
+) -> buck2_error::Result<String> {
+    let cell_resolver = ctx.get_cell_resolver().await?;
+    let root_cell = cell_resolver.root_cell();
+    let alias_resolver = ctx.get_cell_alias_resolver(root_cell).await?;
+    let Ok(label) = TargetLabel::parse(
+        toolchain_type,
+        root_cell,
+        &cell_resolver,
+        &alias_resolver,
+    ) else {
+        return Ok(toolchain_type.to_owned());
+    };
+    let resolved = resolve_bazel_alias(ctx, &label).await?;
+    Ok(normalize_bazel_toolchain_key(&resolved.to_string()))
+}
+
 async fn resolve_bazel_toolchain_deps(
     ctx: &mut DiceComputations<'_>,
     target_label: &ConfiguredTargetLabel,
@@ -1959,41 +1978,53 @@ async fn resolve_bazel_toolchain_deps(
         return Ok((Vec::new(), Vec::new()));
     }
 
-    let declared_toolchains = target_node
-        .bazel_toolchains()
-        .iter()
-        .map(|declared| normalize_bazel_toolchain_key(declared))
-        .collect::<Vec<_>>();
+    let mut declared_toolchains = Vec::with_capacity(target_node.bazel_toolchains().len());
+    for declared in target_node.bazel_toolchains() {
+        let declared_key = normalize_bazel_toolchain_key(&declared.toolchain_type);
+        let resolution_key = resolve_bazel_toolchain_type_alias(ctx, &declared_key).await?;
+        declared_toolchains.push((declared_key, resolution_key, declared.mandatory));
+    }
 
-    let resolved_toolchain_impls: Vec<(String, Option<TargetLabel>)> = ctx
-        .try_compute_join(declared_toolchains.iter(), |ctx, declared: &String| {
+    let selected_toolchain_impls: Vec<(String, bool, Option<TargetLabel>)> = ctx
+        .try_compute_join(
+            declared_toolchains.iter(),
+            |ctx, (declared, resolution_key, mandatory)| {
             async move {
                 let toolchain_impl = resolve_bazel_single_toolchain(
                     ctx,
-                    declared.clone(),
+                    resolution_key.clone(),
                     target_label.cfg().dupe(),
                     execution_platform_cfg.cfg().dupe(),
                 )
                 .await?;
-                buck2_error::Ok((declared.clone(), toolchain_impl))
+                buck2_error::Ok((declared.clone(), *mandatory, toolchain_impl))
             }
             .boxed()
-        })
+        },
+        )
         .await?;
 
-    let resolved_toolchain_impls = resolved_toolchain_impls
-        .into_iter()
-        .filter_map(|(declared, toolchain_impl)| {
-            let toolchain_impl = toolchain_impl?;
-            let configured = toolchain_impl.configure_with_exec(
-                target_label.cfg().dupe(),
-                execution_platform_cfg.cfg().dupe(),
-            );
-            let provider_label =
-                ConfiguredProvidersLabel::new(configured.dupe(), ProvidersName::Default);
-            Some((declared, configured, provider_label))
-        })
-        .collect::<Vec<_>>();
+    let mut resolved_toolchain_impls = Vec::new();
+    for (declared, mandatory, toolchain_impl) in selected_toolchain_impls {
+        let Some(toolchain_impl) = toolchain_impl else {
+            if mandatory {
+                return Err(buck2_error::buck2_error!(
+                    buck2_error::ErrorTag::Input,
+                    "mandatory toolchain type `{}` was not resolved for `{}`",
+                    declared,
+                    target_label
+                ));
+            }
+            continue;
+        };
+        let configured = toolchain_impl.configure_with_exec(
+            target_label.cfg().dupe(),
+            execution_platform_cfg.cfg().dupe(),
+        );
+        let provider_label =
+            ConfiguredProvidersLabel::new(configured.dupe(), ProvidersName::Default);
+        resolved_toolchain_impls.push((declared, configured, provider_label));
+    }
 
     let mut deps = Vec::with_capacity(resolved_toolchain_impls.len());
     let mut resolved = Vec::with_capacity(resolved_toolchain_impls.len());

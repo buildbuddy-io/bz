@@ -277,10 +277,13 @@ impl<'v> AnalysisToolchains<'v> {
 
     fn key_from_value(value: Value<'_>) -> String {
         if let Some(label) = StarlarkProvidersLabel::from_value(value) {
-            return Self::normalize_key(&label.to_string());
+            return Self::normalize_key(&label.label().target().to_string());
+        }
+        if let Some(label) = StarlarkConfiguredProvidersLabel::from_value(value) {
+            return Self::normalize_key(&label.label().target().unconfigured().to_string());
         }
         if let Some(label) = StarlarkTargetLabel::from_value(value) {
-            return Self::normalize_key(&label.to_string());
+            return Self::normalize_key(&label.label().to_string());
         }
         if let Some(key) = value.unpack_str() {
             return Self::normalize_key(key);

@@ -328,7 +328,7 @@ fn bazel_config_module(builder: &mut GlobalsBuilder) {
 fn bazel_config_common_module(builder: &mut GlobalsBuilder) {
     fn toolchain_type<'v>(
         toolchain_type: Value<'v>,
-        #[starlark(require = named, default = false)] mandatory: bool,
+        #[starlark(require = named, default = true)] mandatory: bool,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {
         let mandatory = eval.heap().alloc(mandatory);

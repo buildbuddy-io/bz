@@ -1890,7 +1890,10 @@ async fn run_analysis_with_env_underlying(
                     predeclared_output_files,
                     Some(analysis_env.label),
                     Some(plugins.into()),
-                    node.bazel_toolchains().to_vec(),
+                    node.bazel_toolchains()
+                        .iter()
+                        .map(|toolchain| toolchain.toolchain_type.clone())
+                        .collect(),
                     resolved_toolchains,
                     resolved_toolchain_template_variables,
                     bazel_cpp_options,

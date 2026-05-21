@@ -59,6 +59,7 @@ use crate::nodes::attributes::PACKAGE_CFG_MODIFIERS;
 use crate::nodes::attributes::TYPE;
 use crate::package::Package;
 use crate::package::PackageGroup;
+use crate::rule::BazelToolchainRequirement;
 use crate::rule::Rule;
 use crate::rule_type::RuleType;
 use crate::visibility::VisibilitySpecification;
@@ -222,7 +223,7 @@ impl TargetNode {
         self.as_ref().uses_plugins()
     }
 
-    pub fn bazel_toolchains(&self) -> &[String] {
+    pub fn bazel_toolchains(&self) -> &[BazelToolchainRequirement] {
         self.as_ref().bazel_toolchains()
     }
 
@@ -788,7 +789,7 @@ impl<'a> TargetNodeRef<'a> {
         &self.0.get().rule.uses_plugins
     }
 
-    pub fn bazel_toolchains(self) -> &'a [String] {
+    pub fn bazel_toolchains(self) -> &'a [BazelToolchainRequirement] {
         &self.0.get().rule.bazel_toolchains
     }
 

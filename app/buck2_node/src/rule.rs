@@ -52,6 +52,13 @@ pub struct BazelImplicitOutput {
     pub template: ArcStr,
 }
 
+/// Bazel toolchain type declared by `rule(toolchains = ...)`.
+#[derive(Debug, Eq, PartialEq, Hash, Clone, Pagable, Allocative)]
+pub struct BazelToolchainRequirement {
+    pub toolchain_type: String,
+    pub mandatory: bool,
+}
+
 /// Common rule data needed in `TargetNode`.
 #[derive(Debug, Eq, PartialEq, Hash, Pagable, Allocative)]
 pub struct Rule {
@@ -67,7 +74,7 @@ pub struct Rule {
     /// The plugin kinds that are used by the target
     pub uses_plugins: Vec<PluginKind>,
     /// Bazel toolchain types declared by `rule(toolchains = ...)`.
-    pub bazel_toolchains: Vec<String>,
+    pub bazel_toolchains: Vec<BazelToolchainRequirement>,
     /// Bazel explicit output attrs declared with `attr.output()` or `attr.output_list()`.
     pub bazel_output_attrs: Vec<BazelOutputAttr>,
     /// Bazel implicit outputs declared with `rule(outputs = {...})`.

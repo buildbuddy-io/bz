@@ -74,6 +74,7 @@ use crate::nodes::attributes::TYPE;
 use crate::nodes::unconfigured::RuleKind;
 use crate::nodes::unconfigured::TargetNode;
 use crate::provider_id_set::ProviderIdSet;
+use crate::rule::BazelToolchainRequirement;
 use crate::rule_type::RuleType;
 use crate::rule_type::StarlarkRuleType;
 
@@ -568,7 +569,7 @@ impl ConfiguredTargetNode {
     }
 
     #[inline]
-    pub fn bazel_toolchains(&self) -> &[String] {
+    pub fn bazel_toolchains(&self) -> &[BazelToolchainRequirement] {
         self.as_ref().bazel_toolchains()
     }
 
@@ -879,7 +880,7 @@ impl<'a> ConfiguredTargetNodeRef<'a> {
         }
     }
 
-    pub fn bazel_toolchains(self) -> &'a [String] {
+    pub fn bazel_toolchains(self) -> &'a [BazelToolchainRequirement] {
         match &self.0.get().target_node {
             TargetNodeOrForward::TargetNode(target_node) => target_node.bazel_toolchains(),
             TargetNodeOrForward::Forward(_, _) => &[],
