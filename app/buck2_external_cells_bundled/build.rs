@@ -299,7 +299,7 @@ fn write_include_file_from_cargo_manifest_args(
             let path = runfile_path.strip_prefix(&format!("{module}/"))?;
             let contents_path = runfiles_root.join(contents_path);
             let contents_include_path = if use_buck_generated_out_dir_include_paths(out_dir) {
-                buck_generated_out_dir_include_path(runfile_path)
+                buck_generated_out_dir_include_path(out_dir, runfile_path)
             } else {
                 include_path_from_out_dir_to_existing_path(include_out_dir, &contents_path)
                     .unwrap_or_else(|| include_path_from_out_dir(include_out_dir, runfile_path))
@@ -362,13 +362,35 @@ fn use_buck_generated_out_dir_include_paths(out_dir: &Path) -> bool {
     })
 }
 
-fn buck_generated_out_dir_include_path(runfile_path: &str) -> PathBuf {
+fn buck_generated_out_dir_include_path(out_dir: &Path, runfile_path: &str) -> PathBuf {
+    if let Some(path) = buck_bazel_execroot_include_path(out_dir, runfile_path) {
+        return path;
+    }
+
     let mut path = PathBuf::new();
     for _ in 0..9 {
         path.push("..");
     }
     path.push(runfile_path);
     path
+}
+
+fn buck_bazel_execroot_include_path(out_dir: &Path, runfile_path: &str) -> Option<PathBuf> {
+    let components = out_dir.components().collect::<Vec<_>>();
+    let execroot_index = components
+        .iter()
+        .position(|component| component.as_os_str() == "__bazel_execroot")?;
+    let execroot_root_end = execroot_index.checked_add(2)?;
+    if components.len() < execroot_root_end {
+        return None;
+    }
+
+    let mut path = PathBuf::new();
+    for _ in execroot_root_end..components.len() {
+        path.push("..");
+    }
+    path.push(runfile_path);
+    Some(path)
 }
 
 fn find_existing_runfile_path(runfile_path: &str) -> Option<PathBuf> {
