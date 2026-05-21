@@ -1137,7 +1137,7 @@ impl InterpreterForDir {
                         .as_ref()
                         .invoke_implementation(repository_ctx, eval)
                     {
-                        Ok(_) => Ok(crate::bazel_repository::BazelRepositoryRuleEvaluation::Success(
+                        Ok(value) => Ok(crate::bazel_repository::BazelRepositoryRuleEvaluation::Success(
                             crate::bazel_repository::BazelRepositoryRuleEvaluationResult {
                                 files: crate::bazel_repository::take_repository_ctx_files(
                                     repository_ctx,
@@ -1146,6 +1146,10 @@ impl InterpreterForDir {
                                     crate::bazel_repository::take_repository_ctx_recorded_inputs(
                                         repository_ctx,
                                     )?,
+                                reproducible: value
+                                    .downcast_ref::<crate::bazel_repository::StarlarkRepositoryMetadata>(
+                                    )
+                                    .is_some_and(|metadata| metadata.reproducible()),
                             },
                         )),
                         Err(error) => {

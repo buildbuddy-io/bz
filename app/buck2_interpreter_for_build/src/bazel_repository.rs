@@ -754,6 +754,13 @@ pub enum BazelModuleExtensionEvaluation {
 pub struct BazelRepositoryRuleEvaluationResult {
     pub files: Vec<BazelRepositoryGeneratedFile>,
     pub recorded_inputs: Vec<BazelRepositoryRecordedInput>,
+    pub reproducible: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BazelRepositoryRuleCacheInfo {
+    pub predeclared_input_hash: String,
+    pub local: bool,
 }
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Freeze, Allocative)]
@@ -1262,20 +1269,15 @@ async fn repository_rule_loaded_module_load_paths(
         .await?
 }
 
-pub async fn bzlmod_module_extension_bzl_transitive_digest(
+async fn bzlmod_bzl_transitive_digest(
     ctx: &mut DiceComputations<'_>,
-    setup: &BzlmodModuleExtensionRepoSetup,
+    bzl_path: ImportPath,
 ) -> buck2_error::Result<String> {
-    let extension_cell_path = CellPath::new(
-        CellName::unchecked_new(&setup.extension_bzl_cell)?,
-        CellRelativePathBuf::try_from(setup.extension_bzl_path.to_string())?,
-    );
-    let extension_path = ImportPath::new_same_cell(extension_cell_path)?;
-    let extension_module = ctx
-        .get_loaded_module(StarlarkModulePath::LoadFile(&extension_path))
+    let bzl_module = ctx
+        .get_loaded_module(StarlarkModulePath::LoadFile(&bzl_path))
         .await?;
-    let mut paths = vec![extension_path];
-    collect_loaded_module_load_paths(&extension_module, &mut BTreeSet::new(), &mut paths);
+    let mut paths = vec![bzl_path];
+    collect_loaded_module_load_paths(&bzl_module, &mut BTreeSet::new(), &mut paths);
     paths.sort_by_key(|path| path.to_string());
     paths.dedup_by_key(|path| path.to_string());
 
@@ -1291,6 +1293,96 @@ pub async fn bzlmod_module_extension_bzl_transitive_digest(
         hasher.update(&[0]);
     }
     Ok(blake3::Hasher::finalize(&hasher).to_hex().to_string())
+}
+
+pub async fn bzlmod_module_extension_bzl_transitive_digest(
+    ctx: &mut DiceComputations<'_>,
+    setup: &BzlmodModuleExtensionRepoSetup,
+) -> buck2_error::Result<String> {
+    let extension_cell_path = CellPath::new(
+        CellName::unchecked_new(&setup.extension_bzl_cell)?,
+        CellRelativePathBuf::try_from(setup.extension_bzl_path.to_string())?,
+    );
+    let extension_path = ImportPath::new_same_cell(extension_cell_path)?;
+    bzlmod_bzl_transitive_digest(ctx, extension_path).await
+}
+
+fn update_repository_rule_cache_key(hasher: &mut blake3::Hasher, field: &str) {
+    hasher.update(field.len().to_string().as_bytes());
+    hasher.update(b"\0");
+    hasher.update(field.as_bytes());
+    hasher.update(b"\0");
+}
+
+fn update_repository_rule_cache_key_opt(hasher: &mut blake3::Hasher, field: Option<&str>) {
+    match field {
+        Some(field) => {
+            update_repository_rule_cache_key(hasher, "some");
+            update_repository_rule_cache_key(hasher, field);
+        }
+        None => update_repository_rule_cache_key(hasher, "none"),
+    }
+}
+
+pub async fn bzlmod_repository_rule_cache_info(
+    ctx: &mut DiceComputations<'_>,
+    invocation: &BazelRepositoryRuleInvocation,
+) -> buck2_error::Result<BazelRepositoryRuleCacheInfo> {
+    let rule_path = match &invocation.rule_id.path {
+        BzlOrBxlPath::Bzl(path) => path,
+        BzlOrBxlPath::Bxl(_) => {
+            return Err(BazelRepositoryError::RepositoryRuleBxlUnsupported(
+                invocation.rule_id.to_string(),
+            )
+            .into());
+        }
+    };
+    let rule_module = ctx
+        .get_loaded_module(StarlarkModulePath::LoadFile(rule_path))
+        .await?;
+    let rule_value = rule_module
+        .env()
+        .get_any_visibility(&invocation.rule_id.name)
+        .map(|(value, _)| value)
+        .map_err(|e| buck2_error::conversion::from_any_with_tag(e, buck2_error::ErrorTag::Input))
+        .or_else(|_| {
+            Err(buck2_error::Error::from(
+                BazelRepositoryError::RepositoryRuleSymbolMissing {
+                    path: rule_path.to_string(),
+                    rule: invocation.rule_id.name.clone(),
+                },
+            ))
+        })?;
+    let repository_rule =
+        repository_rule_from_loaded_module(rule_path, &invocation.rule_id.name, rule_value)?;
+    let bzl_transitive_digest = bzlmod_bzl_transitive_digest(ctx, rule_path.clone()).await?;
+    let repo_env = ctx.get_bzlmod_repository_environment().await?;
+
+    let mut hasher = blake3::Hasher::new();
+    update_repository_rule_cache_key(&mut hasher, "buck2-bzlmod-repository-rule-cache-v1");
+    update_repository_rule_cache_key(&mut hasher, std::env::consts::OS);
+    update_repository_rule_cache_key(&mut hasher, std::env::consts::ARCH);
+    update_repository_rule_cache_key(&mut hasher, &invocation.rule_id.path.to_string());
+    update_repository_rule_cache_key(&mut hasher, &invocation.rule_id.name);
+    update_repository_rule_cache_key(&mut hasher, &bzl_transitive_digest);
+    update_repository_rule_cache_key(&mut hasher, &invocation.name);
+    update_repository_rule_cache_key(&mut hasher, &invocation.original_name);
+    update_repository_rule_cache_key(&mut hasher, &invocation.attrs.len().to_string());
+    for (name, value) in &invocation.attrs {
+        update_repository_rule_cache_key(&mut hasher, name);
+        update_repository_rule_cache_key(&mut hasher, value);
+    }
+    let environ = repository_rule.environ.iter().collect::<BTreeSet<_>>();
+    update_repository_rule_cache_key(&mut hasher, &environ.len().to_string());
+    for name in environ {
+        update_repository_rule_cache_key(&mut hasher, name);
+        update_repository_rule_cache_key_opt(&mut hasher, repo_env.get(name).map(|value| &**value));
+    }
+
+    Ok(BazelRepositoryRuleCacheInfo {
+        predeclared_input_hash: blake3::Hasher::finalize(&hasher).to_hex().to_string(),
+        local: repository_rule.local,
+    })
 }
 
 async fn materialize_repository_rule_path_label_deps(
@@ -4254,8 +4346,7 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
         #[starlark(require = named, default = false)] reproducible: bool,
         #[starlark(require = named, default = UnpackDictEntries::default())]
         attrs_for_reproducibility: UnpackDictEntries<Value<'v>, Value<'v>>,
-        eval: &mut Evaluator<'v, '_, '_>,
-    ) -> starlark::Result<Value<'v>> {
+    ) -> starlark::Result<StarlarkRepositoryMetadata> {
         let _unused = this;
         if reproducible && !attrs_for_reproducibility.entries.is_empty() {
             return Err(buck2_error::buck2_error!(
@@ -4264,13 +4355,7 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
             )
             .into());
         }
-        let attrs_for_reproducibility = eval
-            .heap()
-            .alloc(AllocDict(attrs_for_reproducibility.entries));
-        Ok(eval.heap().alloc(AllocStruct([
-            ("reproducible", eval.heap().alloc(reproducible)),
-            ("attrs_for_reproducibility", attrs_for_reproducibility),
-        ])))
+        Ok(StarlarkRepositoryMetadata { reproducible })
     }
 
     fn report_progress<'v>(
@@ -5136,6 +5221,24 @@ impl<'v> StarlarkValue<'v> for FrozenStarlarkBazelModuleTag {
         self.attrs.get(attribute).map(|value| value.to_value())
     }
 }
+
+#[derive(Debug, Display, ProvidesStaticType, NoSerialize, Allocative)]
+#[display("<repo_metadata>")]
+pub(crate) struct StarlarkRepositoryMetadata {
+    #[allow(dead_code)]
+    reproducible: bool,
+}
+
+impl StarlarkRepositoryMetadata {
+    pub(crate) fn reproducible(&self) -> bool {
+        self.reproducible
+    }
+}
+
+starlark_simple_value!(StarlarkRepositoryMetadata);
+
+#[starlark_value(type = "repo_metadata")]
+impl<'v> StarlarkValue<'v> for StarlarkRepositoryMetadata {}
 
 #[derive(Debug, Display, ProvidesStaticType, NoSerialize, Allocative)]
 #[display("<extension_metadata>")]
