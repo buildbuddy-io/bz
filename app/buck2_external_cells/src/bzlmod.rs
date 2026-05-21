@@ -535,6 +535,7 @@ fn write_repository_rule_repo(
         let source_dir = ProjectRelativePath::new(source_dir.as_ref())?;
         let source = project_fs.resolve(source_dir);
         copy_dir_contents(&source, dest)?;
+        replant_copied_repository_symlinks(&source, dest, dest)?;
     }
     write_generated_module_file(dest, canonical_repo_name)?;
     for file in setup.files.iter() {
@@ -1940,6 +1941,63 @@ fn copy_dir_contents(from: &AbsNormPath, to: &AbsNormPath) -> buck2_error::Resul
     Ok(())
 }
 
+fn relative_path_from_path_to_path(target: &Path, dest: &Path) -> PathBuf {
+    let Some(dest_parent) = dest.parent() else {
+        return target.to_owned();
+    };
+    let target_components = target.components().collect::<Vec<_>>();
+    let dest_components = dest_parent.components().collect::<Vec<_>>();
+    let common = target_components
+        .iter()
+        .zip(&dest_components)
+        .take_while(|(target, dest)| target == dest)
+        .count();
+    if common == 0 {
+        return target.to_owned();
+    }
+
+    let mut relative = PathBuf::new();
+    for _ in common..dest_components.len() {
+        relative.push("..");
+    }
+    for component in &target_components[common..] {
+        relative.push(component.as_os_str());
+    }
+    if relative.as_os_str().is_empty() {
+        relative.push(".");
+    }
+    relative
+}
+
+fn replant_copied_repository_symlinks(
+    source_root: &AbsNormPath,
+    dest_root: &AbsNormPath,
+    dir: &AbsNormPath,
+) -> buck2_error::Result<()> {
+    for entry in fs_util::read_dir(dir).categorize_internal()? {
+        let entry = entry?;
+        let path = entry.path();
+        let file_type = entry.file_type()?;
+        if file_type.is_dir() {
+            replant_copied_repository_symlinks(source_root, dest_root, &path)?;
+        } else if file_type.is_symlink() {
+            let target = fs_util::read_link(&path).categorize_internal()?;
+            let Some(target_under_source) = target
+                .is_absolute()
+                .then(|| target.strip_prefix(source_root.as_path()).ok())
+                .flatten()
+            else {
+                continue;
+            };
+            let replanted_target = dest_root.as_path().join(target_under_source);
+            let relative_target = relative_path_from_path_to_path(&replanted_target, path.as_path());
+            fs_util::remove_file(&path).categorize_internal()?;
+            fs_util::symlink(relative_target, &path).categorize_internal()?;
+        }
+    }
+    Ok(())
+}
+
 fn link_or_copy_file(from: &AbsNormPath, to: &AbsNormPath) -> buck2_error::Result<()> {
     match fs::hard_link(from, to) {
         Ok(()) => Ok(()),
@@ -2182,6 +2240,9 @@ async fn bzlmod_generated_repo_contents_cache_candidates(
                 entry_name
             ));
             if !bzlmod_repo_contents_cache_exists(&project_root, &repo)? {
+                continue;
+            }
+            if !bzlmod_generated_repo_symlink_targets_exist(&project_root.resolve(&repo))? {
                 continue;
             }
             let modified = entry
@@ -2476,7 +2537,7 @@ fn bzlmod_generated_repository_rule_materialization_stamp_content(
 
 fn bzlmod_generated_repo_contents_cache_key(setup: &BzlmodGeneratedCellSetup) -> String {
     let mut hasher = blake3::Hasher::new();
-    update_bzlmod_repo_contents_cache_key(&mut hasher, "buck2-bzlmod-generated-materialization-v2");
+    update_bzlmod_repo_contents_cache_key(&mut hasher, "buck2-bzlmod-generated-materialization-v3");
     update_bzlmod_repo_contents_cache_key(&mut hasher, std::env::consts::OS);
     update_bzlmod_repo_contents_cache_key(&mut hasher, std::env::consts::ARCH);
     update_bzlmod_repo_contents_cache_key(&mut hasher, &setup.canonical_repo_name);
