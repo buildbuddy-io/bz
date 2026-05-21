@@ -19,6 +19,7 @@ use allocative::Allocative;
 use async_trait::async_trait;
 use buck2_core::cells::cell_path::CellPath;
 use buck2_core::cells::cell_path::CellPathRef;
+use buck2_core::cells::external::ExternalCellOrigin;
 use buck2_core::cells::name::CellName;
 use buck2_error::internal_error;
 use buck2_fs::paths::file_name::FileNameBuf;
@@ -42,6 +43,7 @@ use pagable::Pagable;
 use pagable::pagable_typetag;
 
 use crate::buildfiles::HasBuildfiles;
+use crate::dice::cells::HasExternalCellOrigins;
 use crate::dice::data::HasIoProvider;
 use crate::dice::skyframe::BazelSkyframeFunction;
 use crate::dice::skyframe::mark_bazel_skyframe_key_with_detail;
@@ -1059,7 +1061,13 @@ impl Key for ReadDirForNoWatchFsKey {
         ctx: &mut DiceComputations,
         _cancellations: &CancellationContext,
     ) -> Self::Value {
+        let origin = ctx.get_external_cell_origin(self.0.cell()).await?;
         let file_ops = get_delegated_file_ops(ctx, self.0.cell(), CheckIgnores::No).await?;
+        if matches!(origin, Some(ExternalCellOrigin::BzlmodGenerated(_))) {
+            return file_ops
+                .read_raw_dir_for_no_watchfs(ctx, self.0.as_ref().path())
+                .await;
+        }
         let no_watchfs_metadata_cache = ctx
             .per_transaction_data()
             .data

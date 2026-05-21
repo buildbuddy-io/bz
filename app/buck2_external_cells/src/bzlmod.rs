@@ -360,6 +360,12 @@ struct BzlmodGeneratedIoRequest {
     dest: ProjectRelativePathBuf,
 }
 
+struct BzlmodGeneratedPublishIoRequest {
+    src: ProjectRelativePathBuf,
+    dest: ProjectRelativePathBuf,
+    cleanup: Vec<ProjectRelativePathBuf>,
+}
+
 struct BzlmodGeneratedHttpArchiveIoRequest {
     setup: BzlmodHttpArchiveSetup,
     archive: ProjectRelativePathBuf,
@@ -403,6 +409,22 @@ impl IoRequest for BzlmodGeneratedHttpArchiveIoRequest {
         }
         copy_dir_contents(&source, &dest)?;
         write_generated_module_file(&dest, &self.setup.repo_name)?;
+        Ok(())
+    }
+}
+
+impl IoRequest for BzlmodGeneratedPublishIoRequest {
+    fn execute(self: Box<Self>, project_fs: &ProjectRoot) -> buck2_error::Result<()> {
+        let src = project_fs.resolve(&self.src);
+        let dest = project_fs.resolve(&self.dest);
+        if let Some(parent) = dest.parent() {
+            fs_util::create_dir_all(parent)?;
+        }
+        fs_util::remove_all(&dest).categorize_internal()?;
+        fs_util::rename(&src, &dest).categorize_internal()?;
+        for path in self.cleanup {
+            fs_util::remove_all(project_fs.resolve(path)).categorize_internal()?;
+        }
         Ok(())
     }
 }
@@ -3161,11 +3183,21 @@ async fn evaluate_and_materialize_bzlmod_repository_rule(
     invocation: &BazelRepositoryRuleInvocation,
     cancellations: &CancellationContext,
 ) -> buck2_error::Result<Vec<BazelRepositoryRecordedInput>> {
+    let working_dir = bzlmod_generated_sibling_path_for_canonical(
+        canonical_repo_name,
+        path,
+        "repository_ctx_tmp",
+    );
+    let materialized_dir = bzlmod_generated_sibling_path_for_canonical(
+        canonical_repo_name,
+        path,
+        "materialization_tmp",
+    );
     ctx.get_blocking_executor()
         .execute_io(
             Box::new(
                 buck2_execute::execute::clean_output_paths::CleanOutputPaths {
-                    paths: vec![path.to_owned()],
+                    paths: vec![working_dir.clone(), materialized_dir.clone()],
                 },
             ),
             cancellations,
@@ -3174,7 +3206,7 @@ async fn evaluate_and_materialize_bzlmod_repository_rule(
     let result = evaluate_bzlmod_repository_rule_with_recorded_inputs(
         ctx,
         invocation,
-        path.as_str(),
+        working_dir.as_str(),
         Some(BazelRepositoryRuleProgress {
             repo: canonical_repo_name.to_owned(),
             path: path.to_string(),
@@ -3200,11 +3232,21 @@ async fn evaluate_and_materialize_bzlmod_repository_rule(
                     generator: BzlmodGeneratedCellGenerator::RepositoryRule(
                         BzlmodRepositoryRuleSetup {
                             files: Arc::new(files),
-                            source_dir: None,
+                            source_dir: Some(Arc::from(working_dir.as_str())),
                         },
                     ),
                 },
+                dest: materialized_dir.clone(),
+            }),
+            cancellations,
+        )
+        .await?;
+    ctx.get_blocking_executor()
+        .execute_io(
+            Box::new(BzlmodGeneratedPublishIoRequest {
+                src: materialized_dir,
                 dest: path.to_owned(),
+                cleanup: vec![working_dir],
             }),
             cancellations,
         )
@@ -4507,6 +4549,24 @@ fn follow_bzlmod_symlinked_directory_entries(
     Ok(())
 }
 
+async fn wait_for_bzlmod_generated_materialization_if_in_progress(
+    project_root: &ProjectRoot,
+    setup: &BzlmodGeneratedCellSetup,
+    base_path: &ProjectRelativePath,
+) -> buck2_error::Result<bool> {
+    let stamp_path = bzlmod_generated_materialization_stamp_path(setup, base_path);
+    if fs_util::symlink_metadata_if_exists(project_root.resolve(&stamp_path))?.is_some() {
+        return Ok(false);
+    }
+    for _ in 0..300 {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        if fs_util::symlink_metadata_if_exists(project_root.resolve(&stamp_path))?.is_some() {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 #[pagable_typetag]
 #[async_trait::async_trait]
 impl FileOpsDelegate for BzlmodGeneratedFileOpsDelegate {
@@ -4517,11 +4577,28 @@ impl FileOpsDelegate for BzlmodGeneratedFileOpsDelegate {
     ) -> buck2_error::Result<ReadFileProxy> {
         ensure_generated_materialized(ctx, self.get_base_path(), self.setup.dupe()).await?;
         Ok(ReadFileProxy::new_with_captures(
-            (self.resolve(path), self.io.dupe()),
-            |(project_path, io)| async move {
-                (&io as &dyn IoProvider)
-                    .read_file_if_exists(project_path)
-                    .await
+            (
+                self.resolve(path),
+                self.io.dupe(),
+                self.setup.dupe(),
+                self.get_base_path(),
+            ),
+            |(project_path, io, setup, base_path)| async move {
+                loop {
+                    let contents = (&io as &dyn IoProvider)
+                        .read_file_if_exists(project_path.clone())
+                        .await?;
+                    if contents.is_some()
+                        || !wait_for_bzlmod_generated_materialization_if_in_progress(
+                            io.project_root(),
+                            &setup,
+                            &base_path,
+                        )
+                        .await?
+                    {
+                        return Ok(contents);
+                    }
+                }
             },
         ))
     }
@@ -4654,15 +4731,36 @@ impl FileOpsDelegate for BzlmodGeneratedFileOpsDelegate {
 }
 
 impl BzlmodGeneratedFileOpsDelegate {
+    async fn wait_for_materialization_if_in_progress(&self) -> buck2_error::Result<bool> {
+        wait_for_bzlmod_generated_materialization_if_in_progress(
+            self.io.project_root(),
+            &self.setup,
+            &self.get_base_path(),
+        )
+        .await
+    }
+
     async fn read_dir_for_no_watchfs_without_dice_impl(
         &self,
         path: &CellRelativePath,
     ) -> buck2_error::Result<Arc<[RawDirEntry]>> {
         let project_path = self.resolve(path);
-        let mut entries = (&self.io as &dyn IoProvider)
-            .read_dir(project_path)
-            .await
-            .with_buck_error_context(|| format!("Error listing dir `{path}`"))?;
+        let mut entries = loop {
+            match (&self.io as &dyn IoProvider)
+                .read_dir(project_path.clone())
+                .await
+            {
+                Ok(entries) => break entries,
+                Err(error) if self.wait_for_materialization_if_in_progress().await? => {
+                    drop(error);
+                    continue;
+                }
+                Err(error) => {
+                    return Err(error)
+                        .with_buck_error_context(|| format!("Error listing dir `{path}`"));
+                }
+            }
+        };
         follow_bzlmod_symlinked_directory_entries(
             self.io.project_root(),
             self.resolve(path).as_ref(),
@@ -4678,11 +4776,21 @@ impl BzlmodGeneratedFileOpsDelegate {
         path: &CellRelativePath,
     ) -> buck2_error::Result<Option<RawPathMetadataForNoWatchFs>> {
         let project_path = self.resolve(path);
-        let Some(metadata) = (&self.io as &dyn IoProvider)
-            .read_path_metadata_if_exists_for_no_watchfs_with_cache(project_path, cache)
-            .await
-            .with_buck_error_context(|| format!("Error accessing metadata for path `{path}`"))?
-        else {
+        let metadata = loop {
+            let metadata = (&self.io as &dyn IoProvider)
+                .read_path_metadata_if_exists_for_no_watchfs_with_cache(
+                    project_path.clone(),
+                    cache.dupe(),
+                )
+                .await
+                .with_buck_error_context(|| {
+                    format!("Error accessing metadata for path `{path}`")
+                })?;
+            if metadata.is_some() || !self.wait_for_materialization_if_in_progress().await? {
+                break metadata;
+            }
+        };
+        let Some(metadata) = metadata else {
             return Ok(None);
         };
         Ok(Some(metadata.try_map(

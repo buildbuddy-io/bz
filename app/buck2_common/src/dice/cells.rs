@@ -222,6 +222,14 @@ impl HasExternalCellOrigins for DiceComputations<'_> {
         if origin.is_some() {
             return Ok(origin);
         }
+        if cell.as_str().starts_with("bzlmod_") {
+            if external_cell_origin_for_cell(cell.as_str()).is_none() {
+                let _aliases = get_bazel_module_resolution_on_dice(self).await?;
+            }
+            if let Some(origin) = external_cell_origin_for_cell(cell.as_str()) {
+                return Ok(Some(origin));
+            }
+        }
         Ok(None)
     }
 }

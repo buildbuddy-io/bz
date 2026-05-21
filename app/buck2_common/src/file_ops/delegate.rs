@@ -377,6 +377,14 @@ impl FileOpsDelegateWithIgnores {
             .await
     }
 
+    pub(crate) async fn read_raw_dir_for_no_watchfs(
+        &self,
+        ctx: &mut DiceComputations<'_>,
+        path: &CellRelativePath,
+    ) -> buck2_error::Result<Arc<[RawDirEntry]>> {
+        self.delegate.read_dir_for_no_watchfs(ctx, path).await
+    }
+
     pub async fn read_path_metadata_if_exists(
         &self,
         ctx: &mut DiceComputations<'_>,
