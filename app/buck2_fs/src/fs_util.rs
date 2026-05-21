@@ -491,8 +491,20 @@ fn delete_tree(path: &Path) -> io::Result<()> {
         return with_retries(|| fs::remove_dir_all(path));
     }
 
-    delete_trees_below(path)?;
-    with_retries(|| fs::remove_dir(path))
+    for attempt in 0..MAX_IO_ATTEMPTS {
+        delete_trees_below(path)?;
+        match with_retries(|| fs::remove_dir(path)) {
+            Ok(()) => return Ok(()),
+            Err(e) if e.kind() == io::ErrorKind::DirectoryNotEmpty => {
+                if attempt + 1 >= MAX_IO_ATTEMPTS {
+                    return Err(e);
+                }
+            }
+            Err(e) => return Err(e),
+        }
+    }
+
+    unreachable!("loop returns on success or final error")
 }
 
 #[cfg(unix)]
