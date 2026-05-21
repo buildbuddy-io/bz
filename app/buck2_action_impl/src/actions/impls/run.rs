@@ -3239,17 +3239,11 @@ impl RunAction {
         let mut aliases = BuckIndexSet::new();
         for artifact_group_values in artifact_inputs {
             for (artifact, value) in artifact_group_values.iter() {
-                let source_path = artifact
-                    .get_path()
-                    .resolve(
-                        artifact_fs,
-                        if artifact.path_resolution_requires_artifact_value() {
-                            Some(value.content_based_path_hash())
-                        } else {
-                            None
-                        }
-                        .as_ref(),
-                    )
+                let source_path = Self::bazel_artifact_alias_source_path(
+                    artifact,
+                    value,
+                    artifact_fs,
+                )
                     .buck_error_context("Invalid Bazel execroot source path")?;
                 let source_requires_materialization =
                     artifact.requires_materialization(artifact_fs);
@@ -3297,6 +3291,26 @@ impl RunAction {
         }
 
         Ok(())
+    }
+
+    fn bazel_artifact_alias_source_path(
+        artifact: &Artifact,
+        value: &ArtifactValue,
+        artifact_fs: &ArtifactFs,
+    ) -> buck2_error::Result<ProjectRelativePathBuf> {
+        if artifact.has_content_based_path() && !artifact.is_projected() {
+            return artifact.resolve_configuration_hash_path(artifact_fs);
+        }
+
+        artifact.resolve_path(
+            artifact_fs,
+            if artifact.path_resolution_requires_artifact_value() {
+                Some(value.content_based_path_hash())
+            } else {
+                None
+            }
+            .as_ref(),
+        )
     }
 
     fn bazel_execroot_source_forest_covers_alias(
@@ -3381,17 +3395,11 @@ impl RunAction {
             let alias =
                 Self::bazel_runfiles_alias_path(bazel_execroot, executable_path, entry.path)?;
             if aliases.insert(alias.clone()) {
-                let source_path = artifact
-                    .get_path()
-                    .resolve(
-                        artifact_fs,
-                        if artifact.path_resolution_requires_artifact_value() {
-                            Some(value.content_based_path_hash())
-                        } else {
-                            None
-                        }
-                        .as_ref(),
-                    )
+                let source_path = Self::bazel_artifact_alias_source_path(
+                    &artifact,
+                    value,
+                    artifact_fs,
+                )
                     .buck_error_context("Invalid Bazel runfiles source path")?;
                 let source_requires_materialization =
                     artifact.requires_materialization(artifact_fs);

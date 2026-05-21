@@ -2813,10 +2813,47 @@ pub async fn materialize_inputs(
 
     paths.extend(external_cell_roots_to_materialize);
 
+    // Bazel exposes tree artifacts directly in the output tree. Some rules_js package store
+    // outputs contain sibling-relative symlinks and tools may realpath through package symlinks,
+    // so directory aliases need to be materialized as directories instead of alias symlinks into
+    // Buck's private artifact store.
+    let mut copied_artifact_path_aliases = BuckIndexSet::new();
+    let mut artifact_path_alias_copies = Vec::new();
+    for (source_path, path, value) in &shared_artifact_path_aliases {
+        let is_external_root_alias =
+            external_cell_root_alias(source_path.as_ref(), path.as_ref()).is_some();
+        if !value.is_dir() || is_external_root_alias {
+            continue;
+        }
+
+        if copied_artifact_path_aliases.insert(path.clone()) {
+            artifact_path_alias_copies.push((
+                path.clone(),
+                value.dupe(),
+                vec![CopiedArtifact {
+                    src: source_path.clone(),
+                    dest: path.clone(),
+                    dest_entry: value.entry().dupe().map_dir(|d| d.as_immutable()),
+                    executable_bit_override: None,
+                }],
+                None,
+            ));
+            paths.push(path.clone());
+        }
+    }
+
     buck2_util::future::try_join_all(
         configuration_path_to_content_based_path_symlinks
             .into_iter()
             .map(|(path, value)| materializer.declare_copy(path, value, vec![], None)),
+    )
+    .await?;
+    buck2_util::future::try_join_all(
+        artifact_path_alias_copies
+            .into_iter()
+            .map(|(path, value, copied_artifacts, cfg_path)| {
+                materializer.declare_copy(path, value, copied_artifacts, cfg_path)
+            }),
     )
     .await?;
     let mut stream = materializer.materialize_many(paths.clone()).await?;
@@ -2843,6 +2880,9 @@ pub async fn materialize_inputs(
 
     let mut external_cell_root_aliases = BuckIndexSet::new();
     for (source_path, path, value) in &shared_artifact_path_aliases {
+        if copied_artifact_path_aliases.contains(path) {
+            continue;
+        }
         if let Some((source_root, alias_root)) =
             external_cell_root_alias(source_path.as_ref(), path.as_ref())
         {
