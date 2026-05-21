@@ -64,7 +64,6 @@ use starlark::values::list::ListRef;
 use starlark::values::list::UnpackList;
 use starlark::values::none::NoneOr;
 use starlark::values::starlark_value;
-use starlark::values::structs::StructRef;
 use starlark::values::tuple::TupleRef;
 use starlark::values::tuple::UnpackTuple;
 use starlark::values::type_repr::StarlarkTypeRepr;
@@ -97,6 +96,7 @@ use crate::interpreter::rule_defs::cmd_args::value::CommandLineArg;
 use crate::interpreter::rule_defs::cmd_args::value::FrozenCommandLineArg;
 use crate::interpreter::rule_defs::depset::BazelDepset;
 use crate::interpreter::rule_defs::depset::bazel_depset_to_list;
+use crate::interpreter::rule_defs::provider::builtin::default_info::bazel_files_to_run_executable;
 
 #[derive(Debug, ProvidesStaticType, NoSerialize, Allocative)]
 struct BazelDirectoryExpander;
@@ -918,14 +918,6 @@ impl<'v> StarlarkCmdArgs<'v> {
         builder.0.get_mut().add_value_typed(value)?;
         Ok(builder)
     }
-}
-
-fn bazel_files_to_run_executable<'v>(value: Value<'v>) -> Option<Value<'v>> {
-    StructRef::from_value(value).and_then(|st| {
-        st.iter().find_map(|(name, value)| {
-            (name.as_str() == "executable" && !value.is_none()).then_some(value)
-        })
-    })
 }
 
 #[derive(UnpackValue, StarlarkTypeRepr)]

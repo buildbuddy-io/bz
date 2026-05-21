@@ -711,11 +711,37 @@ pub struct DefaultInfoGen<V: ValueLifetimeless> {
     default_runfiles: ValueOfUncheckedGeneric<V, FrozenBazelRunfiles>,
 }
 
-fn bazel_files_to_run<'v>(heap: Heap<'v>, executable: Value<'v>) -> Value<'v> {
+pub const BAZEL_FILES_TO_RUN_EXECUTABLE_FIELD: &str = "executable";
+pub const BAZEL_FILES_TO_RUN_RUNFILES_FIELD: &str = "_buck2_default_runfiles";
+
+pub fn bazel_files_to_run_executable<'v>(value: Value<'v>) -> Option<Value<'v>> {
+    StructRef::from_value(value).and_then(|st| {
+        st.iter().find_map(|(name, value)| {
+            (name.as_str() == BAZEL_FILES_TO_RUN_EXECUTABLE_FIELD && !value.is_none())
+                .then_some(value)
+        })
+    })
+}
+
+pub fn bazel_files_to_run_runfiles<'v>(value: Value<'v>) -> Option<Value<'v>> {
+    StructRef::from_value(value).and_then(|st| {
+        st.iter().find_map(|(name, value)| {
+            (name.as_str() == BAZEL_FILES_TO_RUN_RUNFILES_FIELD && !value.is_none())
+                .then_some(value)
+        })
+    })
+}
+
+fn bazel_files_to_run<'v>(
+    heap: Heap<'v>,
+    executable: Value<'v>,
+    default_runfiles: Value<'v>,
+) -> Value<'v> {
     heap.alloc(AllocStruct([
-        ("executable", executable),
+        (BAZEL_FILES_TO_RUN_EXECUTABLE_FIELD, executable),
         ("repo_mapping_manifest", Value::new_none()),
         ("runfiles_manifest", Value::new_none()),
+        (BAZEL_FILES_TO_RUN_RUNFILES_FIELD, default_runfiles),
     ]))
 }
 
@@ -749,12 +775,15 @@ impl<'v> DefaultInfo<'v> {
         let default_outputs = ValueOfUnchecked::<ListType<_>>::new(heap.alloc(AllocList::EMPTY));
         let other_outputs = ValueOfUnchecked::<ListType<_>>::new(heap.alloc(AllocList::EMPTY));
         let files = ValueOfUnchecked::<FrozenBazelDepset>::new(bazel_depset_empty(heap));
-        let files_to_run =
-            ValueOfUnchecked::<StructRef>::new(bazel_files_to_run(heap, Value::new_none()));
         let data_runfiles =
             ValueOfUnchecked::<FrozenBazelRunfiles>::new(bazel_runfiles_empty_value(heap));
         let default_runfiles =
             ValueOfUnchecked::<FrozenBazelRunfiles>::new(bazel_runfiles_empty_value(heap));
+        let files_to_run = ValueOfUnchecked::<StructRef>::new(bazel_files_to_run(
+            heap,
+            Value::new_none(),
+            default_runfiles.get().to_value(),
+        ));
         DefaultInfo {
             sub_targets,
             default_outputs,
@@ -778,12 +807,15 @@ impl<'v> DefaultInfo<'v> {
         let files = ValueOfUnchecked::<FrozenBazelDepset>::new(
             bazel_depset_from_values(heap, outputs).unwrap(),
         );
-        let files_to_run =
-            ValueOfUnchecked::<StructRef>::new(bazel_files_to_run(heap, Value::new_none()));
         let data_runfiles =
             ValueOfUnchecked::<FrozenBazelRunfiles>::new(bazel_runfiles_empty_value(heap));
         let default_runfiles =
             ValueOfUnchecked::<FrozenBazelRunfiles>::new(bazel_runfiles_empty_value(heap));
+        let files_to_run = ValueOfUnchecked::<StructRef>::new(bazel_files_to_run(
+            heap,
+            Value::new_none(),
+            default_runfiles.get().to_value(),
+        ));
         DefaultInfo {
             sub_targets,
             default_outputs,
@@ -803,11 +835,15 @@ impl<'v> DefaultInfo<'v> {
         let files = ValueOfUnchecked::<FrozenBazelDepset>::new(
             bazel_depset_from_values(heap, vec![artifact]).unwrap(),
         );
-        let files_to_run = ValueOfUnchecked::<StructRef>::new(bazel_files_to_run(heap, artifact));
         let data_runfiles =
             ValueOfUnchecked::<FrozenBazelRunfiles>::new(bazel_runfiles_empty_value(heap));
         let default_runfiles =
             ValueOfUnchecked::<FrozenBazelRunfiles>::new(bazel_runfiles_empty_value(heap));
+        let files_to_run = ValueOfUnchecked::<StructRef>::new(bazel_files_to_run(
+            heap,
+            artifact,
+            default_runfiles.get().to_value(),
+        ));
         DefaultInfo {
             sub_targets,
             default_outputs,
@@ -860,17 +896,18 @@ impl FrozenDefaultInfo {
             FrozenValueOfUnchecked::<ListType<_>>::new(heap.alloc(AllocList::EMPTY));
         let files =
             FrozenValueOfUnchecked::<FrozenBazelDepset>::new(bazel_depset_empty_frozen(heap));
-        let files_to_run = FrozenValueOfUnchecked::<StructRef>::new(heap.alloc(AllocStruct([
-            ("executable", FrozenValue::new_none()),
-            ("repo_mapping_manifest", FrozenValue::new_none()),
-            ("runfiles_manifest", FrozenValue::new_none()),
-        ])));
         let data_runfiles = FrozenValueOfUnchecked::<FrozenBazelRunfiles>::new(
             bazel_runfiles_empty_frozen_value(heap),
         );
         let default_runfiles = FrozenValueOfUnchecked::<FrozenBazelRunfiles>::new(
             bazel_runfiles_empty_frozen_value(heap),
         );
+        let files_to_run = FrozenValueOfUnchecked::<StructRef>::new(heap.alloc(AllocStruct([
+            (BAZEL_FILES_TO_RUN_EXECUTABLE_FIELD, FrozenValue::new_none()),
+            ("repo_mapping_manifest", FrozenValue::new_none()),
+            ("runfiles_manifest", FrozenValue::new_none()),
+            (BAZEL_FILES_TO_RUN_RUNFILES_FIELD, default_runfiles.get()),
+        ])));
         FrozenValueTyped::new_err(heap.alloc(FrozenDefaultInfo {
             sub_targets,
             default_outputs,
@@ -899,17 +936,18 @@ impl FrozenDefaultInfo {
         let files = FrozenValueOfUnchecked::<FrozenBazelDepset>::new(
             bazel_depset_from_frozen_values(heap, vec![artifact]),
         );
-        let files_to_run = FrozenValueOfUnchecked::<StructRef>::new(heap.alloc(AllocStruct([
-            ("executable", artifact),
-            ("repo_mapping_manifest", FrozenValue::new_none()),
-            ("runfiles_manifest", FrozenValue::new_none()),
-        ])));
         let data_runfiles = FrozenValueOfUnchecked::<FrozenBazelRunfiles>::new(
             bazel_runfiles_empty_frozen_value(heap),
         );
         let default_runfiles = FrozenValueOfUnchecked::<FrozenBazelRunfiles>::new(
             bazel_runfiles_empty_frozen_value(heap),
         );
+        let files_to_run = FrozenValueOfUnchecked::<StructRef>::new(heap.alloc(AllocStruct([
+            (BAZEL_FILES_TO_RUN_EXECUTABLE_FIELD, artifact),
+            ("repo_mapping_manifest", FrozenValue::new_none()),
+            ("runfiles_manifest", FrozenValue::new_none()),
+            (BAZEL_FILES_TO_RUN_RUNFILES_FIELD, default_runfiles.get()),
+        ])));
         FrozenValueTyped::new_err(heap.alloc(FrozenDefaultInfo {
             sub_targets,
             default_outputs,
@@ -1098,6 +1136,46 @@ impl FrozenDefaultInfo {
             arg_like.visit_artifacts(&mut Visitor(processor))?;
             Ok(())
         })
+    }
+
+    pub fn for_each_default_runfiles_artifact(
+        &self,
+        processor: &mut dyn FnMut(ArtifactGroup),
+    ) -> buck2_error::Result<()> {
+        let runfiles = self.default_runfiles.get().to_value();
+        let runfiles = runfiles
+            .downcast_ref::<FrozenBazelRunfiles>()
+            .ok_or_else(|| internal_error!("DefaultInfo.default_runfiles should be runfiles"))?;
+
+        for value in bazel_depset_to_list(runfiles.files.get().to_value())? {
+            let artifact = ValueAsInputArtifactLike::unpack_value_err(value)?
+                .0
+                .get_bound_artifact()?;
+            processor(ArtifactGroup::Artifact(artifact));
+        }
+
+        for value in bazel_depset_to_list(runfiles.symlinks.get().to_value())?
+            .into_iter()
+            .chain(bazel_depset_to_list(
+                runfiles.root_symlinks.get().to_value(),
+            )?)
+        {
+            let target_file = if let Some(symlink) = BazelSymlinkEntry::from_value(value) {
+                symlink.target_file.to_value()
+            } else if let Some(symlink) = value.downcast_ref::<FrozenBazelSymlinkEntry>() {
+                symlink.target_file.to_value()
+            } else {
+                return Err(internal_error!(
+                    "DefaultInfo.default_runfiles symlink entry should be SymlinkEntry"
+                ));
+            };
+            let artifact = ValueAsInputArtifactLike::unpack_value_err(target_file)?
+                .0
+                .get_bound_artifact()?;
+            processor(ArtifactGroup::Artifact(artifact));
+        }
+
+        Ok(())
     }
 
     pub fn for_each_output(
@@ -1304,6 +1382,7 @@ fn default_info_creator(builder: &mut GlobalsBuilder) {
             files_to_run: ValueOfUnchecked::<StructRef>::new(bazel_files_to_run(
                 heap,
                 files_to_run_executable,
+                valid_default_runfiles.get().to_value(),
             )),
             data_runfiles: valid_data_runfiles,
             default_runfiles: valid_default_runfiles,

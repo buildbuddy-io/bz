@@ -10,6 +10,7 @@
 
 use std::io::ErrorKind;
 use std::sync::Arc;
+use std::time::Duration;
 
 use async_trait::async_trait;
 use buck2_core::cells::cell_path::CellPath;
@@ -739,8 +740,15 @@ async fn should_use_fast_bzlmod_listing(
         Ok(cell) => cell,
         Err(_) => return Ok(false),
     };
+    let origin = match cell.external() {
+        Some(origin) => Some(origin.dupe()),
+        None => ctx
+            .get_external_cell_origin(root.cell())
+            .await
+            .map_err(|e| GatherPackageListingError::error(root, e))?,
+    };
     Ok(matches!(
-        cell.external(),
+        origin,
         Some(ExternalCellOrigin::Bzlmod(_)) | Some(ExternalCellOrigin::BzlmodGenerated(_))
     ))
 }
@@ -770,16 +778,27 @@ async fn gather_bzlmod_package_listing_fast(
             ),
         ));
     };
+    let root_cell_origin = match root_cell.external() {
+        Some(origin) => Some(origin.dupe()),
+        None => ctx
+            .get_external_cell_origin(root_cell_path.cell())
+            .await
+            .map_err(|e| GatherPackageListingError::error(root_cell_path, e))?,
+    };
     let root_project_path = root_cell.path().join(root_cell_path.path());
     if matches!(
-        root_cell.external(),
+        &root_cell_origin,
         Some(ExternalCellOrigin::BzlmodGenerated(_))
     ) {
         file_ops
-            .read_path_metadata_if_exists(ctx, CellRelativePath::empty())
+            .read_raw_dir_for_no_watchfs(ctx, root_cell_path.path())
             .await
             .map_err(|e| GatherPackageListingError::error(root_cell_path, e))?;
     }
+    let is_bzlmod_generated = matches!(
+        &root_cell_origin,
+        Some(ExternalCellOrigin::BzlmodGenerated(_))
+    );
     let root_cell_path = root_cell_path.to_owned();
     let buildfile_candidates = buildfile_candidates.to_vec();
 
@@ -791,6 +810,7 @@ async fn gather_bzlmod_package_listing_fast(
             file_ops,
             buildfile_candidates,
             strategy,
+            is_bzlmod_generated,
         )
     })
     .await
@@ -804,6 +824,7 @@ fn gather_bzlmod_package_listing_fast_blocking(
     file_ops: FileOpsDelegateWithIgnores,
     buildfile_candidates: Vec<FileNameBuf>,
     strategy: PackageListingStrategy,
+    is_bzlmod_generated: bool,
 ) -> Result<PackageListing, GatherPackageListingError> {
     let mut stack = vec![PackageRelativePathBuf::unchecked_new(String::new())];
     let mut files = Vec::new();
@@ -815,12 +836,26 @@ fn gather_bzlmod_package_listing_fast_blocking(
         let package_path = path.as_path();
         let cell_path = root_cell_path.join(package_path.as_forward_rel_path());
         let project_path = root_project_path.join(package_path.as_forward_rel_path());
-        let entries = read_raw_dir_entries_direct(&project_root, project_path.as_ref())
-            .map_err(|e| GatherPackageListingError::error(cell_path.as_ref(), e))?;
-        let entries = file_ops
-            .make_read_dir_output(cell_path.path(), entries)
-            .map_err(|e| GatherPackageListingError::error(cell_path.as_ref(), e))?
-            .included;
+        let mut attempts = 0;
+        let entries = loop {
+            let entries = read_raw_dir_entries_direct(&project_root, project_path.as_ref())
+                .map_err(|e| GatherPackageListingError::error(cell_path.as_ref(), e))?;
+            let entries = file_ops
+                .make_read_dir_output(cell_path.path(), entries)
+                .map_err(|e| GatherPackageListingError::error(cell_path.as_ref(), e))?
+                .included;
+
+            if !is_bzlmod_generated
+                || !package_path.is_empty()
+                || find_buildfile(&buildfile_candidates, &entries).is_some()
+                || attempts >= 300
+            {
+                break entries;
+            }
+
+            attempts += 1;
+            std::thread::sleep(Duration::from_millis(100));
+        };
         let buildfile_in_dir = find_buildfile(&buildfile_candidates, &entries);
 
         match (package_path.is_empty(), buildfile_in_dir) {

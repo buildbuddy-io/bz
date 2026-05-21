@@ -29,6 +29,9 @@ use crate::build::BuildProviderType;
 use crate::build::ProvidersToBuild;
 use crate::interpreter::rule_defs::cmd_args::CommandLineArgLike;
 use crate::interpreter::rule_defs::cmd_args::SimpleCommandLineArtifactVisitor;
+use crate::interpreter::rule_defs::provider::builtin::output_group_info::BAZEL_HIDDEN_TOP_LEVEL_OUTPUT_GROUP;
+use crate::interpreter::rule_defs::provider::builtin::output_group_info::BAZEL_TEMP_FILES_OUTPUT_GROUP;
+use crate::interpreter::rule_defs::provider::builtin::output_group_info::FrozenOutputGroupInfo;
 use crate::interpreter::rule_defs::provider::builtin::run_info::FrozenRunInfo;
 use crate::interpreter::rule_defs::provider::test_provider::TestProvider;
 
@@ -79,6 +82,23 @@ pub async fn get_outputs_for_top_level_target(
                 collection.default_info()?.for_each_other_output(&mut |o| {
                     outputs.push((o, BuildProviderType::DefaultOther))
                 })?;
+                collection
+                    .default_info()?
+                    .for_each_default_runfiles_artifact(&mut |o| {
+                        outputs.push((o, BuildProviderType::DefaultOther))
+                    })?;
+                if let Some(output_group_info) =
+                    collection.builtin_provider::<FrozenOutputGroupInfo>()
+                {
+                    output_group_info
+                        .for_each_output_group(BAZEL_TEMP_FILES_OUTPUT_GROUP, &mut |o| {
+                            outputs.push((o, BuildProviderType::DefaultOther))
+                        })?;
+                    output_group_info
+                        .for_each_output_group(BAZEL_HIDDEN_TOP_LEVEL_OUTPUT_GROUP, &mut |o| {
+                            outputs.push((o, BuildProviderType::DefaultOther))
+                        })?;
+                }
             }
             if providers_to_build.run {
                 if let Some(runinfo) = providers

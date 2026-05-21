@@ -42,12 +42,12 @@ use starlark::values::ValueOfUnchecked;
 use starlark::values::ValueOfUncheckedGeneric;
 use starlark::values::none::NoneOr;
 use starlark::values::starlark_value;
-use starlark::values::structs::StructRef;
 use starlark_map::StarlarkHasher;
 
 use crate::interpreter::rule_defs::provider::DefaultInfo;
 use crate::interpreter::rule_defs::provider::FrozenDefaultInfo;
 use crate::interpreter::rule_defs::provider::builtin::default_info::BazelRunfiles;
+use crate::interpreter::rule_defs::provider::builtin::default_info::bazel_files_to_run_executable;
 use crate::interpreter::rule_defs::provider::builtin::template_variable_info::FrozenTemplateVariableInfo;
 use crate::interpreter::rule_defs::provider::collection::FrozenProviderCollection;
 use crate::interpreter::rule_defs::provider::collection::ProviderCollection;
@@ -250,11 +250,7 @@ impl<'v> Dependency<'v> {
             |info| Ok(info.files_to_run_raw_for_dependency()),
             |info| Ok(info.files_to_run_raw().to_value()),
         )?;
-        Ok(StructRef::from_value(files_to_run).and_then(|st| {
-            st.iter().find_map(|(name, value)| {
-                (name.as_str() == "executable" && !value.is_none()).then_some(value)
-            })
-        }))
+        Ok(bazel_files_to_run_executable(files_to_run))
     }
 
     pub fn default_runfiles_value(&self) -> buck2_error::Result<Value<'v>> {

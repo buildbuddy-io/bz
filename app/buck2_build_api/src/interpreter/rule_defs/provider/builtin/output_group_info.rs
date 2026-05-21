@@ -22,6 +22,7 @@ use starlark::values::Freeze;
 use starlark::values::FrozenValue;
 use starlark::values::Heap;
 use starlark::values::Trace;
+use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark::values::ValueError;
 use starlark::values::ValueLifetimeless;
@@ -33,7 +34,19 @@ use starlark::values::dict::DictRef;
 use starlark::values::dict::DictType;
 
 use crate as buck2_build_api;
+use crate::artifact_groups::ArtifactGroup;
+use crate::interpreter::rule_defs::artifact::starlark_artifact_like::ValueAsInputArtifactLike;
 use crate::interpreter::rule_defs::depset::bazel_depset_from_transitive;
+use crate::interpreter::rule_defs::depset::bazel_depset_to_list;
+
+/// Bazel's default top-level output groups are `default`,
+/// `temp_files_INTERNAL_`, and `_hidden_top_level_INTERNAL_`.
+///
+/// The hidden top-level group is where Bazel puts executable runfiles trees so a
+/// `bazel build //:bin` validates runfiles/data dependencies without printing
+/// those artifacts as primary outputs.
+pub const BAZEL_HIDDEN_TOP_LEVEL_OUTPUT_GROUP: &str = "_hidden_top_level_INTERNAL_";
+pub const BAZEL_TEMP_FILES_OUTPUT_GROUP: &str = "temp_files_INTERNAL_";
 
 #[internal_provider(
     output_group_info_creator,
@@ -124,6 +137,27 @@ pub(crate) fn merge_output_group_info_values<'v>(
     Ok(heap.alloc(OutputGroupInfo {
         groups: ValueOfUnchecked::new(heap.alloc(AllocDict(merged))),
     }))
+}
+
+impl FrozenOutputGroupInfo {
+    pub fn for_each_output_group(
+        &self,
+        group: &str,
+        processor: &mut dyn FnMut(ArtifactGroup),
+    ) -> buck2_error::Result<()> {
+        let Some(value) = output_group_info_groups(self).get_str(group) else {
+            return Ok(());
+        };
+
+        for value in bazel_depset_to_list(value)? {
+            let artifact = ValueAsInputArtifactLike::unpack_value_err(value)?
+                .0
+                .get_bound_artifact()?;
+            processor(ArtifactGroup::Artifact(artifact));
+        }
+
+        Ok(())
+    }
 }
 
 #[starlark_module]

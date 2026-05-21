@@ -12,6 +12,7 @@ use std::ffi::OsStr;
 use std::ffi::OsString;
 use std::ops::ControlFlow;
 use std::path::Path;
+use std::path::PathBuf;
 use std::process::Command;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
@@ -2356,10 +2357,66 @@ fn materialize_artifact_path_alias(
     artifact_fs: &ArtifactFs,
     source_path: &ProjectRelativePath,
     path: &ProjectRelativePath,
+    value: &ArtifactValue,
 ) -> buck2_error::Result<()> {
     let fs = artifact_fs.fs();
     let source = fs.resolve(source_path);
     let dest = fs.resolve(path);
+
+    match value.entry() {
+        ActionDirectoryEntry::Leaf(ActionDirectoryMember::Symlink(symlink)) => {
+            let target = artifact_path_alias_symlink_target(&source, symlink.target().as_str())?;
+            create_or_replace_symlink(target.as_path(), &dest).with_buck_error_context(|| {
+                format!("Error creating symlink artifact path alias `{path}` -> `{source_path}`")
+            })?;
+            return Ok(());
+        }
+        ActionDirectoryEntry::Leaf(ActionDirectoryMember::ExternalSymlink(symlink)) => {
+            create_or_replace_symlink(symlink.to_path_buf().as_path(), &dest)
+                .with_buck_error_context(|| {
+                    format!(
+                        "Error creating symlink artifact path alias `{path}` -> `{source_path}`"
+                    )
+                })?;
+            return Ok(());
+        }
+        ActionDirectoryEntry::Leaf(
+            ActionDirectoryMember::File(_) | ActionDirectoryMember::SourceFile(_),
+        ) => {
+            if artifact_path_alias_file_is_current(&dest, &source) {
+                return Ok(());
+            }
+
+            if let Some(parent) = dest.parent() {
+                fs_util::create_dir_all(parent).with_buck_error_context(|| {
+                    format!("Error creating parent directory for artifact path alias `{path}`")
+                })?;
+            }
+
+            match create_artifact_path_alias_file(&source, &dest) {
+                Ok(()) => return Ok(()),
+                Err(e) if artifact_path_alias_file_is_current(&dest, &source) => return Ok(()),
+                Err(_) => {
+                    CleanOutputPaths::clean(std::iter::once(path), fs)?;
+                    match create_artifact_path_alias_file(&source, &dest) {
+                        Ok(()) => return Ok(()),
+                        Err(e) if artifact_path_alias_file_is_current(&dest, &source) => {
+                            return Ok(());
+                        }
+                        Err(e) => {
+                            return Err(e).with_buck_error_context(|| {
+                                format!(
+                                    "Error creating file artifact path alias `{path}` -> `{source_path}`"
+                                )
+                            });
+                        }
+                    }
+                }
+            }
+        }
+        ActionDirectoryEntry::Dir(_) => {}
+    }
+
     if artifact_path_alias_is_current(&dest, &source) {
         return Ok(());
     }
@@ -2436,6 +2493,87 @@ fn create_artifact_path_alias_symlink(
     }
 }
 
+fn artifact_path_alias_symlink_target(
+    source: &AbsNormPathBuf,
+    target: &str,
+) -> buck2_error::Result<PathBuf> {
+    let target_path = Path::new(target);
+    if target_path.is_absolute() {
+        return Ok(target_path.to_owned());
+    }
+
+    let Some(source_parent) = source.parent() else {
+        return Ok(target_path.to_owned());
+    };
+    let Ok(relative_target) = fs_util::relative_path_from_system(target_path) else {
+        return Ok(target_path.to_owned());
+    };
+    let Ok(resolved_target) = source_parent.join_normalized(relative_target.as_ref()) else {
+        return Ok(target_path.to_owned());
+    };
+
+    if artifact_path_alias_symlink_target_escapes_private_artifact_tree(source, &resolved_target) {
+        Ok(resolved_target.as_path().to_owned())
+    } else {
+        Ok(target_path.to_owned())
+    }
+}
+
+fn artifact_path_alias_symlink_target_escapes_private_artifact_tree(
+    source: &AbsNormPathBuf,
+    resolved_target: &AbsNormPathBuf,
+) -> bool {
+    let source = source.as_path().to_string_lossy();
+    let Some((project_root, _)) = source.split_once("/buck-out/v2/art/") else {
+        return false;
+    };
+    let private_artifact_root = format!("{project_root}/buck-out/v2/art/");
+    !resolved_target
+        .as_path()
+        .to_string_lossy()
+        .starts_with(private_artifact_root.as_str())
+}
+
+fn create_artifact_path_alias_file(
+    source: &AbsNormPathBuf,
+    dest: &AbsNormPathBuf,
+) -> buck2_error::Result<()> {
+    if artifact_path_alias_file_is_current(dest, source) {
+        return Ok(());
+    }
+
+    let tmp = artifact_path_alias_tmp_path(dest)?;
+    let _ignored = fs_util::remove_file(&tmp);
+    match std::fs::hard_link(source.as_path(), tmp.as_path()) {
+        Ok(()) => {}
+        Err(hard_link_error) => {
+            fs_util::copy(source, &tmp)
+                .categorize_internal()
+                .with_buck_error_context(|| {
+                    format!(
+                        "Error creating temporary artifact path alias copy after hardlink failed: {hard_link_error}"
+                    )
+                })?;
+        }
+    }
+
+    match fs_util::rename(&tmp, dest).categorize_internal() {
+        Ok(()) => Ok(()),
+        Err(rename_error) if artifact_path_alias_file_is_current(dest, source) => {
+            let _ignored = fs_util::remove_file(&tmp);
+            Ok(())
+        }
+        Err(rename_error) => {
+            let _ignored = fs_util::remove_file(&tmp);
+            if artifact_path_alias_file_is_current(dest, source) {
+                Ok(())
+            } else {
+                Err(rename_error)
+            }
+        }
+    }
+}
+
 fn artifact_path_alias_tmp_path(dest: &AbsNormPathBuf) -> buck2_error::Result<AbsNormPathBuf> {
     let parent = dest.parent().ok_or_else(|| {
         buck2_error!(
@@ -2461,6 +2599,16 @@ fn artifact_path_alias_is_current(dest: &AbsNormPathBuf, source: &AbsNormPathBuf
     fs_util::read_link(dest)
         .map(|target| artifact_path_alias_target_is_compatible(dest, source, &target))
         .unwrap_or(false)
+}
+
+fn artifact_path_alias_file_is_current(dest: &AbsNormPathBuf, source: &AbsNormPathBuf) -> bool {
+    let Ok(dest_metadata) = fs_util::symlink_metadata(dest) else {
+        return false;
+    };
+    if !dest_metadata.file_type().is_file() {
+        return false;
+    }
+    artifact_path_alias_files_are_equivalent(dest, source)
 }
 
 fn artifact_path_alias_target_is_compatible(
@@ -2629,7 +2777,7 @@ pub async fn materialize_inputs(
                 source_path,
                 source_requires_materialization,
                 path,
-                ..
+                value,
             } => {
                 if *source_requires_materialization {
                     if let Some(root) = external_cell_root(source_path.as_ref()) {
@@ -2646,7 +2794,11 @@ pub async fn materialize_inputs(
                 if sandbox_alias {
                     sandbox_artifact_path_aliases.push((source_path.clone(), path.clone()));
                 } else {
-                    shared_artifact_path_aliases.push((source_path.clone(), path.clone()));
+                    shared_artifact_path_aliases.push((
+                        source_path.clone(),
+                        path.clone(),
+                        value.dupe(),
+                    ));
                 }
             }
             CommandExecutionInput::ActionMetadata(metadata) => {
@@ -2702,7 +2854,7 @@ pub async fn materialize_inputs(
     }
 
     let mut external_cell_root_aliases = BuckIndexSet::new();
-    for (source_path, path) in &shared_artifact_path_aliases {
+    for (source_path, path, value) in &shared_artifact_path_aliases {
         if let Some((source_root, alias_root)) =
             external_cell_root_alias(source_path.as_ref(), path.as_ref())
         {
@@ -2715,7 +2867,12 @@ pub async fn materialize_inputs(
                 paths.push(alias_root);
             }
         } else {
-            materialize_artifact_path_alias(artifact_fs, source_path.as_ref(), path.as_ref())?;
+            materialize_artifact_path_alias(
+                artifact_fs,
+                source_path.as_ref(),
+                path.as_ref(),
+                value,
+            )?;
             paths.push(path.clone());
         }
     }

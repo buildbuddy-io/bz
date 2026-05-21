@@ -3202,8 +3202,7 @@ impl RunAction {
         let outputs = BoxSliceSet::from(outputs);
         let (inputs, command_inputs, non_hidden_inputs) =
             Self::collect_inputs(&inner, &starlark_values, &outputs)?;
-        let local_action_cache_inputs =
-            Self::collect_local_action_cache_inputs(&inner, &command_inputs, &non_hidden_inputs);
+        let local_action_cache_inputs = Self::collect_local_action_cache_inputs(&inner, &inputs);
 
         Ok(RunAction {
             inner,
@@ -3219,19 +3218,20 @@ impl RunAction {
 
     fn collect_local_action_cache_inputs(
         inner: &UnregisteredRunAction,
-        command_inputs: &[ArtifactGroup],
-        non_hidden_inputs: &[ArtifactGroup],
+        inputs: &[ArtifactGroup],
     ) -> Box<[ArtifactGroup]> {
         if !inner.dep_files.is_empty() || inner.metadata_param.is_some() {
             return Vec::new().into_boxed_slice();
         }
 
-        let mut inputs =
-            BuckIndexSet::with_capacity(command_inputs.len() + non_hidden_inputs.len());
-        for input in command_inputs.iter().chain(non_hidden_inputs.iter()) {
-            inputs.insert(input.dupe());
+        let mut local_action_cache_inputs = BuckIndexSet::with_capacity(inputs.len());
+        for input in inputs.iter() {
+            local_action_cache_inputs.insert(input.dupe());
         }
-        inputs.into_iter().collect::<Vec<_>>().into_boxed_slice()
+        local_action_cache_inputs
+            .into_iter()
+            .collect::<Vec<_>>()
+            .into_boxed_slice()
     }
 
     fn add_bazel_execroot_path_aliases(
@@ -3405,8 +3405,11 @@ impl RunAction {
                 let source_requires_materialization =
                     artifact.requires_materialization(artifact_fs);
                 if workspace_anchor.is_none() {
-                    workspace_anchor =
-                        Some((source_path.clone(), source_requires_materialization, value.dupe()));
+                    workspace_anchor = Some((
+                        source_path.clone(),
+                        source_requires_materialization,
+                        value.dupe(),
+                    ));
                 }
                 if source_path == alias {
                     continue;
@@ -3535,7 +3538,7 @@ impl RunAction {
                     .collect()
             }
         } else {
-            self.command_inputs
+            self.local_action_cache_inputs
                 .iter()
                 .map(|group| ctx.artifact_values(group))
                 .collect()
@@ -3787,7 +3790,7 @@ impl RunAction {
         let local_action_cache_probe_inputs =
             if self.inner.dep_files.is_empty() && self.inner.metadata_param.is_none() {
                 command_artifact_inputs = self
-                    .command_inputs
+                    .local_action_cache_inputs
                     .iter()
                     .map(|group| ctx.artifact_values(group))
                     .collect::<Vec<_>>();
