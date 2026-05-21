@@ -363,6 +363,10 @@ pub trait ActionExecutionCtx: Send + Sync {
     /// as an input to the associated action or a panic will be raised.
     fn artifact_values(&self, input: &ArtifactGroup) -> &ArtifactGroupValues;
 
+    /// Digest of the DICE-computed action input set that should be used when forming a
+    /// persistent local action-cache key.
+    fn local_action_cache_input_set_digest(&self) -> &[u8];
+
     fn artifact_path_mapping(
         &self,
         filter: Option<BuckIndexSet<ArtifactGroup>>,

@@ -53,10 +53,10 @@ use pagable::Pagable;
 use starlark::values::OwnedFrozenValue;
 
 use crate::actions::impls::run::action_cache_add_bool;
+use crate::actions::impls::run::action_cache_add_bytes;
 use crate::actions::impls::run::action_cache_add_str;
 use crate::actions::impls::run::compose_local_action_cache_fingerprint;
 use crate::actions::impls::run::finalize_action_cache_digest;
-use crate::actions::impls::run::fingerprint_artifact_group_values;
 use crate::actions::impls::run::fingerprint_command_execution_output;
 
 #[derive(Debug, buck2_error::Error)]
@@ -202,7 +202,6 @@ impl CopyAction {
     fn local_action_cache_key(
         &self,
         ctx: &dyn ActionExecutionCtx,
-        input_values: &buck2_build_api::artifact_groups::ArtifactGroupValues,
         output: &CommandExecutionOutput,
     ) -> buck2_error::Result<LocalActionCacheKey> {
         let key = output
@@ -244,9 +243,13 @@ impl CopyAction {
         let mut input_metadata = CasDigestData::digester(cas_digest_config);
         action_cache_add_str(
             &mut input_metadata,
-            "buck2-local-action-cache-simple-input-metadata-v1",
+            "buck2-local-action-cache-simple-input-metadata-v2",
         );
-        fingerprint_artifact_group_values(&mut input_metadata, ctx.fs(), input_values)?;
+        action_cache_add_str(&mut input_metadata, "artifact_input_set");
+        action_cache_add_bytes(
+            &mut input_metadata,
+            ctx.local_action_cache_input_set_digest(),
+        );
 
         let action_key_digest = finalize_action_cache_digest(action_key);
         let input_metadata_digest = finalize_action_cache_digest(input_metadata);
@@ -388,7 +391,12 @@ impl SymlinkAction {
         let mut input_metadata = CasDigestData::digester(cas_digest_config);
         action_cache_add_str(
             &mut input_metadata,
-            "buck2-local-action-cache-simple-input-metadata-v1",
+            "buck2-local-action-cache-simple-input-metadata-v2",
+        );
+        action_cache_add_str(&mut input_metadata, "artifact_input_set");
+        action_cache_add_bytes(
+            &mut input_metadata,
+            ctx.local_action_cache_input_set_digest(),
         );
 
         let action_key_digest = finalize_action_cache_digest(action_key);
@@ -444,7 +452,7 @@ impl Action for CopyAction {
         let (local_action_cache_key, input, src_value) = {
             let input_values = ctx.artifact_values(self.input());
             let local_action_cache_key =
-                self.local_action_cache_key(ctx, input_values, &local_action_cache_output)?;
+                self.local_action_cache_key(ctx, &local_action_cache_output)?;
             let (input, src_value) = input_values.iter().into_singleton().ok_or_else(|| {
                 internal_error!("Input did not dereference to exactly one artifact")
             })?;

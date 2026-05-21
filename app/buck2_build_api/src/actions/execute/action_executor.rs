@@ -378,7 +378,8 @@ impl BuckActionExecutor {
 struct BuckActionExecutionContext<'a> {
     executor: &'a BuckActionExecutor,
     action: &'a RegisteredAction,
-    inputs: BuckIndexMap<ArtifactGroup, ArtifactGroupValues>,
+    inputs: Arc<BuckIndexMap<ArtifactGroup, ArtifactGroupValues>>,
+    local_action_cache_input_set_digest: Arc<[u8]>,
     outputs: &'a [BuildArtifact],
     command_reports: &'a mut Vec<CommandExecutionReport>,
     cancellations: &'a CancellationContext,
@@ -417,6 +418,10 @@ impl ActionExecutionCtx for BuckActionExecutionContext<'_> {
 
     fn artifact_values(&self, artifact: &ArtifactGroup) -> &ArtifactGroupValues {
         self.inputs.get(artifact).unwrap_or_else(|| panic!("Internal error: action {} tried to grab the artifact {} even though it was not an input.", self.action.owner(), artifact))
+    }
+
+    fn local_action_cache_input_set_digest(&self) -> &[u8] {
+        &self.local_action_cache_input_set_digest
     }
 
     fn artifact_path_mapping(
@@ -729,7 +734,8 @@ impl BuckActionExecutor {
     pub(crate) async fn execute(
         &self,
         waiting_data: WaitingData,
-        inputs: BuckIndexMap<ArtifactGroup, ArtifactGroupValues>,
+        inputs: Arc<BuckIndexMap<ArtifactGroup, ArtifactGroupValues>>,
+        local_action_cache_input_set_digest: Arc<[u8]>,
         action: &RegisteredAction,
         cancellations: &CancellationContext,
     ) -> (
@@ -745,6 +751,7 @@ impl BuckActionExecutor {
                 executor: self,
                 action,
                 inputs,
+                local_action_cache_input_set_digest,
                 outputs: outputs.as_ref(),
                 command_reports: &mut command_reports,
                 cancellations,
@@ -850,7 +857,8 @@ impl BuckActionExecutor {
     pub(crate) async fn try_execute_local_action_cache(
         &self,
         waiting_data: WaitingData,
-        inputs: BuckIndexMap<ArtifactGroup, ArtifactGroupValues>,
+        inputs: Arc<BuckIndexMap<ArtifactGroup, ArtifactGroupValues>>,
+        local_action_cache_input_set_digest: Arc<[u8]>,
         action: &RegisteredAction,
         cancellations: &CancellationContext,
     ) -> (
@@ -866,6 +874,7 @@ impl BuckActionExecutor {
                 executor: self,
                 action,
                 inputs,
+                local_action_cache_input_set_digest,
                 outputs: outputs.as_ref(),
                 command_reports: &mut command_reports,
                 cancellations,
@@ -1167,7 +1176,8 @@ mod tests {
             EventDispatcher::null(),
             executor.execute(
                 WaitingData::new(),
-                Default::default(),
+                Arc::new(Default::default()),
+                Arc::from(Vec::<u8>::new().into_boxed_slice()),
                 &action,
                 CancellationContext::testing(),
             ),

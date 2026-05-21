@@ -9,6 +9,7 @@
  */
 
 use std::collections::HashSet;
+use std::fmt;
 use std::future::Future;
 use std::iter::zip;
 use std::sync::Arc;
@@ -20,6 +21,8 @@ use buck2_artifact::artifact::artifact_type::BaseArtifactKind;
 use buck2_artifact::artifact::build_artifact::BuildArtifact;
 use buck2_build_signals::env::NodeDuration;
 use buck2_build_signals::env::WaitingData;
+use buck2_common::cas_digest::CasDigestData;
+use buck2_common::cas_digest::DataDigester;
 use buck2_common::events::HasEvents;
 use buck2_core::deferred::base_deferred_key::BaseDeferredKey;
 use buck2_core::fs::artifact_path_resolver::ArtifactFs;
@@ -30,12 +33,15 @@ use buck2_data::ActionSubErrors;
 use buck2_data::ToProtoMessage;
 use buck2_data::get_action_digest;
 use buck2_error::BuckErrorContext;
+use buck2_error::internal_error;
 use buck2_event_observer::action_util::get_execution_time_ms;
 use buck2_events::dispatch::async_record_root_spans;
 use buck2_events::dispatch::get_dispatcher;
 use buck2_events::dispatch::span_async;
 use buck2_events::span::SpanId;
 use buck2_execute::artifact::artifact_dyn::ArtifactDyn;
+use buck2_execute::artifact::group::artifact_group_values_dyn::ArtifactGroupValuesDyn;
+use buck2_execute::digest_config::HasDigestConfig;
 use buck2_execute::execute::kind::CommandExecutionKind;
 use buck2_execute::execute::output::CommandStdStreams;
 use buck2_execute::execute::result::CommandExecutionReport;
@@ -59,6 +65,7 @@ use futures::FutureExt;
 use futures::future::BoxFuture;
 use futures::future::{self};
 use pagable::Pagable;
+use pagable::PagablePanic;
 use pagable::pagable_typetag;
 use ref_cast::RefCast;
 use smallvec::SmallVec;
@@ -156,12 +163,19 @@ async fn build_action_no_redirect(
     let is_expected_eligible_for_dedupe = expected_eligible_for_dedupe(&action);
 
     if let Some(local_action_cache_inputs) = action.local_action_cache_inputs()? {
+        let mut ensured_inputs_for_execution = None;
         let ensured_local_action_cache_inputs =
-            ensure_action_inputs(ctx, &local_action_cache_inputs).await?;
+            ensure_action_input_set(ctx, &local_action_cache_inputs).await?;
+        let local_action_cache_input_set_digest =
+            ensured_local_action_cache_inputs.input_set_digest.dupe();
+        if local_action_cache_inputs.as_ref() == inputs.as_ref() {
+            ensured_inputs_for_execution = Some(ensured_local_action_cache_inputs.inputs.dupe());
+        }
         let (execute_result, command_reports) = executor
             .try_execute_local_action_cache(
                 waiting_data.clone(),
-                ensured_local_action_cache_inputs,
+                ensured_local_action_cache_inputs.inputs,
+                local_action_cache_input_set_digest.dupe(),
                 action.as_ref(),
                 cancellation,
             )
@@ -191,10 +205,55 @@ async fn build_action_no_redirect(
                 async_record_root_spans(span_async(start_event, fut.boxed())).await;
             return finish_action_execution(ctx, &action, now, action_execution_data, spans);
         }
+
+        let ensured_inputs = match ensured_inputs_for_execution {
+            Some(ensured_inputs) => ensured_inputs,
+            None => ensure_action_input_set(ctx, &inputs).await?.inputs,
+        };
+
+        return build_action_after_inputs(
+            ctx,
+            cancellation,
+            action,
+            executor,
+            waiting_data,
+            ensured_inputs,
+            local_action_cache_input_set_digest,
+            target_rule_type_name,
+            is_eligible_for_dedupe,
+            is_expected_eligible_for_dedupe,
+        )
+        .await;
     }
 
-    let ensured_inputs = ensure_action_inputs(ctx, &inputs).await?;
+    let ensured_input_set = ensure_action_input_set(ctx, &inputs).await?;
+    build_action_after_inputs(
+        ctx,
+        cancellation,
+        action,
+        executor,
+        waiting_data,
+        ensured_input_set.inputs,
+        ensured_input_set.input_set_digest,
+        target_rule_type_name,
+        is_eligible_for_dedupe,
+        is_expected_eligible_for_dedupe,
+    )
+    .await
+}
 
+async fn build_action_after_inputs(
+    ctx: &mut DiceComputations<'_>,
+    cancellation: &CancellationContext,
+    action: Arc<RegisteredAction>,
+    executor: Arc<BuckActionExecutor>,
+    waiting_data: WaitingData,
+    ensured_inputs: Arc<BuckIndexMap<ArtifactGroup, ArtifactGroupValues>>,
+    local_action_cache_input_set_digest: Arc<[u8]>,
+    target_rule_type_name: Option<String>,
+    is_eligible_for_dedupe: buck2_data::EligibleForDedupe,
+    is_expected_eligible_for_dedupe: buck2_data::ExpectedEligibleForDedupe,
+) -> buck2_error::Result<ActionOutputs> {
     let start_event = action_execution_start_event(&action);
 
     let now = TimeSpan::start_now();
@@ -206,6 +265,7 @@ async fn build_action_no_redirect(
         &executor,
         waiting_data,
         ensured_inputs,
+        local_action_cache_input_set_digest,
         action,
         target_rule_type_name,
         is_eligible_for_dedupe,
@@ -219,26 +279,99 @@ async fn build_action_no_redirect(
     finish_action_execution(ctx, action, now, action_execution_data, spans)
 }
 
-async fn ensure_action_inputs(
+async fn ensure_action_input_set(
     ctx: &mut DiceComputations<'_>,
     inputs: &[ArtifactGroup],
-) -> buck2_error::Result<BuckIndexMap<ArtifactGroup, ArtifactGroupValues>> {
-    if inputs.is_empty() {
-        return Ok(BuckIndexMap::default());
+) -> buck2_error::Result<ActionInputSet> {
+    let inputs: Arc<[ArtifactGroup]> = inputs.iter().cloned().collect::<Vec<_>>().into();
+    ctx.compute(&ActionInputSetKey(inputs)).await?
+}
+
+#[derive(Clone, Dupe, Allocative, PagablePanic)]
+struct ActionInputSet {
+    inputs: Arc<BuckIndexMap<ArtifactGroup, ArtifactGroupValues>>,
+    input_set_digest: Arc<[u8]>,
+}
+
+#[derive(Clone, Dupe, Debug, Eq, PartialEq, Hash, Allocative, Pagable)]
+#[pagable_typetag(dice::DiceKeyDyn)]
+struct ActionInputSetKey(Arc<[ArtifactGroup]>);
+
+impl fmt::Display for ActionInputSetKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "ACTION_INPUT_SET({} inputs)", self.0.len())
+    }
+}
+
+#[async_trait]
+impl Key for ActionInputSetKey {
+    type Value = buck2_error::Result<ActionInputSet>;
+
+    async fn compute(
+        &self,
+        ctx: &mut DiceComputations,
+        _cancellation: &CancellationContext,
+    ) -> Self::Value {
+        let ready_inputs: Vec<_> = tokio::task::unconstrained(KeepGoing::try_compute_join_all(
+            ctx,
+            self.0.iter(),
+            |ctx, v| async move { ctx.ensure_artifact_group(v).await }.boxed(),
+        ))
+        .await?;
+
+        let mut fingerprint =
+            CasDigestData::digester(ctx.global_data().get_digest_config().cas_digest_config());
+        action_cache_add_str(
+            &mut fingerprint,
+            "buck2-local-action-cache-artifact-input-set-v1",
+        );
+        action_cache_add_str(&mut fingerprint, "inputs");
+
+        let mut results = BuckIndexMap::with_capacity(self.0.len());
+        for (artifact, ready) in zip(self.0.iter(), ready_inputs) {
+            let action_cache_fingerprint = ready.action_cache_fingerprint().ok_or_else(|| {
+                internal_error!("missing action-cache fingerprint for action input `{artifact}`")
+            })?;
+            action_cache_add_bytes(&mut fingerprint, action_cache_fingerprint);
+            results.insert(artifact.clone(), ready);
+        }
+
+        let input_set_digest: Arc<[u8]> = finalize_action_cache_digest(fingerprint)
+            .into_boxed_slice()
+            .into();
+        Ok(ActionInputSet {
+            inputs: Arc::new(results),
+            input_set_digest,
+        })
     }
 
-    let ready_inputs: Vec<_> = tokio::task::unconstrained(KeepGoing::try_compute_join_all(
-        ctx,
-        inputs.iter(),
-        |ctx, v| async move { ctx.ensure_artifact_group(v).await }.boxed(),
-    ))
-    .await?;
-
-    let mut results = BuckIndexMap::with_capacity(inputs.len());
-    for (artifact, ready) in zip(inputs.iter(), ready_inputs) {
-        results.insert(artifact.clone(), ready);
+    fn equality(x: &Self::Value, y: &Self::Value) -> bool {
+        match (x, y) {
+            (Ok(x), Ok(y)) => x.input_set_digest == y.input_set_digest,
+            _ => false,
+        }
     }
-    Ok(results)
+
+    fn validity(x: &Self::Value) -> bool {
+        x.is_ok()
+    }
+
+    fn value_serialize() -> impl ValueSerialize<Value = Self::Value> {
+        OkPagableValueSerialize::<Self::Value>::new()
+    }
+}
+
+fn action_cache_add_bytes(fingerprint: &mut DataDigester, bytes: &[u8]) {
+    fingerprint.update(&(bytes.len() as u64).to_le_bytes());
+    fingerprint.update(bytes);
+}
+
+fn action_cache_add_str(fingerprint: &mut DataDigester, value: &str) {
+    action_cache_add_bytes(fingerprint, value.as_bytes());
+}
+
+fn finalize_action_cache_digest(fingerprint: DataDigester) -> Vec<u8> {
+    fingerprint.finalize().raw_digest().as_bytes().to_vec()
 }
 
 fn action_execution_start_event(action: &RegisteredAction) -> buck2_data::ActionExecutionStart {
@@ -345,14 +478,21 @@ async fn build_action_inner(
     cancellation: &CancellationContext,
     executor: &BuckActionExecutor,
     waiting_data: WaitingData,
-    ensured_inputs: BuckIndexMap<ArtifactGroup, ArtifactGroupValues>,
+    ensured_inputs: Arc<BuckIndexMap<ArtifactGroup, ArtifactGroupValues>>,
+    local_action_cache_input_set_digest: Arc<[u8]>,
     action: &Arc<RegisteredAction>,
     target_rule_type_name: Option<String>,
     is_eligible_for_dedupe: buck2_data::EligibleForDedupe,
     is_expected_eligible_for_dedupe: buck2_data::ExpectedEligibleForDedupe,
 ) -> (ActionExecutionData, Box<buck2_data::ActionExecutionEnd>) {
     let (execute_result, command_reports) = executor
-        .execute(waiting_data, ensured_inputs, action, cancellation)
+        .execute(
+            waiting_data,
+            ensured_inputs,
+            local_action_cache_input_set_digest,
+            action,
+            cancellation,
+        )
         .await;
 
     build_action_result(

@@ -57,10 +57,10 @@ use starlark::values::UnpackValue;
 
 use crate::actions::impls::run::DepFilesPlaceholderArtifactPathMapper;
 use crate::actions::impls::run::action_cache_add_bool;
+use crate::actions::impls::run::action_cache_add_bytes;
 use crate::actions::impls::run::action_cache_add_str;
 use crate::actions::impls::run::compose_local_action_cache_fingerprint;
 use crate::actions::impls::run::finalize_action_cache_digest;
-use crate::actions::impls::run::fingerprint_artifact_group_values;
 use crate::actions::impls::run::fingerprint_command_execution_output;
 
 #[derive(Debug, buck2_error::Error)]
@@ -156,7 +156,6 @@ impl TemplateExpansionAction {
     fn local_action_cache_key(
         &self,
         ctx: &dyn ActionExecutionCtx,
-        input_values: &buck2_build_api::artifact_groups::ArtifactGroupValues,
         output: &CommandExecutionOutput,
     ) -> buck2_error::Result<LocalActionCacheKey> {
         let key = output
@@ -184,9 +183,13 @@ impl TemplateExpansionAction {
         let mut input_metadata = CasDigestData::digester(cas_digest_config);
         action_cache_add_str(
             &mut input_metadata,
-            "buck2-local-action-cache-simple-input-metadata-v1",
+            "buck2-local-action-cache-simple-input-metadata-v2",
         );
-        fingerprint_artifact_group_values(&mut input_metadata, ctx.fs(), input_values)?;
+        action_cache_add_str(&mut input_metadata, "artifact_input_set");
+        action_cache_add_bytes(
+            &mut input_metadata,
+            ctx.local_action_cache_input_set_digest(),
+        );
 
         let action_key_digest = finalize_action_cache_digest(action_key);
         let input_metadata_digest = finalize_action_cache_digest(input_metadata);
@@ -496,7 +499,7 @@ impl Action for TemplateExpansionAction {
         let (local_action_cache_key, input, input_value) = {
             let values = ctx.artifact_values(&self.template);
             let local_action_cache_key =
-                self.local_action_cache_key(ctx, values, &local_action_cache_output)?;
+                self.local_action_cache_key(ctx, &local_action_cache_output)?;
             let mut iter = values.iter();
             let Some((input, input_value)) = iter.next() else {
                 return Err(internal_error!("Template did not dereference to an artifact").into());

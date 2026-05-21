@@ -1692,19 +1692,10 @@ fn fingerprint_command_execution_input(
     Ok(())
 }
 
-fn fingerprint_run_local_action_cache_inputs(
-    fingerprint: &mut DataDigester,
-    fs: &ArtifactFs,
-    artifact_inputs: &[&ArtifactGroupValues],
-    extra_inputs: &[CommandExecutionInput],
-) -> buck2_error::Result<()> {
-    for input in artifact_inputs {
-        fingerprint_artifact_group_values(fingerprint, fs, *input)?;
-    }
-    for input in extra_inputs {
-        fingerprint_command_execution_input(fingerprint, fs, input)?;
-    }
-    Ok(())
+#[derive(Clone, Copy)]
+struct LocalActionCacheInputMetadata<'a> {
+    input_set_digest: &'a [u8],
+    extra_inputs: &'a [CommandExecutionInput],
 }
 
 pub(crate) fn fingerprint_command_execution_output(
@@ -3525,24 +3516,6 @@ impl RunAction {
         let executor_fs = ctx.executor_fs();
         let fs = executor_fs.fs();
         let bazel_paths = self.uses_bazel_execroot_paths();
-        let artifact_inputs: Vec<&ArtifactGroupValues> = if collect_action_inputs {
-            if bazel_paths {
-                self.inputs
-                    .iter()
-                    .map(|group| ctx.artifact_values(group))
-                    .collect()
-            } else {
-                visitor
-                    .inputs()
-                    .map(|group| ctx.artifact_values(group))
-                    .collect()
-            }
-        } else {
-            self.local_action_cache_inputs
-                .iter()
-                .map(|group| ctx.artifact_values(group))
-                .collect()
-        };
         let mut local_action_cache_extra_inputs: Vec<CommandExecutionInput> = Vec::with_capacity(2);
 
         let mut extra_env = Vec::new();
@@ -3610,8 +3583,10 @@ impl RunAction {
                 ctx,
                 &command_line_digest,
                 &extra_env,
-                &[],
-                Some((&artifact_inputs, &local_action_cache_extra_inputs)),
+                LocalActionCacheInputMetadata {
+                    input_set_digest: ctx.local_action_cache_input_set_digest(),
+                    extra_inputs: &local_action_cache_extra_inputs,
+                },
                 &outputs,
                 worker,
                 remote_worker,
@@ -3786,27 +3761,15 @@ impl RunAction {
 
         let command_line_digest =
             fingerprint_expanded_command_line_for_local_action_cache(&expanded, &param_files);
-        let command_artifact_inputs;
-        let local_action_cache_probe_inputs =
-            if self.inner.dep_files.is_empty() && self.inner.metadata_param.is_none() {
-                command_artifact_inputs = self
-                    .local_action_cache_inputs
-                    .iter()
-                    .map(|group| ctx.artifact_values(group))
-                    .collect::<Vec<_>>();
-                Some((
-                    command_artifact_inputs.as_slice(),
-                    &local_action_cache_inputs[local_action_cache_extra_inputs_start..],
-                ))
-            } else {
-                None
-            };
+        let local_action_cache_input_metadata = LocalActionCacheInputMetadata {
+            input_set_digest: ctx.local_action_cache_input_set_digest(),
+            extra_inputs: &local_action_cache_inputs[local_action_cache_extra_inputs_start..],
+        };
         let local_action_cache_key = self.local_action_cache_key(
             ctx,
             &command_line_digest,
             &extra_env,
-            &local_action_cache_inputs,
-            local_action_cache_probe_inputs,
+            local_action_cache_input_metadata,
             &outputs,
             worker.as_ref().map(LocalActionCacheWorkerRef::Borrowed),
             remote_worker
@@ -3970,11 +3933,7 @@ impl RunAction {
         ctx: &dyn ActionExecutionCtx,
         command_line_digest: &ExpandedCommandLineDigest,
         extra_env: &[(String, String)],
-        inputs: &[CommandExecutionInput],
-        local_action_cache_probe_inputs: Option<(
-            &[&ArtifactGroupValues],
-            &[CommandExecutionInput],
-        )>,
+        local_action_cache_input_metadata: LocalActionCacheInputMetadata<'_>,
         outputs: &BuckIndexSet<CommandExecutionOutput>,
         worker: Option<LocalActionCacheWorkerRef<'_>>,
         remote_worker: Option<LocalActionCacheRemoteWorkerRef<'_>>,
@@ -4048,20 +4007,16 @@ impl RunAction {
         let mut input_metadata = CasDigestData::digester(cas_digest_config);
         action_cache_add_str(
             &mut input_metadata,
-            "buck2-local-action-cache-input-metadata-v1",
+            "buck2-local-action-cache-input-metadata-v2",
         );
-        action_cache_add_str(&mut input_metadata, "inputs");
-        if let Some((artifact_inputs, extra_inputs)) = local_action_cache_probe_inputs {
-            fingerprint_run_local_action_cache_inputs(
-                &mut input_metadata,
-                ctx.fs(),
-                artifact_inputs,
-                extra_inputs,
-            )?;
-        } else {
-            for input in inputs {
-                fingerprint_command_execution_input(&mut input_metadata, ctx.fs(), input)?;
-            }
+        action_cache_add_str(&mut input_metadata, "artifact_input_set");
+        action_cache_add_bytes(
+            &mut input_metadata,
+            local_action_cache_input_metadata.input_set_digest,
+        );
+        action_cache_add_str(&mut input_metadata, "extra_inputs");
+        for input in local_action_cache_input_metadata.extra_inputs {
+            fingerprint_command_execution_input(&mut input_metadata, ctx.fs(), input)?;
         }
         action_cache_add_str(&mut input_metadata, "worker_input_directory");
         if let Some(worker) = worker.as_ref() {
