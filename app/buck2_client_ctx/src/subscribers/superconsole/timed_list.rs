@@ -26,6 +26,7 @@ use superconsole::components::DrawVertical;
 use superconsole::style::Stylize;
 
 use self::table_builder::Table;
+use crate::subscribers::dice_activity::active_dice_summary;
 use crate::subscribers::superconsole::SuperConsoleState;
 use crate::subscribers::superconsole::timed_list::table_builder::Row;
 use crate::subscribers::superconsole::timed_list::table_builder::TimedRow;
@@ -86,6 +87,20 @@ impl TimedListBody<'_> {
             self.collect_promoted_detail_rows(&child, rows, display_platform)?;
         }
         Ok(())
+    }
+
+    fn active_dice_fallback_row(&self) -> buck2_error::Result<Option<TimedRow>> {
+        let Some(summary) = active_dice_summary(self.state.simple_console.observer().dice_state())
+        else {
+            return Ok(None);
+        };
+        Ok(Some(TimedRow::text(
+            0,
+            summary,
+            String::new(),
+            Duration::ZERO,
+            self.cutoffs,
+        )?))
     }
 
     /// Render a root  as `root [first child + remaining children]`
@@ -219,6 +234,11 @@ impl Component for TimedListBody<'_> {
                     .into(),
             );
         }
+        if builder.len() == 0
+            && let Some(row) = self.active_dice_fallback_row()?
+        {
+            builder.rows.push(Row::from(row));
+        }
 
         builder.draw(dimensions, mode)
     }
@@ -259,7 +279,11 @@ impl Component for TimedList<'_> {
         let span_tracker: &BuckEventSpanTracker = self.state.simple_console.observer().spans();
 
         match mode {
-            DrawMode::Normal if !span_tracker.is_unused() => {
+            DrawMode::Normal
+                if !span_tracker.is_unused()
+                    || active_dice_summary(self.state.simple_console.observer().dice_state())
+                        .is_some() =>
+            {
                 let header = TimedListHeader;
                 let body = TimedListBody {
                     cutoffs: self.cutoffs,
@@ -654,6 +678,42 @@ mod tests {
         assert!(output.contains("Syncing changes to graph"));
         assert!(output.contains("evaluating bzlmod module extension `foo.bzl`%`deps`"));
         assert!(!output.contains(" > "));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_active_dice_renders_fallback_row_without_spans() -> buck2_error::Result<()> {
+        let tick = Tick::now();
+        let mut state = SuperConsoleState::new(
+            fake_timekeeper(tick),
+            TraceId::null(),
+            Verbosity::default(),
+            false,
+            SuperConsoleConfig {
+                max_lines: 5,
+                ..Default::default()
+            },
+            None,
+        )?;
+
+        state
+            .simple_console
+            .observer
+            .observe(&dice_snapshot(fake_time(&tick, 1)))
+            .await?;
+
+        let output = TimedList::new(&CUTOFFS, &state).draw(
+            Dimensions {
+                width: 80,
+                height: 10,
+            },
+            DrawMode::Normal,
+        )?;
+
+        let output = output.fmt_for_test().to_string();
+        assert!(output.contains("Buck2 graph work -- computing BuildKey"));
+        assert!(output.contains("2 of 2 active DICE keys"));
 
         Ok(())
     }

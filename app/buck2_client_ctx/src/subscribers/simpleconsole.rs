@@ -45,6 +45,7 @@ use tokio::sync::mpsc::error::TryRecvError;
 
 use crate::subscribers::console_output_limit::ConsoleOutputLimit;
 use crate::subscribers::console_output_limit::EmitResult;
+use crate::subscribers::dice_activity::active_dice_summary;
 use crate::subscribers::emit_event::emit_event_if_relevant;
 use crate::subscribers::subscriber::EventSubscriber;
 use crate::subscribers::superconsole::io::io_in_flight_non_zero_counters;
@@ -755,10 +756,14 @@ where
                 }
                 None => {
                     if self.expect_spans {
-                        echo!(
-                            "Waiting on buck2 daemon {}...",
-                            self.observer.session_info().trace_id
-                        )?;
+                        if let Some(summary) = active_dice_summary(self.observer().dice_state()) {
+                            echo!("{}", summary)?;
+                        } else {
+                            echo!(
+                                "Waiting on buck2 daemon {}...",
+                                self.observer.session_info().trace_id
+                            )?;
+                        }
                     }
                 }
             }
