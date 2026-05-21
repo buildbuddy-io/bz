@@ -238,41 +238,6 @@ pub(crate) fn collect_bazel_aspect_hidden_attributes<'v>(
     }
 }
 
-fn collect_bazel_aspect_toolchains_impl<'v>(aspect: Value<'v>, output: &mut Vec<Value<'v>>) {
-    if let Some(aspect) = aspect.downcast_ref::<StarlarkAspect>() {
-        output.extend(aspect.toolchains.iter().copied());
-        for required in &aspect.requires {
-            collect_bazel_aspect_toolchains_impl(*required, output);
-        }
-        return;
-    }
-
-    let Some(aspect) = aspect
-        .unpack_frozen()
-        .and_then(|aspect| aspect.downcast_ref::<FrozenStarlarkAspect>())
-    else {
-        return;
-    };
-    output.extend(
-        aspect
-            .toolchains
-            .iter()
-            .map(|toolchain| toolchain.to_value()),
-    );
-    for required in &aspect.requires {
-        collect_bazel_aspect_toolchains_impl(required.to_value(), output);
-    }
-}
-
-pub(crate) fn collect_bazel_aspect_toolchains<'v>(
-    aspects: &[Value<'v>],
-    output: &mut Vec<Value<'v>>,
-) {
-    for aspect in aspects {
-        collect_bazel_aspect_toolchains_impl(*aspect, output);
-    }
-}
-
 fn doc_string(doc: NoneOr<&str>) -> Option<String> {
     doc.into_option().map(|doc| doc.trim().to_owned())
 }

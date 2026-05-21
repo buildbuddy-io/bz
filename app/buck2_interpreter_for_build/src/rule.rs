@@ -100,7 +100,6 @@ use crate::attrs::starlark_attribute::BazelComputedDefault;
 use crate::attrs::starlark_attribute::FrozenBazelComputedDefault;
 use crate::attrs::starlark_attribute::StarlarkAttribute;
 use crate::bazel_aspect::collect_bazel_aspect_hidden_attributes;
-use crate::bazel_aspect::collect_bazel_aspect_toolchains;
 use crate::bazel_aspect::frozen_aspect_implementation;
 use crate::bazel_aspect::frozen_aspect_info;
 use crate::interpreter::build_context::BuildContext;
@@ -752,13 +751,9 @@ fn bazel_toolchain_requirement_from_value(
                 .find_map(|(name, value)| (name.as_str() == "mandatory").then_some(value))
         })
         .map(|value| {
-            value
-                .unpack_bool()
-                .ok_or_else(|| {
-                    buck2_error::Error::from(RuleError::UnsupportedBazelToolchain(
-                        value.to_repr(),
-                    ))
-                })
+            value.unpack_bool().ok_or_else(|| {
+                buck2_error::Error::from(RuleError::UnsupportedBazelToolchain(value.to_repr()))
+            })
         })
         .transpose()?
         .unwrap_or(true);
@@ -878,22 +873,6 @@ impl<'v> StarlarkRuleCallable<'v> {
             .collect::<buck2_error::Result<Vec<(String, Attribute)>>>()?;
         for (name, aspects) in &bazel_attr_aspects {
             collect_bazel_aspect_hidden_attributes(name, aspects, &mut sorted_validated_attrs);
-        }
-        let mut bazel_toolchains = bazel_toolchains;
-        let mut bazel_aspect_toolchains = Vec::new();
-        for aspects in bazel_attr_aspects.values() {
-            collect_bazel_aspect_toolchains(aspects, &mut bazel_aspect_toolchains);
-        }
-        for toolchain in bazel_aspect_toolchains {
-            let toolchain = bazel_toolchain_requirement_from_value(toolchain)?;
-            if let Some(existing) = bazel_toolchains
-                .iter_mut()
-                .find(|existing| existing.toolchain_type == toolchain.toolchain_type)
-            {
-                existing.mandatory |= toolchain.mandatory;
-            } else {
-                bazel_toolchains.push(toolchain);
-            }
         }
         let is_bazel_build_setting = build_setting.is_some();
         let build_setting_attrs = bazel_build_setting_attrs(build_setting)?;
