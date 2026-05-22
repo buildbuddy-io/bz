@@ -53,6 +53,7 @@ use buck2_core::pattern::pattern::PackageSpec;
 use buck2_core::pattern::pattern::ParsedPatternWithModifiers;
 use buck2_core::pattern::pattern_type::ConfiguredProvidersPatternExtra;
 use buck2_core::pattern::pattern_type::ProvidersPatternExtra;
+use buck2_core::provider::label::ConfiguredProvidersLabel;
 use buck2_core::provider::label::ProvidersLabel;
 use buck2_core::provider::label::ProvidersName;
 use buck2_core::soft_error;
@@ -671,6 +672,45 @@ async fn build_targets(
     builder.wait_for(fail_fast, fut).await
 }
 
+async fn request_build_driver(
+    event_consumer: &BuildEventSink,
+    ctx: &LinearRecomputeDiceComputations<'_>,
+    materialization_and_upload: MaterializationAndUploadContext,
+    providers_label: ConfiguredProvidersLabel,
+    providers_to_build: &ProvidersToBuild,
+    opts: build::BuildConfiguredLabelOptions,
+    timeout_observer: Option<&Arc<dyn LivelinessObserver>>,
+) {
+    let key = build::BuildDriverKey::new(
+        providers_label.dupe(),
+        providers_to_build.clone(),
+        materialization_and_upload,
+        opts.graph_properties,
+        opts.skippable,
+    );
+
+    let build = async { ctx.get().compute(&key).await };
+
+    match timeout_observer {
+        Some(timeout_observer) => {
+            let alive = timeout_observer
+                .while_alive()
+                .map(|()| ConfiguredBuildEventVariant::Timeout);
+            futures::pin_mut!(alive);
+            futures::pin_mut!(build);
+            match futures::future::select(alive, build).await {
+                futures::future::Either::Left((timeout, _build)) => {
+                    event_consumer.consume(BuildEvent::new_configured(providers_label, timeout));
+                }
+                futures::future::Either::Right((_value, _alive)) => {}
+            }
+        }
+        None => {
+            let _value = build.await;
+        }
+    }
+}
+
 async fn build_targets_in_universe(
     event_consumer: &BuildEventSink,
     ctx: &LinearRecomputeDiceComputations<'_>,
@@ -693,7 +733,7 @@ async fn build_targets_in_universe(
         .into_iter()
         .map(|p| {
             buck2_util::async_move_clone!(providers_to_build, {
-                build::build_configured_label(
+                request_build_driver(
                     event_consumer,
                     ctx,
                     materialization_and_upload,
@@ -919,7 +959,7 @@ async fn build_target(
         }
     };
 
-    build::build_configured_label(
+    request_build_driver(
         event_consumer,
         ctx,
         materialization_and_upload,
