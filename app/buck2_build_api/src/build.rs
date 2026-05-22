@@ -29,16 +29,9 @@ use buck2_core::provider::label::ProvidersLabel;
 use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
 use buck2_error::internal_error;
 use buck2_events::dispatch::console_message;
-use buck2_node::nodes::configured_frontend::ConfiguredTargetNodeCalculation;
 use dice::LinearRecomputeDiceComputations;
 use dice::UserComputationData;
 use dupe::Dupe;
-use dupe::IterDupedExt;
-use dupe::OptionDupedExt;
-use futures::FutureExt;
-use futures::future::Either;
-use futures::stream::FuturesUnordered;
-use futures::stream::StreamExt;
 use itertools::Itertools;
 use pagable::Pagable;
 use starlark::collections::SmallSet;
@@ -46,29 +39,16 @@ use tokio::sync::Mutex;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::actions::calculation::BuildKey;
-use crate::actions::calculation::get_target_rule_type_name;
-use crate::analysis::calculation::RuleAnalysisCalculation;
 use crate::artifact_groups::ArtifactGroupValues;
-use crate::artifact_groups::ResolvedArtifactGroup;
-use crate::artifact_groups::ResolvedArtifactGroupBuildSignalsKey;
-use crate::artifact_groups::calculation::EnsureTransitiveSetProjectionKey;
-use crate::build::detailed_aggregated_metrics::dice::HasDetailedAggregatedMetrics;
-use crate::build::detailed_aggregated_metrics::types::TopLevelTargetSpec;
 use crate::build::graph_properties::GraphPropertiesOptions;
 use crate::build::graph_properties::GraphPropertiesValues;
-use crate::build::outputs::get_outputs_for_top_level_target;
-use crate::build_signals::HasBuildSignals;
 use crate::interpreter::rule_defs::provider::collection::FrozenProviderCollectionValue;
-use crate::keep_going::KeepGoing;
-use crate::materialize::HasMaterializationQueueTracker;
 use crate::materialize::MaterializationAndUploadContext;
-use crate::materialize::materialize_and_upload_artifact_group;
-use crate::validation::validation_impl::VALIDATION_IMPL;
 
 mod action_error;
 pub mod build_report;
 pub mod detailed_aggregated_metrics;
+mod driver;
 pub mod graph_properties;
 pub mod outputs;
 pub(crate) mod sketch_impl;
@@ -548,229 +528,16 @@ pub async fn build_configured_label(
     opts: BuildConfiguredLabelOptions,
     timeout_observer: Option<&Arc<dyn LivelinessObserver>>,
 ) {
-    if let Err(e) = build_configured_label_inner(
+    driver::build_configured_label(
         event_consumer,
         ctx,
         materialization_and_upload,
-        providers_label.dupe(),
+        providers_label,
         providers_to_build,
         opts,
         timeout_observer,
     )
-    .await
-    {
-        event_consumer.consume_configured(ConfiguredBuildEvent {
-            label: providers_label,
-            variant: ConfiguredBuildEventVariant::Error { err: e },
-        });
-    }
-}
-
-async fn build_configured_label_inner<'a>(
-    event_consumer: &dyn BuildEventConsumer,
-    ctx: &'a LinearRecomputeDiceComputations<'_>,
-    materialization_and_upload: MaterializationAndUploadContext,
-    providers_label: ConfiguredProvidersLabel,
-    providers_to_build: &ProvidersToBuild,
-    opts: BuildConfiguredLabelOptions,
-    timeout_observer: Option<&'a Arc<dyn LivelinessObserver>>,
-) -> buck2_error::Result<()> {
-    let outputs = match get_outputs_for_top_level_target(
-        &mut ctx.get(),
-        &providers_label,
-        providers_to_build,
-    )
-    .await?
-    {
-        MaybeCompatible::Incompatible(reason) => {
-            if opts.skippable {
-                tracing::debug!("{}", reason.skipping_message(providers_label.target()));
-                event_consumer.consume_configured(ConfiguredBuildEvent {
-                    label: providers_label.dupe(),
-                    variant: ConfiguredBuildEventVariant::SkippedIncompatible,
-                });
-                return Ok(());
-            } else {
-                return Err(reason.to_err());
-            };
-        }
-        MaybeCompatible::Compatible(v) => v,
-    };
-
-    let node = ctx
-        .get()
-        .get_configured_target_node(providers_label.target())
-        .await
-        .require_compatible()?;
-
-    ctx.get().top_level_target(TopLevelTargetSpec {
-        label: providers_label.dupe(),
-        target: node,
-        outputs: outputs.dupe(),
-    })?;
-
-    let queue_tracker = ctx
-        .get()
-        .per_transaction_data()
-        .get_materialization_queue_tracker();
-
-    let output_builds: Vec<_> = outputs
-        .iter()
-        .duped()
-        .enumerate()
-        .map(|(index, (output, provider_type))| {
-            let queue_tracker = queue_tracker.dupe();
-
-            let fut = ctx.spawned(move |ctx, _cancellations| {
-                async move {
-                    materialize_and_upload_artifact_group(
-                        ctx,
-                        &output,
-                        materialization_and_upload,
-                        &queue_tracker,
-                    )
-                    .await
-                }
-                .boxed()
-            });
-
-            Either::Left(fut.map(move |v| {
-                let res = match v {
-                    Ok(values) => Ok(ProviderArtifacts {
-                        values,
-                        provider_type,
-                    }),
-                    Err(e) => Err(e),
-                };
-                ConfiguredBuildEventExecutionVariant::BuildOutput { index, output: res }
-            }))
-        })
-        .collect();
-
-    let target_rule_type_name =
-        get_target_rule_type_name(&mut ctx.get(), providers_label.target()).await?;
-
-    let provider_collection = if providers_to_build.run {
-        let providers = ctx
-            .get()
-            .get_providers(&providers_label)
-            .await?
-            .require_compatible()?;
-        Some(providers)
-    } else {
-        None
-    };
-    if let Some(signals) = ctx
-        .get()
-        .per_transaction_data()
-        .get_build_signals()
-        .cloned()
-    {
-        let resolved_artifacts: Vec<_> =
-            tokio::task::unconstrained(KeepGoing::try_compute_join_all(
-                &mut ctx.get(),
-                outputs.iter(),
-                |ctx, (output, _type)| async move { output.resolved_artifact(ctx).await }.boxed(),
-            ))
-            .await?;
-        let node_keys = resolved_artifacts
-            .iter()
-            .filter_map(|resolved| match resolved.dupe() {
-                ResolvedArtifactGroup::Artifact(artifact) => artifact
-                    .action_key()
-                    .duped()
-                    .map(BuildKey)
-                    .map(ResolvedArtifactGroupBuildSignalsKey::BuildKey),
-                ResolvedArtifactGroup::TransitiveSetProjection(key) => Some(
-                    ResolvedArtifactGroupBuildSignalsKey::EnsureTransitiveSetProjectionKey(
-                        EnsureTransitiveSetProjectionKey(key.dupe().dupe()),
-                    ),
-                ),
-            })
-            .collect();
-
-        signals.top_level_target(providers_label.target().dupe(), node_keys);
-    }
-
-    if !opts.skippable && outputs.is_empty() {
-        let docs = "https://buck2.build/docs/users/faq/common_issues/#why-does-my-target-not-have-any-outputs"; // @oss-enable
-        // @oss-disable: let docs = "https://www.internalfb.com/intern/staticdocs/buck2/docs/users/faq/common_issues/#why-does-my-target-not-have-any-outputs";
-        console_message(format!(
-            "Target {} does not have any outputs. This means the rule did not define any outputs. See {} for more information",
-            providers_label.target(),
-            docs,
-        ));
-    }
-
-    let mut outputs: Vec<_> = output_builds;
-
-    let validation_result = {
-        let validation_impl = VALIDATION_IMPL.get()?;
-        let mut ctx = ctx.get();
-        let target = providers_label.target().dupe();
-        Either::Right(async move {
-            let result = validation_impl
-                .validate_target_node_transitively(&mut ctx, target)
-                .await;
-            ConfiguredBuildEventExecutionVariant::Validation { result }
-        })
-    };
-
-    outputs.push(validation_result);
-
-    event_consumer.consume_configured(ConfiguredBuildEvent {
-        label: providers_label.dupe(),
-        variant: ConfiguredBuildEventVariant::Prepared {
-            provider_collection,
-            target_rule_type_name,
-        },
-    });
-
-    let mut outputs: FuturesUnordered<_> = outputs
-        .into_iter()
-        .map(|build| async move {
-            let build = build.map(ConfiguredBuildEventVariant::Execution);
-            match timeout_observer {
-                Some(timeout_observer) => {
-                    let alive = timeout_observer
-                        .while_alive()
-                        .map(|()| ConfiguredBuildEventVariant::Timeout);
-                    futures::pin_mut!(alive);
-                    futures::pin_mut!(build);
-                    futures::future::select(alive, build)
-                        .map(|r| r.factor_first().0)
-                        .await
-                }
-                None => build.await,
-            }
-        })
-        .collect();
-
-    while let Some(variant) = tokio::task::unconstrained(outputs.next()).await {
-        event_consumer.consume_configured(ConfiguredBuildEvent {
-            label: providers_label.dupe(),
-            variant,
-        })
-    }
-
-    if !opts.graph_properties.is_empty() {
-        let graph_properties = graph_properties::get_graph_properties(
-            &mut ctx.get(),
-            providers_label.target(),
-            opts.graph_properties
-                .should_compute_configured_graph_sketch(),
-            opts.graph_properties.retained_analysis_memory_sketch,
-        )
-        .await
-        .ok();
-
-        event_consumer.consume_configured(ConfiguredBuildEvent {
-            label: providers_label,
-            variant: ConfiguredBuildEventVariant::GraphProperties { graph_properties },
-        });
-    }
-
-    Ok(())
+    .await;
 }
 
 #[derive(Clone, Allocative)]

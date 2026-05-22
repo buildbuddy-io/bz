@@ -35,7 +35,9 @@ use crate::build::detailed_aggregated_metrics::buck2_sketches::AnalysisGraphProp
 use crate::build::detailed_aggregated_metrics::buck2_sketches::compute_configured_graph_sketch;
 use crate::build::sketch_impl::MergeableGraphSketch;
 
-#[derive(Copy, Clone, Dupe, Debug, Eq, Hash, PartialEq, Allocative, Default)]
+#[derive(
+    Copy, Clone, Dupe, Debug, Eq, Hash, PartialEq, Allocative, Default, Pagable
+)]
 pub struct GraphPropertiesOptions {
     pub configured_graph_size: bool,
     pub configured_graph_sketch: bool,

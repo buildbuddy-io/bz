@@ -10,6 +10,7 @@
 
 use std::sync::Arc;
 
+use allocative::Allocative;
 use buck2_artifact::artifact::artifact_type::BaseArtifactKind;
 use buck2_artifact::artifact::build_artifact::BuildArtifact;
 use buck2_build_signals::env::WaitingCategory;
@@ -35,6 +36,7 @@ use dice::UserComputationData;
 use dice_futures::spawn::spawn_dropcancel;
 use dupe::Dupe;
 use futures::FutureExt;
+use pagable::Pagable;
 
 use crate::actions::artifact::get_artifact_fs::GetArtifactFs;
 use crate::actions::artifact::materializer::ArtifactMaterializer;
@@ -225,7 +227,7 @@ async fn ensure_uploaded(
     Ok(())
 }
 
-#[derive(Clone, Dupe, Copy)]
+#[derive(Clone, Dupe, Copy, Debug, Eq, PartialEq, Hash, Allocative, Pagable)]
 enum MaterializationContext {
     Skip,
     Materialize {
@@ -244,7 +246,7 @@ impl From<Materializations> for MaterializationContext {
     }
 }
 
-#[derive(Clone, Dupe, Copy)]
+#[derive(Clone, Dupe, Copy, Debug, Eq, PartialEq, Hash, Allocative, Pagable)]
 enum UploadContext {
     Skip,
     Upload,
@@ -258,7 +260,7 @@ impl From<Uploads> for UploadContext {
     }
 }
 
-#[derive(Clone, Dupe, Copy)]
+#[derive(Clone, Dupe, Copy, Debug, Eq, PartialEq, Hash, Allocative, Pagable)]
 pub struct MaterializationAndUploadContext(MaterializationContext, UploadContext);
 impl MaterializationAndUploadContext {
     pub fn skip() -> Self {
