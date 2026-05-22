@@ -9,6 +9,7 @@
  */
 
 use std::path::Path;
+use std::process::Stdio;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::AtomicBool;
@@ -412,6 +413,7 @@ async fn clean(
     } else if background {
         let trash_uuid = Uuid::new_v4();
         let trash_target = trash_dir.as_abs_path().join(trash_uuid.to_string());
+        let mut trash_target_normalized = None;
 
         // Create trash directory if it doesn't exist
         if !trash_dir.exists() {
@@ -426,10 +428,11 @@ async fn clean(
                 trash_target.display()
             ))?;
             fs_util::rename(&buck_out_dir, &trash_target).categorize_internal()?;
-            let trash_target_normalized = AbsNormPathBuf::new(trash_target.to_path_buf())?;
+            let normalized = AbsNormPathBuf::new(trash_target.to_path_buf())?;
             if preserve_bzlmod_caches {
-                restore_preserved_bzlmod_paths(&trash_target_normalized, &buck_out_dir)?;
+                restore_preserved_bzlmod_paths(&normalized, &buck_out_dir)?;
             }
+            trash_target_normalized = Some(normalized);
         }
 
         // Clean the daemon_dir first
@@ -441,24 +444,12 @@ async fn clean(
             }
         }
 
-        console.print_stderr("Buck-out moved to trash. Now cleaning up...")?;
-        console.print_stderr(
-            "Tip: Use Ctrl-Z to put this in the background, or run in a new terminal.",
-        )?;
-        console.print_stderr("You can run other buck2 commands while this completes.")?;
-
-        // Delete the moved directory
-        let trash_target_normalized = AbsNormPathBuf::new(trash_target.to_path_buf())?;
-        if trash_target_normalized.exists() {
-            paths_to_clean.extend(
-                collect_paths_to_clean(&trash_target_normalized, false)?
-                    .map(|path| path.display().to_string()),
-            );
-            tokio::task::spawn_blocking(move || {
-                clean_buck_out_with_retry(&trash_target_normalized, console_type, false)
-            })
-            .await?
-            .buck_error_context("Failed to spawn clean")?;
+        if let Some(trash_target_normalized) = trash_target_normalized {
+            console
+                .print_stderr("Buck-out moved to trash. Deletion continues in the background.")?;
+            console.print_stderr("You can run other buck2 commands while this completes.")?;
+            paths_to_clean.push(trash_target_normalized.display().to_string());
+            spawn_background_cleaner(&trash_target_normalized)?;
         }
         paths_to_clean
     } else {
@@ -492,6 +483,52 @@ async fn clean(
     }
 
     Ok(())
+}
+
+fn spawn_background_cleaner(path: &AbsNormPathBuf) -> buck2_error::Result<()> {
+    #[cfg(unix)]
+    {
+        let child = std::process::Command::new("/bin/sh")
+            .arg("-c")
+            .arg(
+                "/usr/bin/find \"$1\" -type d -not -perm -u=rwx -exec /bin/chmod -f u=rwx {} + 2>/dev/null; /bin/rm -rf \"$1\"",
+            )
+            .arg("buck2-background-clean")
+            .arg(path.as_path())
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .buck_error_context("Failed to start background clean process")?;
+        tracing::info!(
+            path = %path.display(),
+            pid = child.id(),
+            "started background clean process"
+        );
+        drop(child);
+        Ok(())
+    }
+    #[cfg(windows)]
+    {
+        let child = std::process::Command::new("cmd")
+            .arg("/C")
+            .arg("rmdir")
+            .arg("/S")
+            .arg("/Q")
+            .arg(path.as_path())
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .buck_error_context("Failed to start background clean process")?;
+        tracing::info!(
+            path = %path.display(),
+            pid = child.id(),
+            "started background clean process"
+        );
+        drop(child);
+        Ok(())
+    }
 }
 
 const PRESERVED_BZLMOD_PATHS: &[&str] = &[
