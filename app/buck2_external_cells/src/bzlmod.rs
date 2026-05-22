@@ -96,8 +96,8 @@ use buck2_execute::materialize::materializer::HasMaterializer;
 use buck2_execute::materialize::materializer::Materializer;
 use buck2_fs::error::IoResultExt;
 use buck2_fs::fs_util;
-use buck2_fs::paths::abs_path::AbsPath;
 use buck2_fs::paths::abs_norm_path::AbsNormPath;
+use buck2_fs::paths::abs_path::AbsPath;
 use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
 use buck2_http::HttpClient;
 use buck2_http::HttpClientBuilder;
@@ -314,18 +314,7 @@ impl IoRequest for BzlmodExtractIoRequest {
         fs_util::create_dir_all(cache_tmp.clone())?;
 
         extract_archive(&self.setup, &archive, &temp)?;
-
-        let source = match self.setup.strip_prefix.as_ref() {
-            Some(strip_prefix) if !strip_prefix.is_empty() => {
-                temp.join(ForwardRelativePath::new(&**strip_prefix)?)
-            }
-            _ => temp.clone(),
-        };
-        if !source.exists() {
-            return Err(BzlmodError::MissingExtractedDirectory(source.to_string()).into());
-        }
-
-        copy_dir_contents(&source, &cache_tmp)?;
+        copy_dir_contents(&temp, &cache_tmp)?;
 
         for patch in &self.patch_files {
             apply_patch(project_fs, &cache_tmp, &patch.path, patch.patch_strip)?;
@@ -421,17 +410,7 @@ impl IoRequest for BzlmodGeneratedHttpArchiveIoRequest {
             patch_strip: 0,
         };
         extract_archive(&extract_setup, &archive, &temp)?;
-
-        let source = match self.setup.strip_prefix.as_ref() {
-            Some(strip_prefix) if !strip_prefix.is_empty() => {
-                temp.join(ForwardRelativePath::new(&**strip_prefix)?)
-            }
-            _ => temp.clone(),
-        };
-        if !source.exists() {
-            return Err(BzlmodError::MissingExtractedDirectory(source.to_string()).into());
-        }
-        copy_dir_contents(&source, &dest)?;
+        copy_dir_contents(&temp, &dest)?;
         write_generated_module_file(&dest, &self.setup.repo_name)?;
         Ok(())
     }
@@ -1883,8 +1862,15 @@ fn extract_archive(
     let archive_type = setup.archive_type.as_deref();
     let kind = archive_kind_from_type_or_url(archive_type, primary_url)
         .ok_or_else(|| BzlmodError::UnsupportedArchiveType(primary_url.to_owned()))?;
-    extract_bazel_archive(archive.as_path(), temp.as_path(), kind, "", 0, &[])
-        .buck_error_context("Could not extract archive for bzlmod external cell")
+    extract_bazel_archive(
+        archive.as_path(),
+        temp.as_path(),
+        kind,
+        setup.strip_prefix.as_deref().unwrap_or(""),
+        0,
+        &[],
+    )
+    .buck_error_context("Could not extract archive for bzlmod external cell")
 }
 
 fn bzlmod_cell_setup_primary_url(setup: &BzlmodCellSetup) -> &str {
