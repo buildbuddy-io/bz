@@ -1673,6 +1673,10 @@ fn fingerprint_command_execution_input(
             action_cache_add_str(fingerprint, path.as_str());
             value.hash_action_cache_fingerprint(fingerprint);
         }
+        CommandExecutionInput::EmptyFile(path) => {
+            action_cache_add_str(fingerprint, "empty_file");
+            action_cache_add_str(fingerprint, path.as_str());
+        }
         CommandExecutionInput::ActionMetadata(metadata) => {
             action_cache_add_str(fingerprint, "action_metadata");
             action_cache_add_tracked_file_digest(fingerprint, &metadata.digest);
@@ -3417,7 +3421,6 @@ impl RunAction {
 
         let mut aliases = BuckIndexSet::new();
         let mut saw_workspace_runfiles_entry = false;
-        let mut workspace_anchor = None;
         let workspace_runfiles_prefix = bazel_runfiles_prefix();
         for entry in bazel_runfiles_entries(runfiles)? {
             let entry = entry?;
@@ -3453,13 +3456,6 @@ impl RunAction {
                     .buck_error_context("Invalid Bazel runfiles source path")?;
                 let source_requires_materialization =
                     artifact.requires_materialization(artifact_fs);
-                if workspace_anchor.is_none() {
-                    workspace_anchor = Some((
-                        source_path.clone(),
-                        source_requires_materialization,
-                        value.dupe(),
-                    ));
-                }
                 if source_path == alias {
                     continue;
                 }
@@ -3471,21 +3467,14 @@ impl RunAction {
                 });
             }
         }
-        if !saw_workspace_runfiles_entry
-            && let Some((source_path, source_requires_materialization, value)) = workspace_anchor
-        {
+        if !saw_workspace_runfiles_entry {
             let alias = Self::bazel_runfiles_alias_path(
                 bazel_execroot,
                 executable_path,
                 &format!("{workspace_runfiles_prefix}/.runfile"),
             )?;
-            if aliases.insert(alias.clone()) && source_path != alias {
-                inputs.push(CommandExecutionInput::ArtifactPathAlias {
-                    source_path,
-                    source_requires_materialization,
-                    path: alias,
-                    value,
-                });
+            if aliases.insert(alias.clone()) {
+                inputs.push(CommandExecutionInput::EmptyFile(alias));
             }
         }
         Ok(())
