@@ -23,10 +23,11 @@ use std::sync::OnceLock;
 use std::sync::atomic::AtomicU64;
 use std::time::Duration;
 
-use base64::Engine;
 use buck2_build_api::actions::artifact::get_artifact_fs::GetArtifactFs;
 use buck2_common::bzlmod_archive::archive_kind_from_type_or_url;
 use buck2_common::bzlmod_archive::extract_archive as extract_bazel_archive;
+use buck2_common::bzlmod_integrity::BzlmodIntegrityKind;
+use buck2_common::bzlmod_integrity::parse_bzlmod_integrity;
 use buck2_common::bzlmod_patch::apply_unified_patch_file;
 use buck2_common::dice::data::HasIoProvider;
 use buck2_common::file_ops::delegate::FileOpsDelegate;
@@ -96,8 +97,8 @@ use buck2_execute::materialize::materializer::HasMaterializer;
 use buck2_execute::materialize::materializer::Materializer;
 use buck2_fs::error::IoResultExt;
 use buck2_fs::fs_util;
-use buck2_fs::paths::abs_path::AbsPath;
 use buck2_fs::paths::abs_norm_path::AbsNormPath;
+use buck2_fs::paths::abs_path::AbsPath;
 use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
 use buck2_http::HttpClient;
 use buck2_http::HttpClientBuilder;
@@ -152,8 +153,6 @@ enum BzlmodError {
     MissingExtractedDirectory(String),
     #[error("Expected bzlmod materialization to create a directory")]
     NoDirectory,
-    #[error("Invalid bzlmod integrity `{0}`")]
-    InvalidIntegrity(String),
     #[error("Invalid generated bzlmod repo path `{0}`")]
     InvalidGeneratedRepoPath(String),
     #[error("Could not find `{dict}` in bazel_features globals at `{path}`")]
@@ -1775,6 +1774,52 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn checksum_from_integrity_accepts_sri_algorithms() {
+        let cases = [
+            (
+                "sha1-iEPX+SQWIR3p67lj/0zigSWTKHg=",
+                Some("8843d7f92416211de9ebb963ff4ce28125932878"),
+                None,
+                None,
+                None,
+            ),
+            (
+                "sha256-w6uP8Tcg6K2QR905Rms8iXTlksL6OD1KOWBxTK7wxPI=",
+                None,
+                Some("c3ab8ff13720e8ad9047dd39466b3c8974e592c2fa383d4a3960714caef0c4f2"),
+                None,
+                None,
+            ),
+            (
+                "sha384-PJww2fZl501RXIQpYNSkUcg6ASX9Pec5LXs3IxrxDHLqWK7fzfiaV2W/kCr5Ps8G",
+                None,
+                None,
+                Some(
+                    "3c9c30d9f665e74d515c842960d4a451c83a0125fd3de7392d7b37231af10c72ea58aedfcdf89a5765bf902af93ecf06",
+                ),
+                None,
+            ),
+            (
+                "sha512-ClAmHr0aOQ/tK/Mm8mc8FFWCpjQtUjIElz0CGTN/gWFqgGmwElh89WNfaSXxtWw2AjDBmyc1AO4BPgMGAb8kJQ==",
+                None,
+                None,
+                None,
+                Some(
+                    "0a50261ebd1a390fed2bf326f2673c145582a6342d523204973d0219337f81616a8069b012587cf5635f6925f1b56c360230c19b273500ee013e030601bf2425",
+                ),
+            ),
+        ];
+
+        for (integrity, sha1, sha256, sha384, sha512) in cases {
+            let checksum = checksum_from_integrity(integrity).unwrap();
+            assert_eq!(checksum.sha1(), sha1);
+            assert_eq!(checksum.sha256(), sha256);
+            assert_eq!(checksum.sha384(), sha384);
+            assert_eq!(checksum.sha512(), sha512);
+        }
+    }
+
     fn hidden_lockfile_evaluation(
         repo_name: &str,
     ) -> BzlmodHiddenLockfileModuleExtensionEvaluation {
@@ -1950,24 +1995,15 @@ fn link_or_copy_file(from: &AbsNormPath, to: &AbsNormPath) -> buck2_error::Resul
     }
 }
 
-fn integrity_to_sha256_hex(integrity: &str) -> buck2_error::Result<String> {
-    let Some(encoded) = integrity.strip_prefix("sha256-") else {
-        return Err(BzlmodError::InvalidIntegrity(integrity.to_owned()).into());
-    };
-    let bytes = base64::engine::general_purpose::STANDARD
-        .decode(encoded)
-        .map_err(|_| BzlmodError::InvalidIntegrity(integrity.to_owned()))?;
-    if bytes.len() != 32 {
-        return Err(BzlmodError::InvalidIntegrity(integrity.to_owned()).into());
-    }
-    Ok(hex::encode(bytes))
-}
-
 fn checksum_from_integrity(integrity: &str) -> buck2_error::Result<Checksum> {
-    if integrity.is_empty() {
-        Ok(Checksum::none())
-    } else {
-        Checksum::new(None, Some(&integrity_to_sha256_hex(integrity)?))
+    let Some(integrity) = parse_bzlmod_integrity(integrity)? else {
+        return Ok(Checksum::none());
+    };
+    match integrity.kind() {
+        BzlmodIntegrityKind::Sha1 => Checksum::new(Some(&hex::encode(integrity.bytes())), None),
+        BzlmodIntegrityKind::Sha256 => Checksum::new(None, Some(&hex::encode(integrity.bytes()))),
+        BzlmodIntegrityKind::Sha384 => Checksum::new_sha384(&hex::encode(integrity.bytes())),
+        BzlmodIntegrityKind::Sha512 => Checksum::new_sha512(&hex::encode(integrity.bytes())),
     }
 }
 
