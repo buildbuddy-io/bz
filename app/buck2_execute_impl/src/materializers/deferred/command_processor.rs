@@ -33,6 +33,7 @@ use buck2_execute::materialize::materializer::DeclareArtifactPayload;
 use buck2_execute::materialize::materializer::MaterializationError;
 use buck2_execute::materialize::utils::dynamic_priority_handle::DynamicPriorityHandle;
 use buck2_execute::materialize::utils::priority_semaphore::Priority;
+use buck2_fs::fs_util;
 use buck2_fs::fs_util::disk_space_stats;
 use buck2_fs::paths::abs_path::AbsPath;
 use buck2_hash::BuckDashMap;
@@ -96,6 +97,27 @@ use crate::materializers::deferred::materialize_stack::MaterializeStack;
 use crate::materializers::deferred::subscriptions::MaterializerSubscriptionOperation;
 use crate::materializers::deferred::subscriptions::MaterializerSubscriptions;
 use crate::sqlite::materializer_db::MaterializerStateSqliteDb;
+
+fn materialized_path_exists<T: IoHandler>(io: &T, path: &ProjectRelativePath) -> bool {
+    match fs_util::symlink_metadata_if_exists(io.fs().resolve(path)) {
+        Ok(Some(_)) => true,
+        Ok(None) => {
+            tracing::debug!(
+                path = %path,
+                "materializer state said path was materialized, but it is missing on disk",
+            );
+            false
+        }
+        Err(e) => {
+            let _unused = soft_error!(
+                "materialized_path_metadata_error",
+                e,
+                quiet: true
+            );
+            false
+        }
+    }
+}
 
 pub(super) struct DeferredMaterializerCommandProcessor<T: 'static> {
     pub(super) io: Arc<T>,
@@ -838,7 +860,7 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
                 matches!(
                     data.stage,
                     ArtifactMaterializationStage::Materialized { .. }
-                )
+                ) && materialized_path_exists(self.io.as_ref(), path)
             }
         }
     }
@@ -955,26 +977,33 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
                         && artifact_metadata_matches_entry(metadata, value.entry())
                         && !force_mismatch
                     {
-                        // In this case, the entry declared matches the already materialized
-                        // entry on disk, so just update the deps field but leave
-                        // the artifact as materialized.
-                        tracing::trace!(
-                            path = %path,
-                            "already materialized, updating deps only",
-                        );
-                        let deps = value.deps().duped();
-                        data.stage = ArtifactMaterializationStage::Materialized {
-                            metadata: metadata.dupe(),
-                            last_access_time: *last_access_time,
-                            active: true,
-                        };
-                        data.deps = deps;
-                        self.declared_artifact_values
-                            .insert(path.to_owned(), value.dupe());
+                        if !materialized_path_exists(self.io.as_ref(), path) {
+                            tracing::debug!(
+                                path = %path,
+                                "redeclaring because materialized path is missing on disk",
+                            );
+                        } else {
+                            // In this case, the entry declared matches the already materialized
+                            // entry on disk, so just update the deps field but leave
+                            // the artifact as materialized.
+                            tracing::trace!(
+                                path = %path,
+                                "already materialized, updating deps only",
+                            );
+                            let deps = value.deps().duped();
+                            data.stage = ArtifactMaterializationStage::Materialized {
+                                metadata: metadata.dupe(),
+                                last_access_time: *last_access_time,
+                                active: true,
+                            };
+                            data.deps = deps;
+                            self.declared_artifact_values
+                                .insert(path.to_owned(), value.dupe());
 
-                        self.stats.declares_reused.fetch_add(1, Ordering::Relaxed);
+                            self.stats.declares_reused.fetch_add(1, Ordering::Relaxed);
 
-                        return;
+                            return;
+                        }
                     }
                 }
                 ArtifactMaterializationStage::Declared { entry, .. } => {
@@ -1092,7 +1121,8 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
 
         let is_match = match &data.stage {
             ArtifactMaterializationStage::Materialized { metadata, .. } => {
-                let is_match = artifact_metadata_matches_entry(metadata, value.entry());
+                let is_match = artifact_metadata_matches_entry(metadata, value.entry())
+                    && materialized_path_exists(self.io.as_ref(), &path);
                 tracing::trace!("materialized: found {}, is_match: {}", metadata, is_match);
                 is_match
             }
@@ -1137,6 +1167,10 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
                 last_access_time,
                 active,
             } => {
+                if !materialized_path_exists(self.io.as_ref(), &path) {
+                    return false;
+                }
+
                 // Treat this case much like a `declare_existing`
                 *active = true;
                 *last_access_time = Utc::now();
@@ -1288,34 +1322,43 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
             }
             ArtifactMaterializationStage::Materialized {
                 last_access_time, ..
-            } => match check_deps {
-                true => None,
-                false => {
-                    if let Some(ref mut buffer) = self.access_times_buffer.as_mut() {
-                        // TODO (torozco): Why is it legal for something to be Materialized + Cleaning?
-                        let timestamp = Utc::now();
-                        *last_access_time = timestamp;
-
-                        // NOTE (T142264535): We mostly expect that artifacts are always declared
-                        // before they are materialized, but there's one case where that doesn't
-                        // happen. In particular, when incremental actions execute, they will trigger
-                        // materialization of outputs from a previous run. The artifact isn't really
-                        // "active" (it's not an output that we'll use), but we do warn here (when we
-                        // probably shouldn't).
-                        //
-                        // if !active {
-                        //     tracing::warn!(path = %path, "Expected artifact to be marked active by declare")
-                        // }
-                        if buffer.insert(path.to_buf()) {
-                            tracing::debug!(
-                                "nothing to materialize, adding to access times buffer"
-                            );
-                        }
-                    }
-
-                    return Ok(None);
+            } => {
+                if !materialized_path_exists(self.io.as_ref(), path) {
+                    return Err(buck2_error!(
+                        buck2_error::ErrorTag::MaterializationError,
+                        "Materializer state said `{}` was materialized, but it is missing on disk and no materialization method is available",
+                        path
+                    ));
                 }
-            },
+                match check_deps {
+                    true => None,
+                    false => {
+                        if let Some(ref mut buffer) = self.access_times_buffer.as_mut() {
+                            // TODO (torozco): Why is it legal for something to be Materialized + Cleaning?
+                            let timestamp = Utc::now();
+                            *last_access_time = timestamp;
+
+                            // NOTE (T142264535): We mostly expect that artifacts are always declared
+                            // before they are materialized, but there's one case where that doesn't
+                            // happen. In particular, when incremental actions execute, they will trigger
+                            // materialization of outputs from a previous run. The artifact isn't really
+                            // "active" (it's not an output that we'll use), but we do warn here (when we
+                            // probably shouldn't).
+                            //
+                            // if !active {
+                            //     tracing::warn!(path = %path, "Expected artifact to be marked active by declare")
+                            // }
+                            if buffer.insert(path.to_buf()) {
+                                tracing::debug!(
+                                    "nothing to materialize, adding to access times buffer"
+                                );
+                            }
+                        }
+
+                        return Ok(None);
+                    }
+                }
+            }
         };
 
         let version = self.version_tracker.next();
