@@ -883,11 +883,7 @@ impl<'v> StarlarkRuleCallable<'v> {
         }
         let bazel_aspect_toolchains = bazel_aspect_toolchains
             .into_iter()
-            .map(|toolchain| {
-                let mut toolchain = bazel_toolchain_requirement_from_value(toolchain)?;
-                toolchain.mandatory = false;
-                Ok(toolchain)
-            })
+            .map(bazel_toolchain_requirement_from_value)
             .collect::<buck2_error::Result<Vec<_>>>()?;
         let is_bazel_build_setting = build_setting.is_some();
         let build_setting_attrs = bazel_build_setting_attrs(build_setting)?;
