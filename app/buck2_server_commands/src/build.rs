@@ -19,6 +19,7 @@ use buck2_build_api::build::BuildEvent;
 use buck2_build_api::build::BuildEventConsumer;
 use buck2_build_api::build::BuildTargetResult;
 use buck2_build_api::build::ConfiguredBuildEventVariant;
+use buck2_build_api::build::HasBuildEventSink;
 use buck2_build_api::build::HasCreateUnhashedSymlinkLock;
 use buck2_build_api::build::ProvidersToBuild;
 use buck2_build_api::build::build_report::build_report_opts;
@@ -631,6 +632,9 @@ async fn build_targets(
 ) -> buck2_error::Result<BuildTargetResult> {
     let (builder, consumer) =
         AsyncBuildTargetResultBuilder::new(streaming_build_result_tx, build_start);
+    ctx.get()
+        .per_transaction_data()
+        .set_build_event_sink(consumer.clone())?;
     let fut = match target_resolution_config {
         TargetResolutionConfig::Default(global_cfg_options) => {
             let spec = spec.convert_pattern().buck_error_context(

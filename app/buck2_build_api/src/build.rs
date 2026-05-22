@@ -16,6 +16,7 @@ use std::fmt::Formatter;
 use std::future::Future;
 use std::pin::pin;
 use std::sync::Arc;
+use std::sync::Mutex as StdMutex;
 use std::time::Duration;
 use std::time::Instant;
 
@@ -47,6 +48,7 @@ use crate::materialize::MaterializationAndUploadContext;
 
 mod action_error;
 pub mod build_report;
+mod completion;
 pub mod detailed_aggregated_metrics;
 mod driver;
 pub mod graph_properties;
@@ -116,18 +118,8 @@ impl AsyncBuildTargetResultBuilder {
     pub fn new(
         mut streaming_build_result_tx: Option<UnboundedSender<BuildTargetResult>>,
         build_start: Instant,
-    ) -> (Self, impl BuildEventConsumer + Clone) {
+    ) -> (Self, BuildEventSink) {
         let (event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel();
-        #[derive(Clone)]
-        struct EventConsumer {
-            event_tx: UnboundedSender<BuildEvent>,
-        }
-
-        impl BuildEventConsumer for EventConsumer {
-            fn consume(&self, ev: BuildEvent) {
-                let _ignored = self.event_tx.send(ev);
-            }
-        }
 
         (
             Self {
@@ -137,7 +129,7 @@ impl AsyncBuildTargetResultBuilder {
                     build_start,
                 ),
             },
-            EventConsumer { event_tx },
+            BuildEventSink { event_tx },
         )
     }
 
@@ -505,6 +497,66 @@ pub trait BuildEventConsumer: Sync {
     fn consume(&self, ev: BuildEvent);
     fn consume_configured(&self, ev: ConfiguredBuildEvent) {
         self.consume(BuildEvent::Configured(ev))
+    }
+}
+
+#[derive(Clone)]
+pub struct BuildEventSink {
+    event_tx: UnboundedSender<BuildEvent>,
+}
+
+impl BuildEventConsumer for BuildEventSink {
+    fn consume(&self, ev: BuildEvent) {
+        let _ignored = self.event_tx.send(ev);
+    }
+}
+
+struct BuildEventSinkHolder {
+    sink: StdMutex<Option<BuildEventSink>>,
+}
+
+impl BuildEventSinkHolder {
+    fn new() -> Self {
+        Self {
+            sink: StdMutex::new(None),
+        }
+    }
+}
+
+pub trait HasBuildEventSink {
+    fn init_build_event_sink(&mut self);
+    fn set_build_event_sink(&self, sink: BuildEventSink) -> buck2_error::Result<()>;
+    fn get_build_event_sink(&self) -> buck2_error::Result<BuildEventSink>;
+}
+
+impl HasBuildEventSink for UserComputationData {
+    fn init_build_event_sink(&mut self) {
+        self.data.set(BuildEventSinkHolder::new());
+    }
+
+    fn set_build_event_sink(&self, sink: BuildEventSink) -> buck2_error::Result<()> {
+        let holder = self
+            .data
+            .get::<BuildEventSinkHolder>()
+            .map_err(|e| internal_error!("per-transaction data invalid: {}", e))?;
+        *holder
+            .sink
+            .lock()
+            .map_err(|_| internal_error!("build event sink lock poisoned"))? = Some(sink);
+        Ok(())
+    }
+
+    fn get_build_event_sink(&self) -> buck2_error::Result<BuildEventSink> {
+        let holder = self
+            .data
+            .get::<BuildEventSinkHolder>()
+            .map_err(|e| internal_error!("per-transaction data invalid: {}", e))?;
+        holder
+            .sink
+            .lock()
+            .map_err(|_| internal_error!("build event sink lock poisoned"))?
+            .clone()
+            .ok_or_else(|| internal_error!("build event sink was not installed"))
     }
 }
 
