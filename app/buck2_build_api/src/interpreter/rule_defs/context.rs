@@ -260,12 +260,6 @@ impl<'v> AnalysisToolchains<'v> {
 
     fn keys_match(requested: &str, declared: &str) -> bool {
         requested == declared
-            || requested
-                .split_once("//")
-                .zip(declared.split_once("//"))
-                .is_some_and(|((_, requested_rest), (_, declared_rest))| {
-                    requested_rest == declared_rest
-                })
     }
 
     fn declared_key_for(&self, key: &str) -> Option<&str> {
@@ -3607,4 +3601,27 @@ pub static ANALYSIS_ACTIONS_METHODS_ANON_TARGET: LateBinding<fn(&mut MethodsBuil
 
 pub(crate) fn init_analysis_context_ty() {
     AnalysisContextReprLate::init(AnalysisContext::starlark_type_repr());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AnalysisToolchains;
+
+    #[test]
+    fn analysis_toolchains_preserve_repository_identity() {
+        let toolchains = AnalysisToolchains::new(
+            vec!["repo_a//pkg:toolchain_type".to_owned()],
+            starlark::collections::SmallMap::new(),
+            Vec::new(),
+        );
+
+        assert_eq!(
+            toolchains.declared_key_for("repo_a//pkg:toolchain_type"),
+            Some("repo_a//pkg:toolchain_type")
+        );
+        assert_eq!(
+            toolchains.declared_key_for("repo_b//pkg:toolchain_type"),
+            None
+        );
+    }
 }

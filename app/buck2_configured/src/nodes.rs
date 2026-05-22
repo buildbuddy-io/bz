@@ -1344,12 +1344,6 @@ fn normalize_bazel_toolchain_key(key: &str) -> String {
 
 fn bazel_toolchain_keys_match(declared: &str, candidate: &str) -> bool {
     declared == candidate
-        || declared
-            .split_once("//")
-            .zip(candidate.split_once("//"))
-            .is_some_and(|((_, declared_rest), (_, candidate_rest))| {
-                declared_rest == candidate_rest
-            })
 }
 
 fn bazel_rule_kind_is(node: &TargetNode, kind: &str) -> bool {
@@ -2854,4 +2848,21 @@ fn _assert_compute_configured_forward_target_node_size() {
         sz(&compute_configured_forward_target_node) <= 700,
         "compute_configured_forward_target_node size is larger than 700 bytes",
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::bazel_toolchain_keys_match;
+
+    #[test]
+    fn bazel_toolchain_keys_match_preserves_repository_identity() {
+        assert!(bazel_toolchain_keys_match(
+            "repo_a//pkg:toolchain_type",
+            "repo_a//pkg:toolchain_type"
+        ));
+        assert!(!bazel_toolchain_keys_match(
+            "repo_a//pkg:toolchain_type",
+            "repo_b//pkg:toolchain_type"
+        ));
+    }
 }
