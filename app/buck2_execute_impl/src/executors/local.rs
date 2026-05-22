@@ -10,12 +10,14 @@
 
 use std::ffi::OsStr;
 use std::ffi::OsString;
+use std::collections::HashMap;
 use std::io::Read;
 use std::ops::ControlFlow;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
@@ -123,6 +125,7 @@ use gazebo::prelude::*;
 use host_sharing::HostSharingBroker;
 use host_sharing::HostSharingRequirements;
 use host_sharing::host_sharing::HostSharingGuard;
+use tokio::sync::Notify;
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tracing::info;
 
@@ -159,6 +162,128 @@ enum LocalActionCacheMetadataLookup {
     Stale,
 }
 
+#[derive(Clone)]
+enum BazelSharedActionResult {
+    Success,
+    Failure,
+}
+
+struct BazelSharedActionCompletion {
+    result: Mutex<Option<BazelSharedActionResult>>,
+    notify: Notify,
+}
+
+impl BazelSharedActionCompletion {
+    fn new() -> Self {
+        Self {
+            result: Mutex::new(None),
+            notify: Notify::new(),
+        }
+    }
+
+    async fn wait(&self) -> BazelSharedActionResult {
+        loop {
+            if let Some(result) = self.result.lock().expect("poisoned mutex").clone() {
+                return result;
+            }
+            self.notify.notified().await;
+        }
+    }
+
+    fn complete(&self, result: BazelSharedActionResult) {
+        *self.result.lock().expect("poisoned mutex") = Some(result);
+        self.notify.notify_waiters();
+    }
+}
+
+struct BazelSharedActionEntry {
+    action_digest: String,
+    completion: Arc<BazelSharedActionCompletion>,
+}
+
+#[derive(Default)]
+struct BazelSharedActionTrackerState {
+    build_id: Option<String>,
+    actions: HashMap<ProjectRelativePathBuf, BazelSharedActionEntry>,
+}
+
+#[derive(Default)]
+struct BazelSharedActionTracker {
+    state: Mutex<BazelSharedActionTrackerState>,
+}
+
+enum BazelSharedActionLease {
+    Leader(BazelSharedActionLeader),
+    Follower(BazelSharedActionFollower),
+}
+
+struct BazelSharedActionLeader {
+    completion: Arc<BazelSharedActionCompletion>,
+}
+
+impl BazelSharedActionLeader {
+    fn complete(self, success: bool) {
+        self.completion.complete(if success {
+            BazelSharedActionResult::Success
+        } else {
+            BazelSharedActionResult::Failure
+        });
+    }
+}
+
+struct BazelSharedActionFollower {
+    completion: Arc<BazelSharedActionCompletion>,
+}
+
+impl BazelSharedActionFollower {
+    async fn wait(&self) -> BazelSharedActionResult {
+        self.completion.wait().await
+    }
+}
+
+impl BazelSharedActionTracker {
+    fn lease(
+        &self,
+        build_id: String,
+        primary_output: ProjectRelativePathBuf,
+        action_digest: &ActionDigest,
+    ) -> buck2_error::Result<BazelSharedActionLease> {
+        let action_digest = action_digest.to_string();
+        let mut state = self.state.lock().expect("poisoned mutex");
+        if state.build_id.as_ref() != Some(&build_id) {
+            state.build_id = Some(build_id);
+            state.actions.clear();
+        }
+
+        if let Some(entry) = state.actions.get(&primary_output) {
+            if entry.action_digest != action_digest {
+                return Err(buck2_error!(
+                    buck2_error::ErrorTag::Input,
+                    "Conflicting Bazel shared actions for primary output `{}`: existing action digest `{}`, new action digest `{}`",
+                    primary_output,
+                    entry.action_digest,
+                    action_digest
+                ));
+            }
+            return Ok(BazelSharedActionLease::Follower(BazelSharedActionFollower {
+                completion: entry.completion.dupe(),
+            }));
+        }
+
+        let completion = Arc::new(BazelSharedActionCompletion::new());
+        state.actions.insert(
+            primary_output,
+            BazelSharedActionEntry {
+                action_digest,
+                completion: completion.dupe(),
+            },
+        );
+        Ok(BazelSharedActionLease::Leader(BazelSharedActionLeader {
+            completion,
+        }))
+    }
+}
+
 #[derive(Clone, Dupe, Allocative)]
 pub enum ForkserverAccess {
     None,
@@ -172,6 +297,7 @@ pub struct LocalExecutor {
     materializer: Arc<dyn Materializer>,
     incremental_db_state: Arc<IncrementalDbState>,
     local_action_cache: Arc<LocalActionCache>,
+    bazel_shared_actions: Arc<BazelSharedActionTracker>,
     blocking_executor: Arc<dyn BlockingExecutor>,
     pub(crate) host_sharing_broker: Arc<HostSharingBroker>,
     root: AbsNormPathBuf,
@@ -203,6 +329,7 @@ impl LocalExecutor {
             materializer,
             incremental_db_state,
             local_action_cache,
+            bazel_shared_actions: Arc::new(BazelSharedActionTracker::default()),
             blocking_executor,
             host_sharing_broker,
             root,
@@ -1558,6 +1685,12 @@ impl LocalExecutor {
 
         Ok(())
     }
+
+    fn current_build_id() -> String {
+        get_dispatcher_opt()
+            .map(|dispatcher| dispatcher.trace_id().to_string())
+            .unwrap_or_else(|| "unknown".to_owned())
+    }
 }
 
 #[async_trait]
@@ -1568,8 +1701,63 @@ impl PreparedCommandExecutor for LocalExecutor {
         manager: CommandExecutionManager,
         cancellations: &CancellationContext,
     ) -> CommandExecutionResult {
+        let action_digest = command.prepared_action.digest();
+        let manager = match self.maybe_execute(command, manager, cancellations).await {
+            ControlFlow::Break(result) => return result,
+            ControlFlow::Continue(manager) => manager,
+        };
+
+        let shared_action_leader =
+            if let Some(primary_output) = command.request.bazel_shared_action_primary_output() {
+                match self.bazel_shared_actions.lease(
+                    Self::current_build_id(),
+                    primary_output.to_buf(),
+                    &action_digest,
+                ) {
+                    Ok(BazelSharedActionLease::Leader(leader)) => Some(leader),
+                    Ok(BazelSharedActionLease::Follower(follower)) => {
+                        let mut manager = manager;
+                        manager.start_waiting_category(WaitingCategory::LocalQueued);
+                        match follower.wait().await {
+                            BazelSharedActionResult::Success => {
+                                match self.maybe_execute(command, manager, cancellations).await {
+                                    ControlFlow::Break(result) => return result,
+                                    ControlFlow::Continue(manager) => {
+                                        return manager.error(
+                                            "bazel_shared_action_cache_miss",
+                                            buck2_error!(
+                                                buck2_error::ErrorTag::Tier0,
+                                                "Bazel shared action `{}` completed successfully for primary output `{}`, but its result was not available from the local action cache",
+                                                action_digest,
+                                                primary_output
+                                            ),
+                                        );
+                                    }
+                                }
+                            }
+                            BazelSharedActionResult::Failure => {
+                                return manager.error(
+                                    "bazel_shared_action_failed",
+                                    buck2_error!(
+                                        buck2_error::ErrorTag::Input,
+                                        "Bazel shared action `{}` failed for primary output `{}`",
+                                        action_digest,
+                                        primary_output
+                                    ),
+                                );
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        return manager.error("bazel_shared_action_conflict", e);
+                    }
+                }
+            } else {
+                None
+            };
+
         let mut manager = manager.with_execution_kind(CommandExecutionKind::Local {
-            digest: command.prepared_action.digest(),
+            digest: action_digest.dupe(),
             command: command.request.all_args_vec(),
             env: command.request.env().clone(),
         });
@@ -1618,7 +1806,7 @@ impl PreparedCommandExecutor for LocalExecutor {
 
         // If we start running something, we don't want this task to get dropped, because if we do
         // we might interfere with e.g. clean up.
-        cancellations
+        let result = cancellations
             .with_structured_cancellation(|cancellation| {
                 Self::exec_request(
                     self,
@@ -1631,7 +1819,11 @@ impl PreparedCommandExecutor for LocalExecutor {
                     &local_resource_holders,
                 )
             })
-            .await
+            .await;
+        if let Some(shared_action_leader) = shared_action_leader {
+            shared_action_leader.complete(result.was_success());
+        }
+        result
     }
 
     fn is_local_execution_possible(&self, _executor_preference: ExecutorPreference) -> bool {
@@ -2647,18 +2839,7 @@ fn create_artifact_path_alias_file(
 
     let tmp = artifact_path_alias_tmp_path(dest)?;
     let _ignored = fs_util::remove_file(&tmp);
-    match std::fs::hard_link(source.as_path(), tmp.as_path()) {
-        Ok(()) => {}
-        Err(hard_link_error) => {
-            fs_util::copy(source, &tmp)
-                .categorize_internal()
-                .with_buck_error_context(|| {
-                    format!(
-                        "Error creating temporary artifact path alias copy after hardlink failed: {hard_link_error}"
-                    )
-                })?;
-        }
-    }
+    create_artifact_path_alias_file_tmp(source, &tmp)?;
 
     match fs_util::rename(&tmp, dest).categorize_internal() {
         Ok(()) => Ok(()),
@@ -2674,6 +2855,80 @@ fn create_artifact_path_alias_file(
                 Err(rename_error)
             }
         }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn create_artifact_path_alias_file_tmp(
+    source: &AbsNormPathBuf,
+    tmp: &AbsNormPathBuf,
+) -> buck2_error::Result<()> {
+    match clone_artifact_path_alias_file(source, tmp) {
+        Ok(()) => Ok(()),
+        Err(clone_error) => {
+            fs_util::copy(source, tmp)
+                .categorize_internal()
+                .with_buck_error_context(|| {
+                    format!(
+                        "Error creating temporary artifact path alias copy after clonefile failed: {clone_error}"
+                    )
+                })?;
+            Ok(())
+        }
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn create_artifact_path_alias_file_tmp(
+    source: &AbsNormPathBuf,
+    tmp: &AbsNormPathBuf,
+) -> buck2_error::Result<()> {
+    match std::fs::hard_link(source.as_path(), tmp.as_path()) {
+        Ok(()) => Ok(()),
+        Err(hard_link_error) => {
+            fs_util::copy(source, tmp)
+                .categorize_internal()
+                .with_buck_error_context(|| {
+                    format!(
+                        "Error creating temporary artifact path alias copy after hardlink failed: {hard_link_error}"
+                    )
+                })?;
+            Ok(())
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn clone_artifact_path_alias_file(
+    source: &AbsNormPathBuf,
+    tmp: &AbsNormPathBuf,
+) -> std::io::Result<()> {
+    use std::ffi::CString;
+    use std::os::raw::c_char;
+    use std::os::unix::ffi::OsStrExt;
+
+    unsafe extern "C" {
+        fn clonefile(src: *const c_char, dst: *const c_char, flags: u32) -> i32;
+    }
+
+    fn path_to_cstring(path: &AbsNormPathBuf) -> std::io::Result<CString> {
+        CString::new(path.as_path().as_os_str().as_bytes()).map_err(|_| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("path contains an interior NUL byte: `{}`", path.display()),
+            )
+        })
+    }
+
+    let source = path_to_cstring(source)?;
+    let tmp = path_to_cstring(tmp)?;
+    // SAFETY: `source` and `tmp` are valid NUL-terminated path strings for this call and stay
+    // alive for the duration of the syscall. `flags = 0` requests clonefile's default behavior.
+    let result = unsafe { clonefile(source.as_ptr(), tmp.as_ptr(), 0) };
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
     }
 }
 
@@ -3461,6 +3716,34 @@ mod tests {
         assert!(!artifact_path_alias_files_are_equivalent(
             &different, &source
         ));
+        Ok(())
+    }
+
+    #[test]
+    fn test_create_artifact_path_alias_file_copies_content() -> buck2_error::Result<()> {
+        let temp = ProjectRootTemp::new()?;
+        temp.write_file("source", "content");
+        let source = temp.path().resolve(ProjectRelativePath::new("source")?);
+        let dest = temp.path().resolve(ProjectRelativePath::new("dest")?);
+
+        create_artifact_path_alias_file(&source, &dest)?;
+
+        assert_eq!(
+            fs_util::read_to_string(&dest).categorize_internal()?,
+            "content"
+        );
+        assert!(artifact_path_alias_file_is_current(&dest, &source));
+
+        #[cfg(target_os = "macos")]
+        {
+            let source_metadata = fs_util::metadata(&source).categorize_internal()?;
+            let dest_metadata = fs_util::metadata(&dest).categorize_internal()?;
+            assert!(!artifact_path_alias_metadata_is_same_file(
+                &dest_metadata,
+                &source_metadata,
+            ));
+        }
+
         Ok(())
     }
 

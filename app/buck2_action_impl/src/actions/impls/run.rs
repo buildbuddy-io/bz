@@ -3770,31 +3770,27 @@ impl RunAction {
             )?;
         }
 
-        for output in self.outputs.iter() {
-            if output.get_path().is_content_based_path() {
-                let full_path = cli_ctx
-                    .resolve_project_path(fs.buck_out_path_resolver().resolve_gen(
-                        output.get_path(),
-                        Some(&ContentBasedPathHash::for_output_artifact()),
-                    )?)?
-                    .into_string();
-                shared_content_based_paths.push(full_path);
+        if !bazel_paths {
+            for output in self.outputs.iter() {
+                if output.get_path().is_content_based_path() {
+                    let full_path = cli_ctx
+                        .resolve_project_path(fs.buck_out_path_resolver().resolve_gen(
+                            output.get_path(),
+                            Some(&ContentBasedPathHash::for_output_artifact()),
+                        )?)?
+                        .into_string();
+                    shared_content_based_paths.push(full_path);
+                }
             }
         }
 
-        let mut host_sharing_tokens: BuckIndexSet<String> =
+        let host_sharing_tokens: BuckIndexSet<String> =
             shared_content_based_paths.into_iter().collect();
+        let mut bazel_shared_action_primary_output = None;
         let outputs = self
             .outputs
             .iter()
             .map(|b| {
-                if bazel_paths {
-                    let declared_path = fs.resolve_build(
-                        b.get_path(),
-                        Some(&ContentBasedPathHash::for_output_artifact()),
-                    )?;
-                    host_sharing_tokens.insert(declared_path.as_str().to_owned());
-                }
                 let produced_path = if let Some(bazel_execroot) = bazel_execroot.as_deref() {
                     let bazel_path =
                         if let Some(path) = visitor.bazel_output_exec_paths.get(b.get_path()) {
@@ -3809,8 +3805,8 @@ impl RunAction {
                 } else {
                     None
                 };
-                if let Some(produced_path) = &produced_path {
-                    host_sharing_tokens.insert(produced_path.as_str().to_owned());
+                if bazel_shared_action_primary_output.is_none() {
+                    bazel_shared_action_primary_output = produced_path.clone();
                 }
                 Ok(CommandExecutionOutput::BuildArtifact {
                     path: b.get_path().dupe(),
@@ -3858,6 +3854,7 @@ impl RunAction {
                 worker,
                 remote_worker,
                 local_action_cache_key,
+                bazel_shared_action_primary_output,
                 pending_action_metadata_writes,
             },
             expanded_command_line_digest_for_dep_files,
@@ -4505,6 +4502,7 @@ pub(crate) struct UnpreparedRunAction {
     worker: Option<WorkerSpec>,
     remote_worker: Option<RemoteWorkerSpec>,
     local_action_cache_key: Option<LocalActionCacheKey>,
+    bazel_shared_action_primary_output: Option<ProjectRelativePathBuf>,
     pending_action_metadata_writes: Vec<PendingActionMetadataWrite>,
 }
 
@@ -4551,6 +4549,7 @@ impl UnpreparedRunAction {
             worker,
             remote_worker,
             local_action_cache_key,
+            bazel_shared_action_primary_output,
             pending_action_metadata_writes: _,
         } = self;
         let paths = CommandExecutionPaths::new(inputs, outputs, fs, digest_config, interner)?;
@@ -4561,6 +4560,7 @@ impl UnpreparedRunAction {
             worker,
             remote_worker,
             local_action_cache_key,
+            bazel_shared_action_primary_output,
         })
     }
 }
@@ -4573,6 +4573,7 @@ pub(crate) struct PreparedRunAction {
     worker: Option<WorkerSpec>,
     remote_worker: Option<RemoteWorkerSpec>,
     local_action_cache_key: Option<LocalActionCacheKey>,
+    bazel_shared_action_primary_output: Option<ProjectRelativePathBuf>,
 }
 
 impl PreparedRunAction {
@@ -4584,6 +4585,7 @@ impl PreparedRunAction {
             worker,
             remote_worker,
             local_action_cache_key,
+            bazel_shared_action_primary_output,
         } = self;
 
         for (k, v) in extra_env {
@@ -4593,6 +4595,7 @@ impl PreparedRunAction {
         CommandExecutionRequest::new(exe, args, paths, env)
             .with_worker(worker)
             .with_remote_worker(remote_worker)
+            .with_bazel_shared_action_primary_output(bazel_shared_action_primary_output)
             .with_local_action_cache_key(local_action_cache_key)
     }
 }
