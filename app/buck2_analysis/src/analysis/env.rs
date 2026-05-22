@@ -1005,6 +1005,9 @@ fn push_bazel_toolchain_alias_keys(
     } else {
         repo.to_owned()
     };
+    if destination_cell == context_cell {
+        push_bazel_toolchain_key(keys, seen, &format!("//{package_and_target}"));
+    }
     for (alias, destination) in bzlmod_cell_aliases_for_cell(context_cell) {
         if destination == destination_cell {
             push_bazel_toolchain_key(keys, seen, &format!("{alias}//{package_and_target}"));
