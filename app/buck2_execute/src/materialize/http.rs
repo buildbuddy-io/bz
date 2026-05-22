@@ -46,6 +46,8 @@ use pagable::Pagable;
 use sha1::Digest;
 use sha1::Sha1;
 use sha2::Sha256;
+use sha2::Sha384;
+use sha2::Sha512;
 use smallvec::SmallVec;
 use tokio::io::AsyncRead;
 use tokio::io::AsyncReadExt;
@@ -58,6 +60,8 @@ pub enum Checksum {
     None,
     Sha1(Arc<str>),
     Sha256(Arc<str>),
+    Sha384(Arc<str>),
+    Sha512(Arc<str>),
     Both { sha1: Arc<str>, sha256: Arc<str> },
 }
 
@@ -87,12 +91,37 @@ impl Checksum {
         Self::None
     }
 
-    pub fn new(sha1: Option<&str>, sha256: Option<&str>) -> buck2_error::Result<Self> {
-        fn is_hex_digit(x: char) -> bool {
-            let x = x.to_ascii_lowercase();
-            x.is_ascii_digit() || ('a'..='f').contains(&x)
-        }
+    fn is_hex_digit(x: char) -> bool {
+        let x = x.to_ascii_lowercase();
+        x.is_ascii_digit() || ('a'..='f').contains(&x)
+    }
 
+    fn validate_digest(
+        digest: &str,
+        digest_len: usize,
+        digest_type: &'static str,
+    ) -> buck2_error::Result<Arc<str>> {
+        let expected_len = digest_len * 2;
+        if digest.len() != expected_len {
+            return Err(DownloadFileError::InvalidDigestLength {
+                digest: digest.to_owned(),
+                expected_len,
+                digest_type,
+            }
+            .into());
+        }
+        if let Some(bad_char) = digest.chars().find(|x| !Self::is_hex_digit(*x)) {
+            return Err(DownloadFileError::InvalidDigestCharacter {
+                digest: digest.to_owned(),
+                bad_char,
+                digest_type,
+            }
+            .into());
+        }
+        Ok(Arc::from(digest.to_ascii_lowercase()))
+    }
+
+    pub fn new(sha1: Option<&str>, sha256: Option<&str>) -> buck2_error::Result<Self> {
         fn validate_digest(
             digest: Option<&str>,
             digest_len: usize,
@@ -101,24 +130,7 @@ impl Checksum {
             match digest {
                 None => Ok(None),
                 Some(digest) => {
-                    let expected_len = digest_len * 2;
-                    if digest.len() != expected_len {
-                        return Err(DownloadFileError::InvalidDigestLength {
-                            digest: digest.to_owned(),
-                            expected_len,
-                            digest_type,
-                        }
-                        .into());
-                    }
-                    if let Some(bad_char) = digest.chars().find(|x| !is_hex_digit(*x)) {
-                        return Err(DownloadFileError::InvalidDigestCharacter {
-                            digest: digest.to_owned(),
-                            bad_char,
-                            digest_type,
-                        }
-                        .into());
-                    }
-                    Ok(Some(Arc::from(digest.to_ascii_lowercase())))
+                    Checksum::validate_digest(digest, digest_len, digest_type).map(Some)
                 }
             }
         }
@@ -134,11 +146,21 @@ impl Checksum {
         }
     }
 
+    pub fn new_sha384(sha384: &str) -> buck2_error::Result<Self> {
+        Ok(Self::Sha384(Self::validate_digest(sha384, 48, "sha384")?))
+    }
+
+    pub fn new_sha512(sha512: &str) -> buck2_error::Result<Self> {
+        Ok(Self::Sha512(Self::validate_digest(sha512, 64, "sha512")?))
+    }
+
     pub fn sha1(&self) -> Option<&str> {
         match self {
             Self::None => None,
             Self::Sha1(sha1) => Some(sha1),
             Self::Sha256(..) => None,
+            Self::Sha384(..) => None,
+            Self::Sha512(..) => None,
             Self::Both { sha1, .. } => Some(sha1),
         }
     }
@@ -148,7 +170,31 @@ impl Checksum {
             Self::None => None,
             Self::Sha1(..) => None,
             Self::Sha256(sha256) => Some(sha256),
+            Self::Sha384(..) => None,
+            Self::Sha512(..) => None,
             Self::Both { sha256, .. } => Some(sha256),
+        }
+    }
+
+    pub fn sha384(&self) -> Option<&str> {
+        match self {
+            Self::Sha384(sha384) => Some(sha384),
+            Self::None
+            | Self::Sha1(..)
+            | Self::Sha256(..)
+            | Self::Sha512(..)
+            | Self::Both { .. } => None,
+        }
+    }
+
+    pub fn sha512(&self) -> Option<&str> {
+        match self {
+            Self::Sha512(sha512) => Some(sha512),
+            Self::None
+            | Self::Sha1(..)
+            | Self::Sha256(..)
+            | Self::Sha384(..)
+            | Self::Both { .. } => None,
         }
     }
 }
@@ -464,6 +510,22 @@ async fn copy_and_hash_from_reader(
         validators.push((validator, sha256, "sha256"));
     }
 
+    if let Some(sha384) = checksum.sha384() {
+        validators.push((
+            Validator::ExtraDigest(Box::new(Sha384::new()) as _),
+            sha384,
+            "sha384",
+        ));
+    }
+
+    if let Some(sha512) = checksum.sha512() {
+        validators.push((
+            Validator::ExtraDigest(Box::new(Sha512::new()) as _),
+            sha512,
+            "sha512",
+        ));
+    }
+
     let mut buff = DebugBuffer::new(512);
     let mut read_buffer = vec![0u8; 64 * 1024];
 
@@ -725,6 +787,22 @@ mod tests {
 
         assert_eq!(std::str::from_utf8(&bytes).unwrap(), "foobar");
 
+        do_test(
+            testing::blake3(),
+            &Checksum::new_sha384(
+                "3c9c30d9f665e74d515c842960d4a451c83a0125fd3de7392d7b37231af10c72ea58aedfcdf89a5765bf902af93ecf06",
+            )?,
+        )
+        .await?;
+
+        do_test(
+            testing::blake3(),
+            &Checksum::new_sha512(
+                "0a50261ebd1a390fed2bf326f2673c145582a6342d523204973d0219337f81616a8069b012587cf5635f6925f1b56c360230c19b273500ee013e030601bf2425",
+            )?,
+        )
+        .await?;
+
         Ok(())
     }
 
@@ -752,6 +830,16 @@ mod tests {
 
         assert_matches!(
             do_test(testing::blake3(), &Checksum::Sha256(Arc::from("oops"))).await,
+            Err(HttpDownloadError::InvalidChecksum { .. })
+        );
+
+        assert_matches!(
+            do_test(testing::blake3(), &Checksum::Sha384(Arc::from("oops"))).await,
+            Err(HttpDownloadError::InvalidChecksum { .. })
+        );
+
+        assert_matches!(
+            do_test(testing::blake3(), &Checksum::Sha512(Arc::from("oops"))).await,
             Err(HttpDownloadError::InvalidChecksum { .. })
         );
 
