@@ -39,6 +39,7 @@ pub enum ArchiveKind {
     TarZst,
     Zst,
     Ar,
+    SevenZ,
     TarBr,
     Br,
 }
@@ -58,7 +59,8 @@ pub fn archive_kind_from_type_or_url(archive_type: Option<&str>, url: &str) -> O
         .to_ascii_lowercase();
     for extension in [
         "tar.gz", "tgz", "tar.xz", "txz", "tar.bz2", "tbz", "tar.zst", "tzst", "tar.br", "zip",
-        "jar", "war", "aar", "nupkg", "whl", "tar", "gz", "xz", "bz2", "zst", "ar", "deb", "br",
+        "jar", "war", "aar", "nupkg", "whl", "tar", "gz", "xz", "bz2", "zst", "ar", "deb", "7z",
+        "br",
     ] {
         if url.ends_with(&format!(".{extension}")) {
             return archive_kind_from_extension(extension);
@@ -80,6 +82,7 @@ fn archive_kind_from_extension(extension: &str) -> Option<ArchiveKind> {
         "tar.zst" | "tzst" => Some(ArchiveKind::TarZst),
         "zst" => Some(ArchiveKind::Zst),
         "ar" | "deb" => Some(ArchiveKind::Ar),
+        "7z" => Some(ArchiveKind::SevenZ),
         "tar.br" => Some(ArchiveKind::TarBr),
         "br" => Some(ArchiveKind::Br),
         _ => None,
@@ -178,6 +181,13 @@ pub fn extract_archive(
             extract_compressed_file(reader, archive, output, "zst", rename_files)
         }
         ArchiveKind::Ar => extract_ar_archive(archive, output, rename_files),
+        ArchiveKind::SevenZ => extract_sevenz_archive(
+            archive,
+            output,
+            strip_prefix,
+            strip_components,
+            rename_files,
+        ),
         ArchiveKind::TarBr => {
             let reader = fs::File::open(archive)
                 .with_buck_error_context(|| format!("Error opening `{}`", archive.display()))?;
@@ -263,6 +273,112 @@ fn extract_ar_archive(
         }
     }
     Ok(())
+}
+
+fn extract_sevenz_archive(
+    archive: &Path,
+    output: &Path,
+    strip_prefix: &str,
+    strip_components: u32,
+    rename_files: &[(String, String)],
+) -> buck2_error::Result<()> {
+    let reader = fs::File::open(archive)
+        .with_buck_error_context(|| format!("Error opening `{}`", archive.display()))?;
+    let mut found_prefix = strip_prefix.is_empty();
+    let mut available_prefixes = Vec::new();
+    let mut extraction_error: Option<buck2_error::Error> = None;
+    let result = sevenz_rust::decompress_with_extract_fn(reader, output, |entry, reader, _dest| {
+        if extraction_error.is_some() {
+            return Err(sevenz_rust::Error::other(
+                "previous 7z extraction error".to_owned(),
+            ));
+        }
+        let entry_name = renamed_archive_entry_name(entry.name(), rename_files);
+        let relative_path = match prepare_archive_entry_path(
+            &entry_name,
+            strip_prefix,
+            strip_components,
+            &mut found_prefix,
+            &mut available_prefixes,
+        ) {
+            Ok(Some(relative_path)) => relative_path,
+            Ok(None) => return Ok(true),
+            Err(error) => {
+                extraction_error = Some(error);
+                return Err(sevenz_rust::Error::other(
+                    "invalid 7z archive entry path".to_owned(),
+                ));
+            }
+        };
+        let destination = output.join(&relative_path);
+        if entry.is_directory() {
+            if let Err(error) = fs::create_dir_all(&destination) {
+                extraction_error = Some(buck2_error!(
+                    buck2_error::ErrorTag::IoSystem,
+                    "Error creating `{}`: {}",
+                    destination.display(),
+                    error
+                ));
+                return Err(sevenz_rust::Error::other(
+                    "error creating 7z output directory".to_owned(),
+                ));
+            }
+            return Ok(true);
+        }
+        if let Some(parent) = destination.parent()
+            && let Err(error) = fs::create_dir_all(parent)
+        {
+            extraction_error = Some(buck2_error!(
+                buck2_error::ErrorTag::IoSystem,
+                "Error creating `{}`: {}",
+                parent.display(),
+                error
+            ));
+            return Err(sevenz_rust::Error::other(
+                "error creating 7z output parent directory".to_owned(),
+            ));
+        }
+        let mut file = match fs::File::create(&destination) {
+            Ok(file) => file,
+            Err(error) => {
+                extraction_error = Some(buck2_error!(
+                    buck2_error::ErrorTag::IoSystem,
+                    "Error creating `{}`: {}",
+                    destination.display(),
+                    error
+                ));
+                return Err(sevenz_rust::Error::other(
+                    "error creating 7z output file".to_owned(),
+                ));
+            }
+        };
+        if let Err(error) = io::copy(reader, &mut file) {
+            extraction_error = Some(buck2_error!(
+                buck2_error::ErrorTag::IoSystem,
+                "Error writing `{}`: {}",
+                destination.display(),
+                error
+            ));
+            return Err(sevenz_rust::Error::other(
+                "error writing 7z output file".to_owned(),
+            ));
+        }
+        Ok(true)
+    });
+    match result {
+        Ok(()) => ensure_strip_prefix_found(strip_prefix, found_prefix, available_prefixes),
+        Err(error) => {
+            if let Some(error) = extraction_error {
+                return Err(error);
+            }
+            Err(buck2_error!(
+                buck2_error::ErrorTag::Input,
+                "Error reading 7z archive `{}`: {}",
+                archive.display(),
+                error
+            ))
+        }
+    }
 }
 
 fn extract_compressed_file<R: Read>(
@@ -859,6 +975,10 @@ mod tests {
             Some(ArchiveKind::Ar)
         );
         assert_eq!(
+            archive_kind_from_type_or_url(None, "https://example.com/a.7z"),
+            Some(ArchiveKind::SevenZ)
+        );
+        assert_eq!(
             archive_kind_from_type_or_url(None, "https://example.com/a.zip?download=1"),
             Some(ArchiveKind::Zip)
         );
@@ -999,6 +1119,25 @@ mod tests {
 
         assert_eq!(
             fs::read_to_string(output.join("renamed.txt")).unwrap(),
+            "content"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_extract_sevenz_strips_components() -> buck2_error::Result<()> {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("input");
+        fs::create_dir_all(input.join("pkg")).unwrap();
+        fs::write(input.join("pkg/file.txt"), "content").unwrap();
+        let archive = dir.path().join("source.7z");
+        sevenz_rust::compress_to_path(&input, &archive).unwrap();
+
+        let output = dir.path().join("out");
+        extract_archive(&archive, &output, ArchiveKind::SevenZ, "", 1, &[])?;
+
+        assert_eq!(
+            fs::read_to_string(output.join("file.txt")).unwrap(),
             "content"
         );
         Ok(())
