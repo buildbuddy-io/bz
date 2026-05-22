@@ -280,7 +280,7 @@ pub fn buckd_startup_timeout() -> buck2_error::Result<Duration> {
 
 pub fn buckd_startup_init_timeout() -> buck2_error::Result<Duration> {
     Ok(Duration::from_secs(
-        buck2_env!("BUCKD_STARTUP_INIT_TIMEOUT", type=u64)?.unwrap_or(90),
+        buck2_env!("BUCKD_STARTUP_INIT_TIMEOUT", type=u64)?.unwrap_or(3),
     ))
 }
 
