@@ -330,14 +330,25 @@ fn include_path_from_out_dir(out_dir: &Path, runfile_path: &str) -> PathBuf {
 
 fn syntactic_include_path_from_out_dir(out_dir: &Path, runfile_path: &str) -> PathBuf {
     let cwd = std::env::current_dir().ok();
+    syntactic_include_path_from_out_dir_for_cwd(cwd.as_deref(), out_dir, runfile_path)
+}
+
+fn syntactic_include_path_from_out_dir_for_cwd(
+    cwd: Option<&Path>,
+    out_dir: &Path,
+    runfile_path: &str,
+) -> PathBuf {
+    let execroot_to_workspace_parent_count =
+        cwd.and_then(parent_count_from_buck_execroot_to_workspace);
     let out_dir = cwd
-        .as_deref()
         .and_then(|cwd| out_dir.strip_prefix(cwd).ok())
         .unwrap_or(out_dir);
 
     let mut path = PathBuf::new();
     let mut parent_count = out_dir.components().count();
-    if out_dir_str_contains(out_dir, "__bazel_execroot") {
+    if let Some(execroot_to_workspace_parent_count) = execroot_to_workspace_parent_count {
+        parent_count += execroot_to_workspace_parent_count;
+    } else if out_dir_str_contains(out_dir, "__bazel_execroot") {
         // Buck exposes OUT_DIR through an execroot symlink. Filesystem resolution applies `..`
         // after following that symlink, so the syntactic fallback needs fewer parents than the
         // execroot spelling itself.
@@ -354,13 +365,24 @@ fn syntactic_include_path_from_out_dir(out_dir: &Path, runfile_path: &str) -> Pa
     path
 }
 
+fn parent_count_from_buck_execroot_to_workspace(path: &Path) -> Option<usize> {
+    let components = normal_components(path);
+    let execroot_index = components
+        .iter()
+        .position(|component| *component == "__bazel_execroot")?;
+    let buck_out_index = components[..execroot_index]
+        .iter()
+        .rposition(|component| *component == "buck-out")?;
+
+    Some(components.len() - buck_out_index)
+}
+
 fn out_dir_str_contains(out_dir: &Path, needle: &str) -> bool {
     out_dir.to_str().is_some_and(|path| path.contains(needle))
 }
 
-fn path_contains_buck_out_bin(path: &Path) -> bool {
-    let components = path
-        .components()
+fn normal_components(path: &Path) -> Vec<&str> {
+    path.components()
         .filter_map(|component| match component {
             Component::Normal(component) => component.to_str(),
             Component::CurDir
@@ -368,7 +390,11 @@ fn path_contains_buck_out_bin(path: &Path) -> bool {
             | Component::RootDir
             | Component::Prefix(_) => None,
         })
-        .collect::<Vec<_>>();
+        .collect::<Vec<_>>()
+}
+
+fn path_contains_buck_out_bin(path: &Path) -> bool {
+    let components = normal_components(path);
     components
         .windows(2)
         .any(|window| window == ["buck-out", "bin"])
@@ -488,4 +514,45 @@ fn write_include_entry(
 fn write_include_module_footer(mut include_file: impl io::Write) -> io::Result<()> {
     writeln!(include_file, "  ];\n}}")?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+    use std::path::PathBuf;
+
+    use crate::parent_count_from_buck_execroot_to_workspace;
+    use crate::syntactic_include_path_from_out_dir_for_cwd;
+
+    fn parents(count: usize, suffix: &str) -> PathBuf {
+        let mut path = PathBuf::new();
+        for _ in 0..count {
+            path.push("..");
+        }
+        path.push(suffix);
+        path
+    }
+
+    #[test]
+    fn buck_execroot_current_dir_counts_parents_back_to_workspace() {
+        let cwd = Path::new("/repo/buck-out/v2/__bazel_execroot/09afd8b101deb8aa");
+        assert_eq!(parent_count_from_buck_execroot_to_workspace(cwd), Some(4));
+    }
+
+    #[test]
+    fn include_path_from_buck_bazel_execroot_points_to_workspace_source() {
+        let cwd = Path::new("/repo/buck-out/v2/__bazel_execroot/09afd8b101deb8aa");
+        let out_dir = cwd.join(
+            "buck-out/bin/ecbd565059a02aa3/app/buck2_external_cells_bundled/build_script.out_dir",
+        );
+
+        assert_eq!(
+            syntactic_include_path_from_out_dir_for_cwd(
+                Some(cwd),
+                &out_dir,
+                "bazel_tools/tools/test/generate-xml.sh",
+            ),
+            parents(10, "bazel_tools/tools/test/generate-xml.sh"),
+        );
+    }
 }
