@@ -602,6 +602,24 @@ mod tests {
     }
 
     #[test]
+    fn test_repository_ctx_renamed_strip_prefix() {
+        assert_eq!(
+            repository_ctx_renamed_strip_prefix("download_and_extract", "new", "").unwrap(),
+            "new"
+        );
+        assert_eq!(
+            repository_ctx_renamed_strip_prefix("download_and_extract", "", "old").unwrap(),
+            "old"
+        );
+
+        let error = repository_ctx_renamed_strip_prefix("download_and_extract", "new", "old")
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("download_and_extract() got multiple values"));
+        assert!(error.contains("stripPrefix"));
+    }
+
+    #[test]
     fn test_repository_path_display_is_absolute() {
         let path = StarlarkRepositoryPath::new("buck-out/v2/external_cells/repo/file".to_owned());
         assert!(Path::new(&path.to_string()).is_absolute());
@@ -4078,6 +4096,24 @@ fn repository_ctx_extract_archive(
     .map_err(Into::into)
 }
 
+fn repository_ctx_renamed_strip_prefix<'a>(
+    method: &str,
+    strip_prefix: &'a str,
+    strip_prefix_legacy: &'a str,
+) -> buck2_error::Result<&'a str> {
+    if strip_prefix_legacy.is_empty() {
+        return Ok(strip_prefix);
+    }
+    if strip_prefix.is_empty() {
+        return Ok(strip_prefix_legacy);
+    }
+    Err(buck2_error::buck2_error!(
+        buck2_error::ErrorTag::Input,
+        "{}() got multiple values for parameter 'strip_prefix' (via compatibility alias 'stripPrefix')",
+        method
+    ))
+}
+
 fn repository_ctx_rename_files_from_entries(
     entries: &UnpackDictEntries<Value<'_>, Value<'_>>,
 ) -> starlark::Result<Vec<(String, String)>> {
@@ -4735,11 +4771,8 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
         let output_path = repository_path_from_value_relative_to(output, eval, Some(working_dir))?;
         let output_path = repository_path_for_write(&output_path)?;
         let archive_path = repository_path_for_write(&archive_path_string)?;
-        let strip_prefix = if stripPrefix.is_empty() {
-            strip_prefix
-        } else {
-            stripPrefix
-        };
+        let strip_prefix =
+            repository_ctx_renamed_strip_prefix("download_and_extract", strip_prefix, stripPrefix)?;
         let result = match repository_ctx_extract_archive(
             &archive_path,
             &output_path,
