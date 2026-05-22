@@ -348,6 +348,8 @@ impl LocalExecutor {
                 )
                 .buck_error_context("Error creating output directories")?;
 
+                materialize_input_path_aliases(&self.artifact_fs, materialized_inputs)?;
+
                 let bazel_worker_sandbox = if request.worker().as_ref().is_some_and(|worker| {
                     worker.protocol == WorkerProtocol::Bazel && worker.bazel_worker_sandboxing
                 }) {
@@ -2261,6 +2263,19 @@ pub struct MaterializedInputPaths {
     pub scratch: ScratchPath,
     pub paths: Vec<ProjectRelativePathBuf>,
     pub artifact_path_aliases: Vec<(ProjectRelativePathBuf, ProjectRelativePathBuf)>,
+    shared_artifact_path_aliases: Vec<SharedArtifactPathAlias>,
+    external_cell_root_aliases: Vec<ExternalCellRootAlias>,
+}
+
+struct SharedArtifactPathAlias {
+    source_path: ProjectRelativePathBuf,
+    path: ProjectRelativePathBuf,
+    value: ArtifactValue,
+}
+
+struct ExternalCellRootAlias {
+    source_root: ProjectRelativePathBuf,
+    alias_root: ProjectRelativePathBuf,
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -2540,6 +2555,28 @@ fn materialize_external_cell_root_alias(
     create_or_replace_symlink(source.as_path(), &dest).with_buck_error_context(|| {
         format!("Error creating external repository alias `{alias_root}` -> `{source_root}`")
     })
+}
+
+pub fn materialize_input_path_aliases(
+    artifact_fs: &ArtifactFs,
+    materialized_inputs: &MaterializedInputPaths,
+) -> buck2_error::Result<()> {
+    for alias in &materialized_inputs.external_cell_root_aliases {
+        materialize_external_cell_root_alias(
+            artifact_fs,
+            alias.source_root.as_ref(),
+            alias.alias_root.as_ref(),
+        )?;
+    }
+    for alias in &materialized_inputs.shared_artifact_path_aliases {
+        materialize_artifact_path_alias(
+            artifact_fs,
+            alias.source_path.as_ref(),
+            alias.path.as_ref(),
+            &alias.value,
+        )?;
+    }
+    Ok(())
 }
 
 fn create_artifact_path_alias_symlink(
@@ -2969,26 +3006,26 @@ pub async fn materialize_inputs(
     }
 
     let mut external_cell_root_aliases = BuckIndexSet::new();
+    let mut external_cell_root_aliases_to_materialize = Vec::new();
+    let mut shared_artifact_path_aliases_to_materialize = Vec::new();
     for (source_path, path, value) in &shared_artifact_path_aliases {
         if let Some((source_root, alias_root)) =
             external_cell_root_alias(source_path.as_ref(), path.as_ref())
         {
             if external_cell_root_aliases.insert((source_root.clone(), alias_root.clone())) {
-                materialize_external_cell_root_alias(
-                    artifact_fs,
-                    source_root.as_ref(),
-                    alias_root.as_ref(),
-                )?;
-                paths.push(alias_root);
+                paths.push(alias_root.clone());
+                external_cell_root_aliases_to_materialize.push(ExternalCellRootAlias {
+                    source_root,
+                    alias_root,
+                });
             }
         } else {
-            materialize_artifact_path_alias(
-                artifact_fs,
-                source_path.as_ref(),
-                path.as_ref(),
-                value,
-            )?;
             paths.push(path.clone());
+            shared_artifact_path_aliases_to_materialize.push(SharedArtifactPathAlias {
+                source_path: source_path.clone(),
+                path: path.clone(),
+                value: value.dupe(),
+            });
         }
     }
 
@@ -2996,6 +3033,8 @@ pub async fn materialize_inputs(
         scratch,
         paths,
         artifact_path_aliases: sandbox_artifact_path_aliases,
+        shared_artifact_path_aliases: shared_artifact_path_aliases_to_materialize,
+        external_cell_root_aliases: external_cell_root_aliases_to_materialize,
     })
 }
 

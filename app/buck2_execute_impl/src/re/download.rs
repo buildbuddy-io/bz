@@ -68,6 +68,7 @@ use futures::future;
 use gazebo::prelude::*;
 use remote_execution as RE;
 
+use crate::executors::local::materialize_input_path_aliases;
 use crate::executors::local::materialize_inputs;
 use crate::re::paranoid_download::ParanoidDownloader;
 use crate::storage_resource_exhausted::is_storage_resource_exhausted;
@@ -160,7 +161,18 @@ pub async fn download_action_results<'a>(
                         match materialize_inputs(artifact_fs, materializer, request, digest_config)
                             .await
                         {
-                            Ok(materialized_paths) => Some(materialized_paths.paths.clone()),
+                            Ok(materialized_paths) => {
+                                if let Err(e) =
+                                    materialize_input_path_aliases(artifact_fs, &materialized_paths)
+                                {
+                                    console_message(format!(
+                                        "Failed to materialize input aliases for failed action: {e}"
+                                    ));
+                                    None
+                                } else {
+                                    Some(materialized_paths.paths.clone())
+                                }
+                            }
                             Err(e) => {
                                 // TODO(minglunli): Properly handle this and the error below and add a test for it.
                                 console_message(format!(
