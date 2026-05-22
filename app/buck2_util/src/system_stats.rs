@@ -93,6 +93,25 @@ pub fn system_memory_stats_detailed() -> SystemMemoryStats {
     }
 }
 
+pub fn system_cpu_usage() -> Option<f64> {
+    use sysinfo::CpuRefreshKind;
+    use sysinfo::RefreshKind;
+    use sysinfo::System;
+
+    let mut system = System::new_with_specifics(
+        RefreshKind::nothing().with_cpu(CpuRefreshKind::nothing().with_cpu_usage()),
+    );
+    std::thread::sleep(sysinfo::MINIMUM_CPU_UPDATE_INTERVAL);
+    system.refresh_cpu_usage();
+
+    let cpu_usage = system.global_cpu_usage();
+    if !cpu_usage.is_finite() {
+        return None;
+    }
+
+    Some((f64::from(cpu_usage) / 100.0) * num_cores() as f64)
+}
+
 #[cfg(test)]
 mod tests {
     use super::system_memory_stats;

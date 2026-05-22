@@ -129,7 +129,6 @@ use buck2_server_starlark_debug::create_debugger_handle;
 use buck2_test::local_resource_registry::InitLocalResourceRegistry;
 use buck2_util::arc_str::ArcS;
 use buck2_util::system_stats::SystemMemoryStats;
-use buck2_util::system_stats::UnixSystemStats;
 use buck2_util::truncate::truncate_container;
 use buck2_validation::enabled_optional_validations_key::SetEnabledOptionalValidations;
 use dice::DiceComputations;
@@ -173,7 +172,7 @@ fn parse_concurrency(requested: u32) -> Option<usize> {
 }
 
 const ACTION_PARALLELISM_WITH_HEADROOM_PER_CPU: usize = 3;
-const MIN_AVAILABLE_MEMORY_FOR_ACTION_PARALLELISM_HEADROOM: u64 = 4 * 1024 * 1024 * 1024;
+const MIN_AVAILABLE_MEMORY_FOR_ACTION_PARALLELISM_HEADROOM: u64 = 2 * 1024 * 1024 * 1024;
 
 #[derive(Clone, Copy)]
 enum ActionConcurrencySource {
@@ -196,14 +195,16 @@ fn default_action_concurrency() -> usize {
     let base = buck2_util::threads::available_parallelism_fresh();
     action_concurrency_from_host_headroom(
         base,
-        UnixSystemStats::get().map(|stats| stats.load1),
+        // Match Bazel's CPU-load scheduling model: use recent CPU utilization, not
+        // Unix load average, to decide whether extra local actions can start.
+        buck2_util::system_stats::system_cpu_usage(),
         buck2_util::system_stats::system_memory_stats_detailed(),
     )
 }
 
 fn action_concurrency_from_host_headroom(
     base: usize,
-    load1: Option<f64>,
+    cpu_usage: Option<f64>,
     memory: SystemMemoryStats,
 ) -> usize {
     let base = base.max(1);
@@ -213,19 +214,19 @@ fn action_concurrency_from_host_headroom(
         return base;
     }
 
-    let Some(load1) = load1 else {
+    let Some(cpu_usage) = cpu_usage else {
         return base;
     };
-    if !load1.is_finite() {
+    if !cpu_usage.is_finite() {
         return base;
     }
 
-    let load1 = load1.max(0.0);
-    if load1 >= base as f64 {
+    let cpu_usage = cpu_usage.max(0.0);
+    if cpu_usage >= base as f64 {
         return base;
     }
 
-    let idle_cpus = ((base as f64) - load1).floor() as usize;
+    let idle_cpus = ((base as f64) - cpu_usage).floor() as usize;
     let extra_parallelism =
         idle_cpus.saturating_mul(ACTION_PARALLELISM_WITH_HEADROOM_PER_CPU.saturating_sub(1));
 
@@ -237,10 +238,10 @@ fn has_memory_headroom_for_action_parallelism(memory: SystemMemoryStats) -> bool
         return false;
     }
 
-    // Keep roughly the same one-third host-memory cushion Bazel leaves by default when
-    // deriving local resources, with a small absolute floor for smaller machines.
+    // Keep memory as a pressure guard, but follow Bazel's shape by making the job
+    // overcommit decision primarily CPU-load based.
     let required_available =
-        (memory.total / 3).max(MIN_AVAILABLE_MEMORY_FOR_ACTION_PARALLELISM_HEADROOM);
+        (memory.total / 10).max(MIN_AVAILABLE_MEMORY_FOR_ACTION_PARALLELISM_HEADROOM);
     memory.available >= required_available
 }
 
@@ -1610,13 +1611,13 @@ mod tests {
     #[test]
     fn action_concurrency_stays_at_base_without_memory_headroom() {
         assert_eq!(
-            action_concurrency_from_host_headroom(10, Some(0.0), memory(64, 8)),
+            action_concurrency_from_host_headroom(10, Some(0.0), memory(64, 4)),
             10
         );
     }
 
     #[test]
-    fn action_concurrency_stays_at_base_without_load_stats() {
+    fn action_concurrency_stays_at_base_without_cpu_stats() {
         assert_eq!(
             action_concurrency_from_host_headroom(10, None, memory(64, 40)),
             10
