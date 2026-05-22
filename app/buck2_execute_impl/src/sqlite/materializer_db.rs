@@ -61,6 +61,15 @@ pub struct MaterializerStateSqliteDb {
     identity: SqliteIdentity,
 }
 
+pub struct MaterializerStateSqliteDbDeferredLoad {
+    db: MaterializerStateSqliteDb,
+    materializer_state_dir: AbsNormPathBuf,
+    versions: StdBuckHashMap<String, String>,
+    current_instance_metadata: StdBuckHashMap<String, String>,
+    digest_config: DigestConfig,
+    load_error: Option<buck2_error::Error>,
+}
+
 impl SqliteDb for MaterializerStateSqliteDb {
     type StateType = MaterializerState;
     type TableType = MaterializerStateSqliteTable;
@@ -103,15 +112,57 @@ impl MaterializerStateSqliteDb {
     ) -> buck2_error::Result<(Self, buck2_error::Result<MaterializerState>)> {
         io_executor
             .execute_io_inline(|| {
-                Self::initialize_materializer_sqlite_db(
+                Self::defer_load(
                     materializer_state_dir,
                     versions,
                     current_instance_metadata,
                     digest_config,
                     reject_identity,
                 )
+                .and_then(MaterializerStateSqliteDbDeferredLoad::load)
             })
             .await
+    }
+
+    pub fn defer_load(
+        materializer_state_dir: AbsNormPathBuf,
+        versions: StdBuckHashMap<String, String>,
+        current_instance_metadata: StdBuckHashMap<String, String>,
+        digest_config: DigestConfig,
+        reject_identity: Option<&SqliteIdentity>,
+    ) -> buck2_error::Result<MaterializerStateSqliteDbDeferredLoad> {
+        let reject_identity = reject_identity.cloned();
+
+        match Self::get_sqlite_db(
+            &materializer_state_dir,
+            &versions,
+            current_instance_metadata.clone(),
+            reject_identity.as_ref(),
+        ) {
+            Ok(db) => Ok(MaterializerStateSqliteDbDeferredLoad {
+                db,
+                materializer_state_dir,
+                versions,
+                current_instance_metadata,
+                digest_config,
+                load_error: None,
+            }),
+            Err(e) => {
+                let db = Self::create_sqlite_db(
+                    materializer_state_dir.clone(),
+                    versions.clone(),
+                    current_instance_metadata.clone(),
+                )?;
+                Ok(MaterializerStateSqliteDbDeferredLoad {
+                    db,
+                    materializer_state_dir,
+                    versions,
+                    current_instance_metadata,
+                    digest_config,
+                    load_error: Some(e),
+                })
+            }
+        }
     }
 
     /// Internal implementation that handles digest config
@@ -160,6 +211,48 @@ impl MaterializerStateSqliteDb {
 
     pub(crate) fn materializer_state_table(&mut self) -> &MaterializerStateSqliteTable {
         &self.tables.domain_table
+    }
+}
+
+impl MaterializerStateSqliteDbDeferredLoad {
+    pub fn identity(&self) -> &SqliteIdentity {
+        self.db.identity()
+    }
+
+    pub fn load(
+        self,
+    ) -> buck2_error::Result<(
+        MaterializerStateSqliteDb,
+        buck2_error::Result<MaterializerState>,
+    )> {
+        let Self {
+            db,
+            materializer_state_dir,
+            versions,
+            current_instance_metadata,
+            digest_config,
+            load_error,
+        } = self;
+
+        if let Some(e) = load_error {
+            return Ok((db, Err(e)));
+        }
+
+        match db
+            .tables
+            .domain_table
+            .read_materializer_state(digest_config)
+        {
+            Ok(state) => Ok((db, Ok(state))),
+            Err(e) => {
+                let db = MaterializerStateSqliteDb::create_sqlite_db(
+                    materializer_state_dir,
+                    versions,
+                    current_instance_metadata,
+                )?;
+                Ok((db, Err(e)))
+            }
+        }
     }
 }
 

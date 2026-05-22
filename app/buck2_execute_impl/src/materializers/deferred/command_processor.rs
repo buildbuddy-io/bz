@@ -162,6 +162,11 @@ pub(super) enum MaterializerCommand<T: 'static> {
         oneshot::Sender<Vec<Result<ProjectRelativePathBuf, ArtifactNotMaterializedReason>>>,
     ),
 
+    GetDeclaredArtifactValues(
+        Vec<ProjectRelativePathBuf>,
+        oneshot::Sender<Vec<Option<ArtifactValue>>>,
+    ),
+
     /// Declares that a set of artifacts already exist
     DeclareExisting(Vec<DeclareArtifactPayload>, Option<SpanId>, Option<TraceId>),
 
@@ -240,6 +245,9 @@ impl<T> std::fmt::Debug for MaterializerCommand<T> {
         match self {
             MaterializerCommand::GetMaterializedFilePaths(paths, _) => {
                 write!(f, "GetMaterializedFilePaths({paths:?}, _)",)
+            }
+            MaterializerCommand::GetDeclaredArtifactValues(paths, _) => {
+                write!(f, "GetDeclaredArtifactValues({paths:?}, _)",)
             }
             MaterializerCommand::DeclareExisting(paths, current_span, trace_id) => {
                 write!(
@@ -651,6 +659,17 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
             MaterializerCommand::GetMaterializedFilePaths(paths, result_sender) => {
                 let result =
                     paths.into_map(|p| self.tree.file_contents_path(p, self.io.digest_config()));
+                result_sender.send(result).ok();
+            }
+            MaterializerCommand::GetDeclaredArtifactValues(paths, result_sender) => {
+                let result = paths
+                    .into_iter()
+                    .map(|path| {
+                        self.declared_artifact_values
+                            .get(&path)
+                            .map(|value| value.value().dupe())
+                    })
+                    .collect();
                 result_sender.send(result).ok();
             }
             MaterializerCommand::DeclareExisting(artifacts, ..) => {

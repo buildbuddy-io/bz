@@ -93,8 +93,7 @@ use crate::materializers::deferred::eager_materialization::EagerPathLeases;
 use crate::materializers::deferred::file_tree::FileTree;
 use crate::materializers::deferred::io_handler::DefaultIoHandler;
 use crate::materializers::deferred::io_handler::IoHandler;
-use crate::sqlite::materializer_db::MaterializerState;
-use crate::sqlite::materializer_db::MaterializerStateSqliteDb;
+use crate::sqlite::materializer_db::MaterializerStateSqliteDbDeferredLoad;
 
 /// Materializer implementation that defers materialization of declared
 /// artifacts until they are needed (i.e. `ensure_materialized` is called).
@@ -136,11 +135,8 @@ pub struct DeferredMaterializerAccessor<T: IoHandler + 'static> {
 
     io: Arc<T>,
 
-    /// Exact-path artifact values mirrored from the command processor for cheap metadata reads.
-    declared_artifact_values: Arc<BuckDashMap<ProjectRelativePathBuf, ArtifactValue>>,
-
     /// Tracked for logging purposes.
-    materializer_state_info: buck2_data::MaterializerStateInfo,
+    materializer_state_entries_from_sqlite: Arc<AtomicU64>,
 
     stats: Arc<DeferredMaterializerStats>,
 }
@@ -505,14 +501,12 @@ impl<T: IoHandler + Allocative> Materializer for DeferredMaterializerAccessor<T>
         &self,
         paths: Vec<ProjectRelativePathBuf>,
     ) -> buck2_error::Result<Vec<Option<ArtifactValue>>> {
-        Ok(paths
-            .into_iter()
-            .map(|path| {
-                self.declared_artifact_values
-                    .get(&path)
-                    .map(|value| value.value().dupe())
-            })
-            .collect())
+        let (sender, recv) = oneshot::channel();
+        self.command_sender
+            .send(MaterializerCommand::GetDeclaredArtifactValues(
+                paths, sender,
+            ))?;
+        Ok(recv.await?)
     }
 
     async fn has_artifact_at(&self, path: ProjectRelativePathBuf) -> buck2_error::Result<bool> {
@@ -595,7 +589,11 @@ impl<T: IoHandler + Allocative> Materializer for DeferredMaterializerAccessor<T>
     }
 
     fn log_materializer_state(&self, events: &EventDispatcher) {
-        events.instant_event(self.materializer_state_info)
+        events.instant_event(buck2_data::MaterializerStateInfo {
+            num_entries_from_sqlite: self
+                .materializer_state_entries_from_sqlite
+                .load(Ordering::Relaxed),
+        })
     }
 
     fn add_snapshot_stats(&self, snapshot: &mut buck2_data::Snapshot) {
@@ -668,8 +666,7 @@ impl DeferredMaterializerAccessor<DefaultIoHandler> {
         re_client_manager: Arc<ReConnectionManager>,
         io_executor: Arc<dyn BlockingExecutor>,
         configs: DeferredMaterializerConfigs,
-        sqlite_db: Option<MaterializerStateSqliteDb>,
-        sqlite_state: Option<MaterializerState>,
+        sqlite_db: Option<MaterializerStateSqliteDbDeferredLoad>,
         http_client: HttpClient,
         daemon_dispatcher: EventDispatcher,
     ) -> buck2_error::Result<Self> {
@@ -693,25 +690,12 @@ impl DeferredMaterializerAccessor<DefaultIoHandler> {
 
         let stats = Arc::new(DeferredMaterializerStats::default());
 
-        let num_entries_from_sqlite = sqlite_state.as_ref().map_or(0, |s| s.len()) as u64;
-        let materializer_state_info = buck2_data::MaterializerStateInfo {
-            num_entries_from_sqlite,
-        };
+        let materializer_state_entries_from_sqlite = Arc::new(AtomicU64::new(0));
         let access_times_buffer =
             (!matches!(configs.update_access_times, AccessTimesUpdates::Disabled))
                 .then(StdBuckHashSet::new);
 
         let declared_artifact_values = Arc::new(BuckDashMap::default());
-        if let Some(sqlite_state) = &sqlite_state {
-            for entry in sqlite_state {
-                declared_artifact_values.insert(
-                    entry.path.clone(),
-                    ArtifactValue::new(entry.metadata.dupe(), None),
-                );
-            }
-        }
-
-        let tree = ArtifactTree::initialize(sqlite_state);
 
         let io = Arc::new(DefaultIoHandler::new(
             fs,
@@ -728,8 +712,36 @@ impl DeferredMaterializerAccessor<DefaultIoHandler> {
             let rt = Handle::current();
             let stats = stats.dupe();
             let io = io.dupe();
-            move |cancellations| {
-                DeferredMaterializerCommandProcessor::new(
+            let materializer_state_entries_from_sqlite =
+                materializer_state_entries_from_sqlite.dupe();
+            move |cancellations| -> buck2_error::Result<_> {
+                let (sqlite_db, sqlite_state) = match sqlite_db {
+                    Some(sqlite_db) => {
+                        let (sqlite_db, sqlite_state) = sqlite_db.load()?;
+                        let sqlite_state = sqlite_state.ok();
+
+                        let num_entries_from_sqlite =
+                            sqlite_state.as_ref().map_or(0, |s| s.len()) as u64;
+                        materializer_state_entries_from_sqlite
+                            .store(num_entries_from_sqlite, Ordering::Relaxed);
+
+                        if let Some(sqlite_state) = &sqlite_state {
+                            for entry in sqlite_state {
+                                declared_artifact_values.insert(
+                                    entry.path.clone(),
+                                    ArtifactValue::new(entry.metadata.dupe(), None),
+                                );
+                            }
+                        }
+
+                        (Some(sqlite_db), sqlite_state)
+                    }
+                    None => (None, None),
+                };
+
+                let tree = ArtifactTree::initialize(sqlite_state);
+
+                Ok(DeferredMaterializerCommandProcessor::new(
                     io,
                     sqlite_db,
                     rt,
@@ -743,7 +755,7 @@ impl DeferredMaterializerAccessor<DefaultIoHandler> {
                     configs.verbose_materializer_log,
                     daemon_dispatcher,
                     configs.disable_eager_write_dispatch,
-                )
+                ))
             }
         };
 
@@ -756,7 +768,15 @@ impl DeferredMaterializerAccessor<DefaultIoHandler> {
 
                 let cancellations = CancellationContext::never_cancelled();
 
-                rt.block_on(command_processor(cancellations).run(
+                let command_processor = match command_processor(cancellations) {
+                    Ok(command_processor) => command_processor,
+                    Err(e) => {
+                        tracing::error!("Error initializing deferred materializer: {e:#}");
+                        return;
+                    }
+                };
+
+                rt.block_on(command_processor.run(
                     command_receiver,
                     configs.ttl_refresh,
                     configs.update_access_times,
@@ -773,8 +793,7 @@ impl DeferredMaterializerAccessor<DefaultIoHandler> {
             defer_write_actions: configs.defer_write_actions,
             eager_materialization_enabled: configs.eager_materialization_enabled,
             io,
-            declared_artifact_values,
-            materializer_state_info,
+            materializer_state_entries_from_sqlite,
             stats,
         })
     }

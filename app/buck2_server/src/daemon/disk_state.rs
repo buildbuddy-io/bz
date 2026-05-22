@@ -14,6 +14,7 @@ use allocative::Allocative;
 use buck2_common::invocation_paths::InvocationPaths;
 use buck2_common::legacy_configs::configs::LegacyBuckConfig;
 use buck2_common::legacy_configs::key::BuckconfigKeyRef;
+use buck2_common::sqlite::sqlite_db::SqliteIdentity;
 use buck2_core::rollout_percentage::RolloutPercentage;
 use buck2_error::BuckErrorContext;
 use buck2_error::internal_error;
@@ -26,8 +27,8 @@ use buck2_execute_impl::sqlite::incremental_state_db::INCREMENTAL_DB_SCHEMA_VERS
 use buck2_execute_impl::sqlite::incremental_state_db::IncrementalDbState;
 use buck2_execute_impl::sqlite::incremental_state_db::IncrementalStateSqliteDb;
 use buck2_execute_impl::sqlite::materializer_db::MATERIALIZER_DB_SCHEMA_VERSION;
-use buck2_execute_impl::sqlite::materializer_db::MaterializerState;
 use buck2_execute_impl::sqlite::materializer_db::MaterializerStateSqliteDb;
+use buck2_execute_impl::sqlite::materializer_db::MaterializerStateSqliteDbDeferredLoad;
 use buck2_fs::error::IoResultExt;
 use buck2_fs::fs_util;
 use buck2_fs::paths::abs_norm_path::AbsNormPath;
@@ -107,7 +108,10 @@ pub(crate) async fn maybe_initialize_materializer_sqlite_db(
     digest_config: DigestConfig,
     init_ctx: &BuckdServerInitPreferences,
     daemon_id: &DaemonId,
-) -> buck2_error::Result<(Option<MaterializerStateSqliteDb>, Option<MaterializerState>)> {
+) -> buck2_error::Result<(
+    Option<MaterializerStateSqliteDbDeferredLoad>,
+    Option<SqliteIdentity>,
+)> {
     if !options.sqlite_materializer_state {
         // When sqlite materializer state is disabled, we should always delete the materializer state db.
         // Otherwise, artifacts in buck-out will diverge from the state stored in db.
@@ -132,21 +136,16 @@ pub(crate) async fn maybe_initialize_materializer_sqlite_db(
     // Most things in the rest of `metadata` should go in the metadata sqlite table.
     // TODO(scottcao): Narrow down what metadata we need and and insert them into the
     // metadata table before a feature rollout.
-    let (db, load_result) = MaterializerStateSqliteDb::initialize(
+    let db = MaterializerStateSqliteDb::defer_load(
         paths.materializer_state_path(),
         versions,
         metadata,
-        io_executor,
         digest_config,
         init_ctx.reject_materializer_state.as_ref(),
-    )
-    .await?;
+    )?;
 
-    // We know path not found or version mismatch is normal, but some sqlite failures
-    // are worth logging here. TODO(scottcao): Refine our error types and figure out what
-    // errors to log
-    let materializer_state = load_result.ok();
-    Ok((Some(db), materializer_state))
+    let identity = db.identity().clone();
+    Ok((Some(db), Some(identity)))
 }
 
 pub(crate) async fn maybe_initialize_incremental_sqlite_db(

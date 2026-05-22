@@ -32,7 +32,6 @@ use buck2_common::io::IoProvider;
 use buck2_common::legacy_configs::cells::BuckConfigBasedCells;
 use buck2_common::legacy_configs::file_ops::ConfigPath;
 use buck2_common::legacy_configs::key::BuckconfigKeyRef;
-use buck2_common::sqlite::sqlite_db::SqliteDb;
 use buck2_common::sqlite::sqlite_db::SqliteIdentity;
 use buck2_core::buck2_env;
 use buck2_core::cells::cell_root_path::CellRootPath;
@@ -69,8 +68,7 @@ use buck2_execute_impl::materializers::deferred::TtlRefreshConfiguration;
 use buck2_execute_impl::materializers::deferred::clean_stale::CleanStaleConfig;
 use buck2_execute_impl::re::paranoid_download::ParanoidDownloader;
 use buck2_execute_impl::sqlite::incremental_state_db::IncrementalDbState;
-use buck2_execute_impl::sqlite::materializer_db::MaterializerState;
-use buck2_execute_impl::sqlite::materializer_db::MaterializerStateSqliteDb;
+use buck2_execute_impl::sqlite::materializer_db::MaterializerStateSqliteDbDeferredLoad;
 use buck2_file_watcher::file_watcher::FileWatcher;
 use buck2_fs::cwd::WorkingDirectory;
 use buck2_fs::fs_util;
@@ -618,7 +616,7 @@ impl DaemonState {
                 .unwrap_or(cfg!(any(target_os = "macos", target_os = "windows")));
 
             tracing::info!("Creating materializer...");
-            let (io, _, (materializer_db, materializer_state), incremental_db_state) =
+            let (io, _, (materializer_db, materializer_state_identity), incremental_db_state) =
                 futures::future::try_join4(
                     create_io_provider(
                         fb,
@@ -654,13 +652,17 @@ impl DaemonState {
                     ),
                 )
                 .await?;
+            tracing::info!("Initialized daemon IO and sqlite state.");
 
+            tracing::info!("Creating HTTP client...");
             let http_client = http_client_from_startup_config(&init_ctx.daemon_startup_config)
                 .await
                 .buck_error_context("Error creating HTTP client")?
                 .build();
+            tracing::info!("Created HTTP client.");
 
             let incremental_db_state = Arc::new(incremental_db_state);
+            tracing::info!("Creating local action cache...");
             let local_action_cache_enabled = root_config
                 .parse(BuckconfigKeyRef {
                     section: "buck2",
@@ -673,9 +675,7 @@ impl DaemonState {
                 digest_config,
                 local_action_cache_enabled,
             ));
-
-            let materializer_state_identity =
-                materializer_db.as_ref().map(|d| d.identity().clone());
+            tracing::info!("Created local action cache.");
 
             let re_client_manager = Arc::new(ReConnectionManager::new(
                 fb,
@@ -694,6 +694,7 @@ impl DaemonState {
                 // but for now seems fine to drop events if scribe isn't enabled.
                 EventDispatcher::null()
             };
+            tracing::info!("Spawning deferred materializer...");
             let materializer = Self::create_materializer(
                 io.project_root().dupe(),
                 digest_config,
@@ -703,10 +704,10 @@ impl DaemonState {
                 materializations,
                 deferred_materializer_configs,
                 materializer_db,
-                materializer_state,
                 http_client.dupe(),
                 daemon_dispatcher.dupe(),
             )?;
+            tracing::info!("Spawned deferred materializer.");
 
             tracing::info!("Creating memory tracker...");
             let memory_tracker = memory_tracker::create_memory_tracker(
@@ -875,8 +876,7 @@ impl DaemonState {
         blocking_executor: Arc<dyn BlockingExecutor>,
         materializations: MaterializationMethod,
         deferred_materializer_configs: DeferredMaterializerConfigs,
-        materializer_db: Option<MaterializerStateSqliteDb>,
-        materializer_state: Option<MaterializerState>,
+        materializer_db: Option<MaterializerStateSqliteDbDeferredLoad>,
         http_client: HttpClient,
         daemon_dispatcher: EventDispatcher,
     ) -> buck2_error::Result<Arc<dyn Materializer>> {
@@ -890,7 +890,6 @@ impl DaemonState {
                     blocking_executor,
                     deferred_materializer_configs,
                     materializer_db,
-                    materializer_state,
                     http_client,
                     daemon_dispatcher,
                 )?))

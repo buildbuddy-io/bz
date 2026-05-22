@@ -532,9 +532,7 @@ mod state_machine {
                 defer_write_actions: true,
                 eager_materialization_enabled: true,
                 io,
-                materializer_state_info: buck2_data::MaterializerStateInfo {
-                    num_entries_from_sqlite: 0,
-                },
+                materializer_state_entries_from_sqlite: Arc::new(AtomicU64::new(0)),
                 stats: Arc::new(DeferredMaterializerStats::default()),
             },
             handle,
