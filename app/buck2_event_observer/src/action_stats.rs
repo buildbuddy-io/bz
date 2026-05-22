@@ -14,6 +14,7 @@ use buck2_data::SchedulingMode;
 use dupe::Dupe;
 
 use crate::cache_hit_rate::total_cache_hit_rate;
+use crate::humanized::CommaSeparatedCount;
 use crate::last_command_execution_kind::LastCommandExecutionKind;
 use crate::last_command_execution_kind::get_last_command_execution_kind;
 
@@ -119,16 +120,16 @@ impl fmt::Display for ActionStats {
         let mut action_stats_message = format!(
             "Cache hits: {}%. Commands: {} (cached: {}, remote: {}, local: {})",
             self.total_cache_hit_percentage(),
-            self.total_executed_and_cached_actions(),
-            self.total_cached_actions(),
-            self.remote_actions,
-            self.local_actions
+            CommaSeparatedCount::new(self.total_executed_and_cached_actions()),
+            CommaSeparatedCount::new(self.total_cached_actions()),
+            CommaSeparatedCount::new(self.remote_actions),
+            CommaSeparatedCount::new(self.local_actions)
         );
         if self.fallback_actions > 0 {
             action_stats_message += format!(
                 ". Fallback: {}/{}",
-                self.fallback_actions,
-                self.total_executed_actions()
+                CommaSeparatedCount::new(self.fallback_actions),
+                CommaSeparatedCount::new(self.total_executed_actions())
             )
             .as_str();
         }

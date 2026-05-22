@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use buck2_event_observer::action_stats::ActionStats;
 use buck2_event_observer::fmt_duration;
-use buck2_event_observer::humanized::HumanizedCount;
+use buck2_event_observer::humanized::CommaSeparatedCount;
 use buck2_event_observer::pending_estimate::pending_estimate;
 use buck2_event_observer::progress::BuildProgressPhaseStats;
 use buck2_event_observer::progress::BuildProgressStats;
@@ -130,6 +130,10 @@ fn time_elapsed(state: &SuperConsoleState) -> String {
     fmt_duration::fmt_duration(state.timekeeper.duration_since_command_start())
 }
 
+fn format_count(count: u64) -> String {
+    CommaSeparatedCount::new(count).to_string()
+}
+
 /// This component is used to display summary counts about the number of jobs.
 struct CountComponent<'s> {
     data: &'s HeaderData<'s>,
@@ -145,8 +149,8 @@ impl Component for CountComponent<'_> {
     ) -> buck2_error::Result<Lines> {
         match mode {
             DrawMode::Normal => {
-                let remaining = HumanizedCount::new(self.data.remaining);
-                let total = HumanizedCount::new(self.data.total());
+                let remaining = CommaSeparatedCount::new(self.data.remaining);
+                let total = CommaSeparatedCount::new(self.data.total());
 
                 let contents = if self.data.action_stats.log_stats() {
                     let mut actions_summary = format!(
@@ -158,8 +162,10 @@ impl Component for CountComponent<'_> {
                     if self.data.action_stats.fallback_actions > 0 {
                         actions_summary += format!(
                             "Fallback: {}/{}. ",
-                            HumanizedCount::new(self.data.action_stats.fallback_actions),
-                            HumanizedCount::new(self.data.action_stats.total_executed_actions())
+                            CommaSeparatedCount::new(self.data.action_stats.fallback_actions),
+                            CommaSeparatedCount::new(
+                                self.data.action_stats.total_executed_actions()
+                            )
                         )
                         .as_str();
                     }
@@ -168,8 +174,8 @@ impl Component for CountComponent<'_> {
                 } else {
                     format!(
                         "Remaining: {}/{}. Time elapsed: {}",
-                        self.data.remaining,
-                        self.data.total(),
+                        CommaSeparatedCount::new(self.data.remaining),
+                        CommaSeparatedCount::new(self.data.total()),
                         self.data.elapsed_str
                     )
                 };
@@ -178,7 +184,8 @@ impl Component for CountComponent<'_> {
             DrawMode::Final => {
                 let mut lines = vec![Line::unstyled(&format!(
                     "Jobs completed: {}. Time elapsed: {}.",
-                    self.data.finished, self.data.elapsed_str,
+                    CommaSeparatedCount::new(self.data.finished),
+                    self.data.elapsed_str,
                 ))?];
                 if self.data.action_stats.log_stats() {
                     lines.push(Line::unstyled(&self.data.action_stats.to_string())?);
@@ -224,14 +231,16 @@ impl Style {
                 header = header,
                 progress_label = progress_label,
                 progress_label_width = PROGRESS_LABEL_WIDTH,
-                completed = completed,
-                total = total,
+                completed = format_count(completed),
+                total = format_count(total),
                 num_width = *num_width
             ),
             Style::ExtraCompact => {
                 format!(
                     "{header} {progress_label:<progress_label_width$} {completed}/{total}",
                     progress_label_width = PROGRESS_LABEL_WIDTH,
+                    completed = format_count(completed),
+                    total = format_count(total),
                 )
             }
         };
@@ -242,7 +251,7 @@ impl Style {
                     format!(" (running: {running_str})",)
                 }
                 Style::ExtraCompact => {
-                    format!(" ({running_num})",)
+                    format!(" ({})", format_count(running_num))
                 }
             };
         }
@@ -252,9 +261,9 @@ impl Style {
     fn display_num(&self, num: u64) -> String {
         match self {
             Style::Normal(num_width) | Style::Compact(num_width) => {
-                format!("{num:num_width$}")
+                format!("{:>width$}", format_count(num), width = *num_width)
             }
-            Style::ExtraCompact => format!("{num}"),
+            Style::ExtraCompact => format_count(num),
         }
     }
 }
@@ -276,10 +285,16 @@ impl ProgressHeader<'_> {
     fn render_loads_extra(&self) -> String {
         let mut msgs = Vec::new();
         if self.progress_stats.dirs_read > 0 {
-            msgs.push(format!("{} dirs read", self.progress_stats.dirs_read));
+            msgs.push(format!(
+                "{} dirs read",
+                CommaSeparatedCount::new(self.progress_stats.dirs_read)
+            ));
         }
         if self.progress_stats.targets > 0 {
-            msgs.push(format!("{} targets declared", self.progress_stats.targets));
+            msgs.push(format!(
+                "{} targets declared",
+                CommaSeparatedCount::new(self.progress_stats.targets)
+            ));
         }
         msgs.join(", ")
     }
@@ -300,12 +315,15 @@ impl ProgressHeader<'_> {
     fn render_analyses_extra(&self) -> String {
         let mut msgs = Vec::new();
         if self.progress_stats.actions_declared > 0 {
-            msgs.push(format!("{} actions", self.progress_stats.actions_declared));
+            msgs.push(format!(
+                "{} actions",
+                CommaSeparatedCount::new(self.progress_stats.actions_declared)
+            ));
         }
         if self.progress_stats.artifacts_declared > 0 {
             msgs.push(format!(
                 "{} artifacts declared",
-                self.progress_stats.artifacts_declared
+                CommaSeparatedCount::new(self.progress_stats.artifacts_declared)
             ));
         }
         msgs.join(", ")
@@ -365,15 +383,21 @@ impl ProgressHeader<'_> {
 
                 let mut res_types = Vec::new();
                 if self.action_stats.local_actions > 0 {
-                    res_types.push(format!("{} local", self.action_stats.local_actions));
+                    res_types.push(format!(
+                        "{} local",
+                        CommaSeparatedCount::new(self.action_stats.local_actions)
+                    ));
                 }
                 if self.action_stats.remote_actions > 0 {
-                    res_types.push(format!("{} remote", self.action_stats.remote_actions));
+                    res_types.push(format!(
+                        "{} remote",
+                        CommaSeparatedCount::new(self.action_stats.remote_actions)
+                    ));
                 }
                 if self.action_stats.total_cached_actions() > 0 {
                     res_types.push(format!(
                         "{} cache ({}%{})",
-                        self.action_stats.total_cached_actions(),
+                        CommaSeparatedCount::new(self.action_stats.total_cached_actions()),
                         self.action_stats.total_cache_hit_percentage(),
                         if compact { "" } else { " hit" }
                     ));
@@ -436,8 +460,8 @@ impl Component for ProgressHeader<'_> {
     type Error = buck2_error::Error;
 
     fn draw_unchecked(&self, dimensions: Dimensions, mode: DrawMode) -> buck2_error::Result<Lines> {
-        fn digits_len(v: u64) -> usize {
-            (v.checked_ilog10().unwrap_or(0) + 1) as usize
+        fn count_len(v: u64) -> usize {
+            format_count(v).len()
         }
 
         let loads = &self.phase_stats.loads;
@@ -453,7 +477,7 @@ impl Component for ProgressHeader<'_> {
             validations.started,
         );
 
-        let num_width = std::cmp::max(5, digits_len(max_total));
+        let num_width = std::cmp::max(5, count_len(max_total));
 
         let header_width = "Executing actions.  Validated _/_ (running: _ local, _ remote)  ".len()
             + 4 * (num_width - 1);
@@ -466,7 +490,7 @@ impl Component for ProgressHeader<'_> {
             DrawMode::Final => "",
         };
 
-        let long_middle_len = "111222333 actions, 111222333 artifacts declared  ".len();
+        let long_middle_len = "111,222,333 actions, 111,222,333 artifacts declared  ".len();
 
         let style = if header_width + long_middle_len < dimensions.width {
             Style::Normal(num_width)

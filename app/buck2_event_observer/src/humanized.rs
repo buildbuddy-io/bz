@@ -63,6 +63,10 @@ pub struct HumanizedCount {
     fixed_width: bool,
 }
 
+pub struct CommaSeparatedCount {
+    count: u64,
+}
+
 impl HumanizedCount {
     pub fn new(count: u64) -> Self {
         HumanizedCount {
@@ -76,6 +80,12 @@ impl HumanizedCount {
             count,
             fixed_width: true,
         }
+    }
+}
+
+impl CommaSeparatedCount {
+    pub fn new(count: u64) -> Self {
+        Self { count }
     }
 }
 
@@ -169,8 +179,29 @@ impl fmt::Display for HumanizedCount {
     }
 }
 
+impl fmt::Display for CommaSeparatedCount {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = self.count.to_string();
+        let first_group_len = match s.len() % 3 {
+            0 => 3,
+            n => n,
+        };
+        f.write_str(&s[..first_group_len])?;
+
+        let mut index = first_group_len;
+        while index < s.len() {
+            f.write_str(",")?;
+            f.write_str(&s[index..index + 3])?;
+            index += 3;
+        }
+
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use super::CommaSeparatedCount;
     use super::HumanizedBytes;
     use super::HumanizedBytesPerSecond;
     use super::HumanizedCount;
@@ -276,5 +307,18 @@ mod tests {
         t(0, "0", "  0 ");
         t(22, "22", " 22 ");
         t(1000000, "1.0M", "1.0M");
+    }
+
+    #[test]
+    fn test_comma_separated_count() {
+        fn t(value: u64, expected: &str) {
+            assert_eq!(CommaSeparatedCount::new(value).to_string(), expected);
+        }
+
+        t(0, "0");
+        t(22, "22");
+        t(999, "999");
+        t(1000, "1,000");
+        t(1000000, "1,000,000");
     }
 }

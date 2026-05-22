@@ -24,6 +24,7 @@ use buck2_event_observer::display::TargetDisplayOptions;
 use buck2_event_observer::display::display_file_watcher_end;
 use buck2_event_observer::event_observer::EventObserver;
 use buck2_event_observer::event_observer::EventObserverExtra;
+use buck2_event_observer::humanized::CommaSeparatedCount;
 use buck2_event_observer::humanized::HumanizedBytes;
 use buck2_event_observer::unpack_event::VisitorError;
 use buck2_event_observer::unpack_event::unpack_event;
@@ -475,18 +476,22 @@ where
             echo!("Cache hits: {}%", cache_hit_percentage)?;
             echo!(
                 "Commands: {} (cached: {}, remote: {}, local: {})",
-                self.observer()
-                    .action_stats()
-                    .total_executed_and_cached_actions(),
-                self.observer().action_stats().cached_actions,
-                self.observer().action_stats().remote_actions,
-                self.observer().action_stats().local_actions
+                CommaSeparatedCount::new(
+                    self.observer()
+                        .action_stats()
+                        .total_executed_and_cached_actions()
+                ),
+                CommaSeparatedCount::new(self.observer().action_stats().cached_actions),
+                CommaSeparatedCount::new(self.observer().action_stats().remote_actions),
+                CommaSeparatedCount::new(self.observer().action_stats().local_actions)
             )?;
             if self.observer().action_stats().fallback_actions > 0 {
                 echo!(
                     "Fallback: {}/{}",
-                    self.observer().action_stats().fallback_actions,
-                    self.observer().action_stats().total_executed_actions()
+                    CommaSeparatedCount::new(self.observer().action_stats().fallback_actions),
+                    CommaSeparatedCount::new(
+                        self.observer().action_stats().total_executed_actions()
+                    )
                 )?;
             }
         }
