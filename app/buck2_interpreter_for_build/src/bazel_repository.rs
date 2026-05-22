@@ -797,6 +797,50 @@ mod tests {
         );
         fs::remove_dir_all(&dir).unwrap();
     }
+
+    fn module_ctx_download_test_key(name: &str) -> String {
+        let nanos = SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |duration| duration.as_nanos());
+        format!(
+            "test-module-ctx-download-cache-lock-{name}-{}-{nanos}",
+            std::process::id()
+        )
+    }
+
+    fn module_ctx_download_cache_lock_exists(key: &str) -> bool {
+        MODULE_CTX_DOWNLOAD_CACHE_LOCKS.get().is_some_and(|locks| {
+            locks
+                .lock()
+                .expect("module ctx download cache lock map is poisoned")
+                .contains_key(key)
+        })
+    }
+
+    #[test]
+    fn test_module_ctx_download_cache_lock_release_prunes_unused_lock() {
+        let key = module_ctx_download_test_key("unused");
+        let lock = module_ctx_download_cache_lock(&key);
+        assert!(module_ctx_download_cache_lock_exists(&key));
+
+        module_ctx_download_cache_release_lock(&key, &lock);
+
+        assert!(!module_ctx_download_cache_lock_exists(&key));
+    }
+
+    #[test]
+    fn test_module_ctx_download_cache_lock_release_keeps_shared_lock() {
+        let key = module_ctx_download_test_key("shared");
+        let lock = module_ctx_download_cache_lock(&key);
+        let other = module_ctx_download_cache_lock(&key);
+
+        module_ctx_download_cache_release_lock(&key, &lock);
+
+        assert!(module_ctx_download_cache_lock_exists(&key));
+        drop(other);
+        module_ctx_download_cache_release_lock(&key, &lock);
+        assert!(!module_ctx_download_cache_lock_exists(&key));
+    }
 }
 
 fn validate_module_extension_return<'v>(
@@ -5997,6 +6041,20 @@ fn module_ctx_download_cache_lock(key: &str) -> Arc<Mutex<()>> {
         .clone()
 }
 
+fn module_ctx_download_cache_release_lock(key: &str, lock: &Arc<Mutex<()>>) {
+    let Some(locks) = MODULE_CTX_DOWNLOAD_CACHE_LOCKS.get() else {
+        return;
+    };
+    let mut locks = locks
+        .lock()
+        .expect("module ctx download cache lock map is poisoned");
+    if matches!(locks.get(key), Some(stored) if Arc::ptr_eq(stored, lock))
+        && Arc::strong_count(lock) == 2
+    {
+        locks.remove(key);
+    }
+}
+
 fn module_ctx_download_cache_verification_key(
     file: &Path,
     checksum: &ModuleCtxChecksum,
@@ -6225,46 +6283,57 @@ fn module_ctx_download_to_path_blocking(
             canonical_id
         );
         let lock = module_ctx_download_cache_lock(&lock_key);
-        let _guard = lock
-            .lock()
-            .expect("module ctx download cache entry lock is poisoned");
-        if destination.is_file()
-            && module_ctx_validate_download_file_checksum(destination, expected_checksum).is_ok()
-        {
-            module_ctx_set_executable(destination, executable)?;
-            return module_ctx_download_result_checksums_verified(expected_checksum);
-        }
-        if module_ctx_download_cache_get_to_path(
-            expected_checksum,
-            canonical_id,
-            destination,
-            executable,
-        )
-        .unwrap_or(false)
-        {
-            return module_ctx_download_result_checksums_verified(expected_checksum);
-        }
-
-        buck2_events::dispatch::span(
-            buck2_data::DiceStateUpdateStageStart {
-                stage: module_ctx_download_stage_label(urls, destination),
-            },
-            || {
-                (
-                    module_ctx_download_to_path_uncached_blocking(
-                        urls,
-                        destination,
-                        Some(expected_checksum),
-                        executable,
-                        headers,
-                        auth_headers,
-                    ),
-                    buck2_data::DiceStateUpdateStageEnd {},
+        let result: buck2_error::Result<(Option<String>, String)> = {
+            let _guard = lock
+                .lock()
+                .expect("module ctx download cache entry lock is poisoned");
+            (|| {
+                if destination.is_file()
+                    && module_ctx_validate_download_file_checksum(destination, expected_checksum)
+                        .is_ok()
+                {
+                    module_ctx_set_executable(destination, executable)?;
+                    return module_ctx_download_result_checksums_verified(expected_checksum);
+                }
+                if module_ctx_download_cache_get_to_path(
+                    expected_checksum,
+                    canonical_id,
+                    destination,
+                    executable,
                 )
-            },
-        )?;
-        module_ctx_download_cache_put_verified(expected_checksum, canonical_id, destination)?;
-        return module_ctx_download_result_checksums_verified(expected_checksum);
+                .unwrap_or(false)
+                {
+                    return module_ctx_download_result_checksums_verified(expected_checksum);
+                }
+
+                buck2_events::dispatch::span(
+                    buck2_data::DiceStateUpdateStageStart {
+                        stage: module_ctx_download_stage_label(urls, destination),
+                    },
+                    || {
+                        (
+                            module_ctx_download_to_path_uncached_blocking(
+                                urls,
+                                destination,
+                                Some(expected_checksum),
+                                executable,
+                                headers,
+                                auth_headers,
+                            ),
+                            buck2_data::DiceStateUpdateStageEnd {},
+                        )
+                    },
+                )?;
+                module_ctx_download_cache_put_verified(
+                    expected_checksum,
+                    canonical_id,
+                    destination,
+                )?;
+                module_ctx_download_result_checksums_verified(expected_checksum)
+            })()
+        };
+        module_ctx_download_cache_release_lock(&lock_key, &lock);
+        return result;
     }
 
     let checksums = buck2_events::dispatch::span(
