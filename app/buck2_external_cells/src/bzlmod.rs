@@ -2176,13 +2176,15 @@ fn record_bzlmod_repo_contents_cache_alias(
     cache_repo: &ProjectRelativePath,
 ) -> buck2_error::Result<()> {
     let cache_repo_abs = project_fs.resolve(cache_repo);
-    let cache_repo_metadata = fs_util::metadata(&cache_repo_abs).with_buck_error_context(|| {
-        format!(
-            "Error checking bzlmod cache repo `{}` before publishing alias `{}`",
-            cache_repo.as_str(),
-            cache_alias.as_str()
-        )
-    })?;
+    let cache_repo_metadata = fs_util::metadata(&cache_repo_abs)
+        .categorize_internal()
+        .with_buck_error_context(|| {
+            format!(
+                "Error checking bzlmod cache repo `{}` before publishing alias `{}`",
+                cache_repo.as_str(),
+                cache_alias.as_str()
+            )
+        })?;
     if !cache_repo_metadata.is_dir() {
         return Err(buck2_error::buck2_error!(
             buck2_error::ErrorTag::Tier0,
