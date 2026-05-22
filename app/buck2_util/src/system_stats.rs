@@ -10,6 +10,13 @@
 
 use crate::threads::available_parallelism;
 
+use std::sync::Mutex;
+use std::sync::OnceLock;
+use std::time::Duration;
+use std::time::Instant;
+
+use crate::os::host_cpu_usage::HostCpuUsage;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SystemMemoryStats {
     pub total: u64,
@@ -93,29 +100,67 @@ pub fn system_memory_stats_detailed() -> SystemMemoryStats {
     }
 }
 
+#[derive(Debug)]
+struct SystemCpuUsageSample {
+    timestamp: Instant,
+    usage: HostCpuUsage,
+}
+
 pub fn system_cpu_usage() -> Option<f64> {
-    use sysinfo::CpuRefreshKind;
-    use sysinfo::RefreshKind;
-    use sysinfo::System;
+    static PREVIOUS: OnceLock<Mutex<Option<SystemCpuUsageSample>>> = OnceLock::new();
 
-    let mut system = System::new_with_specifics(
-        RefreshKind::nothing().with_cpu(CpuRefreshKind::nothing().with_cpu_usage()),
-    );
-    std::thread::sleep(sysinfo::MINIMUM_CPU_UPDATE_INTERVAL);
-    system.refresh_cpu_usage();
+    let current = SystemCpuUsageSample {
+        timestamp: Instant::now(),
+        usage: HostCpuUsage::get().ok()?,
+    };
 
-    let cpu_usage = system.global_cpu_usage();
-    if !cpu_usage.is_finite() {
+    let mut previous = PREVIOUS.get_or_init(|| Mutex::new(None)).lock().ok()?;
+    let previous = previous.replace(SystemCpuUsageSample {
+        timestamp: current.timestamp,
+        usage: current.usage.clone(),
+    })?;
+
+    system_cpu_usage_from_samples(&previous, &current)
+}
+
+fn system_cpu_usage_from_samples(
+    previous: &SystemCpuUsageSample,
+    current: &SystemCpuUsageSample,
+) -> Option<f64> {
+    let elapsed = current
+        .timestamp
+        .checked_duration_since(previous.timestamp)?;
+    let elapsed_millis = duration_millis(elapsed)?;
+    if elapsed_millis == 0 {
         return None;
     }
 
-    Some((f64::from(cpu_usage) / 100.0) * num_cores() as f64)
+    let user_millis = current
+        .usage
+        .user_millis
+        .checked_sub(previous.usage.user_millis)?;
+    let system_millis = current
+        .usage
+        .system_millis
+        .checked_sub(previous.usage.system_millis)?;
+    let busy_millis = user_millis.checked_add(system_millis)?;
+
+    Some(busy_millis as f64 / elapsed_millis as f64)
+}
+
+fn duration_millis(duration: Duration) -> Option<u64> {
+    duration.as_millis().try_into().ok()
 }
 
 #[cfg(test)]
 mod tests {
+    use super::SystemCpuUsageSample;
+    use super::system_cpu_usage_from_samples;
     use super::system_memory_stats;
     use super::system_memory_stats_detailed;
+    use crate::os::host_cpu_usage::HostCpuUsage;
+    use std::time::Duration;
+    use std::time::Instant;
 
     #[test]
     fn get_system_memory_stats() {
@@ -130,5 +175,29 @@ mod tests {
         // sysinfo returns zero when fails to retrieve data
         assert!(memory.total > 0);
         assert!(memory.available > 0);
+    }
+
+    #[test]
+    fn get_system_cpu_usage_from_samples() {
+        let start = Instant::now();
+        let previous = SystemCpuUsageSample {
+            timestamp: start,
+            usage: HostCpuUsage {
+                user_millis: 1000,
+                system_millis: 500,
+            },
+        };
+        let current = SystemCpuUsageSample {
+            timestamp: start + Duration::from_millis(100),
+            usage: HostCpuUsage {
+                user_millis: 1250,
+                system_millis: 650,
+            },
+        };
+
+        assert_eq!(
+            system_cpu_usage_from_samples(&previous, &current),
+            Some(4.0)
+        );
     }
 }
