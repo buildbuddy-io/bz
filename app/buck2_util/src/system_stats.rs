@@ -10,6 +10,12 @@
 
 use crate::threads::available_parallelism;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SystemMemoryStats {
+    pub total: u64,
+    pub available: u64,
+}
+
 pub struct UnixSystemStats {
     pub load1: f64,
     pub load5: f64,
@@ -58,9 +64,20 @@ pub fn num_cores() -> usize {
 }
 
 pub fn system_memory_stats() -> u64 {
+    system_memory_stats_detailed().total
+}
+
+pub fn system_memory_stats_detailed() -> SystemMemoryStats {
     if let Ok(Some(bytes)) = buck2_env::env::buck2_env!("BUCK2_TEST_FAKE_SYSTEM_TOTAL_MEMORY", type=u64, applicability=testing)
     {
-        return bytes;
+        let available = buck2_env::env::buck2_env!("BUCK2_TEST_FAKE_SYSTEM_AVAILABLE_MEMORY", type=u64, applicability=testing)
+            .ok()
+            .flatten()
+            .unwrap_or(bytes);
+        return SystemMemoryStats {
+            total: bytes,
+            available,
+        };
     }
 
     use sysinfo::MemoryRefreshKind;
@@ -70,17 +87,29 @@ pub fn system_memory_stats() -> u64 {
     let system = System::new_with_specifics(
         RefreshKind::nothing().with_memory(MemoryRefreshKind::nothing().with_ram()),
     );
-    system.total_memory()
+    SystemMemoryStats {
+        total: system.total_memory(),
+        available: system.available_memory(),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::system_memory_stats;
+    use super::system_memory_stats_detailed;
 
     #[test]
     fn get_system_memory_stats() {
         let total_mem = system_memory_stats();
         // sysinfo returns zero when fails to retrieve data
         assert!(total_mem > 0);
+    }
+
+    #[test]
+    fn get_detailed_system_memory_stats() {
+        let memory = system_memory_stats_detailed();
+        // sysinfo returns zero when fails to retrieve data
+        assert!(memory.total > 0);
+        assert!(memory.available > 0);
     }
 }

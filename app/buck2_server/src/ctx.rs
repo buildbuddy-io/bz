@@ -128,6 +128,8 @@ use buck2_server_starlark_debug::BuckStarlarkDebuggerHandle;
 use buck2_server_starlark_debug::create_debugger_handle;
 use buck2_test::local_resource_registry::InitLocalResourceRegistry;
 use buck2_util::arc_str::ArcS;
+use buck2_util::system_stats::SystemMemoryStats;
+use buck2_util::system_stats::UnixSystemStats;
 use buck2_util::truncate::truncate_container;
 use buck2_validation::enabled_optional_validations_key::SetEnabledOptionalValidations;
 use dice::DiceComputations;
@@ -168,6 +170,78 @@ fn parse_concurrency(requested: u32) -> Option<usize> {
         .expect("Buck2 isn't built for 16 bit systems");
 
     if ret == 0 { None } else { Some(ret) }
+}
+
+const ACTION_PARALLELISM_WITH_HEADROOM_PER_CPU: usize = 3;
+const MIN_AVAILABLE_MEMORY_FOR_ACTION_PARALLELISM_HEADROOM: u64 = 4 * 1024 * 1024 * 1024;
+
+#[derive(Clone, Copy)]
+enum ActionConcurrencySource {
+    CommandLine,
+    Config,
+    Default,
+}
+
+impl ActionConcurrencySource {
+    fn as_tag_value(self) -> &'static str {
+        match self {
+            Self::CommandLine => "command-line",
+            Self::Config => "config",
+            Self::Default => "default",
+        }
+    }
+}
+
+fn default_action_concurrency() -> usize {
+    let base = buck2_util::threads::available_parallelism_fresh();
+    action_concurrency_from_host_headroom(
+        base,
+        UnixSystemStats::get().map(|stats| stats.load1),
+        buck2_util::system_stats::system_memory_stats_detailed(),
+    )
+}
+
+fn action_concurrency_from_host_headroom(
+    base: usize,
+    load1: Option<f64>,
+    memory: SystemMemoryStats,
+) -> usize {
+    let base = base.max(1);
+    let max_parallelism = base.saturating_mul(ACTION_PARALLELISM_WITH_HEADROOM_PER_CPU);
+
+    if !has_memory_headroom_for_action_parallelism(memory) {
+        return base;
+    }
+
+    let Some(load1) = load1 else {
+        return base;
+    };
+    if !load1.is_finite() {
+        return base;
+    }
+
+    let load1 = load1.max(0.0);
+    if load1 >= base as f64 {
+        return base;
+    }
+
+    let idle_cpus = ((base as f64) - load1).floor() as usize;
+    let extra_parallelism =
+        idle_cpus.saturating_mul(ACTION_PARALLELISM_WITH_HEADROOM_PER_CPU.saturating_sub(1));
+
+    base.saturating_add(extra_parallelism).min(max_parallelism)
+}
+
+fn has_memory_headroom_for_action_parallelism(memory: SystemMemoryStats) -> bool {
+    if memory.total == 0 || memory.available == 0 {
+        return false;
+    }
+
+    // Keep roughly the same one-third host-memory cushion Bazel leaves by default when
+    // deriving local resources, with a small absolute floor for smaller machines.
+    let required_available =
+        (memory.total / 3).max(MIN_AVAILABLE_MEMORY_FOR_ACTION_PARALLELISM_HEADROOM);
+    memory.available >= required_available
 }
 
 /// BaseCommandContext provides access to the global daemon state and information specific to a command (like the
@@ -915,10 +989,16 @@ impl DiceCommandUpdater<'_, '_> {
             })?
             .unwrap_or(0);
 
-        let concurrency = self
-            .concurrency
-            .or_else(|| parse_concurrency(config_threads))
-            .unwrap_or_else(buck2_util::threads::available_parallelism_fresh);
+        let (concurrency, concurrency_source) = if let Some(concurrency) = self.concurrency {
+            (concurrency, ActionConcurrencySource::CommandLine)
+        } else if let Some(concurrency) = parse_concurrency(config_threads) {
+            (concurrency, ActionConcurrencySource::Config)
+        } else {
+            (
+                default_action_concurrency(),
+                ActionConcurrencySource::Default,
+            )
+        };
 
         if let Some(max_lines) = root_config.parse(BuckconfigKeyRef {
             section: "ui",
@@ -1159,6 +1239,11 @@ impl DiceCommandUpdater<'_, '_> {
             format!("lazy-cycle-detector:{}", has_cycle_detector),
             format!("miniperf:{}", enable_miniperf),
             format!("log-configured-graph-size:{}", log_configured_graph_size),
+            format!("action-parallelism:{}", concurrency),
+            format!(
+                "action-parallelism-source:{}",
+                concurrency_source.as_tag_value()
+            ),
         ];
         self.cmd_ctx
             .events()
@@ -1482,5 +1567,59 @@ impl ServerCommandContextTrait for ServerCommandContext<'_> {
 
     fn command_start(&self) -> Instant {
         self.command_start
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const GIB: u64 = 1024 * 1024 * 1024;
+
+    fn memory(total_gib: u64, available_gib: u64) -> SystemMemoryStats {
+        SystemMemoryStats {
+            total: total_gib * GIB,
+            available: available_gib * GIB,
+        }
+    }
+
+    #[test]
+    fn action_concurrency_scales_with_cpu_headroom() {
+        assert_eq!(
+            action_concurrency_from_host_headroom(10, Some(1.2), memory(64, 40)),
+            26
+        );
+    }
+
+    #[test]
+    fn action_concurrency_caps_at_three_actions_per_cpu() {
+        assert_eq!(
+            action_concurrency_from_host_headroom(10, Some(0.0), memory(64, 40)),
+            30
+        );
+    }
+
+    #[test]
+    fn action_concurrency_stays_at_base_without_cpu_headroom() {
+        assert_eq!(
+            action_concurrency_from_host_headroom(10, Some(10.0), memory(64, 40)),
+            10
+        );
+    }
+
+    #[test]
+    fn action_concurrency_stays_at_base_without_memory_headroom() {
+        assert_eq!(
+            action_concurrency_from_host_headroom(10, Some(0.0), memory(64, 8)),
+            10
+        );
+    }
+
+    #[test]
+    fn action_concurrency_stays_at_base_without_load_stats() {
+        assert_eq!(
+            action_concurrency_from_host_headroom(10, None, memory(64, 40)),
+            10
+        );
     }
 }
