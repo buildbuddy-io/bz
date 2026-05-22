@@ -30,6 +30,7 @@ use buck2_core::bzl::ImportPath;
 use buck2_core::cells::build_file_cell::BuildFileCell;
 use buck2_core::cells::cell_path::CellPath;
 use buck2_core::cells::cell_path_with_allowed_relative_dir::CellPathWithAllowedRelativeDir;
+use buck2_core::cells::external::is_bzlmod_cell_name;
 use buck2_core::cells::paths::CellRelativePathBuf;
 use buck2_core::package::package_relative_path::PackageRelativePathBuf;
 use buck2_error::BuckErrorContext;
@@ -464,7 +465,7 @@ impl LoadResolver for InterpreterLoadResolver {
         // Bazel module repos carry their own repository mappings. A .bzl file loaded from a
         // bzlmod repo must therefore resolve its own label literals and transitive loads in that
         // repo's context, not in the context of the BUILD or .bzl file that imported it.
-        if path.cell().as_str().starts_with("bzlmod_") || path.cell().as_str() == "bazel_tools" {
+        if is_bzlmod_cell_name(path.cell().as_str()) || path.cell().as_str() == "bazel_tools" {
             let import_path = ImportPath::new_same_cell_with_package_root(path, package_root)?;
             return Ok(match import_path.path().path().extension() {
                 Some("json") => OwnedStarlarkModulePath::JsonFile(import_path),
@@ -622,7 +623,7 @@ impl InterpreterForDir {
     fn is_bazel_compat_path(&self, import: StarlarkPath<'_>) -> bool {
         let import_cell = import.cell();
         let import_cell_name = import_cell.as_str();
-        if import_cell_name == "bazel_tools" || import_cell_name.starts_with("bzlmod_") {
+        if import_cell_name == "bazel_tools" || is_bzlmod_cell_name(import_cell_name) {
             return true;
         }
         if import_cell_name == "root" && self.bazel_compat_prelude_enabled() {

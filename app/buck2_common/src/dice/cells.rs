@@ -16,6 +16,7 @@ use buck2_core::cells::CellAliasResolver;
 use buck2_core::cells::CellResolver;
 use buck2_core::cells::external::ExternalCellOrigin;
 use buck2_core::cells::external::external_cell_origin_for_cell;
+use buck2_core::cells::external::is_bzlmod_cell_name;
 use buck2_core::cells::name::CellName;
 use buck2_core::fs::project_rel_path::ProjectRelativePath;
 use derive_more::Display;
@@ -206,7 +207,7 @@ impl HasExternalCellOrigins for DiceComputations<'_> {
         &mut self,
         cell: CellName,
     ) -> buck2_error::Result<Option<ExternalCellOrigin>> {
-        if cell.as_str().starts_with("bzlmod_") {
+        if is_bzlmod_cell_name(cell.as_str()) {
             let cell_in_resolver = match self.compute(&CellResolverKey).await? {
                 Some(resolver) => resolver.contains_declared(cell),
                 None => false,
@@ -222,7 +223,7 @@ impl HasExternalCellOrigins for DiceComputations<'_> {
         if origin.is_some() {
             return Ok(origin);
         }
-        if cell.as_str().starts_with("bzlmod_") {
+        if is_bzlmod_cell_name(cell.as_str()) {
             if external_cell_origin_for_cell(cell.as_str()).is_none() {
                 let _aliases = get_bazel_module_resolution_on_dice(self).await?;
             }
@@ -253,7 +254,7 @@ impl Key for CellAliasResolverKey {
         let root_aliases = resolver.root_cell_cell_alias_resolver();
         let bzlmod_module_aliases = if (self.0 == resolver.root_cell()
             || self.0.as_str() == "bazel_tools"
-            || self.0.as_str().starts_with("bzlmod_"))
+            || is_bzlmod_cell_name(self.0.as_str()))
             && bzlmod_resolution_enabled_on_dice(ctx).await?
         {
             Some(get_bazel_module_resolution_on_dice(ctx).await?)
@@ -289,7 +290,7 @@ impl Key for CellAliasResolverKey {
                 &crate::legacy_configs::configs::LegacyBuckConfig::empty(),
             );
         }
-        if (self.0.as_str() == "bazel_tools" || self.0.as_str().starts_with("bzlmod_"))
+        if (self.0.as_str() == "bazel_tools" || is_bzlmod_cell_name(self.0.as_str()))
             && let Some(module_aliases) = &bzlmod_module_aliases
         {
             let current_cell_aliases =

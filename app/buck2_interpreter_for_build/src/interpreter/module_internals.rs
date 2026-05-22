@@ -23,6 +23,7 @@ use buck2_common::package_listing::listing::PackageListing;
 use buck2_core::build_file_path::BuildFilePath;
 use buck2_core::bzl::ImportPath;
 use buck2_core::cells::cell_path::CellPath;
+use buck2_core::cells::external::is_bzlmod_cell_name;
 use buck2_core::cells::paths::CellRelativePathBuf;
 use buck2_core::package::PackageLabel;
 use buck2_core::package::package_relative_path::PackageRelativePath;
@@ -121,7 +122,7 @@ fn is_bazel_compat_build_file(buildfile_path: &BuildFilePath) -> bool {
 
     let cell = buildfile_path.cell();
     let cell = cell.as_str();
-    filename == "BUILD" && (cell == "root" || cell == "bazel_tools" || cell.starts_with("bzlmod_"))
+    filename == "BUILD" && (cell == "root" || cell == "bazel_tools" || is_bzlmod_cell_name(cell))
 }
 
 fn populate_bazel_input_file_targets(

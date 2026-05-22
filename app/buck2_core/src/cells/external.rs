@@ -47,14 +47,12 @@ pub fn external_cell_source_path(kind: &str, canonical_repo_name: &str) -> Strin
 }
 
 pub fn bzlmod_cell_name(canonical_repo_name: &str) -> String {
-    let mut cell = String::with_capacity("bzlmod_".len() + canonical_repo_name.len() * 2);
-    cell.push_str("bzlmod_");
-    for byte in canonical_repo_name.bytes() {
-        use std::fmt::Write;
+    canonical_repo_name.to_owned()
+}
 
-        write!(&mut cell, "{byte:02x}").expect("writing to string cannot fail");
-    }
-    cell
+pub fn is_bzlmod_cell_name(cell_name: &str) -> bool {
+    cell_name.contains('+')
+        || bzlmod_canonical_repo_name_for_cell(cell_name).is_some_and(|repo| !repo.is_empty())
 }
 
 static BZLMOD_CANONICAL_REPO_NAMES: Lazy<Mutex<StdBuckHashMap<String, String>>> =
@@ -721,29 +719,15 @@ mod tests {
     use super::bzlmod_cell_name;
 
     #[test]
-    fn bzlmod_cell_name_is_injective_for_bazel_canonical_repo_names() {
-        let names = [
-            "",
-            "rules_cc+",
-            "rules_go+0.57.0",
-            "foo-bar+",
-            "foo.bar+",
-            "foo_bar+",
-            "rules_python++python+python_3_11",
-        ];
-        let encoded = names
-            .into_iter()
-            .map(bzlmod_cell_name)
-            .collect::<std::collections::BTreeSet<_>>();
-        assert_eq!(encoded.len(), names.len());
-    }
-
-    #[test]
-    fn bzlmod_cell_name_uses_safe_reversible_ascii_encoding() {
-        assert_eq!(bzlmod_cell_name(""), "bzlmod_");
-        assert_eq!(bzlmod_cell_name("rules_cc+"), "bzlmod_72756c65735f63632b");
-        assert_eq!(bzlmod_cell_name("foo-bar+"), "bzlmod_666f6f2d6261722b");
-        assert_eq!(bzlmod_cell_name("foo.bar+"), "bzlmod_666f6f2e6261722b");
-        assert_eq!(bzlmod_cell_name("foo_bar+"), "bzlmod_666f6f5f6261722b");
+    fn bzlmod_cell_name_preserves_bazel_canonical_repo_names() {
+        assert_eq!(bzlmod_cell_name(""), "");
+        assert_eq!(bzlmod_cell_name("bazel_tools"), "bazel_tools");
+        assert_eq!(bzlmod_cell_name("platforms"), "platforms");
+        assert_eq!(bzlmod_cell_name("rules_cc+"), "rules_cc+");
+        assert_eq!(bzlmod_cell_name("rules_go+0.57.0"), "rules_go+0.57.0");
+        assert_eq!(
+            bzlmod_cell_name("rules_python++python+python_3_11"),
+            "rules_python++python+python_3_11"
+        );
     }
 }

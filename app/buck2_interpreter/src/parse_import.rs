@@ -16,6 +16,7 @@ use buck2_core::cells::build_file_cell::BuildFileCell;
 use buck2_core::cells::cell_path::CellPath;
 use buck2_core::cells::cell_path_with_allowed_relative_dir::CellPathWithAllowedRelativeDir;
 use buck2_core::cells::external::bzlmod_cell_name;
+use buck2_core::cells::external::is_bzlmod_cell_name;
 use buck2_core::cells::name::CellName;
 use buck2_core::cells::paths::CellRelativePath;
 use buck2_core::cells::paths::CellRelativePathBuf;
@@ -104,7 +105,7 @@ fn parse_import_cell_path_parts(
     } else if alias.is_empty() {
         ImportCell::Alias(alias)
     } else if !alias.starts_with('@') {
-        if alias.starts_with("bzlmod_") {
+        if is_bzlmod_cell_name(alias) {
             ImportCell::Canonical(CellName::unchecked_new(alias).ok()?)
         } else if !allow_missing_at_symbol {
             return None;

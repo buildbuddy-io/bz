@@ -117,6 +117,7 @@ use crate::cells::external::ExternalCellOrigin;
 use crate::cells::external::bzlmod_cell_name;
 use crate::cells::external::external_cell_origin_for_cell;
 use crate::cells::external::external_cell_source_path;
+use crate::cells::external::is_bzlmod_cell_name;
 use crate::cells::name::CellName;
 use crate::cells::nested::NestedCells;
 use crate::cells::paths::CellRelativePathBuf;
@@ -198,7 +199,7 @@ impl CellAliasResolver {
         if alias.is_empty() {
             return Ok(self.current);
         }
-        if alias.starts_with("bzlmod_") {
+        if is_bzlmod_cell_name(alias) {
             return CellName::unchecked_new(alias);
         }
         self.aliases.get(alias).duped().ok_or_else(|| {

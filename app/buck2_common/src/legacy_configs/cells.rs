@@ -53,6 +53,7 @@ use buck2_core::cells::external::GitCellSetup;
 use buck2_core::cells::external::GitObjectFormat;
 use buck2_core::cells::external::bzlmod_cell_aliases_for_cell;
 use buck2_core::cells::external::bzlmod_cell_name;
+use buck2_core::cells::external::is_bzlmod_cell_name;
 use buck2_core::cells::external::register_bzlmod_cell_aliases_from_refs;
 use buck2_core::cells::external::register_bzlmod_cell_canonical_repo_name_for_cell;
 use buck2_core::cells::external::register_bzlmod_module_extension_usages_json;
@@ -346,7 +347,7 @@ impl BuckConfigBasedCells {
         let cell_path = self.cell_resolver.get(cell_name)?.path();
 
         let follow_includes = false;
-        let is_bzlmod_cell = cell_name.as_str().starts_with("bzlmod_");
+        let is_bzlmod_cell = is_bzlmod_cell_name(cell_name.as_str());
 
         let config_paths = if is_bzlmod_cell {
             Vec::new()
@@ -673,12 +674,12 @@ impl BuckConfigBasedCells {
                 continue;
             }
             let destination = CellName::unchecked_new(destination.as_str())?;
-            if !destination.as_str().starts_with("bzlmod_") {
+            if !is_bzlmod_cell_name(destination.as_str()) {
                 cell_resolver.get(destination)?;
             }
             aliases.insert(alias, destination);
         }
-        if cell_name.as_str().starts_with("bzlmod_") || cell_name.as_str() == "bazel_tools" {
+        if is_bzlmod_cell_name(cell_name.as_str()) || cell_name.as_str() == "bazel_tools" {
             for (alias, destination) in bzlmod_cell_aliases_for_cell(cell_name.as_str()) {
                 if alias == "bazel_tools" {
                     continue;
@@ -746,7 +747,7 @@ impl BuckConfigBasedCells {
         cell_name: &str,
         cell_path: &CellRootPath,
     ) -> buck2_error::Result<LegacyBuckConfig> {
-        let is_bzlmod_cell = cell_name.starts_with("bzlmod_");
+        let is_bzlmod_cell = is_bzlmod_cell_name(cell_name);
         if is_bzlmod_cell || cell_name == "bazel_tools" {
             return Ok(LegacyBuckConfig::empty().with_bazel_compat_cell_defaults(
                 &[],
@@ -8107,11 +8108,7 @@ fn bzlmod_canonical_repo_name(module_name: &str, version: &str, multiple_version
 }
 
 fn bzlmod_cell_name_for_canonical_repo_name(canonical_repo_name: &str) -> String {
-    if canonical_repo_name == "bazel_tools" {
-        "bazel_tools".to_owned()
-    } else {
-        bzlmod_cell_name(canonical_repo_name)
-    }
+    bzlmod_cell_name(canonical_repo_name)
 }
 
 fn is_valid_bzlmod_module_name(name: &str) -> bool {

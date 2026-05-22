@@ -18,6 +18,7 @@ use buck2_common::package_listing::listing::PackageListing;
 use buck2_common::starlark_profiler::StarlarkProfileDataAndStatsDyn;
 use buck2_core::build_file_path::BuildFilePath;
 use buck2_core::bzl::ImportPath;
+use buck2_core::cells::external::is_bzlmod_cell_name;
 use buck2_core::package::PackageLabel;
 use buck2_core::pattern::pattern::PackageSpec;
 use buck2_core::pattern::pattern_type::PatternType;
@@ -435,7 +436,7 @@ fn is_bazel_compat_build_file(buildfile_path: &BuildFilePath) -> bool {
 
     let cell = buildfile_path.cell();
     let cell = cell.as_str();
-    filename == "BUILD" && (cell == "root" || cell == "bazel_tools" || cell.starts_with("bzlmod_"))
+    filename == "BUILD" && (cell == "root" || cell == "bazel_tools" || is_bzlmod_cell_name(cell))
 }
 
 fn bazel_input_file_rule() -> buck2_error::Result<Arc<Rule>> {

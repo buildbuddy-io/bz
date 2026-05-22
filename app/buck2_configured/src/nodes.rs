@@ -36,6 +36,7 @@ use buck2_common::legacy_configs::view::LegacyBuckConfigView;
 use buck2_common::pattern::resolve::ResolveTargetPatterns;
 use buck2_core::cells::external::bazel_canonical_label_key;
 use buck2_core::cells::external::bzlmod_cell_name;
+use buck2_core::cells::external::is_bzlmod_cell_name;
 use buck2_core::configuration::compatibility::IncompatiblePlatformReason;
 use buck2_core::configuration::compatibility::IncompatiblePlatformReasonCause;
 use buck2_core::configuration::compatibility::MaybeCompatible;
@@ -1349,7 +1350,7 @@ fn buck_label_for_bazel_canonical_key(key: &str) -> buck2_error::Result<String> 
     let Some((repo, package_and_target)) = key.split_once("//") else {
         return Ok(key);
     };
-    if repo.is_empty() || repo.starts_with("bzlmod_") {
+    if repo.is_empty() || is_bzlmod_cell_name(repo) {
         return Ok(key);
     }
     if repo.contains('+') {
@@ -2912,11 +2913,11 @@ mod tests {
         assert_eq!(
             buck_label_for_bazel_canonical_key("aspect_bazel_lib+//lib:coreutils_toolchain_type")
                 .unwrap(),
-            "bzlmod_6173706563745f62617a656c5f6c69622b//lib:coreutils_toolchain_type"
+            "aspect_bazel_lib+//lib:coreutils_toolchain_type"
         );
         assert_eq!(
             buck_label_for_bazel_canonical_key("@@rules_js++npm+npm__react_18.3.1//:pkg").unwrap(),
-            "bzlmod_72756c65735f6a732b2b6e706d2b6e706d5f5f72656163745f31382e332e31//:pkg"
+            "rules_js++npm+npm__react_18.3.1//:pkg"
         );
         assert_eq!(
             buck_label_for_bazel_canonical_key("root//app:target").unwrap(),

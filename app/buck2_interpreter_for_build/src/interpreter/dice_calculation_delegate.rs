@@ -31,6 +31,7 @@ use buck2_core::bzl::ImportPath;
 use buck2_core::cells::build_file_cell::BuildFileCell;
 use buck2_core::cells::cell_path::CellPath;
 use buck2_core::cells::cell_path_with_allowed_relative_dir::CellPathWithAllowedRelativeDir;
+use buck2_core::cells::external::is_bzlmod_cell_name;
 use buck2_core::package::PackageLabel;
 use buck2_error::BuckErrorContext;
 use buck2_error::internal_error;
@@ -141,7 +142,7 @@ impl<'c, 'd> HasCalculationDelegate<'c, 'd> for DiceComputations<'d> {
 
                 let cell_alias_resolver = ctx.get_cell_alias_resolver(self.0.cell()).await?;
                 let is_bazel_external_cell = self.0.cell().as_str() == "bazel_tools"
-                    || self.0.cell().as_str().starts_with("bzlmod_");
+                    || is_bzlmod_cell_name(self.0.cell().as_str());
 
                 let implicit_import_paths = if is_bazel_external_cell {
                     Arc::new(ImplicitImportPaths {
