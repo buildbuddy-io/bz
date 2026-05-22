@@ -35,6 +35,7 @@ use buck2_common::legacy_configs::key::BuckconfigKeyRef;
 use buck2_common::legacy_configs::view::LegacyBuckConfigView;
 use buck2_common::pattern::resolve::ResolveTargetPatterns;
 use buck2_core::cells::external::bazel_canonical_label_key;
+use buck2_core::cells::external::bzlmod_cell_name;
 use buck2_core::configuration::compatibility::IncompatiblePlatformReason;
 use buck2_core::configuration::compatibility::IncompatiblePlatformReasonCause;
 use buck2_core::configuration::compatibility::MaybeCompatible;
@@ -1343,6 +1344,24 @@ fn normalize_bazel_toolchain_key(key: &str) -> String {
     key.trim_start_matches('@').to_owned()
 }
 
+fn buck_label_for_bazel_canonical_key(key: &str) -> buck2_error::Result<String> {
+    let key = normalize_bazel_toolchain_key(key);
+    let Some((repo, package_and_target)) = key.split_once("//") else {
+        return Ok(key);
+    };
+    if repo.is_empty() || repo.starts_with("bzlmod_") {
+        return Ok(key);
+    }
+    if repo.contains('+') {
+        return Ok(format!(
+            "{}//{}",
+            bzlmod_cell_name(repo),
+            package_and_target
+        ));
+    }
+    Ok(key)
+}
+
 fn bazel_toolchain_keys_match(declared: &str, candidate: &str) -> bool {
     declared == candidate
 }
@@ -1954,10 +1973,15 @@ async fn resolve_bazel_toolchain_type_alias(
     let cell_resolver = ctx.get_cell_resolver().await?;
     let root_cell = cell_resolver.root_cell();
     let alias_resolver = ctx.get_cell_alias_resolver(root_cell).await?;
-    let Ok(label) = TargetLabel::parse(toolchain_type, root_cell, &cell_resolver, &alias_resolver)
-    else {
-        return Ok(toolchain_type.to_owned());
-    };
+    let label = TargetLabel::parse(
+        &buck_label_for_bazel_canonical_key(toolchain_type)?,
+        root_cell,
+        &cell_resolver,
+        &alias_resolver,
+    )
+    .with_buck_error_context(|| {
+        format!("resolving Bazel toolchain type `{toolchain_type}` to a target label")
+    })?;
     let resolved = resolve_bazel_alias(ctx, &label).await?;
     Ok(normalize_bazel_toolchain_key(&bazel_canonical_label_key(
         &resolved,
@@ -2858,6 +2882,7 @@ fn _assert_compute_configured_forward_target_node_size() {
 #[cfg(test)]
 mod tests {
     use super::bazel_toolchain_keys_match;
+    use super::buck_label_for_bazel_canonical_key;
 
     #[test]
     fn bazel_toolchain_keys_match_preserves_repository_identity() {
@@ -2869,5 +2894,22 @@ mod tests {
             "repo_a//pkg:toolchain_type",
             "repo_b//pkg:toolchain_type"
         ));
+    }
+
+    #[test]
+    fn buck_label_for_bazel_canonical_key_maps_bzlmod_repos_to_cells() {
+        assert_eq!(
+            buck_label_for_bazel_canonical_key("aspect_bazel_lib+//lib:coreutils_toolchain_type")
+                .unwrap(),
+            "bzlmod_6173706563745f62617a656c5f6c69622b//lib:coreutils_toolchain_type"
+        );
+        assert_eq!(
+            buck_label_for_bazel_canonical_key("@@rules_js++npm+npm__react_18.3.1//:pkg").unwrap(),
+            "bzlmod_72756c65735f6a732b2b6e706d2b6e706d5f5f72656163745f31382e332e31//:pkg"
+        );
+        assert_eq!(
+            buck_label_for_bazel_canonical_key("root//app:target").unwrap(),
+            "root//app:target"
+        );
     }
 }
