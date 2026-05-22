@@ -673,6 +673,83 @@ mod tests {
             vec![("Authorization", "Bearer user:pass")],
         );
     }
+
+    fn repository_recorded_input_test_dir(name: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |duration| duration.as_nanos());
+        let dir = std::env::temp_dir().join(format!(
+            "buck2-repository-recorded-input-{name}-{}-{nanos}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_repository_recorded_file_value_records_symlink_text() {
+        let dir = repository_recorded_input_test_dir("file-symlink");
+        let target = dir.join("target");
+        let other = dir.join("other");
+        let link = dir.join("link");
+        fs::write(&target, "old").unwrap();
+        fs::write(&other, "other").unwrap();
+        std::os::unix::fs::symlink("target", &link).unwrap();
+
+        let initial = repository_recorded_file_value(&link).unwrap();
+        fs::write(&target, "new").unwrap();
+        assert_eq!(initial, repository_recorded_file_value(&link).unwrap());
+
+        fs::remove_file(&link).unwrap();
+        std::os::unix::fs::symlink("other", &link).unwrap();
+        assert_ne!(initial, repository_recorded_file_value(&link).unwrap());
+
+        assert_eq!("SYMLINK:target", initial);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_repository_recorded_dirents_value_records_symlink_text() {
+        let dir = repository_recorded_input_test_dir("dirents-symlink");
+        let target = dir.join("target");
+        let link = dir.join("link");
+        fs::create_dir_all(&target).unwrap();
+        fs::write(target.join("file"), "old").unwrap();
+        std::os::unix::fs::symlink("target", &link).unwrap();
+
+        let initial = repository_recorded_dirents_value(&link).unwrap();
+        fs::write(target.join("file"), "new").unwrap();
+
+        assert_eq!(initial, repository_recorded_dirents_value(&link).unwrap());
+        assert_eq!("SYMLINK:target", initial);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_repository_recorded_dir_tree_value_records_symlink_text() {
+        let dir = repository_recorded_input_test_dir("tree-symlink");
+        let tree = dir.join("tree");
+        fs::create_dir_all(&tree).unwrap();
+        let target = dir.join("target");
+        let other = dir.join("other");
+        let link = tree.join("link");
+        fs::write(&target, "old").unwrap();
+        fs::write(&other, "other").unwrap();
+        std::os::unix::fs::symlink("../target", &link).unwrap();
+
+        let initial = repository_recorded_dir_tree_value(&tree).unwrap();
+        fs::write(&target, "new").unwrap();
+        assert_eq!(initial, repository_recorded_dir_tree_value(&tree).unwrap());
+
+        fs::remove_file(&link).unwrap();
+        std::os::unix::fs::symlink("../other", &link).unwrap();
+        assert_ne!(initial, repository_recorded_dir_tree_value(&tree).unwrap());
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
 }
 
 fn validate_module_extension_return<'v>(
@@ -831,11 +908,15 @@ fn record_repository_env_var(
 }
 
 fn repository_recorded_file_value(path: &Path) -> io::Result<String> {
-    let metadata = match fs::metadata(path) {
+    let metadata = match fs::symlink_metadata(path) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok("ENOENT".to_owned()),
         Err(error) => return Err(error),
     };
+    if metadata.file_type().is_symlink() {
+        let target = fs::read_link(path)?;
+        return Ok(format!("SYMLINK:{}", target.to_string_lossy()));
+    }
     if metadata.is_dir() {
         return Ok("DIR".to_owned());
     }
@@ -859,7 +940,7 @@ fn repository_recorded_file_value(path: &Path) -> io::Result<String> {
 }
 
 fn repository_recorded_dirents_value(path: &Path) -> io::Result<String> {
-    let metadata = match fs::metadata(path) {
+    let metadata = match fs::symlink_metadata(path) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok("ENOENT".to_owned()),
         Err(error) => return Err(error),
@@ -884,7 +965,7 @@ fn repository_recorded_dirents_value(path: &Path) -> io::Result<String> {
 
 fn repository_recorded_dir_tree_value(path: &Path) -> io::Result<String> {
     fn visit(base: &Path, path: &Path, hasher: &mut blake3::Hasher) -> io::Result<()> {
-        let metadata = match fs::metadata(path) {
+        let metadata = match fs::symlink_metadata(path) {
             Ok(metadata) => metadata,
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
                 hasher.update(b"ENOENT");
@@ -895,7 +976,9 @@ fn repository_recorded_dir_tree_value(path: &Path) -> io::Result<String> {
         let relative = path.strip_prefix(base).unwrap_or(path);
         hasher.update(relative.to_string_lossy().as_bytes());
         hasher.update(&[0]);
-        if metadata.is_dir() {
+        if metadata.file_type().is_symlink() {
+            hasher.update(repository_recorded_file_value(path)?.as_bytes());
+        } else if metadata.is_dir() {
             hasher.update(b"DIR");
             let mut entries = fs::read_dir(path)?
                 .map(|entry| entry.map(|entry| entry.path()))
