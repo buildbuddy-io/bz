@@ -1,0 +1,47 @@
+def _bool_flag_impl(ctx):
+    return [DefaultInfo()]
+
+bool_flag = rule(
+    implementation = _bool_flag_impl,
+    build_setting = config.bool(flag = True),
+)
+
+bool_flag(
+    name = "true_flag",
+    build_setting_default = True,
+)
+
+bool_flag(
+    name = "false_flag",
+    build_setting_default = False,
+)
+
+config_setting(
+    name = "true_flag_false",
+    flag_values = {
+        ":true_flag": "False",
+    },
+)
+
+config_setting(
+    name = "false_flag_false",
+    flag_values = {
+        ":false_flag": "False",
+    },
+)
+
+stub(
+    name = "true-default-test",
+    labels = select({
+        ":true_flag_false": ["FALSE_MATCHED"],
+        "DEFAULT": ["TRUE_DEFAULT"],
+    }),
+)
+
+stub(
+    name = "false-default-test",
+    labels = select({
+        ":false_flag_false": ["FALSE_DEFAULT"],
+        "DEFAULT": ["FALSE_DID_NOT_MATCH"],
+    }),
+)
