@@ -2523,6 +2523,7 @@ fn materialize_empty_input_file(
         })?;
     }
     fs_util::write(&dest, b"")
+        .categorize_internal()
         .with_buck_error_context(|| format!("Error writing empty input file `{path}`"))?;
     Ok(())
 }
@@ -2761,8 +2762,14 @@ fn artifact_path_alias_file_contents_are_equivalent(
     let mut source_buffer = [0u8; 64 * 1024];
 
     loop {
-        let target_len = target_file.read(&mut target_buffer).categorize_internal()?;
-        let source_len = source_file.read(&mut source_buffer).categorize_internal()?;
+        let target_len = target_file
+            .read(&mut target_buffer)
+            .map_err(buck2_error::Error::from)
+            .with_buck_error_context(|| format!("Error reading `{}`", target.display()))?;
+        let source_len = source_file
+            .read(&mut source_buffer)
+            .map_err(buck2_error::Error::from)
+            .with_buck_error_context(|| format!("Error reading `{}`", source.display()))?;
         if target_len != source_len {
             return Ok(false);
         }
