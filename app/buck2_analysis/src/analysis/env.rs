@@ -52,6 +52,8 @@ use buck2_core::deferred::key::DeferredHolderKey;
 use buck2_core::execution_types::execution::ExecutionPlatformResolution;
 use buck2_core::fs::buck_out_path::BazelOutputRoot;
 use buck2_core::fs::buck_out_path::BuckOutPathKind;
+use buck2_core::cells::external::bzlmod_cell_aliases_for_cell;
+use buck2_core::cells::external::bzlmod_cell_name;
 use buck2_core::package::PackageLabel;
 use buck2_core::package::package_relative_path::PackageRelativePath;
 use buck2_core::package::source_path::SourcePath;
@@ -90,6 +92,7 @@ use buck2_node::nodes::configured::ConfiguredTargetNodeRef;
 use buck2_node::provider_id_set::ProviderIdSet;
 use buck2_node::rule::BAZEL_OUTPUT_FILE_OUTPUT_ATTR;
 use buck2_node::rule::BazelToolchainRequirement;
+use buck2_node::rule_type::RuleType;
 use buck2_node::rule_type::StarlarkRuleType;
 use dice::CancellationContext;
 use dice::DiceComputations;
@@ -972,6 +975,41 @@ fn bazel_toolchain_requirement_from_value(
         toolchain_type: AnalysisToolchains::key_from_value(value),
         mandatory: bazel_toolchain_mandatory_from_value(value)?,
     })
+}
+
+fn push_bazel_toolchain_key(
+    keys: &mut Vec<String>,
+    seen: &mut StdBuckHashSet<String>,
+    key: &str,
+) {
+    if seen.insert(key.to_owned()) {
+        keys.push(key.to_owned());
+    }
+}
+
+fn push_bazel_toolchain_alias_keys(
+    keys: &mut Vec<String>,
+    seen: &mut StdBuckHashSet<String>,
+    key: &str,
+    context_cell: &str,
+) {
+    let Some((repo, package_and_target)) = key.split_once("//") else {
+        return;
+    };
+    if repo.is_empty() {
+        return;
+    }
+
+    let destination_cell = if repo.contains('+') {
+        bzlmod_cell_name(repo)
+    } else {
+        repo.to_owned()
+    };
+    for (alias, destination) in bzlmod_cell_aliases_for_cell(context_cell) {
+        if destination == destination_cell {
+            push_bazel_toolchain_key(keys, seen, &format!("{alias}//{package_and_target}"));
+        }
+    }
 }
 
 fn aspect_attrs_struct<'v>(
@@ -2035,6 +2073,16 @@ async fn run_analysis_with_env_underlying(
 
                 let mut bazel_toolchain_keys = Vec::new();
                 let mut bazel_toolchain_keys_seen = StdBuckHashSet::default();
+                let target_cell = node.label().pkg().cell_name().as_str().to_owned();
+                let rule_bzl_cell = match node.rule_type() {
+                    RuleType::Starlark(rule_type) => match &rule_type.path {
+                        buck2_node::bzl_or_bxl_path::BzlOrBxlPath::Bzl(path) => {
+                            Some(path.path().cell().as_str().to_owned())
+                        }
+                        buck2_node::bzl_or_bxl_path::BzlOrBxlPath::Bxl(_) => None,
+                    },
+                    _ => None,
+                };
                 for toolchain_type in node
                     .bazel_toolchains()
                     .iter()
@@ -2050,8 +2098,24 @@ async fn run_analysis_with_env_underlying(
                             .map(|toolchain| &toolchain.toolchain_type),
                     )
                 {
-                    if bazel_toolchain_keys_seen.insert(toolchain_type.clone()) {
-                        bazel_toolchain_keys.push(toolchain_type.clone());
+                    push_bazel_toolchain_key(
+                        &mut bazel_toolchain_keys,
+                        &mut bazel_toolchain_keys_seen,
+                        toolchain_type,
+                    );
+                    push_bazel_toolchain_alias_keys(
+                        &mut bazel_toolchain_keys,
+                        &mut bazel_toolchain_keys_seen,
+                        toolchain_type,
+                        &target_cell,
+                    );
+                    if let Some(rule_bzl_cell) = &rule_bzl_cell {
+                        push_bazel_toolchain_alias_keys(
+                            &mut bazel_toolchain_keys,
+                            &mut bazel_toolchain_keys_seen,
+                            toolchain_type,
+                            rule_bzl_cell,
+                        );
                     }
                 }
 
