@@ -34,6 +34,7 @@ use buck2_common::legacy_configs::dice::HasLegacyConfigs;
 use buck2_common::legacy_configs::key::BuckconfigKeyRef;
 use buck2_common::legacy_configs::view::LegacyBuckConfigView;
 use buck2_common::pattern::resolve::ResolveTargetPatterns;
+use buck2_core::cells::external::bazel_canonical_label_key;
 use buck2_core::configuration::compatibility::IncompatiblePlatformReason;
 use buck2_core::configuration::compatibility::IncompatiblePlatformReasonCause;
 use buck2_core::configuration::compatibility::MaybeCompatible;
@@ -1822,7 +1823,9 @@ async fn compute_registered_bazel_toolchain_nodes(
             };
             let toolchain_type = resolve_bazel_alias(ctx, &toolchain_type).await?;
             toolchains.push(BazelRegisteredToolchain {
-                toolchain_type: normalize_bazel_toolchain_key(&toolchain_type.to_string()),
+                toolchain_type: normalize_bazel_toolchain_key(&bazel_canonical_label_key(
+                    &toolchain_type,
+                )),
                 node,
             });
         }
@@ -1956,7 +1959,9 @@ async fn resolve_bazel_toolchain_type_alias(
         return Ok(toolchain_type.to_owned());
     };
     let resolved = resolve_bazel_alias(ctx, &label).await?;
-    Ok(normalize_bazel_toolchain_key(&resolved.to_string()))
+    Ok(normalize_bazel_toolchain_key(&bazel_canonical_label_key(
+        &resolved,
+    )))
 }
 
 pub async fn resolve_bazel_declared_toolchain_deps(

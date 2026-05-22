@@ -27,6 +27,7 @@ use serde::Deserialize;
 use serde::Serialize;
 
 use crate::cells::name::CellName;
+use crate::target::label::label::TargetLabel;
 
 pub const BZLMOD_BAZEL_COMPAT_VERSION: &str = "9.1.0";
 pub const EXTERNAL_CELLS_ROOT: &str = "buck-out/v2/external_cells";
@@ -92,6 +93,20 @@ pub fn bzlmod_canonical_repo_name_for_cell(cell_name: &str) -> Option<String> {
         .expect("bzlmod canonical repo map poisoned")
         .get(cell_name)
         .cloned()
+}
+
+pub fn bazel_canonical_label_key(label: &TargetLabel) -> String {
+    let package = label.pkg();
+    let cell = package.cell_name();
+    let repo = bzlmod_canonical_repo_name_for_cell(cell.as_str())
+        .filter(|repo| !repo.is_empty())
+        .unwrap_or_else(|| cell.to_string());
+    format!(
+        "{}//{}:{}",
+        repo,
+        package.cell_relative_path().as_str(),
+        label.name()
+    )
 }
 
 pub fn register_bzlmod_cell_aliases(

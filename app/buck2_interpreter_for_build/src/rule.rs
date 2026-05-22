@@ -13,6 +13,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use allocative::Allocative;
+use buck2_core::cells::external::bazel_canonical_label_key;
 use buck2_core::plugins::PluginKind;
 use buck2_error::internal_error;
 use buck2_interpreter::late_binding_ty::AnalysisContextReprLate;
@@ -729,22 +730,19 @@ fn bazel_toolchain_key_from_value(
     label_ctx: &dyn AttrCoercionContext,
 ) -> buck2_error::Result<String> {
     if let Some(toolchain) = StarlarkProvidersLabel::from_value(value) {
-        return Ok(normalize_bazel_toolchain_key(
-            &toolchain.label().target().to_string(),
-        ));
+        return Ok(normalize_bazel_toolchain_key(&bazel_canonical_label_key(
+            toolchain.label().target(),
+        )));
     }
     if let Some(toolchain) = StarlarkTargetLabel::from_value(value) {
-        return Ok(normalize_bazel_toolchain_key(
-            &toolchain.label().to_string(),
-        ));
+        return Ok(normalize_bazel_toolchain_key(&bazel_canonical_label_key(
+            toolchain.label(),
+        )));
     }
     if let Some(toolchain) = value.unpack_str() {
-        return Ok(normalize_bazel_toolchain_key(
-            &label_ctx
-                .coerce_providers_label(toolchain)?
-                .target()
-                .to_string(),
-        ));
+        return Ok(normalize_bazel_toolchain_key(&bazel_canonical_label_key(
+            label_ctx.coerce_providers_label(toolchain)?.target(),
+        )));
     }
     if let Some(toolchain_type) = StructRef::from_value(value).and_then(|st| {
         st.iter()

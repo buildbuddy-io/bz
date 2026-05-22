@@ -16,6 +16,7 @@ use std::fmt::Formatter;
 use std::sync::OnceLock;
 
 use allocative::Allocative;
+use buck2_core::cells::external::bazel_canonical_label_key;
 use buck2_core::cells::external::bzlmod_canonical_repo_name_for_cell;
 use buck2_core::cells::external::bzlmod_cell_aliases_for_cell;
 use buck2_core::configuration::data::BazelBuildSettingValue;
@@ -271,13 +272,15 @@ impl<'v> AnalysisToolchains<'v> {
 
     pub fn key_from_value(value: Value<'_>) -> String {
         if let Some(label) = StarlarkProvidersLabel::from_value(value) {
-            return Self::normalize_key(&label.label().target().to_string());
+            return Self::normalize_key(&bazel_canonical_label_key(label.label().target()));
         }
         if let Some(label) = StarlarkConfiguredProvidersLabel::from_value(value) {
-            return Self::normalize_key(&label.label().target().unconfigured().to_string());
+            return Self::normalize_key(&bazel_canonical_label_key(
+                label.label().target().unconfigured(),
+            ));
         }
         if let Some(label) = StarlarkTargetLabel::from_value(value) {
-            return Self::normalize_key(&label.label().to_string());
+            return Self::normalize_key(&bazel_canonical_label_key(label.label()));
         }
         if let Some(key) = value.unpack_str() {
             return Self::normalize_key(key);
