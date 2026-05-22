@@ -14,6 +14,7 @@
 use buck2_core::cells::CellResolver;
 use buck2_core::cells::cell_path::CellPath;
 use buck2_core::cells::external::ExternalCellOrigin;
+use buck2_core::cells::external::external_cell_origin_for_cell;
 use buck2_core::fs::project_rel_path::ProjectRelativePath;
 
 pub mod dep_files;
@@ -52,8 +53,68 @@ pub(crate) fn is_bzlmod_external_cell_path(cells: &CellResolver, cell_path: &Cel
         return true;
     }
 
-    // The fs_hash_crawler snapshots already-resolved CellPaths, so bzlmod
-    // generated repositories may reach this point as declared cells even though
-    // they are still output-base repository state from Bazel's perspective.
-    cell_path.cell().as_str().starts_with("bzlmod_")
+    matches!(
+        external_cell_origin_for_cell(cell_path.cell().as_str()),
+        Some(ExternalCellOrigin::Bzlmod(_) | ExternalCellOrigin::BzlmodGenerated(_))
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use buck2_core::cells::cell_root_path::CellRootPathBuf;
+    use buck2_core::cells::external::BzlmodCellSetup;
+    use buck2_core::cells::external::register_external_cell_origin;
+    use buck2_core::cells::name::CellName;
+    use buck2_core::cells::paths::CellRelativePathBuf;
+
+    use super::*;
+
+    fn cell_path(cell: CellName, path: &str) -> CellPath {
+        CellPath::new(cell, CellRelativePathBuf::unchecked_new(path.to_owned()))
+    }
+
+    fn cell_resolver(cell: CellName) -> CellResolver {
+        CellResolver::testing_with_name_and_path(cell, CellRootPathBuf::testing_new(""))
+    }
+
+    fn test_bzlmod_cell_setup(canonical_repo_name: &str) -> BzlmodCellSetup {
+        BzlmodCellSetup {
+            module_name: Arc::from("test_module"),
+            version: Arc::from("1.0.0"),
+            canonical_repo_name: Arc::from(canonical_repo_name),
+            local_path: None,
+            url: Arc::from("https://example.com/test.tar.gz"),
+            urls: Arc::new(vec![Arc::from("https://example.com/test.tar.gz")]),
+            integrity: Arc::from("sha256-test"),
+            strip_prefix: None,
+            archive_type: None,
+            patches: Arc::new(Vec::new()),
+            overlays: Arc::new(Vec::new()),
+            patch_strip: 0,
+        }
+    }
+
+    #[test]
+    fn bzlmod_prefix_cell_without_external_origin_is_not_ignored() {
+        let cell = CellName::testing_new("bzlmod_regular_watched_cell");
+        let cells = cell_resolver(cell);
+        let path = cell_path(cell, "src/lib.rs");
+
+        assert!(!is_bzlmod_external_cell_path(&cells, &path));
+    }
+
+    #[test]
+    fn registered_bzlmod_external_origin_is_ignored() {
+        let cell = CellName::testing_new("registered_bzlmod_watched_cell");
+        register_external_cell_origin(
+            cell,
+            ExternalCellOrigin::Bzlmod(test_bzlmod_cell_setup("registered+watched")),
+        );
+        let cells = cell_resolver(cell);
+        let path = cell_path(cell, "src/lib.rs");
+
+        assert!(is_bzlmod_external_cell_path(&cells, &path));
+    }
 }
