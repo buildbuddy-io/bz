@@ -10,6 +10,7 @@
 
 use std::ffi::OsStr;
 use std::ffi::OsString;
+use std::io::Read;
 use std::ops::ControlFlow;
 use std::path::Path;
 use std::path::PathBuf;
@@ -2649,14 +2650,53 @@ fn artifact_path_alias_files_are_equivalent(
     {
         return false;
     }
+    if artifact_path_alias_metadata_is_same_file(&target_metadata, &source_metadata) {
+        return true;
+    }
 
-    let Ok(target_content) = fs_util::read(target) else {
-        return false;
-    };
-    let Ok(source_content) = fs_util::read(source) else {
-        return false;
-    };
-    target_content == source_content
+    artifact_path_alias_file_contents_are_equivalent(target, source).unwrap_or(false)
+}
+
+#[cfg(unix)]
+fn artifact_path_alias_metadata_is_same_file(
+    target_metadata: &std::fs::Metadata,
+    source_metadata: &std::fs::Metadata,
+) -> bool {
+    use std::os::unix::fs::MetadataExt;
+
+    target_metadata.dev() == source_metadata.dev() && target_metadata.ino() == source_metadata.ino()
+}
+
+#[cfg(not(unix))]
+fn artifact_path_alias_metadata_is_same_file(
+    _target_metadata: &std::fs::Metadata,
+    _source_metadata: &std::fs::Metadata,
+) -> bool {
+    false
+}
+
+fn artifact_path_alias_file_contents_are_equivalent(
+    target: &AbsNormPathBuf,
+    source: &AbsNormPathBuf,
+) -> buck2_error::Result<bool> {
+    let mut target_file = fs_util::open_file(target).categorize_internal()?;
+    let mut source_file = fs_util::open_file(source).categorize_internal()?;
+    let mut target_buffer = [0u8; 64 * 1024];
+    let mut source_buffer = [0u8; 64 * 1024];
+
+    loop {
+        let target_len = target_file.read(&mut target_buffer).categorize_internal()?;
+        let source_len = source_file.read(&mut source_buffer).categorize_internal()?;
+        if target_len != source_len {
+            return Ok(false);
+        }
+        if target_len == 0 {
+            return Ok(true);
+        }
+        if target_buffer[..target_len] != source_buffer[..source_len] {
+            return Ok(false);
+        }
+    }
 }
 
 fn promote_produced_output_path(
@@ -3259,6 +3299,24 @@ mod tests {
             fs_util::read_link(&dest).categorize_internal()?.as_path(),
             source.as_path()
         );
+        Ok(())
+    }
+
+    #[test]
+    fn test_artifact_path_alias_file_equivalence_uses_content() -> buck2_error::Result<()> {
+        let temp = ProjectRootTemp::new()?;
+        let content = "a".repeat(70 * 1024);
+        temp.write_file("source", &content);
+        temp.write_file("same", &content);
+        temp.write_file("different", &format!("{}b", "a".repeat(70 * 1024 - 1)));
+        let source = temp.path().resolve(ProjectRelativePath::new("source")?);
+        let same = temp.path().resolve(ProjectRelativePath::new("same")?);
+        let different = temp.path().resolve(ProjectRelativePath::new("different")?);
+
+        assert!(artifact_path_alias_files_are_equivalent(&same, &source));
+        assert!(!artifact_path_alias_files_are_equivalent(
+            &different, &source
+        ));
         Ok(())
     }
 
