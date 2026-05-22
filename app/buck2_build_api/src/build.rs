@@ -572,7 +572,7 @@ pub struct BuildConfiguredLabelOptions {
 }
 
 pub async fn build_configured_label(
-    event_consumer: &dyn BuildEventConsumer,
+    event_consumer: &BuildEventSink,
     ctx: &LinearRecomputeDiceComputations<'_>,
     materialization_and_upload: MaterializationAndUploadContext,
     providers_label: ConfiguredProvidersLabel,

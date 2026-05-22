@@ -17,6 +17,7 @@ use buck2_build_api::build;
 use buck2_build_api::build::AsyncBuildTargetResultBuilder;
 use buck2_build_api::build::BuildEvent;
 use buck2_build_api::build::BuildEventConsumer;
+use buck2_build_api::build::BuildEventSink;
 use buck2_build_api::build::BuildTargetResult;
 use buck2_build_api::build::ConfiguredBuildEventVariant;
 use buck2_build_api::build::HasBuildEventSink;
@@ -671,7 +672,7 @@ async fn build_targets(
 }
 
 async fn build_targets_in_universe(
-    event_consumer: &dyn BuildEventConsumer,
+    event_consumer: &BuildEventSink,
     ctx: &LinearRecomputeDiceComputations<'_>,
     spec: ResolvedPattern<ConfiguredProvidersPatternExtra>,
     universe: CqueryUniverse,
@@ -713,7 +714,7 @@ async fn build_targets_in_universe(
 }
 
 async fn build_targets_with_global_target_platform<'a>(
-    event_consumer: &'a dyn BuildEventConsumer,
+    event_consumer: &'a BuildEventSink,
     ctx: &'a LinearRecomputeDiceComputations<'_>,
     spec: ResolvedPattern<ProvidersPatternExtra>,
     global_cfg_options: GlobalCfgOptions,
@@ -780,7 +781,7 @@ fn build_providers_to_providers_to_build(build_providers: &BuildProviders) -> Pr
 }
 
 async fn build_targets_for_spec(
-    event_consumer: &dyn BuildEventConsumer,
+    event_consumer: &BuildEventSink,
     ctx: &LinearRecomputeDiceComputations<'_>,
     spec: PackageSpec<ProvidersPatternExtra>,
     package_with_modifiers: PackageLabelWithModifiers,
@@ -881,7 +882,7 @@ async fn build_targets_for_spec(
 }
 
 async fn build_target(
-    event_consumer: &dyn BuildEventConsumer,
+    event_consumer: &BuildEventSink,
     ctx: &LinearRecomputeDiceComputations<'_>,
     spec: TargetBuildSpec,
     providers_to_build: &ProvidersToBuild,

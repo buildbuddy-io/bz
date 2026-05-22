@@ -30,8 +30,10 @@ use pagable::pagable_typetag;
 
 use crate::build::BuildConfiguredLabelOptions;
 use crate::build::BuildEventConsumer;
+use crate::build::BuildEventSink;
 use crate::build::ConfiguredBuildEvent;
 use crate::build::ConfiguredBuildEventVariant;
+use crate::build::HasBuildEventSink;
 use crate::build::ProvidersToBuild;
 use crate::build::completion::TargetCompletionKey;
 use crate::build::completion::emit_configured_build_event;
@@ -155,7 +157,7 @@ async fn compute_build_driver(
 }
 
 pub async fn build_configured_label(
-    event_consumer: &dyn BuildEventConsumer,
+    event_consumer: &BuildEventSink,
     ctx: &LinearRecomputeDiceComputations<'_>,
     materialization_and_upload: MaterializationAndUploadContext,
     providers_label: ConfiguredProvidersLabel,
@@ -163,6 +165,18 @@ pub async fn build_configured_label(
     opts: BuildConfiguredLabelOptions,
     timeout_observer: Option<&Arc<dyn LivelinessObserver>>,
 ) {
+    if let Err(e) = ctx
+        .get()
+        .per_transaction_data()
+        .set_build_event_sink(event_consumer.clone())
+    {
+        event_consumer.consume_configured(ConfiguredBuildEvent {
+            label: providers_label,
+            variant: ConfiguredBuildEventVariant::Error { err: e },
+        });
+        return;
+    }
+
     let key = BuildDriverKey::new(
         providers_label.dupe(),
         providers_to_build.clone(),
