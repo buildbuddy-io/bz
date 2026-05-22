@@ -24,3 +24,119 @@ alias(
     name = "cc_toolchain",
     actual = "@com_google_protobuf//:cc_toolchain",
 )
+
+config_setting(
+    name = "linux_aarch64",
+    constraint_values = [
+        "@platforms//os:linux",
+        "@platforms//cpu:aarch64",
+    ],
+)
+
+config_setting(
+    name = "linux_ppc64le",
+    constraint_values = [
+        "@platforms//os:linux",
+        "@platforms//cpu:ppc64le",
+    ],
+)
+
+config_setting(
+    name = "linux_s390x",
+    constraint_values = [
+        "@platforms//os:linux",
+        "@platforms//cpu:s390x",
+    ],
+)
+
+config_setting(
+    name = "linux_x86_32",
+    constraint_values = [
+        "@platforms//os:linux",
+        "@platforms//cpu:x86_32",
+    ],
+)
+
+config_setting(
+    name = "linux_x86_64",
+    constraint_values = [
+        "@platforms//os:linux",
+        "@platforms//cpu:x86_64",
+    ],
+)
+
+config_setting(
+    name = "macos_aarch64",
+    constraint_values = [
+        "@platforms//os:macos",
+        "@platforms//cpu:aarch64",
+    ],
+)
+
+config_setting(
+    name = "macos_x86_64",
+    constraint_values = [
+        "@platforms//os:macos",
+        "@platforms//cpu:x86_64",
+    ],
+)
+
+config_setting(
+    name = "windows",
+    constraint_values = ["@platforms//os:windows"],
+)
+
+BUCK2_PROTOC_REPOS = {
+    ":linux_aarch64": "@crates__protoc-bin-vendored-linux-aarch_64-3.2.0//",
+    ":linux_ppc64le": "@crates__protoc-bin-vendored-linux-ppcle_64-3.2.0//",
+    ":linux_s390x": "@crates__protoc-bin-vendored-linux-s390_64-3.2.0//",
+    ":linux_x86_32": "@crates__protoc-bin-vendored-linux-x86_32-3.2.0//",
+    ":linux_x86_64": "@crates__protoc-bin-vendored-linux-x86_64-3.2.0//",
+    ":macos_aarch64": "@crates__protoc-bin-vendored-macos-aarch_64-3.2.0//",
+    ":macos_x86_64": "@crates__protoc-bin-vendored-macos-x86_64-3.2.0//",
+    ":windows": "@crates__protoc-bin-vendored-win32-3.2.0//",
+}
+
+BUCK2_PROTOC_BINARIES = {
+    condition: [repo + (":bin/protoc.exe" if condition == ":windows" else ":bin/protoc")]
+    for condition, repo in BUCK2_PROTOC_REPOS.items()
+}
+
+BUCK2_WELL_KNOWN_PROTO_PATHS = [
+    "include/google/protobuf/any.proto",
+    "include/google/protobuf/api.proto",
+    "include/google/protobuf/compiler/plugin.proto",
+    "include/google/protobuf/cpp_features.proto",
+    "include/google/protobuf/descriptor.proto",
+    "include/google/protobuf/duration.proto",
+    "include/google/protobuf/empty.proto",
+    "include/google/protobuf/field_mask.proto",
+    "include/google/protobuf/go_features.proto",
+    "include/google/protobuf/java_features.proto",
+    "include/google/protobuf/source_context.proto",
+    "include/google/protobuf/struct.proto",
+    "include/google/protobuf/timestamp.proto",
+    "include/google/protobuf/type.proto",
+    "include/google/protobuf/wrappers.proto",
+]
+
+filegroup(
+    name = "buck2_protoc",
+    srcs = select(BUCK2_PROTOC_BINARIES),
+)
+
+filegroup(
+    name = "buck2_protoc_descriptor_proto",
+    srcs = select({
+        condition: [repo + ":include/google/protobuf/descriptor.proto"]
+        for condition, repo in BUCK2_PROTOC_REPOS.items()
+    }),
+)
+
+filegroup(
+    name = "buck2_protoc_well_known_protos",
+    srcs = select({
+        condition: [repo + ":" + path for path in BUCK2_WELL_KNOWN_PROTO_PATHS]
+        for condition, repo in BUCK2_PROTOC_REPOS.items()
+    }),
+)
