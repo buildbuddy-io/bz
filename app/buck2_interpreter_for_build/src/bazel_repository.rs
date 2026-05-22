@@ -530,7 +530,7 @@ mod tests {
             "bazel_tools"
         ));
         assert!(repository_rule_should_scan_loaded_module_cell(
-            "bzlmod_rules_go_"
+            &bzlmod_cell_name("rules_go+")
         ));
     }
 
@@ -554,7 +554,7 @@ mod tests {
                 "/repo/buck-out/v2/external_cells/bzlmod/gazelle+/internal/list_repository_tools_srcs.go",
             )),
             Some(RepositoryPathLabelDep::cell_path(
-                "bzlmod_gazelle_".to_owned(),
+                bzlmod_cell_name("gazelle+"),
                 "internal/list_repository_tools_srcs.go".to_owned(),
             ))
         );
@@ -563,7 +563,7 @@ mod tests {
                 "/repo/buck-out/v2/external_cells/bzlmod_generated/rules_go++go_sdk+main___download_0/bin/go",
             )),
             Some(RepositoryPathLabelDep::cell_path(
-                "bzlmod_rules_go__go_sdk_main___download_0".to_owned(),
+                bzlmod_cell_name("rules_go++go_sdk+main___download_0"),
                 "bin/go".to_owned(),
             ))
         );
@@ -578,7 +578,7 @@ mod tests {
                 "/repo/buck-out/v2/external_cells/bzlmod/gazelle+",
             )),
             Some(RepositoryPathLabelDep::tree(
-                "bzlmod_gazelle_".to_owned(),
+                bzlmod_cell_name("gazelle+"),
                 None,
             ))
         );
@@ -587,7 +587,7 @@ mod tests {
                 "/repo/buck-out/v2/external_cells/bzlmod/gazelle+/internal",
             )),
             Some(RepositoryPathLabelDep::tree(
-                "bzlmod_gazelle_".to_owned(),
+                bzlmod_cell_name("gazelle+"),
                 Some("internal".to_owned()),
             ))
         );

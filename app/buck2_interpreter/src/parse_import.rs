@@ -270,6 +270,7 @@ pub fn parse_bzl_path_with_config(
 #[cfg(test)]
 mod tests {
     use buck2_core::cells::alias::NonEmptyCellAlias;
+    use buck2_core::cells::external::bzlmod_cell_name;
     use buck2_core::cells::name::CellName;
     use buck2_fs::paths::file_name::FileName;
     use buck2_hash::StdBuckHashMap;
@@ -339,7 +340,7 @@ mod tests {
     #[test]
     fn bazel_canonical_repo_package() -> buck2_error::Result<()> {
         assert_eq!(
-            path("bzlmod_rules_go_0_57_0", "go", "def.bzl"),
+            path(&bzlmod_cell_name("rules_go+0.57.0"), "go", "def.bzl"),
             parse_import(
                 &resolver(),
                 RelativeImports::Allow {

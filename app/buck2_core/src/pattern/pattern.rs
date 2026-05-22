@@ -1339,6 +1339,7 @@ mod tests {
     use crate::cells::cell_path::CellPath;
     use crate::cells::cell_path_with_allowed_relative_dir::CellPathWithAllowedRelativeDir;
     use crate::cells::cell_root_path::CellRootPathBuf;
+    use crate::cells::external::bzlmod_cell_name;
     use crate::cells::name::CellName;
     use crate::cells::paths::CellRelativePath;
     use crate::cells::paths::CellRelativePathBuf;
@@ -1486,7 +1487,7 @@ mod tests {
                     CellRootPathBuf::testing_new("bazel_tools"),
                 ),
                 (
-                    CellName::testing_new("bzlmod_rules_go_0_57_0"),
+                    CellName::testing_new(&bzlmod_cell_name("rules_go+0.57.0")),
                     CellRootPathBuf::testing_new(
                         "buck-out/v2/external_cells/bzlmod/rules_go+0.57.0",
                     ),
@@ -2125,7 +2126,7 @@ mod tests {
             .unwrap()
         );
         assert_eq!(
-            mk_providers("bzlmod_rules_go_0_57_0", "go", "sdk", None),
+            mk_providers(&bzlmod_cell_name("rules_go+0.57.0"), "go", "sdk", None),
             ParsedPattern::<ProvidersPatternExtra>::parse_precise(
                 "@@rules_go+0.57.0//go:sdk",
                 CellName::testing_new("root"),

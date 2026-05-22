@@ -9286,14 +9286,14 @@ mod tests {
             resolver.get(CellName::testing_new("root"))?.path().as_str()
         );
         assert_eq!(
-            "bzlmod_rules_go_0_57_0",
+            &bzlmod_cell_name("rules_go+0.57.0"),
             resolver
                 .root_cell_cell_alias_resolver()
                 .resolve("rules_go")?
                 .as_str()
         );
         assert_eq!(
-            "bzlmod_rules_go_0_57_0",
+            &bzlmod_cell_name("rules_go+0.57.0"),
             resolver
                 .root_cell_cell_alias_resolver()
                 .resolve("io_bazel_rules_go")?
@@ -10101,11 +10101,13 @@ mod tests {
     #[test]
     fn test_bzlmod_extension_generated_repos_inherit_extension_host_repo_mapping() {
         let mut cell_aliases_by_cell = super::BzlmodCellAliasesByCell::default();
+        let gazelle_cell = bzlmod_cell_name("gazelle+");
+        let package_metadata_cell = bzlmod_cell_name("package_metadata+");
         super::add_bzlmod_cell_alias(
             &mut cell_aliases_by_cell,
-            "bzlmod_gazelle_",
+            &gazelle_cell,
             "package_metadata",
-            "bzlmod_package_metadata_",
+            &package_metadata_cell,
         );
 
         let mut generated = Vec::new();
@@ -10116,7 +10118,7 @@ mod tests {
             &mut cell_aliases_by_cell,
             "root",
             "com_github_example_dep",
-            "bzlmod_gazelle_",
+            &gazelle_cell,
             "gazelle++go_deps+com_github_example_dep",
             "{}".to_owned(),
         );
@@ -10159,7 +10161,7 @@ mod tests {
                 &generated_cell_name,
                 "package_metadata"
             ),
-            Some("bzlmod_package_metadata_")
+            Some(package_metadata_cell.as_str())
         );
         assert_eq!(
             super::bzlmod_cell_alias_target(
@@ -10301,18 +10303,19 @@ mod tests {
             registered_toolchains: Vec::new(),
         };
 
+        let rules_go_cell = bzlmod_cell_name("rules_go+");
         let mut cell_aliases_by_cell = super::BzlmodCellAliasesByCell::default();
         super::add_bzlmod_cell_alias(
             &mut cell_aliases_by_cell,
             "root",
             "io_bazel_rules_go",
-            "bzlmod_rules_go_",
+            &rules_go_cell,
         );
 
         let mut extension_unique_names = std::collections::BTreeMap::new();
         extension_unique_names.insert(
             super::BzlmodExtensionId {
-                bzl_cell_name: "bzlmod_rules_go_".to_owned(),
+                bzl_cell_name: rules_go_cell.clone(),
                 bzl_path: "go/extensions.bzl".to_owned(),
                 extension_name: "go_sdk".to_owned(),
             },
@@ -10320,7 +10323,7 @@ mod tests {
         );
 
         let mut canonical_repo_names_by_cell = std::collections::BTreeMap::new();
-        canonical_repo_names_by_cell.insert("bzlmod_rules_go_".to_owned(), "rules_go+".to_owned());
+        canonical_repo_names_by_cell.insert(rules_go_cell.clone(), "rules_go+".to_owned());
 
         let mut generated = Vec::new();
         let mut generated_repo_declaring_cells = Vec::new();
@@ -10330,7 +10333,7 @@ mod tests {
         insert_test_extension_usages_json(
             &mut extension_usages_json_by_id,
             super::BzlmodExtensionId {
-                bzl_cell_name: "bzlmod_rules_go_".to_owned(),
+                bzl_cell_name: rules_go_cell,
                 bzl_path: "go/extensions.bzl".to_owned(),
                 extension_name: "go_sdk".to_owned(),
             },
@@ -10512,7 +10515,8 @@ mod tests {
     #[test]
     fn test_bzlmod_lockfile_extension_key() -> buck2_error::Result<()> {
         let mut canonical_repo_names_by_cell = std::collections::BTreeMap::new();
-        canonical_repo_names_by_cell.insert("bzlmod_rules_go_".to_owned(), "rules_go+".to_owned());
+        let rules_go_cell = bzlmod_cell_name("rules_go+");
+        canonical_repo_names_by_cell.insert(rules_go_cell.clone(), "rules_go+".to_owned());
 
         assert_eq!(
             super::bzlmod_lockfile_extension_key(
@@ -10528,7 +10532,7 @@ mod tests {
         assert_eq!(
             super::bzlmod_lockfile_extension_key(
                 &super::BzlmodExtensionId {
-                    bzl_cell_name: "bzlmod_rules_go_".to_owned(),
+                    bzl_cell_name: rules_go_cell,
                     bzl_path: "go/extensions.bzl".to_owned(),
                     extension_name: "go_sdk".to_owned(),
                 },
@@ -10543,28 +10547,30 @@ mod tests {
     fn test_bzlmod_registered_toolchains_resolve_declaring_repo_mapping() -> buck2_error::Result<()>
     {
         let mut cell_aliases_by_cell = super::BzlmodCellAliasesByCell::default();
+        let rules_go_cell = bzlmod_cell_name("rules_go+0.57.0");
+        let go_toolchains_cell = bzlmod_cell_name("rules_go+0.57.0+go_sdk+go_toolchains");
         super::add_bzlmod_cell_alias(
             &mut cell_aliases_by_cell,
-            "bzlmod_rules_go_0_57_0",
+            &rules_go_cell,
             "go_toolchains",
-            "bzlmod_rules_go_0_57_0_go_sdk_go_toolchains",
+            &go_toolchains_cell,
         );
 
         assert_eq!(
             super::qualify_bzlmod_registered_toolchain(
                 "@go_toolchains//:all",
-                "bzlmod_rules_go_0_57_0",
+                &rules_go_cell,
                 &cell_aliases_by_cell,
             )?,
-            "bzlmod_rules_go_0_57_0_go_sdk_go_toolchains//:all"
+            format!("{go_toolchains_cell}//:all")
         );
         assert_eq!(
             super::qualify_bzlmod_registered_toolchain(
                 "//:all",
-                "bzlmod_rules_go_0_57_0",
+                &rules_go_cell,
                 &cell_aliases_by_cell,
             )?,
-            "bzlmod_rules_go_0_57_0//:all"
+            format!("{rules_go_cell}//:all")
         );
 
         Ok(())
