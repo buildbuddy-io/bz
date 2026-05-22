@@ -154,6 +154,7 @@ pub(crate) struct BuildEventProtocolSubscriber {
     sender: Option<mpsc::UnboundedSender<publish_build_event::PublishBuildToolEventStreamRequest>>,
     upload: Option<JoinHandle<buck2_error::Result<UploadSummary>>>,
     sequence_number: i64,
+    progress_count: i32,
     config: BuildEventProtocolConfig,
     exit_code: Option<(String, u32)>,
     error_seen: bool,
@@ -169,6 +170,7 @@ impl BuildEventProtocolSubscriber {
             sender: Some(sender),
             upload: Some(upload),
             sequence_number: 0,
+            progress_count: 0,
             config,
             exit_code: None,
             error_seen: false,
@@ -248,6 +250,7 @@ impl BuildEventProtocolSubscriber {
 
     fn started_event(&self) -> build_event_stream::BuildEvent {
         let mut children = vec![
+            progress_id(0),
             options_parsed_id(),
             workspace_status_id(),
             build_finished_id(),
@@ -412,20 +415,45 @@ impl BuildEventProtocolSubscriber {
         }
     }
 
+    fn next_progress_event(
+        &mut self,
+        stdout: String,
+        stderr: String,
+    ) -> build_event_stream::BuildEvent {
+        let current_progress = self.progress_count;
+        self.progress_count += 1;
+        build_event_stream::BuildEvent {
+            id: Some(progress_id(current_progress)),
+            children: vec![progress_id(self.progress_count)],
+            last_message: false,
+            payload: Some(build_event_stream::build_event::Payload::Progress(
+                build_event_stream::Progress { stdout, stderr },
+            )),
+        }
+    }
+
+    fn final_progress_event(&self) -> build_event_stream::BuildEvent {
+        build_event_stream::BuildEvent {
+            id: Some(progress_id(self.progress_count)),
+            children: Vec::new(),
+            last_message: false,
+            payload: Some(build_event_stream::build_event::Payload::Progress(
+                build_event_stream::Progress {
+                    stdout: String::new(),
+                    stderr: String::new(),
+                },
+            )),
+        }
+    }
+
     fn send_progress_text(&mut self, stdout: Option<String>, stderr: Option<String>) {
         let stdout = stdout.unwrap_or_default();
         let stderr = stderr.unwrap_or_default();
         if stdout.is_empty() && stderr.is_empty() {
             return;
         }
-        self.send_bazel_event(build_event_stream::BuildEvent {
-            id: Some(progress_id(self.sequence_number as i32 + 1)),
-            children: Vec::new(),
-            last_message: false,
-            payload: Some(build_event_stream::build_event::Payload::Progress(
-                build_event_stream::Progress { stdout, stderr },
-            )),
-        });
+        let event = self.next_progress_event(stdout, stderr);
+        self.send_bazel_event(event);
     }
 
     fn send_progress_bytes(&mut self, stdout: Option<&[u8]>, stderr: Option<&[u8]>) {
@@ -447,6 +475,7 @@ impl BuildEventProtocolSubscriber {
         }
         self.finished_sent = true;
         self.send_workspace_status();
+        self.send_bazel_event(self.final_progress_event());
 
         let (name, code) = self.exit_code.clone().unwrap_or_else(|| {
             if self.error_seen {
@@ -1309,6 +1338,43 @@ mod tests {
 
     use super::*;
 
+    fn test_config() -> BuildEventProtocolConfig {
+        BuildEventProtocolConfig {
+            backend: "grpc://localhost:1985".to_owned(),
+            headers: Vec::new(),
+            project_id: String::new(),
+            keywords: Vec::new(),
+            timeout: None,
+            results_url: None,
+            invocation_id: "invocation".to_owned(),
+            build_id: "build".to_owned(),
+            command_name: "build".to_owned(),
+            argv: vec![
+                "buck2".to_owned(),
+                "build".to_owned(),
+                "//:target".to_owned(),
+            ],
+            target_patterns: vec!["//:target".to_owned()],
+            start_time: UNIX_EPOCH,
+            working_directory: "/workspace".to_owned(),
+            workspace_directory: "/workspace".to_owned(),
+        }
+    }
+
+    fn test_subscriber() -> BuildEventProtocolSubscriber {
+        BuildEventProtocolSubscriber {
+            sender: None,
+            upload: None,
+            sequence_number: 0,
+            progress_count: 0,
+            config: test_config(),
+            exit_code: None,
+            error_seen: false,
+            workspace_status_sent: false,
+            finished_sent: false,
+        }
+    }
+
     #[test]
     fn redacts_bes_header_values_from_argv() {
         let argv = vec![
@@ -1331,6 +1397,30 @@ mod tests {
                 "//:target"
             ]
         );
+    }
+
+    #[test]
+    fn started_event_announces_initial_progress() {
+        let event = test_subscriber().started_event();
+
+        assert!(event.children.contains(&progress_id(0)));
+    }
+
+    #[test]
+    fn progress_events_form_a_chain() {
+        let mut subscriber = test_subscriber();
+
+        let first = subscriber.next_progress_event("stdout".to_owned(), String::new());
+        assert_eq!(Some(progress_id(0)), first.id);
+        assert_eq!(vec![progress_id(1)], first.children);
+
+        let second = subscriber.next_progress_event(String::new(), "stderr".to_owned());
+        assert_eq!(Some(progress_id(1)), second.id);
+        assert_eq!(vec![progress_id(2)], second.children);
+
+        let final_progress = subscriber.final_progress_event();
+        assert_eq!(Some(progress_id(2)), final_progress.id);
+        assert!(final_progress.children.is_empty());
     }
 
     #[test]
