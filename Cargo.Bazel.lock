@@ -816,6 +816,7 @@ dependencies = [
  "buck2_build_api",
  "buck2_build_signals",
  "buck2_common",
+ "buck2_configured",
  "buck2_core",
  "buck2_data",
  "buck2_error",

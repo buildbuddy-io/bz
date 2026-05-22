@@ -1804,6 +1804,51 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
+    fn copy_dir_contents_rewrites_in_tree_absolute_symlink() -> buck2_error::Result<()> {
+        let project_root = ProjectRootTemp::new()?;
+        let from = project_root.path().resolve(ProjectRelativePath::new("from")?);
+        let to = project_root.path().resolve(ProjectRelativePath::new("to")?);
+        let target_rel = ForwardRelativePath::new(".tmp_git_root/shed/pkg/Cargo.toml")?;
+        let target = from.join(target_rel);
+        fs_util::create_dir_all(target.parent().expect("target has parent"))?;
+        fs_util::write(&target, "[package]\n").categorize_internal()?;
+        let link = from.join(ForwardRelativePath::new("Cargo.toml")?);
+        fs_util::symlink(&target, &link).categorize_internal()?;
+
+        copy_dir_contents(&from, &to)?;
+
+        let copied_link = to.join(ForwardRelativePath::new("Cargo.toml")?);
+        assert!(
+            fs_util::symlink_metadata_if_exists(&copied_link)?
+                .is_some_and(|metadata| metadata.file_type().is_symlink())
+        );
+        assert_eq!(
+            PathBuf::from(".tmp_git_root/shed/pkg/Cargo.toml"),
+            fs_util::read_link(&copied_link).categorize_internal()?
+        );
+        assert_eq!(
+            "[package]\n",
+            fs_util::read_to_string(&copied_link).categorize_internal()?
+        );
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn generated_repo_symlink_check_rejects_broken_link() -> buck2_error::Result<()> {
+        let project_root = ProjectRootTemp::new()?;
+        let repo = project_root.path().resolve(ProjectRelativePath::new("repo")?);
+        fs_util::create_dir_all(&repo)?;
+        let link = repo.join(ForwardRelativePath::new("Cargo.toml")?);
+        let missing = project_root.path().resolve(ProjectRelativePath::new("missing")?);
+        fs_util::symlink(&missing, &link).categorize_internal()?;
+
+        assert!(!bzlmod_generated_repo_symlink_targets_exist(&repo)?);
+        Ok(())
+    }
+
+    #[test]
     fn checksum_from_integrity_allows_empty_integrity() {
         assert!(matches!(
             checksum_from_integrity("").unwrap(),
@@ -2011,6 +2056,15 @@ fn apply_patch(
 }
 
 fn copy_dir_contents(from: &AbsNormPath, to: &AbsNormPath) -> buck2_error::Result<()> {
+    copy_dir_contents_impl(from, to, from, to)
+}
+
+fn copy_dir_contents_impl(
+    root_from: &AbsNormPath,
+    root_to: &AbsNormPath,
+    from: &AbsNormPath,
+    to: &AbsNormPath,
+) -> buck2_error::Result<()> {
     for entry in fs_util::read_dir(from).categorize_internal()? {
         let entry = entry?;
         let from_path = entry.path();
@@ -2018,15 +2072,56 @@ fn copy_dir_contents(from: &AbsNormPath, to: &AbsNormPath) -> buck2_error::Resul
         let file_type = entry.file_type()?;
         if file_type.is_dir() {
             fs_util::create_dir_all(&to_path)?;
-            copy_dir_contents(&from_path, &to_path)?;
+            copy_dir_contents_impl(root_from, root_to, &from_path, &to_path)?;
         } else if file_type.is_file() {
             link_or_copy_file(&from_path, &to_path)?;
         } else if file_type.is_symlink() {
             let target = fs_util::read_link(&from_path).categorize_internal()?;
+            let target = copy_dir_symlink_target(root_from, root_to, &to_path, target);
             fs_util::symlink(target, &to_path).categorize_internal()?;
         }
     }
     Ok(())
+}
+
+fn copy_dir_symlink_target(
+    root_from: &AbsNormPath,
+    root_to: &AbsNormPath,
+    link: &AbsNormPath,
+    target: PathBuf,
+) -> PathBuf {
+    if !target.is_absolute() {
+        return target;
+    }
+    let Ok(target_relative) = target.strip_prefix(root_from.as_path()) else {
+        return target;
+    };
+    let copied_target = root_to.as_path().join(target_relative);
+    path_relative_to_link(&copied_target, link.as_path())
+}
+
+fn path_relative_to_link(target: &Path, link: &Path) -> PathBuf {
+    let Some(link_parent) = link.parent() else {
+        return target.to_path_buf();
+    };
+    let target_components = target.components().collect::<Vec<_>>();
+    let parent_components = link_parent.components().collect::<Vec<_>>();
+    let mut shared = 0;
+    while target_components.get(shared) == parent_components.get(shared) {
+        shared += 1;
+    }
+
+    let mut relative = PathBuf::new();
+    for _ in shared..parent_components.len() {
+        relative.push("..");
+    }
+    for component in target_components.iter().skip(shared) {
+        relative.push(component.as_os_str());
+    }
+    if relative.as_os_str().is_empty() {
+        relative.push(".");
+    }
+    relative
 }
 
 fn link_or_copy_file(from: &AbsNormPath, to: &AbsNormPath) -> buck2_error::Result<()> {
@@ -2312,6 +2407,10 @@ async fn bzlmod_generated_repo_contents_cache_candidates(
                 entry_name
             ));
             if !bzlmod_repo_contents_cache_exists(&project_root, &repo)? {
+                continue;
+            }
+            let repo_abs = project_root.resolve(&repo);
+            if !bzlmod_generated_repo_symlink_targets_exist(&repo_abs)? {
                 continue;
             }
             let modified = entry

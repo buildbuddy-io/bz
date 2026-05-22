@@ -275,7 +275,7 @@ impl<'v> AnalysisToolchains<'v> {
             .map(String::as_str)
     }
 
-    fn key_from_value(value: Value<'_>) -> String {
+    pub fn key_from_value(value: Value<'_>) -> String {
         if let Some(label) = StarlarkProvidersLabel::from_value(value) {
             return Self::normalize_key(&label.label().target().to_string());
         }
@@ -313,6 +313,12 @@ impl<'v> AnalysisToolchains<'v> {
     fn contains_value(&self, value: Value<'_>) -> bool {
         let key = Self::key_from_value(value);
         self.declared_key_for(&key).is_some()
+    }
+
+    pub fn resolved_value_for(&self, value: Value<'_>) -> Option<Value<'v>> {
+        let key = Self::key_from_value(value);
+        let declared_key = self.declared_key_for(&key)?;
+        self.resolved.get(declared_key).copied()
     }
 }
 

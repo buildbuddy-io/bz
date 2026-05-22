@@ -7,9 +7,9 @@
  * You may select, at your option, one of the above-listed licenses.
  */
 
-use std::fmt;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
+use std::fmt;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -19,8 +19,8 @@ use buck2_common::file_ops::metadata::SimpleDirEntry;
 use buck2_common::find_buildfile::find_buildfile;
 use buck2_common::package_listing::PackageListingStrategy;
 use buck2_common::package_listing::dice::DicePackageListingResolver;
-use buck2_core::cells::external::ExternalCellOrigin;
 use buck2_core::cells::cell_path::CellPathRef;
+use buck2_core::cells::external::ExternalCellOrigin;
 use buck2_core::package::PackageLabel;
 use buck2_core::package::package_relative_path::PackageRelativePath;
 use buck2_core::package::package_relative_path::PackageRelativePathBuf;
@@ -157,12 +157,8 @@ impl Key for BazelPackageDataBatchKey {
     ) -> Self::Value {
         if should_use_fast_package_listing_for_bazel_package_data(ctx, self.package.dupe()).await? {
             return Ok(Arc::new(
-                compute_package_data_from_single_listing(
-                    ctx,
-                    self.package.dupe(),
-                    &self.requests,
-                )
-                .await?,
+                compute_package_data_from_single_listing(ctx, self.package.dupe(), &self.requests)
+                    .await?,
             ));
         }
 

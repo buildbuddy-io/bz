@@ -87,14 +87,8 @@ def _reject_unsupported_attrs(ctx):
         unsupported.append("exec_properties")
     if ctx.attr.heuristic_label_expansion:
         unsupported.append("heuristic_label_expansion")
-    if ctx.attr.local:
-        unsupported.append("local")
-    if ctx.attr.message:
-        unsupported.append("message")
     if ctx.attr.output_licenses:
         unsupported.append("output_licenses")
-    if ctx.attr.output_to_bindir:
-        unsupported.append("output_to_bindir")
 
     if unsupported:
         fail(
@@ -135,6 +129,8 @@ def _bazel_genrule_impl(ctx):
         tools = depset(tools),
         outputs = outs,
         mnemonic = "Genrule",
+        progress_message = ctx.attr.message if ctx.attr.message else None,
+        local_only = ctx.attr.local,
     )
 
     files = depset(outs)
