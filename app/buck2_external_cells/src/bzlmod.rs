@@ -96,8 +96,8 @@ use buck2_execute::materialize::materializer::HasMaterializer;
 use buck2_execute::materialize::materializer::Materializer;
 use buck2_fs::error::IoResultExt;
 use buck2_fs::fs_util;
-use buck2_fs::paths::abs_path::AbsPath;
 use buck2_fs::paths::abs_norm_path::AbsNormPath;
+use buck2_fs::paths::abs_path::AbsPath;
 use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
 use buck2_http::HttpClient;
 use buck2_http::HttpClientBuilder;
@@ -135,6 +135,7 @@ static BZLMOD_MODULE_EXTENSION_REPO_MAPPING_REGISTRATIONS: OnceLock<
 static BZLMOD_DOWNLOAD_HTTP_CLIENT: LazyLock<tokio::sync::OnceCell<HttpClient>> =
     LazyLock::new(tokio::sync::OnceCell::new);
 static BZLMOD_GENERATED_CACHE_ENTRY_COUNTER: AtomicU64 = AtomicU64::new(0);
+static BZLMOD_CACHE_ALIAS_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 const BZLMOD_DOWNLOAD_MAX_PARALLEL_DOWNLOADS: usize = 8;
 const BZLMOD_DOWNLOAD_MAX_REDIRECTS: usize = 40;
@@ -1742,6 +1743,63 @@ mod tests {
     }
 
     #[test]
+    fn bzlmod_repo_contents_cache_alias_is_published_atomically() -> buck2_error::Result<()> {
+        let project_root = ProjectRootTemp::new()?;
+        let cache_repo_a =
+            ProjectRelativePathBuf::testing_new("buck-out/v2/cache/bzlmod_repo_contents/a");
+        let cache_repo_b =
+            ProjectRelativePathBuf::testing_new("buck-out/v2/cache/bzlmod_repo_contents/b");
+        let cache_alias = ProjectRelativePathBuf::testing_new(
+            "buck-out/v2/cache/bzlmod_repo_contents/by_canonical/repo",
+        );
+
+        fs_util::create_dir_all(project_root.path().resolve(&cache_repo_a))?;
+        fs_util::create_dir_all(project_root.path().resolve(&cache_repo_b))?;
+
+        record_bzlmod_repo_contents_cache_alias(project_root.path(), &cache_alias, &cache_repo_a)?;
+        record_bzlmod_repo_contents_cache_alias(project_root.path(), &cache_alias, &cache_repo_b)?;
+
+        assert_eq!(
+            cache_repo_b.as_str(),
+            fs::read_to_string(project_root.path().resolve(&cache_alias)).with_buck_error_context(
+                || {
+                    format!(
+                        "Error reading bzlmod cache alias `{}`",
+                        cache_alias.as_str()
+                    )
+                }
+            )?
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn bzlmod_repo_contents_cache_alias_rejects_missing_repo() -> buck2_error::Result<()> {
+        let project_root = ProjectRootTemp::new()?;
+        let missing_cache_repo =
+            ProjectRelativePathBuf::testing_new("buck-out/v2/cache/bzlmod_repo_contents/missing");
+        let cache_alias = ProjectRelativePathBuf::testing_new(
+            "buck-out/v2/cache/bzlmod_repo_contents/by_canonical/repo",
+        );
+
+        assert!(
+            record_bzlmod_repo_contents_cache_alias(
+                project_root.path(),
+                &cache_alias,
+                &missing_cache_repo,
+            )
+            .is_err()
+        );
+        assert!(
+            fs_util::symlink_metadata_if_exists(project_root.path().resolve(&cache_alias))?
+                .is_none()
+        );
+
+        Ok(())
+    }
+
+    #[test]
     fn repository_rule_build_directory_is_not_mirrored_as_build_bazel() -> buck2_error::Result<()> {
         let project_root = ProjectRootTemp::new()?;
         let dest_rel = ProjectRelativePath::new("repo")?;
@@ -2095,11 +2153,59 @@ fn record_bzlmod_repo_contents_cache_alias(
     cache_alias: &ProjectRelativePath,
     cache_repo: &ProjectRelativePath,
 ) -> buck2_error::Result<()> {
-    let cache_alias = project_fs.resolve(cache_alias);
-    if let Some(parent) = cache_alias.parent() {
-        fs_util::create_dir_all(parent)?;
+    let cache_repo_abs = project_fs.resolve(cache_repo);
+    let cache_repo_metadata = fs_util::metadata(&cache_repo_abs).with_buck_error_context(|| {
+        format!(
+            "Error checking bzlmod cache repo `{}` before publishing alias `{}`",
+            cache_repo.as_str(),
+            cache_alias.as_str()
+        )
+    })?;
+    if !cache_repo_metadata.is_dir() {
+        return Err(buck2_error::buck2_error!(
+            buck2_error::ErrorTag::Tier0,
+            "Cannot publish bzlmod cache alias `{}` to non-directory cache repo `{}`",
+            cache_alias.as_str(),
+            cache_repo.as_str()
+        ));
     }
-    fs_util::write(cache_alias, cache_repo.as_str()).categorize_internal()
+
+    let cache_alias = project_fs.resolve(cache_alias);
+    let cache_alias_parent = cache_alias.parent().ok_or_else(|| {
+        internal_error!(
+            "bzlmod cache alias path has no parent: `{}`",
+            cache_alias.display()
+        )
+    })?;
+    fs_util::create_dir_all(cache_alias_parent)?;
+
+    let alias_file_name = cache_alias
+        .as_path()
+        .file_name()
+        .and_then(|file_name| file_name.to_str())
+        .ok_or_else(|| {
+            internal_error!(
+                "bzlmod cache alias path has no UTF-8 filename: `{}`",
+                cache_alias.display()
+            )
+        })?;
+    let tmp_counter = BZLMOD_CACHE_ALIAS_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let tmp_file_name = format!(
+        ".{}.tmp.{}.{}",
+        alias_file_name,
+        std::process::id(),
+        tmp_counter
+    );
+    let tmp_cache_alias = cache_alias_parent.join(ForwardRelativePath::new(&tmp_file_name)?);
+
+    fs_util::write(&tmp_cache_alias, cache_repo.as_str()).categorize_internal()?;
+    match fs_util::rename(&tmp_cache_alias, &cache_alias) {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            let _ignored = fs_util::remove_file(&tmp_cache_alias);
+            Err(error.categorize_internal())
+        }
+    }
 }
 
 fn prepare_bzlmod_external_cell_root(
