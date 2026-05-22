@@ -1259,6 +1259,49 @@ impl LocalExecutor {
         Ok(LocalActionCacheMetadataLookup::Hit(outputs))
     }
 
+    async fn unprepared_local_action_cache_outputs_are_valid(
+        &self,
+        outputs: &BuckIndexMap<CommandExecutionOutput, ArtifactValue>,
+        expected_fingerprint: &[u8],
+    ) -> buck2_error::Result<bool> {
+        let actual_fingerprint =
+            local_action_cache_outputs_fingerprint(&self.artifact_fs, outputs)?;
+        if actual_fingerprint.as_slice() != expected_fingerprint {
+            return Ok(false);
+        }
+
+        let output_matches = outputs
+            .iter()
+            .map(|(output, value)| {
+                Ok((
+                    output
+                        .as_ref()
+                        .resolve(&self.artifact_fs, Some(&value.content_based_path_hash()))?
+                        .into_path(),
+                    value.dupe(),
+                ))
+            })
+            .collect::<buck2_error::Result<Vec<_>>>()?;
+        Ok(self
+            .materializer
+            .declare_match(output_matches)
+            .await?
+            .is_match())
+    }
+
+    fn remove_unprepared_action_metadata(
+        &self,
+        key: &str,
+        manager: CommandExecutionManager,
+    ) -> ControlFlow<CommandExecutionResult, CommandExecutionManager> {
+        if let Err(e) = self.local_action_cache.remove_action_metadata(key) {
+            return ControlFlow::Break(
+                manager.error("local_action_cache_remove_metadata_failed", e),
+            );
+        }
+        ControlFlow::Continue(manager)
+    }
+
     fn insert_local_action_cache_metadata(
         &self,
         request: &CommandExecutionRequest,
@@ -1635,21 +1678,39 @@ impl PreparedCommandOptionalExecutor for LocalExecutor {
             || entry.action_fingerprint.as_ref()
                 != command.local_action_cache_key.fingerprint.as_slice()
         {
-            if let Err(e) = self
-                .local_action_cache
-                .remove_action_metadata(&command.local_action_cache_key.key)
-            {
-                return ControlFlow::Break(
-                    manager.error("local_action_cache_remove_metadata_failed", e),
-                );
-            }
-            return ControlFlow::Continue(manager);
+            return self
+                .remove_unprepared_action_metadata(&command.local_action_cache_key.key, manager);
         }
 
         let start = TimeSpan::start_now();
         let start_time = SystemTime::now();
         match Self::local_action_cache_outputs_from_entry(command.outputs, &entry) {
             Ok(Some(outputs)) => {
+                let outputs_are_valid = match self
+                    .unprepared_local_action_cache_outputs_are_valid(
+                        &outputs,
+                        &entry.outputs_fingerprint,
+                    )
+                    .await
+                {
+                    Ok(outputs_are_valid) => outputs_are_valid,
+                    Err(e) => {
+                        return ControlFlow::Break(
+                            manager.error("local_action_cache_match_failed", e),
+                        );
+                    }
+                };
+                if !outputs_are_valid {
+                    tracing::debug!(
+                        "unprepared local action cache miss for `{}` because output state did not match",
+                        command.local_action_cache_key.key
+                    );
+                    return self.remove_unprepared_action_metadata(
+                        &command.local_action_cache_key.key,
+                        manager,
+                    );
+                }
+
                 let time_span = start.end_now();
                 let timing = CommandExecutionMetadata {
                     time_span,
@@ -1676,15 +1737,7 @@ impl PreparedCommandOptionalExecutor for LocalExecutor {
                 ))
             }
             Ok(None) => {
-                if let Err(e) = self
-                    .local_action_cache
-                    .remove_action_metadata(&command.local_action_cache_key.key)
-                {
-                    return ControlFlow::Break(
-                        manager.error("local_action_cache_remove_metadata_failed", e),
-                    );
-                }
-                ControlFlow::Continue(manager)
+                self.remove_unprepared_action_metadata(&command.local_action_cache_key.key, manager)
             }
             Err(e) => {
                 ControlFlow::Break(manager.error("local_action_cache_metadata_decode_failed", e))
@@ -3221,12 +3274,19 @@ mod tests {
     use buck2_core::cells::CellResolver;
     use buck2_core::cells::cell_root_path::CellRootPathBuf;
     use buck2_core::cells::name::CellName;
+    use buck2_core::configuration::data::ConfigurationData;
+    use buck2_core::deferred::base_deferred_key::BaseDeferredKey;
+    use buck2_core::fs::buck_out_path::BuckOutPathKind;
     use buck2_core::fs::buck_out_path::BuckOutPathResolver;
     use buck2_core::fs::project::ProjectRoot;
     use buck2_core::fs::project::ProjectRootTemp;
+    use buck2_core::target::label::label::TargetLabel;
     use buck2_execute::execute::blocking::testing::DummyBlockingExecutor;
+    use buck2_execute::execute::request::OutputType;
     use buck2_execute::materialize::nodisk::NoDiskMaterializer;
+    use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
     use buck2_hash::StdBuckHashMap;
+    use buck2_hash::buck_indexmap;
     use host_sharing::HostSharingStrategy;
 
     use super::*;
@@ -3288,6 +3348,42 @@ mod tests {
         );
 
         Ok((executor, temp.path().root().to_buf(), temp))
+    }
+
+    fn test_output(path: &str) -> CommandExecutionOutput {
+        let target = TargetLabel::testing_parse("cell//pkg:target")
+            .configure(ConfigurationData::testing_new());
+        CommandExecutionOutput::BuildArtifact {
+            path: BuildArtifactPath::new(
+                BaseDeferredKey::TargetLabel(target),
+                ForwardRelativePathBuf::unchecked_new(path.to_owned()),
+                BuckOutPathKind::Configuration,
+            ),
+            output_type: OutputType::File,
+            produced_path: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_unprepared_action_cache_outputs_require_materializer_match()
+    -> buck2_error::Result<()> {
+        let (executor, _, _tmpdir) = test_executor()?;
+        let outputs = buck_indexmap! {
+            test_output("out") => ArtifactValue::file(DigestConfig::testing_default().empty_file()),
+        };
+        let fingerprint = local_action_cache_outputs_fingerprint(&executor.artifact_fs, &outputs)?;
+
+        assert!(
+            !executor
+                .unprepared_local_action_cache_outputs_are_valid(&outputs, b"stale")
+                .await?
+        );
+        assert!(
+            !executor
+                .unprepared_local_action_cache_outputs_are_valid(&outputs, fingerprint.as_slice())
+                .await?
+        );
+        Ok(())
     }
 
     #[tokio::test]
