@@ -2420,8 +2420,11 @@ impl Key for BzlmodRegistryKey {
         }))
     }
 
-    fn equality(_x: &Self::Value, _y: &Self::Value) -> bool {
-        false
+    fn equality(x: &Self::Value, y: &Self::Value) -> bool {
+        match (x, y) {
+            (Ok(x), Ok(y)) => x == y,
+            _ => false,
+        }
     }
 
     fn validity(x: &Self::Value) -> bool {
@@ -3456,8 +3459,11 @@ impl Key for BzlmodRepoDefinitionKey {
         }))
     }
 
-    fn equality(_x: &Self::Value, _y: &Self::Value) -> bool {
-        false
+    fn equality(x: &Self::Value, y: &Self::Value) -> bool {
+        match (x, y) {
+            (Ok(x), Ok(y)) => x == y,
+            _ => false,
+        }
     }
 
     fn validity(x: &Self::Value) -> bool {
@@ -3503,8 +3509,11 @@ impl Key for BzlmodRepositoryDirectoryKey {
         }))
     }
 
-    fn equality(_x: &Self::Value, _y: &Self::Value) -> bool {
-        false
+    fn equality(x: &Self::Value, y: &Self::Value) -> bool {
+        match (x, y) {
+            (Ok(x), Ok(y)) => x == y,
+            _ => false,
+        }
     }
 
     fn validity(x: &Self::Value) -> bool {
