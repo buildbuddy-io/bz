@@ -24,6 +24,7 @@ use std::process::Stdio;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::OnceLock;
+use std::sync::atomic::AtomicU64;
 use std::thread;
 use std::time::Duration;
 use std::time::Instant;
@@ -738,6 +739,63 @@ mod tests {
             module_ctx_download_request_headers_for_url(url, &[], &auth_headers),
             vec![("Authorization", "Bearer user:pass")],
         );
+    }
+
+    fn module_ctx_download_test_dir(name: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |duration| duration.as_nanos());
+        std::env::temp_dir().join(format!(
+            "buck2-module-ctx-download-{name}-{}-{nanos}",
+            std::process::id()
+        ))
+    }
+
+    fn module_ctx_download_tmp_entries(dir: &Path, destination_name: &str) -> Vec<String> {
+        let mut entries = fs::read_dir(dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .filter(|entry| entry.starts_with(&format!(".{destination_name}.tmp.")))
+            .collect::<Vec<_>>();
+        entries.sort();
+        entries
+    }
+
+    #[test]
+    fn test_module_ctx_copy_download_file_publishes_without_tmp_leftovers() {
+        let dir = module_ctx_download_test_dir("success");
+        fs::create_dir_all(&dir).unwrap();
+        let source = dir.join("source");
+        let destination = dir.join("dest");
+        fs::write(&source, b"new").unwrap();
+        fs::write(&destination, b"old").unwrap();
+
+        module_ctx_copy_download_file(&source, &destination, false).unwrap();
+
+        assert_eq!(b"new", fs::read(&destination).unwrap().as_slice());
+        assert_eq!(
+            Vec::<String>::new(),
+            module_ctx_download_tmp_entries(&dir, "dest")
+        );
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn test_module_ctx_copy_download_file_failure_preserves_destination() {
+        let dir = module_ctx_download_test_dir("failure");
+        fs::create_dir_all(&dir).unwrap();
+        let source = dir.join("missing");
+        let destination = dir.join("dest");
+        fs::write(&destination, b"old").unwrap();
+
+        module_ctx_copy_download_file(&source, &destination, false).unwrap_err();
+
+        assert_eq!(b"old", fs::read(&destination).unwrap().as_slice());
+        assert_eq!(
+            Vec::<String>::new(),
+            module_ctx_download_tmp_entries(&dir, "dest")
+        );
+        fs::remove_dir_all(&dir).unwrap();
     }
 }
 
@@ -5528,6 +5586,7 @@ const MODULE_CTX_HTTP_READ_TIMEOUT: Duration = Duration::from_secs(20);
 const MODULE_CTX_HTTP_WRITE_TIMEOUT: Duration = Duration::from_secs(20);
 
 static MODULE_CTX_HTTP_DOWNLOAD_SEMAPHORE: OnceLock<Arc<tokio::sync::Semaphore>> = OnceLock::new();
+static MODULE_CTX_DOWNLOAD_TMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 fn module_ctx_http_download_semaphore() -> &'static tokio::sync::Semaphore {
     MODULE_CTX_HTTP_DOWNLOAD_SEMAPHORE
@@ -5586,6 +5645,42 @@ fn module_ctx_remove_partial_download(path: &Path) {
     let _unused = fs::remove_file(path);
 }
 
+fn module_ctx_download_tmp_path(destination: &Path) -> PathBuf {
+    let counter =
+        MODULE_CTX_DOWNLOAD_TMP_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let mut file_name = std::ffi::OsString::from(".");
+    file_name.push(
+        destination
+            .file_name()
+            .unwrap_or_else(|| std::ffi::OsStr::new("download")),
+    );
+    file_name.push(format!(".tmp.{}.{}", std::process::id(), counter));
+    destination.with_file_name(file_name)
+}
+
+fn module_ctx_prepare_download_tmp(destination: &Path) -> buck2_error::Result<PathBuf> {
+    if let Some(parent) = destination.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| module_ctx_download_write_error(parent, error))?;
+    }
+    let tmp = module_ctx_download_tmp_path(destination);
+    module_ctx_remove_partial_download(&tmp);
+    Ok(tmp)
+}
+
+fn module_ctx_publish_download_tmp(
+    tmp: &Path,
+    destination: &Path,
+    executable: bool,
+) -> buck2_error::Result<()> {
+    module_ctx_set_executable(tmp, executable)?;
+    if let Err(error) = fs::rename(tmp, destination) {
+        module_ctx_remove_partial_download(tmp);
+        return Err(module_ctx_download_write_error(destination, error));
+    }
+    Ok(())
+}
+
 async fn module_ctx_download_url_to_path(
     client: &buck2_http::HttpClient,
     url: &str,
@@ -5609,14 +5704,13 @@ async fn module_ctx_download_url_to_path(
             }
         })?;
 
-    if let Some(parent) = destination.parent() {
-        fs::create_dir_all(parent).map_err(|error| {
-            ModuleCtxDownloadAttemptError::Fatal(module_ctx_download_write_error(parent, error))
-        })?;
-    }
-
-    let mut file = fs::File::create(destination).map_err(|error| {
-        ModuleCtxDownloadAttemptError::Fatal(module_ctx_download_write_error(destination, error))
+    let tmp_destination = module_ctx_prepare_download_tmp(destination)
+        .map_err(ModuleCtxDownloadAttemptError::Fatal)?;
+    let mut file = fs::File::create(&tmp_destination).map_err(|error| {
+        ModuleCtxDownloadAttemptError::Fatal(module_ctx_download_write_error(
+            &tmp_destination,
+            error,
+        ))
     })?;
     let checksum_kind = expected_checksum
         .map(|checksum| checksum.kind)
@@ -5627,26 +5721,29 @@ async fn module_ctx_download_url_to_path(
     let reader = StreamReader::new(body.map_err(std::io::Error::other));
     if gunzip {
         module_ctx_download_copy_response(
-            destination,
+            &tmp_destination,
             GzipDecoder::new(reader),
             &mut file,
             &mut hasher,
         )
         .await?;
     } else {
-        module_ctx_download_copy_response(destination, reader, &mut file, &mut hasher).await?;
+        module_ctx_download_copy_response(&tmp_destination, reader, &mut file, &mut hasher).await?;
     }
 
     file.flush().map_err(|error| {
-        module_ctx_remove_partial_download(destination);
-        ModuleCtxDownloadAttemptError::Fatal(module_ctx_download_write_error(destination, error))
+        module_ctx_remove_partial_download(&tmp_destination);
+        ModuleCtxDownloadAttemptError::Fatal(module_ctx_download_write_error(
+            &tmp_destination,
+            error,
+        ))
     })?;
     drop(file);
 
     let got = hasher.finalize_hex();
     let checksum = if let Some(expected_checksum) = expected_checksum {
         if expected_checksum.hex != got {
-            module_ctx_remove_partial_download(destination);
+            module_ctx_remove_partial_download(&tmp_destination);
             return Err(ModuleCtxDownloadAttemptError::NonRetryable(
                 BazelRepositoryError::ModuleCtxDownloadChecksumMismatch {
                     path: destination.to_string_lossy().into_owned(),
@@ -5664,7 +5761,7 @@ async fn module_ctx_download_url_to_path(
         }
     };
 
-    module_ctx_set_executable(destination, executable)
+    module_ctx_publish_download_tmp(&tmp_destination, destination, executable)
         .map_err(ModuleCtxDownloadAttemptError::Fatal)?;
     module_ctx_download_result_checksums_verified(&checksum)
         .map_err(ModuleCtxDownloadAttemptError::Fatal)
@@ -6029,13 +6126,14 @@ fn module_ctx_copy_download_file(
     destination: &Path,
     executable: bool,
 ) -> buck2_error::Result<()> {
-    if let Some(parent) = destination.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|error| module_ctx_download_write_error(parent, error))?;
+    let tmp = module_ctx_prepare_download_tmp(destination)?;
+    match fs::copy(source, &tmp) {
+        Ok(_) => module_ctx_publish_download_tmp(&tmp, destination, executable),
+        Err(error) => {
+            module_ctx_remove_partial_download(&tmp);
+            Err(module_ctx_download_write_error(destination, error))
+        }
     }
-    fs::copy(source, destination)
-        .map_err(|error| module_ctx_download_write_error(destination, error))?;
-    module_ctx_set_executable(destination, executable)
 }
 
 fn module_ctx_download_cache_get_to_path(
