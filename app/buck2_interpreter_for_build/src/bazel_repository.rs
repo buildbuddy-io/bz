@@ -203,6 +203,10 @@ pub(crate) enum BazelRepositoryError {
     },
     #[error("repository_ctx.download_and_extract could not extract `{archive}`: {error}")]
     RepositoryCtxExtractArchive { archive: String, error: String },
+    #[error(
+        "{function}(block = False) is not supported because downloads are currently executed synchronously"
+    )]
+    RepositoryCtxNonblockingDownloadUnsupported { function: &'static str },
     #[error("repository_ctx.download_and_extract rename_files key must be a string, got `{0}`")]
     RepositoryCtxRenameFilesKeyUnsupportedValue(String),
     #[error(
@@ -528,6 +532,19 @@ mod tests {
         assert!(repository_rule_should_scan_loaded_module_cell(
             "bzlmod_rules_go_"
         ));
+    }
+
+    #[test]
+    fn test_repository_ctx_rejects_nonblocking_downloads() {
+        repository_ctx_reject_nonblocking_download(true, "repository_ctx.download").unwrap();
+
+        let error = repository_ctx_reject_nonblocking_download(false, "repository_ctx.download")
+            .unwrap_err();
+        let error = format!("{error:?}");
+        assert!(
+            error.contains("repository_ctx.download(block = False) is not supported"),
+            "error: {error}"
+        );
     }
 
     #[test]
@@ -4563,6 +4580,20 @@ fn repository_ctx_join_command_output(
         .map_err(|error| error.to_string())
 }
 
+fn repository_ctx_reject_nonblocking_download(
+    block: bool,
+    function: &'static str,
+) -> starlark::Result<()> {
+    if block {
+        Ok(())
+    } else {
+        Err(buck2_error::Error::from(
+            BazelRepositoryError::RepositoryCtxNonblockingDownloadUnsupported { function },
+        )
+        .into())
+    }
+}
+
 #[starlark_module]
 fn repository_context_methods(builder: &mut MethodsBuilder) {
     fn file<'v>(
@@ -5022,6 +5053,7 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
         #[starlark(require = named, default = true)] block: bool,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {
+        repository_ctx_reject_nonblocking_download(block, "repository_ctx.download")?;
         let auth_headers = module_ctx_download_auth_headers_from_entries(&auth)?;
         let download_headers = module_ctx_download_headers_from_entries(&headers)?;
 
@@ -5071,6 +5103,7 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
         #[starlark(require = named, default = true)] block: bool,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {
+        repository_ctx_reject_nonblocking_download(block, "repository_ctx.download_and_extract")?;
         let working_dir = repository_ctx_working_dir(this);
         let archive_name = if r#type.is_empty() {
             ".buck2_download_and_extract.archive".to_owned()
@@ -7062,6 +7095,7 @@ fn module_extension_context_methods(builder: &mut MethodsBuilder) {
         #[starlark(require = named, default = true)] block: bool,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {
+        repository_ctx_reject_nonblocking_download(block, "module_ctx.download")?;
         let auth_headers = module_ctx_download_auth_headers_from_entries(&auth)?;
         let download_headers = module_ctx_download_headers_from_entries(&headers)?;
 
