@@ -14,13 +14,17 @@ use std::io::Read;
 use std::path::Component;
 use std::path::Path;
 use std::path::PathBuf;
+use std::str;
 
 use buck2_error::BuckErrorContext;
 use buck2_error::buck2_error;
 use bzip2::read::BzDecoder;
 use flate2::read::GzDecoder;
+use object::read::archive::ArchiveFile;
 use tar::Archive;
 use xz2::read::XzDecoder;
+
+const ARCHIVE_BUFFER_SIZE: usize = 32 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ArchiveKind {
@@ -34,6 +38,9 @@ pub enum ArchiveKind {
     Bz2,
     TarZst,
     Zst,
+    Ar,
+    TarBr,
+    Br,
 }
 
 pub fn archive_kind_from_type_or_url(archive_type: Option<&str>, url: &str) -> Option<ArchiveKind> {
@@ -50,8 +57,8 @@ pub fn archive_kind_from_type_or_url(archive_type: Option<&str>, url: &str) -> O
         .unwrap_or(url)
         .to_ascii_lowercase();
     for extension in [
-        "tar.gz", "tgz", "tar.xz", "txz", "tar.bz2", "tbz", "tar.zst", "tzst", "zip", "jar", "war",
-        "aar", "nupkg", "whl", "tar", "gz", "xz", "bz2", "zst",
+        "tar.gz", "tgz", "tar.xz", "txz", "tar.bz2", "tbz", "tar.zst", "tzst", "tar.br", "zip",
+        "jar", "war", "aar", "nupkg", "whl", "tar", "gz", "xz", "bz2", "zst", "ar", "deb", "br",
     ] {
         if url.ends_with(&format!(".{extension}")) {
             return archive_kind_from_extension(extension);
@@ -72,6 +79,9 @@ fn archive_kind_from_extension(extension: &str) -> Option<ArchiveKind> {
         "bz2" => Some(ArchiveKind::Bz2),
         "tar.zst" | "tzst" => Some(ArchiveKind::TarZst),
         "zst" => Some(ArchiveKind::Zst),
+        "ar" | "deb" => Some(ArchiveKind::Ar),
+        "tar.br" => Some(ArchiveKind::TarBr),
+        "br" => Some(ArchiveKind::Br),
         _ => None,
     }
 }
@@ -167,7 +177,92 @@ pub fn extract_archive(
                 .buck_error_context("Error initializing zstd archive decoder")?;
             extract_compressed_file(reader, archive, output, "zst", rename_files)
         }
+        ArchiveKind::Ar => extract_ar_archive(archive, output, rename_files),
+        ArchiveKind::TarBr => {
+            let reader = fs::File::open(archive)
+                .with_buck_error_context(|| format!("Error opening `{}`", archive.display()))?;
+            let reader = brotli::Decompressor::new(reader, ARCHIVE_BUFFER_SIZE);
+            extract_tar_archive(reader, output, strip_prefix, strip_components, rename_files)
+        }
+        ArchiveKind::Br => {
+            let reader = fs::File::open(archive)
+                .with_buck_error_context(|| format!("Error opening `{}`", archive.display()))?;
+            let reader = brotli::Decompressor::new(reader, ARCHIVE_BUFFER_SIZE);
+            extract_compressed_file(reader, archive, output, "br", rename_files)
+        }
     }
+}
+
+fn extract_ar_archive(
+    archive: &Path,
+    output: &Path,
+    rename_files: &[(String, String)],
+) -> buck2_error::Result<()> {
+    let data = fs::read(archive)
+        .with_buck_error_context(|| format!("Error reading `{}`", archive.display()))?;
+    let ar = ArchiveFile::parse(data.as_slice()).map_err(|error| {
+        buck2_error!(
+            buck2_error::ErrorTag::Input,
+            "Error reading ar archive `{}`: {}",
+            archive.display(),
+            error
+        )
+    })?;
+    for member in ar.members() {
+        let member = member.map_err(|error| {
+            buck2_error!(
+                buck2_error::ErrorTag::Input,
+                "Error reading ar archive member from `{}`: {}",
+                archive.display(),
+                error
+            )
+        })?;
+        let entry_name = str::from_utf8(member.name()).map_err(|error| {
+            buck2_error!(
+                buck2_error::ErrorTag::Input,
+                "Ar archive `{}` has a non-UTF-8 member name: {}",
+                archive.display(),
+                error
+            )
+        })?;
+        let entry_name = renamed_archive_entry_name(entry_name, rename_files);
+        let components = safe_archive_components(&entry_name)?;
+        if components.is_empty() {
+            continue;
+        }
+        let destination = output.join(components.into_iter().collect::<PathBuf>());
+        if let Some(parent) = destination.parent() {
+            fs::create_dir_all(parent)
+                .with_buck_error_context(|| format!("Error creating `{}`", parent.display()))?;
+        }
+        fs::write(
+            &destination,
+            member.data(data.as_slice()).map_err(|error| {
+                buck2_error!(
+                    buck2_error::ErrorTag::Input,
+                    "Error reading ar archive member `{}` from `{}`: {}",
+                    entry_name,
+                    archive.display(),
+                    error
+                )
+            })?,
+        )
+        .with_buck_error_context(|| format!("Error writing `{}`", destination.display()))?;
+        set_extracted_file_mode(
+            &destination,
+            (member.mode().unwrap_or(0o644) | 0o400) as u32,
+        )?;
+        if let Some(date) = member.date() {
+            let time = filetime::FileTime::from_unix_time(date as i64, 0);
+            filetime::set_file_mtime(&destination, time).with_buck_error_context(|| {
+                format!(
+                    "Error setting modification time on `{}`",
+                    destination.display()
+                )
+            })?;
+        }
+    }
+    Ok(())
 }
 
 fn extract_compressed_file<R: Read>(
@@ -713,6 +808,7 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
 
+    use brotli::CompressorWriter;
     use flate2::Compression;
     use flate2::write::GzEncoder;
     use tar::Builder;
@@ -749,6 +845,18 @@ mod tests {
         assert_eq!(
             archive_kind_from_type_or_url(None, "https://example.com/a.zst"),
             Some(ArchiveKind::Zst)
+        );
+        assert_eq!(
+            archive_kind_from_type_or_url(None, "https://example.com/a.tar.br"),
+            Some(ArchiveKind::TarBr)
+        );
+        assert_eq!(
+            archive_kind_from_type_or_url(None, "https://example.com/a.br"),
+            Some(ArchiveKind::Br)
+        );
+        assert_eq!(
+            archive_kind_from_type_or_url(None, "https://example.com/a.deb"),
+            Some(ArchiveKind::Ar)
         );
         assert_eq!(
             archive_kind_from_type_or_url(None, "https://example.com/a.zip?download=1"),
@@ -813,6 +921,31 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn test_extract_tar_br_strips_components() -> buck2_error::Result<()> {
+        let dir = tempfile::tempdir().unwrap();
+        let archive = dir.path().join("source.tar.br");
+        let file = fs::File::create(&archive).unwrap();
+        let encoder = CompressorWriter::new(file, 4096, 5, 22);
+        let mut tar = Builder::new(encoder);
+        let mut header = tar::Header::new_gnu();
+        header.set_size(7);
+        header.set_cksum();
+        tar.append_data(&mut header, "pkg/file.txt", "content".as_bytes())
+            .unwrap();
+        let encoder = tar.into_inner().unwrap();
+        encoder.into_inner().unwrap();
+
+        let output = dir.path().join("out");
+        extract_archive(&archive, &output, ArchiveKind::TarBr, "", 1, &[])?;
+
+        assert_eq!(
+            fs::read_to_string(output.join("file.txt")).unwrap(),
+            "content"
+        );
+        Ok(())
+    }
+
     #[cfg(unix)]
     #[test]
     fn test_extract_zip_deprefixes_symlink_target() -> buck2_error::Result<()> {
@@ -869,6 +1002,76 @@ mod tests {
             "content"
         );
         Ok(())
+    }
+
+    #[test]
+    fn test_extract_br_writes_single_file() -> buck2_error::Result<()> {
+        let dir = tempfile::tempdir().unwrap();
+        let archive = dir.path().join("source.txt.br");
+        let file = fs::File::create(&archive).unwrap();
+        let mut encoder = CompressorWriter::new(file, 4096, 5, 22);
+        std::io::Write::write_all(&mut encoder, b"content").unwrap();
+        encoder.into_inner().unwrap();
+
+        let output = dir.path().join("out");
+        extract_archive(
+            &archive,
+            &output,
+            ArchiveKind::Br,
+            "ignored",
+            1,
+            &[("source.txt".to_owned(), "renamed.txt".to_owned())],
+        )?;
+
+        assert_eq!(
+            fs::read_to_string(output.join("renamed.txt")).unwrap(),
+            "content"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_extract_ar_writes_members_and_renames() -> buck2_error::Result<()> {
+        let dir = tempfile::tempdir().unwrap();
+        let archive = dir.path().join("source.deb");
+        let mut ar = b"!<arch>\n".to_vec();
+        write_ar_entry(&mut ar, "old.txt", b"content", 0o100600, 42);
+        fs::write(&archive, ar).unwrap();
+
+        let output = dir.path().join("out");
+        extract_archive(
+            &archive,
+            &output,
+            ArchiveKind::Ar,
+            "ignored",
+            1,
+            &[("old.txt".to_owned(), "renamed.txt".to_owned())],
+        )?;
+
+        assert_eq!(
+            fs::read_to_string(output.join("renamed.txt")).unwrap(),
+            "content"
+        );
+        Ok(())
+    }
+
+    fn write_ar_entry(archive: &mut Vec<u8>, name: &str, content: &[u8], mode: u32, modified: u64) {
+        let name = format!("{name}/");
+        let header = format!(
+            "{:<16}{:<12}{:<6}{:<6}{:<8o}{:<10}`\n",
+            name,
+            modified,
+            0,
+            0,
+            mode,
+            content.len()
+        );
+        assert_eq!(header.len(), 60);
+        archive.extend_from_slice(header.as_bytes());
+        archive.extend_from_slice(content);
+        if content.len() % 2 != 0 {
+            archive.push(b'\n');
+        }
     }
 
     #[test]
