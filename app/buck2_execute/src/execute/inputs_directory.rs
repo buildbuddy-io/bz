@@ -43,6 +43,12 @@ pub fn inputs_directory(
                     value.resolve_source_file_proxy(abs_path.as_abs_path(), digest_config)?;
                 insert_artifact_lazy(&mut builder, path.clone(), &value)?;
             }
+            CommandExecutionInput::EmptyFile(path) => {
+                builder.insert(
+                    path.clone().into(),
+                    DirectoryEntry::Leaf(ActionDirectoryMember::File(digest_config.empty_file())),
+                )?;
+            }
             CommandExecutionInput::ActionMetadata(metadata) => {
                 let path = fs
                     .buck_out_path_resolver()

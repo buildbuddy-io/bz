@@ -2450,6 +2450,29 @@ fn materialize_artifact_path_alias(
     }
 }
 
+fn materialize_empty_input_file(
+    artifact_fs: &ArtifactFs,
+    path: &ProjectRelativePath,
+) -> buck2_error::Result<()> {
+    let fs = artifact_fs.fs();
+    let dest = fs.resolve(path);
+    if fs_util::symlink_metadata_if_exists(&dest)?
+        .is_some_and(|metadata| metadata.is_file() && metadata.len() == 0)
+    {
+        return Ok(());
+    }
+
+    CleanOutputPaths::clean(std::iter::once(path), fs)?;
+    if let Some(parent) = dest.parent() {
+        fs_util::create_dir_all(parent).with_buck_error_context(|| {
+            format!("Error creating parent directory for empty input file `{path}`")
+        })?;
+    }
+    fs_util::write(&dest, b"")
+        .with_buck_error_context(|| format!("Error writing empty input file `{path}`"))?;
+    Ok(())
+}
+
 fn materialize_external_cell_root_alias(
     artifact_fs: &ArtifactFs,
     source_root: &ProjectRelativePath,
@@ -2789,6 +2812,10 @@ pub async fn materialize_inputs(
                     ));
                 }
             }
+            CommandExecutionInput::EmptyFile(path) => {
+                materialize_empty_input_file(artifact_fs, path.as_ref())?;
+                paths.push(path.clone());
+            }
             CommandExecutionInput::ActionMetadata(metadata) => {
                 let path = artifact_fs
                     .buck_out_path_resolver()
@@ -2926,6 +2953,17 @@ async fn check_inputs(
                         // We ignore the result here because while we want to tag it, we'd
                         // prefer to just show the normal error to the user, so we don't
                         // want to propagate it.
+                        let _ignored = tag_result!(
+                            "missing_local_inputs",
+                            fs_util::symlink_metadata(&abs_path).categorize_internal().buck_error_context("Missing input"),
+                            quiet: true,
+                            task: false,
+                            daemon_materializer_state_is_corrupted: true
+                        );
+                    }
+                    CommandExecutionInput::EmptyFile(path) => {
+                        let abs_path = artifact_fs.fs().resolve(path);
+
                         let _ignored = tag_result!(
                             "missing_local_inputs",
                             fs_util::symlink_metadata(&abs_path).categorize_internal().buck_error_context("Missing input"),
