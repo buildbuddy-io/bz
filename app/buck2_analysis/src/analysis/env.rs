@@ -2004,6 +2004,17 @@ async fn run_analysis_with_env_underlying(
             execution_platform_resolution: node.execution_platform_resolution().clone(),
         };
 
+        let target_cell = node.label().pkg().cell_name().as_str().to_owned();
+        let rule_bzl_cell = match node.rule_type() {
+            RuleType::Starlark(rule_type) => match &rule_type.path {
+                buck2_node::bzl_or_bxl_path::BzlOrBxlPath::Bzl(path) => {
+                    Some(path.path().cell().as_str().to_owned())
+                }
+                buck2_node::bzl_or_bxl_path::BzlOrBxlPath::Bxl(_) => None,
+            },
+            _ => None,
+        };
+
         let attributes = node_to_attrs_struct(node, &mut &resolution_ctx)?;
         let plugins = plugins_to_starlark_value(node, &mut &resolution_ctx)?;
         let mut resolved_toolchains = SmallMap::new();
@@ -2028,7 +2039,31 @@ async fn run_analysis_with_env_underlying(
                     resolved.toolchain_type,
                 ));
             };
-            resolved_toolchains.insert(resolved.toolchain_type.clone(), toolchain_info.to_value());
+            let toolchain_info = toolchain_info.to_value();
+            let mut resolved_keys = Vec::new();
+            let mut resolved_keys_seen = StdBuckHashSet::default();
+            push_bazel_toolchain_key(
+                &mut resolved_keys,
+                &mut resolved_keys_seen,
+                &resolved.toolchain_type,
+            );
+            push_bazel_toolchain_alias_keys(
+                &mut resolved_keys,
+                &mut resolved_keys_seen,
+                &resolved.toolchain_type,
+                &target_cell,
+            );
+            if let Some(rule_bzl_cell) = &rule_bzl_cell {
+                push_bazel_toolchain_alias_keys(
+                    &mut resolved_keys,
+                    &mut resolved_keys_seen,
+                    &resolved.toolchain_type,
+                    rule_bzl_cell,
+                );
+            }
+            for resolved_key in resolved_keys {
+                resolved_toolchains.insert(resolved_key, toolchain_info);
+            }
             if let Some(template_variable_info) = provider_collection
                 .as_ref()
                 .builtin_provider::<FrozenTemplateVariableInfo>()
@@ -2077,16 +2112,6 @@ async fn run_analysis_with_env_underlying(
 
                 let mut bazel_toolchain_keys = Vec::new();
                 let mut bazel_toolchain_keys_seen = StdBuckHashSet::default();
-                let target_cell = node.label().pkg().cell_name().as_str().to_owned();
-                let rule_bzl_cell = match node.rule_type() {
-                    RuleType::Starlark(rule_type) => match &rule_type.path {
-                        buck2_node::bzl_or_bxl_path::BzlOrBxlPath::Bzl(path) => {
-                            Some(path.path().cell().as_str().to_owned())
-                        }
-                        buck2_node::bzl_or_bxl_path::BzlOrBxlPath::Bxl(_) => None,
-                    },
-                    _ => None,
-                };
                 for toolchain_type in node
                     .bazel_toolchains()
                     .iter()
