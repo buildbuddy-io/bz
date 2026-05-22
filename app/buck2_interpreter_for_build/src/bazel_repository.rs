@@ -604,6 +604,18 @@ mod tests {
     }
 
     #[test]
+    fn test_repository_ctx_patch_strip_rejects_negative() {
+        assert_eq!(repository_ctx_patch_strip(0, "patch.diff").unwrap(), 0);
+        assert_eq!(repository_ctx_patch_strip(2, "patch.diff").unwrap(), 2);
+
+        let error = repository_ctx_patch_strip(-1, "patch.diff")
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("strip must be non-negative"));
+        assert!(error.contains("patch.diff"));
+    }
+
+    #[test]
     fn test_repository_path_display_is_absolute() {
         let path = StarlarkRepositoryPath::new("buck-out/v2/external_cells/repo/file".to_owned());
         assert!(Path::new(&path.to_string()).is_absolute());
@@ -3654,6 +3666,15 @@ fn repository_ctx_clean_working_dir(working_dir: &str) -> buck2_error::Result<()
     })
 }
 
+fn repository_ctx_patch_strip(strip: i32, patch: &str) -> buck2_error::Result<u32> {
+    u32::try_from(strip).map_err(|_| {
+        buck2_error::Error::from(BazelRepositoryError::RepositoryCtxPatch {
+            patch: patch.to_owned(),
+            error: format!("strip must be non-negative, got `{strip}`"),
+        })
+    })
+}
+
 fn repository_ctx_push_file<'v>(
     this: ValueTypedComplex<'v, StarlarkRepositoryContext<'v>>,
     file: BazelRepositoryGeneratedFile,
@@ -4556,12 +4577,8 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
                 error: error.to_string(),
             })
         })?;
-        apply_unified_patch_file(
-            &working_dir_abs,
-            &patch_path_abs,
-            strip.try_into().unwrap_or(0),
-        )
-        .map_err(|error| {
+        let strip = repository_ctx_patch_strip(strip, &patch_path)?;
+        apply_unified_patch_file(&working_dir_abs, &patch_path_abs, strip).map_err(|error| {
             buck2_error::Error::from(BazelRepositoryError::RepositoryCtxPatch {
                 patch: patch_path,
                 error: error.to_string(),
