@@ -12,6 +12,7 @@ import shutil
 
 import pytest
 from buck2.tests.e2e_util.api.buck import Buck
+from buck2.tests.e2e_util.asserts import expect_failure
 from buck2.tests.e2e_util.buck_workspace import buck_test
 
 
@@ -63,5 +64,21 @@ async def test_bazel_aspect_toolchains_are_not_rule_toolchains(buck: Buck) -> No
 
 
 @buck_test()
+async def test_bazel_aspect_toolchains_only_required_when_aspect_applies(
+    buck: Buck,
+) -> None:
+    await buck.build("//:missing_mandatory_aspect_toolchain_not_applicable")
+    await expect_failure(
+        buck.build("//:missing_mandatory_aspect_toolchain_applicable"),
+        stderr_regex="mandatory toolchain type `root//:missing_aspect_toolchain_type` was not resolved",
+    )
+
+
+@buck_test()
 async def test_bazel_aspect_rule_attrs_can_resolve_base_target_deps(buck: Buck) -> None:
     await buck.build("//:aspect_mid_go_proto")
+
+
+@buck_test()
+async def test_bazel_genrule_local_output_to_bindir_attrs(buck: Buck) -> None:
+    await buck.build("//:local_output_to_bindir_genrule")

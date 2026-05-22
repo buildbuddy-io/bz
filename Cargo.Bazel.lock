@@ -816,6 +816,7 @@ dependencies = [
  "buck2_build_api",
  "buck2_build_signals",
  "buck2_common",
+ "buck2_configured",
  "buck2_core",
  "buck2_data",
  "buck2_error",
@@ -1665,6 +1666,7 @@ dependencies = [
  "assert_matches",
  "async-scoped",
  "async-trait",
+ "base64",
  "blake3",
  "buck2_cli_proto",
  "buck2_core",
@@ -2266,7 +2268,6 @@ version = "0.1.0"
 dependencies = [
  "allocative",
  "async-trait",
- "base64",
  "blake3",
  "buck2_build_api",
  "buck2_common",

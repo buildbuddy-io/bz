@@ -93,6 +93,7 @@ pub enum CommandExecutionInput {
         path: ProjectRelativePathBuf,
         value: ArtifactValue,
     },
+    EmptyFile(ProjectRelativePathBuf),
     ActionMetadata(ActionMetadataBlob),
     ScratchPath(BuckOutScratchPath),
     IncrementalRemoteOutput(

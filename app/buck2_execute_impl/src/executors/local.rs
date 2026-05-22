@@ -10,6 +10,7 @@
 
 use std::ffi::OsStr;
 use std::ffi::OsString;
+use std::io::Read;
 use std::ops::ControlFlow;
 use std::path::Path;
 use std::path::PathBuf;
@@ -1259,6 +1260,49 @@ impl LocalExecutor {
         Ok(LocalActionCacheMetadataLookup::Hit(outputs))
     }
 
+    async fn unprepared_local_action_cache_outputs_are_valid(
+        &self,
+        outputs: &BuckIndexMap<CommandExecutionOutput, ArtifactValue>,
+        expected_fingerprint: &[u8],
+    ) -> buck2_error::Result<bool> {
+        let actual_fingerprint =
+            local_action_cache_outputs_fingerprint(&self.artifact_fs, outputs)?;
+        if actual_fingerprint.as_slice() != expected_fingerprint {
+            return Ok(false);
+        }
+
+        let output_matches = outputs
+            .iter()
+            .map(|(output, value)| {
+                Ok((
+                    output
+                        .as_ref()
+                        .resolve(&self.artifact_fs, Some(&value.content_based_path_hash()))?
+                        .into_path(),
+                    value.dupe(),
+                ))
+            })
+            .collect::<buck2_error::Result<Vec<_>>>()?;
+        Ok(self
+            .materializer
+            .declare_match(output_matches)
+            .await?
+            .is_match())
+    }
+
+    fn remove_unprepared_action_metadata(
+        &self,
+        key: &str,
+        manager: CommandExecutionManager,
+    ) -> ControlFlow<CommandExecutionResult, CommandExecutionManager> {
+        if let Err(e) = self.local_action_cache.remove_action_metadata(key) {
+            return ControlFlow::Break(
+                manager.error("local_action_cache_remove_metadata_failed", e),
+            );
+        }
+        ControlFlow::Continue(manager)
+    }
+
     fn insert_local_action_cache_metadata(
         &self,
         request: &CommandExecutionRequest,
@@ -1635,21 +1679,39 @@ impl PreparedCommandOptionalExecutor for LocalExecutor {
             || entry.action_fingerprint.as_ref()
                 != command.local_action_cache_key.fingerprint.as_slice()
         {
-            if let Err(e) = self
-                .local_action_cache
-                .remove_action_metadata(&command.local_action_cache_key.key)
-            {
-                return ControlFlow::Break(
-                    manager.error("local_action_cache_remove_metadata_failed", e),
-                );
-            }
-            return ControlFlow::Continue(manager);
+            return self
+                .remove_unprepared_action_metadata(&command.local_action_cache_key.key, manager);
         }
 
         let start = TimeSpan::start_now();
         let start_time = SystemTime::now();
         match Self::local_action_cache_outputs_from_entry(command.outputs, &entry) {
             Ok(Some(outputs)) => {
+                let outputs_are_valid = match self
+                    .unprepared_local_action_cache_outputs_are_valid(
+                        &outputs,
+                        &entry.outputs_fingerprint,
+                    )
+                    .await
+                {
+                    Ok(outputs_are_valid) => outputs_are_valid,
+                    Err(e) => {
+                        return ControlFlow::Break(
+                            manager.error("local_action_cache_match_failed", e),
+                        );
+                    }
+                };
+                if !outputs_are_valid {
+                    tracing::debug!(
+                        "unprepared local action cache miss for `{}` because output state did not match",
+                        command.local_action_cache_key.key
+                    );
+                    return self.remove_unprepared_action_metadata(
+                        &command.local_action_cache_key.key,
+                        manager,
+                    );
+                }
+
                 let time_span = start.end_now();
                 let timing = CommandExecutionMetadata {
                     time_span,
@@ -1676,15 +1738,7 @@ impl PreparedCommandOptionalExecutor for LocalExecutor {
                 ))
             }
             Ok(None) => {
-                if let Err(e) = self
-                    .local_action_cache
-                    .remove_action_metadata(&command.local_action_cache_key.key)
-                {
-                    return ControlFlow::Break(
-                        manager.error("local_action_cache_remove_metadata_failed", e),
-                    );
-                }
-                ControlFlow::Continue(manager)
+                self.remove_unprepared_action_metadata(&command.local_action_cache_key.key, manager)
             }
             Err(e) => {
                 ControlFlow::Break(manager.error("local_action_cache_metadata_decode_failed", e))
@@ -2450,6 +2504,30 @@ fn materialize_artifact_path_alias(
     }
 }
 
+fn materialize_empty_input_file(
+    artifact_fs: &ArtifactFs,
+    path: &ProjectRelativePath,
+) -> buck2_error::Result<()> {
+    let fs = artifact_fs.fs();
+    let dest = fs.resolve(path);
+    if fs_util::symlink_metadata_if_exists(&dest)?
+        .is_some_and(|metadata| metadata.is_file() && metadata.len() == 0)
+    {
+        return Ok(());
+    }
+
+    CleanOutputPaths::clean(std::iter::once(path), fs)?;
+    if let Some(parent) = dest.parent() {
+        fs_util::create_dir_all(parent).with_buck_error_context(|| {
+            format!("Error creating parent directory for empty input file `{path}`")
+        })?;
+    }
+    fs_util::write(&dest, b"")
+        .categorize_internal()
+        .with_buck_error_context(|| format!("Error writing empty input file `{path}`"))?;
+    Ok(())
+}
+
 fn materialize_external_cell_root_alias(
     artifact_fs: &ArtifactFs,
     source_root: &ProjectRelativePath,
@@ -2649,14 +2727,59 @@ fn artifact_path_alias_files_are_equivalent(
     {
         return false;
     }
+    if artifact_path_alias_metadata_is_same_file(&target_metadata, &source_metadata) {
+        return true;
+    }
 
-    let Ok(target_content) = fs_util::read(target) else {
-        return false;
-    };
-    let Ok(source_content) = fs_util::read(source) else {
-        return false;
-    };
-    target_content == source_content
+    artifact_path_alias_file_contents_are_equivalent(target, source).unwrap_or(false)
+}
+
+#[cfg(unix)]
+fn artifact_path_alias_metadata_is_same_file(
+    target_metadata: &std::fs::Metadata,
+    source_metadata: &std::fs::Metadata,
+) -> bool {
+    use std::os::unix::fs::MetadataExt;
+
+    target_metadata.dev() == source_metadata.dev() && target_metadata.ino() == source_metadata.ino()
+}
+
+#[cfg(not(unix))]
+fn artifact_path_alias_metadata_is_same_file(
+    _target_metadata: &std::fs::Metadata,
+    _source_metadata: &std::fs::Metadata,
+) -> bool {
+    false
+}
+
+fn artifact_path_alias_file_contents_are_equivalent(
+    target: &AbsNormPathBuf,
+    source: &AbsNormPathBuf,
+) -> buck2_error::Result<bool> {
+    let mut target_file = fs_util::open_file(target).categorize_internal()?;
+    let mut source_file = fs_util::open_file(source).categorize_internal()?;
+    let mut target_buffer = [0u8; 64 * 1024];
+    let mut source_buffer = [0u8; 64 * 1024];
+
+    loop {
+        let target_len = target_file
+            .read(&mut target_buffer)
+            .map_err(buck2_error::Error::from)
+            .with_buck_error_context(|| format!("Error reading `{}`", target.display()))?;
+        let source_len = source_file
+            .read(&mut source_buffer)
+            .map_err(buck2_error::Error::from)
+            .with_buck_error_context(|| format!("Error reading `{}`", source.display()))?;
+        if target_len != source_len {
+            return Ok(false);
+        }
+        if target_len == 0 {
+            return Ok(true);
+        }
+        if target_buffer[..target_len] != source_buffer[..source_len] {
+            return Ok(false);
+        }
+    }
 }
 
 fn promote_produced_output_path(
@@ -2788,6 +2911,10 @@ pub async fn materialize_inputs(
                         value.dupe(),
                     ));
                 }
+            }
+            CommandExecutionInput::EmptyFile(path) => {
+                materialize_empty_input_file(artifact_fs, path.as_ref())?;
+                paths.push(path.clone());
             }
             CommandExecutionInput::ActionMetadata(metadata) => {
                 let path = artifact_fs
@@ -2926,6 +3053,17 @@ async fn check_inputs(
                         // We ignore the result here because while we want to tag it, we'd
                         // prefer to just show the normal error to the user, so we don't
                         // want to propagate it.
+                        let _ignored = tag_result!(
+                            "missing_local_inputs",
+                            fs_util::symlink_metadata(&abs_path).categorize_internal().buck_error_context("Missing input"),
+                            quiet: true,
+                            task: false,
+                            daemon_materializer_state_is_corrupted: true
+                        );
+                    }
+                    CommandExecutionInput::EmptyFile(path) => {
+                        let abs_path = artifact_fs.fs().resolve(path);
+
                         let _ignored = tag_result!(
                             "missing_local_inputs",
                             fs_util::symlink_metadata(&abs_path).categorize_internal().buck_error_context("Missing input"),
@@ -3221,12 +3359,19 @@ mod tests {
     use buck2_core::cells::CellResolver;
     use buck2_core::cells::cell_root_path::CellRootPathBuf;
     use buck2_core::cells::name::CellName;
+    use buck2_core::configuration::data::ConfigurationData;
+    use buck2_core::deferred::base_deferred_key::BaseDeferredKey;
+    use buck2_core::fs::buck_out_path::BuckOutPathKind;
     use buck2_core::fs::buck_out_path::BuckOutPathResolver;
     use buck2_core::fs::project::ProjectRoot;
     use buck2_core::fs::project::ProjectRootTemp;
+    use buck2_core::target::label::label::TargetLabel;
     use buck2_execute::execute::blocking::testing::DummyBlockingExecutor;
+    use buck2_execute::execute::request::OutputType;
     use buck2_execute::materialize::nodisk::NoDiskMaterializer;
+    use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
     use buck2_hash::StdBuckHashMap;
+    use buck2_hash::buck_indexmap;
     use host_sharing::HostSharingStrategy;
 
     use super::*;
@@ -3262,6 +3407,24 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn test_artifact_path_alias_file_equivalence_uses_content() -> buck2_error::Result<()> {
+        let temp = ProjectRootTemp::new()?;
+        let content = "a".repeat(70 * 1024);
+        temp.write_file("source", &content);
+        temp.write_file("same", &content);
+        temp.write_file("different", &format!("{}b", "a".repeat(70 * 1024 - 1)));
+        let source = temp.path().resolve(ProjectRelativePath::new("source")?);
+        let same = temp.path().resolve(ProjectRelativePath::new("same")?);
+        let different = temp.path().resolve(ProjectRelativePath::new("different")?);
+
+        assert!(artifact_path_alias_files_are_equivalent(&same, &source));
+        assert!(!artifact_path_alias_files_are_equivalent(
+            &different, &source
+        ));
+        Ok(())
+    }
+
     fn test_executor() -> buck2_error::Result<(LocalExecutor, AbsNormPathBuf, ProjectRootTemp)> {
         let temp = ProjectRootTemp::new().unwrap();
         let project_fs = temp.path();
@@ -3288,6 +3451,42 @@ mod tests {
         );
 
         Ok((executor, temp.path().root().to_buf(), temp))
+    }
+
+    fn test_output(path: &str) -> CommandExecutionOutput {
+        let target = TargetLabel::testing_parse("cell//pkg:target")
+            .configure(ConfigurationData::testing_new());
+        CommandExecutionOutput::BuildArtifact {
+            path: BuildArtifactPath::new(
+                BaseDeferredKey::TargetLabel(target),
+                ForwardRelativePathBuf::unchecked_new(path.to_owned()),
+                BuckOutPathKind::Configuration,
+            ),
+            output_type: OutputType::File,
+            produced_path: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_unprepared_action_cache_outputs_require_materializer_match()
+    -> buck2_error::Result<()> {
+        let (executor, _, _tmpdir) = test_executor()?;
+        let outputs = buck_indexmap! {
+            test_output("out") => ArtifactValue::file(DigestConfig::testing_default().empty_file()),
+        };
+        let fingerprint = local_action_cache_outputs_fingerprint(&executor.artifact_fs, &outputs)?;
+
+        assert!(
+            !executor
+                .unprepared_local_action_cache_outputs_are_valid(&outputs, b"stale")
+                .await?
+        );
+        assert!(
+            !executor
+                .unprepared_local_action_cache_outputs_are_valid(&outputs, fingerprint.as_slice())
+                .await?
+        );
+        Ok(())
     }
 
     #[tokio::test]

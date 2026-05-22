@@ -645,6 +645,7 @@ fn register_bazel_run_action<'v>(
     mnemonic: Option<StringValue<'v>>,
     use_default_shell_env: bool,
     resource_set: NoneOr<StarlarkCallable<'v>>,
+    local_only: bool,
     bazel_string_args: Option<Box<[String]>>,
     bazel_cc_command_line: Option<ValueTyped<'v, BazelCcCompileCommandLine<'v>>>,
     precomputed_local_action_cache_command_line_digest: Option<ExpandedCommandLineDigest>,
@@ -702,7 +703,7 @@ fn register_bazel_run_action<'v>(
         WeightClass::Permits(1)
     };
 
-    let executor_preference = new_executor_preference(false, false, false)?;
+    let executor_preference = new_executor_preference(local_only, false, false)?;
     let starlark_values = eval.heap().alloc_complex(StarlarkRunActionValues {
         exe: eval.heap().alloc_typed(exe),
         args: eval.heap().alloc_typed(args),
@@ -789,6 +790,7 @@ pub(crate) fn register_bazel_cc_compile_action<'v>(
         Some(action.mnemonic),
         true,
         NoneOr::None,
+        false,
         None,
         Some(action.command_line),
         precomputed_local_action_cache_command_line_digest,
@@ -847,6 +849,7 @@ pub(crate) fn register_bazel_java_run_action<'v>(
         Some(action.mnemonic),
         true,
         NoneOr::None,
+        false,
         None,
         None,
         None,
@@ -878,6 +881,7 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
         #[starlark(require = named, default = NoneOr::None)] resource_set: NoneOr<
             StarlarkCallable<'v>,
         >,
+        #[starlark(require = named, default = false)] local_only: bool,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<NoneType> {
         let _unused = (
@@ -910,6 +914,7 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
             mnemonic,
             use_default_shell_env,
             resource_set,
+            local_only,
             None,
             None,
             None,
@@ -1140,6 +1145,7 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
                     mnemonic,
                     use_default_shell_env,
                     resource_set,
+                    local_only,
                     None,
                     None,
                     None,
@@ -1176,6 +1182,7 @@ pub(crate) fn analysis_actions_methods_run(methods: &mut MethodsBuilder) {
                 mnemonic,
                 use_default_shell_env,
                 resource_set,
+                local_only,
                 None,
                 None,
                 None,

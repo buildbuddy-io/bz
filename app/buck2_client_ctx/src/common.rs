@@ -224,6 +224,22 @@ pub struct CommonEventLogOptions {
 }
 
 impl CommonEventLogOptions {
+    pub(crate) fn bes_timeout_duration(&self) -> buck2_error::Result<Option<std::time::Duration>> {
+        self.bes_timeout
+            .as_deref()
+            .map(|timeout| {
+                humantime::parse_duration(timeout).map_err(|error| {
+                    buck2_error::buck2_error!(
+                        buck2_error::ErrorTag::Input,
+                        "invalid --bes_timeout `{}`: {}",
+                        timeout,
+                        error
+                    )
+                })
+            })
+            .transpose()
+    }
+
     pub fn default_ref() -> &'static Self {
         static DEFAULT: CommonEventLogOptions = CommonEventLogOptions {
             event_log: None,
@@ -686,6 +702,29 @@ mod tests {
 
     fn source(flag: RepresentativeConfigFlagSource) -> RepresentativeConfigFlag {
         RepresentativeConfigFlag { source: Some(flag) }
+    }
+
+    #[test]
+    fn test_bes_timeout_duration_rejects_invalid_value() {
+        let opts = CommonEventLogOptions {
+            bes_timeout: Some("not-a-duration".to_owned()),
+            ..Default::default()
+        };
+        let error = opts.bes_timeout_duration().unwrap_err().to_string();
+        assert!(error.contains("invalid --bes_timeout"));
+        assert!(error.contains("not-a-duration"));
+    }
+
+    #[test]
+    fn test_bes_timeout_duration_parses_valid_value() {
+        let opts = CommonEventLogOptions {
+            bes_timeout: Some("5s".to_owned()),
+            ..Default::default()
+        };
+        assert_eq!(
+            opts.bes_timeout_duration().unwrap(),
+            Some(std::time::Duration::from_secs(5))
+        );
     }
 
     #[test]

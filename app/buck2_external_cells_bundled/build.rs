@@ -299,7 +299,7 @@ fn write_include_file_from_cargo_manifest_args(
             let path = runfile_path.strip_prefix(&format!("{module}/"))?;
             let contents_path = runfiles_root.join(contents_path);
             let contents_include_path = if use_buck_generated_out_dir_include_paths(out_dir) {
-                buck_generated_out_dir_include_path(runfile_path)
+                syntactic_include_path_from_out_dir(include_out_dir, runfile_path)
             } else {
                 include_path_from_out_dir_to_existing_path(include_out_dir, &contents_path)
                     .unwrap_or_else(|| include_path_from_out_dir(include_out_dir, runfile_path))
@@ -337,20 +337,41 @@ fn syntactic_include_path_from_out_dir(out_dir: &Path, runfile_path: &str) -> Pa
 
     let mut path = PathBuf::new();
     let mut parent_count = out_dir.components().count();
-    if out_dir
-        .to_str()
-        .is_some_and(|path| path.contains("__bazel_execroot"))
-    {
+    if out_dir_str_contains(out_dir, "__bazel_execroot") {
         // Buck exposes OUT_DIR through an execroot symlink. Filesystem resolution applies `..`
         // after following that symlink, so the syntactic fallback needs fewer parents than the
         // execroot spelling itself.
         parent_count = parent_count.saturating_sub(2);
+    } else if path_contains_buck_out_bin(out_dir) {
+        // `buck-out/bin/<config>` is a symlink to `buck-out/v2/art/<cell>/<config>`, which is
+        // two components deeper when `include_bytes!` resolves `..` through the symlink.
+        parent_count += 2;
     }
     for _ in 0..parent_count {
         path.push("..");
     }
     path.push(runfile_path);
     path
+}
+
+fn out_dir_str_contains(out_dir: &Path, needle: &str) -> bool {
+    out_dir.to_str().is_some_and(|path| path.contains(needle))
+}
+
+fn path_contains_buck_out_bin(path: &Path) -> bool {
+    let components = path
+        .components()
+        .filter_map(|component| match component {
+            Component::Normal(component) => component.to_str(),
+            Component::CurDir
+            | Component::ParentDir
+            | Component::RootDir
+            | Component::Prefix(_) => None,
+        })
+        .collect::<Vec<_>>();
+    components
+        .windows(2)
+        .any(|window| window == ["buck-out", "bin"])
 }
 
 fn use_buck_generated_out_dir_include_paths(out_dir: &Path) -> bool {
@@ -360,15 +381,6 @@ fn use_buck_generated_out_dir_include_paths(out_dir: &Path) -> bool {
             || path.contains("__bazel_execroot")
             || path.contains("__build_script__")
     })
-}
-
-fn buck_generated_out_dir_include_path(runfile_path: &str) -> PathBuf {
-    let mut path = PathBuf::new();
-    for _ in 0..9 {
-        path.push("..");
-    }
-    path.push(runfile_path);
-    path
 }
 
 fn find_existing_runfile_path(runfile_path: &str) -> Option<PathBuf> {

@@ -95,6 +95,7 @@ use serde::Serialize;
 use sha2::Digest;
 use sha2::Sha256;
 
+use crate::bzlmod_integrity::parse_bzlmod_integrity;
 use crate::dice::cells::HasCellResolver;
 use crate::dice::data::HasIoProvider;
 use crate::external_cells::EXTERNAL_CELLS_IMPL;
@@ -2420,8 +2421,11 @@ impl Key for BzlmodRegistryKey {
         }))
     }
 
-    fn equality(_x: &Self::Value, _y: &Self::Value) -> bool {
-        false
+    fn equality(x: &Self::Value, y: &Self::Value) -> bool {
+        match (x, y) {
+            (Ok(x), Ok(y)) => x == y,
+            _ => false,
+        }
     }
 
     fn validity(x: &Self::Value) -> bool {
@@ -3456,8 +3460,11 @@ impl Key for BzlmodRepoDefinitionKey {
         }))
     }
 
-    fn equality(_x: &Self::Value, _y: &Self::Value) -> bool {
-        false
+    fn equality(x: &Self::Value, y: &Self::Value) -> bool {
+        match (x, y) {
+            (Ok(x), Ok(y)) => x == y,
+            _ => false,
+        }
     }
 
     fn validity(x: &Self::Value) -> bool {
@@ -3503,8 +3510,11 @@ impl Key for BzlmodRepositoryDirectoryKey {
         }))
     }
 
-    fn equality(_x: &Self::Value, _y: &Self::Value) -> bool {
-        false
+    fn equality(x: &Self::Value, y: &Self::Value) -> bool {
+        match (x, y) {
+            (Ok(x), Ok(y)) => x == y,
+            _ => false,
+        }
     }
 
     fn validity(x: &Self::Value) -> bool {
@@ -6224,74 +6234,20 @@ fn verify_bzlmod_archive_integrity(
     integrity: &str,
     bytes: &[u8],
 ) -> buck2_error::Result<()> {
-    let Some(expected) = bzlmod_integrity_sha256_bytes(integrity)? else {
+    let Some(expected) = parse_bzlmod_integrity(integrity)? else {
         return Ok(());
     };
-    let got = Sha256::digest(bytes);
-    if got.as_slice() != expected.as_slice() {
+    let got = expected.kind().digest(bytes);
+    if got.as_slice() != expected.bytes() {
         return Err(buck2_error!(
             buck2_error::ErrorTag::Input,
             "archive_override integrity mismatch for `{}`: expected {}, got {}",
             url,
-            hex::encode(expected),
+            hex::encode(expected.bytes()),
             hex::encode(got)
         ));
     }
     Ok(())
-}
-
-fn bzlmod_integrity_sha256_bytes(integrity: &str) -> buck2_error::Result<Option<Vec<u8>>> {
-    if integrity.is_empty() {
-        return Ok(None);
-    }
-    let Some(encoded) = integrity.strip_prefix("sha256-") else {
-        return Err(buck2_error!(
-            buck2_error::ErrorTag::Input,
-            "unsupported bzlmod archive integrity `{}`",
-            integrity
-        ));
-    };
-    let bytes = bzlmod_base64_decode(encoded)?;
-    if bytes.len() != 32 {
-        return Err(buck2_error!(
-            buck2_error::ErrorTag::Input,
-            "invalid bzlmod sha256 integrity `{}`",
-            integrity
-        ));
-    }
-    Ok(Some(bytes))
-}
-
-fn bzlmod_base64_decode(encoded: &str) -> buck2_error::Result<Vec<u8>> {
-    let mut out = Vec::new();
-    let mut buffer = 0u32;
-    let mut bits = 0u8;
-    for ch in encoded.chars() {
-        if ch == '=' {
-            break;
-        }
-        let value = match ch {
-            'A'..='Z' => ch as u32 - 'A' as u32,
-            'a'..='z' => ch as u32 - 'a' as u32 + 26,
-            '0'..='9' => ch as u32 - '0' as u32 + 52,
-            '+' => 62,
-            '/' => 63,
-            _ => {
-                return Err(buck2_error!(
-                    buck2_error::ErrorTag::Input,
-                    "invalid base64 character `{}` in bzlmod integrity",
-                    ch
-                ));
-            }
-        };
-        buffer = (buffer << 6) | value;
-        bits += 6;
-        if bits >= 8 {
-            bits -= 8;
-            out.push(((buffer >> bits) & 0xff) as u8);
-        }
-    }
-    Ok(out)
 }
 
 fn apply_bzlmod_single_version_module_patches(
@@ -9648,6 +9604,23 @@ mod tests {
             super::bzlmod_archive_override_kind(&archive_override),
             Some(crate::bzlmod_archive::ArchiveKind::TarGz)
         );
+    }
+
+    #[test]
+    fn test_bzlmod_archive_integrity_accepts_sri_algorithms() {
+        for integrity in [
+            "sha1-iEPX+SQWIR3p67lj/0zigSWTKHg=",
+            "sha256-w6uP8Tcg6K2QR905Rms8iXTlksL6OD1KOWBxTK7wxPI=",
+            "sha384-PJww2fZl501RXIQpYNSkUcg6ASX9Pec5LXs3IxrxDHLqWK7fzfiaV2W/kCr5Ps8G",
+            "sha512-ClAmHr0aOQ/tK/Mm8mc8FFWCpjQtUjIElz0CGTN/gWFqgGmwElh89WNfaSXxtWw2AjDBmyc1AO4BPgMGAb8kJQ==",
+        ] {
+            super::verify_bzlmod_archive_integrity(
+                "https://example.com/archive.tar.gz",
+                integrity,
+                b"foobar",
+            )
+            .unwrap();
+        }
     }
 
     #[test]

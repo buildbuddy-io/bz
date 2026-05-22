@@ -411,6 +411,66 @@ impl BuckOutPathResolver {
         &self.buck_out_v2
     }
 
+    fn bazel_push_path_component(path: &mut String, component: &str) {
+        if component.is_empty() {
+            return;
+        }
+        if !path.is_empty() {
+            path.push('/');
+        }
+        path.push_str(component);
+    }
+
+    fn bazel_logical_physical_path(
+        path: &BuildArtifactPath,
+        label: &ConfiguredTargetLabel,
+    ) -> String {
+        let mut result = String::new();
+        if path.bazel_output_path_kind() == BazelOutputPathKind::PackageRelative {
+            let package_path = label.pkg().cell_relative_path().as_str();
+            if !package_path.is_empty()
+                && path.path().as_str() != package_path
+                && !path
+                    .path()
+                    .as_str()
+                    .strip_prefix(&format!("{package_path}/"))
+                    .is_some()
+            {
+                Self::bazel_push_path_component(&mut result, package_path);
+            }
+        }
+        Self::bazel_push_path_component(&mut result, path.path().as_str());
+        result
+    }
+
+    fn bazel_shared_physical_path(
+        &self,
+        prefix: &ForwardRelativePath,
+        path: &BuildArtifactPath,
+    ) -> Option<ProjectRelativePathBuf> {
+        if path.path_resolution_method() != BuckOutPathKind::Configuration {
+            return None;
+        }
+        let label = path.bazel_owner()?;
+
+        let mut configuration = label.cfg().output_hash().as_str().to_owned();
+        if let Some(exec_cfg) = label.exec_cfg() {
+            configuration.push('-');
+            configuration.push_str(exec_cfg.output_hash().as_str());
+        }
+
+        let mut result = String::new();
+        Self::bazel_push_path_component(&mut result, self.buck_out_v2.as_str());
+        Self::bazel_push_path_component(&mut result, prefix.as_str());
+        Self::bazel_push_path_component(&mut result, label.pkg().cell_name().as_str());
+        Self::bazel_push_path_component(&mut result, &configuration);
+        Self::bazel_push_path_component(
+            &mut result,
+            &Self::bazel_logical_physical_path(path, label),
+        );
+        Some(ProjectRelativePathBuf::unchecked_new(result))
+    }
+
     /// Resolves a 'BuckOutPath' into a 'ProjectRelativePath' based on the base
     /// directory, target and cell.
     pub fn resolve_gen(
@@ -418,6 +478,11 @@ impl BuckOutPathResolver {
         path: &BuildArtifactPath,
         content_hash: Option<&ContentBasedPathHash>,
     ) -> buck2_error::Result<ProjectRelativePathBuf> {
+        if let Some(path) =
+            self.bazel_shared_physical_path(ForwardRelativePath::unchecked_new("art"), path)
+        {
+            return Ok(path);
+        }
         self.prefixed_path_for_owner(
             ForwardRelativePath::unchecked_new("art"),
             path.owner().owner(),
@@ -437,6 +502,11 @@ impl BuckOutPathResolver {
         &self,
         path: &BuildArtifactPath,
     ) -> buck2_error::Result<ProjectRelativePathBuf> {
+        if let Some(path) =
+            self.bazel_shared_physical_path(ForwardRelativePath::unchecked_new("art"), path)
+        {
+            return Ok(path);
+        }
         self.prefixed_path_for_owner(
             ForwardRelativePath::unchecked_new("art"),
             path.owner().owner(),

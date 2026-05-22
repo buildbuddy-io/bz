@@ -81,7 +81,25 @@ def _selected_command(ctx):
         fail("genrule cmd_bat/cmd_ps are only selected for Windows execution")
     fail("missing value for `cmd` attribute, you can also set `cmd_bash` on non-Windows platforms")
 
+def _reject_unsupported_attrs(ctx):
+    unsupported = []
+    if ctx.attr.exec_properties:
+        unsupported.append("exec_properties")
+    if ctx.attr.heuristic_label_expansion:
+        unsupported.append("heuristic_label_expansion")
+    if ctx.attr.output_licenses:
+        unsupported.append("output_licenses")
+
+    if unsupported:
+        fail(
+            "bazel genrule does not support non-default values for: {}".format(
+                ", ".join(unsupported),
+            ),
+        )
+
 def _bazel_genrule_impl(ctx):
+    _reject_unsupported_attrs(ctx)
+
     outs = ctx.outputs.outs
     if len(outs) == 0:
         fail("genrule requires at least one output")
@@ -111,6 +129,8 @@ def _bazel_genrule_impl(ctx):
         tools = depset(tools),
         outputs = outs,
         mnemonic = "Genrule",
+        progress_message = ctx.attr.message if ctx.attr.message else None,
+        local_only = ctx.attr.local,
     )
 
     files = depset(outs)

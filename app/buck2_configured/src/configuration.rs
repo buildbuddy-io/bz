@@ -123,7 +123,6 @@ async fn configuration_matches(
         match build_settings.get(setting) {
             Some(actual) if actual.matches_config_setting_value(expected) => {}
             None if bazel_command_line_option_default(setting) == Some(expected.as_str()) => {}
-            None if expected == "False" => {}
             None => match bazel_build_setting_default(ctx, setting).await? {
                 Some(default) if default.matches_config_setting_value(expected) => {}
                 _ => return Ok(false),

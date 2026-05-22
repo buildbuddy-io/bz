@@ -27,9 +27,13 @@ pub enum ArchiveKind {
     Zip,
     Tar,
     TarGz,
+    Gz,
     TarXz,
+    Xz,
     TarBz2,
+    Bz2,
     TarZst,
+    Zst,
 }
 
 pub fn archive_kind_from_type_or_url(archive_type: Option<&str>, url: &str) -> Option<ArchiveKind> {
@@ -47,7 +51,7 @@ pub fn archive_kind_from_type_or_url(archive_type: Option<&str>, url: &str) -> O
         .to_ascii_lowercase();
     for extension in [
         "tar.gz", "tgz", "tar.xz", "txz", "tar.bz2", "tbz", "tar.zst", "tzst", "zip", "jar", "war",
-        "aar", "nupkg", "whl", "tar", "gz",
+        "aar", "nupkg", "whl", "tar", "gz", "xz", "bz2", "zst",
     ] {
         if url.ends_with(&format!(".{extension}")) {
             return archive_kind_from_extension(extension);
@@ -60,10 +64,14 @@ fn archive_kind_from_extension(extension: &str) -> Option<ArchiveKind> {
     match extension {
         "zip" | "jar" | "war" | "aar" | "nupkg" | "whl" => Some(ArchiveKind::Zip),
         "tar" => Some(ArchiveKind::Tar),
-        "tar.gz" | "tgz" | "gz" => Some(ArchiveKind::TarGz),
+        "tar.gz" | "tgz" => Some(ArchiveKind::TarGz),
+        "gz" => Some(ArchiveKind::Gz),
         "tar.xz" | "txz" => Some(ArchiveKind::TarXz),
+        "xz" => Some(ArchiveKind::Xz),
         "tar.bz2" | "tbz" => Some(ArchiveKind::TarBz2),
+        "bz2" => Some(ArchiveKind::Bz2),
         "tar.zst" | "tzst" => Some(ArchiveKind::TarZst),
+        "zst" => Some(ArchiveKind::Zst),
         _ => None,
     }
 }
@@ -108,6 +116,11 @@ pub fn extract_archive(
                 rename_files,
             )
         }
+        ArchiveKind::Gz => {
+            let reader = fs::File::open(archive)
+                .with_buck_error_context(|| format!("Error opening `{}`", archive.display()))?;
+            extract_compressed_file(GzDecoder::new(reader), archive, output, "gz", rename_files)
+        }
         ArchiveKind::TarXz => {
             let reader = fs::File::open(archive)
                 .with_buck_error_context(|| format!("Error opening `{}`", archive.display()))?;
@@ -118,6 +131,11 @@ pub fn extract_archive(
                 strip_components,
                 rename_files,
             )
+        }
+        ArchiveKind::Xz => {
+            let reader = fs::File::open(archive)
+                .with_buck_error_context(|| format!("Error opening `{}`", archive.display()))?;
+            extract_compressed_file(XzDecoder::new(reader), archive, output, "xz", rename_files)
         }
         ArchiveKind::TarBz2 => {
             let reader = fs::File::open(archive)
@@ -130,6 +148,11 @@ pub fn extract_archive(
                 rename_files,
             )
         }
+        ArchiveKind::Bz2 => {
+            let reader = fs::File::open(archive)
+                .with_buck_error_context(|| format!("Error opening `{}`", archive.display()))?;
+            extract_compressed_file(BzDecoder::new(reader), archive, output, "bz2", rename_files)
+        }
         ArchiveKind::TarZst => {
             let reader = fs::File::open(archive)
                 .with_buck_error_context(|| format!("Error opening `{}`", archive.display()))?;
@@ -137,7 +160,56 @@ pub fn extract_archive(
                 .buck_error_context("Error initializing zstd archive decoder")?;
             extract_tar_archive(reader, output, strip_prefix, strip_components, rename_files)
         }
+        ArchiveKind::Zst => {
+            let reader = fs::File::open(archive)
+                .with_buck_error_context(|| format!("Error opening `{}`", archive.display()))?;
+            let reader = zstd::stream::read::Decoder::new(reader)
+                .buck_error_context("Error initializing zstd archive decoder")?;
+            extract_compressed_file(reader, archive, output, "zst", rename_files)
+        }
     }
+}
+
+fn extract_compressed_file<R: Read>(
+    mut reader: R,
+    archive: &Path,
+    output: &Path,
+    extension: &str,
+    rename_files: &[(String, String)],
+) -> buck2_error::Result<()> {
+    let entry_name = compressed_file_entry_name(archive, extension)?;
+    let entry_name = renamed_archive_entry_name(&entry_name, rename_files);
+    let components = safe_archive_components(&entry_name)?;
+    if components.is_empty() {
+        return Ok(());
+    }
+    let destination = output.join(components.into_iter().collect::<PathBuf>());
+    if let Some(parent) = destination.parent() {
+        fs::create_dir_all(parent)
+            .with_buck_error_context(|| format!("Error creating `{}`", parent.display()))?;
+    }
+    let mut file = fs::File::create(&destination)
+        .with_buck_error_context(|| format!("Error creating `{}`", destination.display()))?;
+    io::copy(&mut reader, &mut file)
+        .with_buck_error_context(|| format!("Error writing `{}`", destination.display()))?;
+    Ok(())
+}
+
+fn compressed_file_entry_name(archive: &Path, extension: &str) -> buck2_error::Result<String> {
+    let file_name = archive
+        .file_name()
+        .and_then(|file_name| file_name.to_str())
+        .ok_or_else(|| {
+            buck2_error!(
+                buck2_error::ErrorTag::Input,
+                "Compressed archive path `{}` has no UTF-8 file name",
+                archive.display()
+            )
+        })?;
+    Ok(file_name
+        .strip_suffix(&format!(".{extension}"))
+        .unwrap_or(file_name)
+        .to_owned())
 }
 
 fn extract_zip_archive(
@@ -159,6 +231,7 @@ fn extract_zip_archive(
     })?;
     let mut found_prefix = strip_prefix.is_empty();
     let mut available_prefixes = Vec::new();
+    let mut pending_links = Vec::new();
     for index in 0..zip.len() {
         let mut entry = zip.by_index(index).map_err(|error| {
             buck2_error!(
@@ -180,7 +253,7 @@ fn extract_zip_archive(
         else {
             continue;
         };
-        let destination = output.join(relative_path);
+        let destination = output.join(&relative_path);
         if entry.is_dir() {
             fs::create_dir_all(&destination).with_buck_error_context(|| {
                 format!("Error creating `{}`", destination.display())
@@ -198,7 +271,13 @@ fn extract_zip_archive(
                 .with_buck_error_context(|| {
                     format!("Error reading symlink target from `{}`", entry.name())
                 })?;
-            create_symlink(Path::new(&target), &destination)?;
+            let target =
+                prepare_archive_symlink_target(&relative_path, Path::new(&target), strip_prefix)?;
+            pending_links.push(PendingArchiveLink {
+                kind: PendingArchiveLinkKind::Symlink,
+                destination,
+                target,
+            });
             continue;
         }
         let mut file = fs::File::create(&destination)
@@ -209,7 +288,8 @@ fn extract_zip_archive(
             set_extracted_file_mode(&destination, mode)?;
         }
     }
-    ensure_strip_prefix_found(strip_prefix, found_prefix, available_prefixes)
+    ensure_strip_prefix_found(strip_prefix, found_prefix, available_prefixes)?;
+    create_pending_archive_links(&pending_links)
 }
 
 fn extract_tar_archive<R: Read>(
@@ -223,6 +303,7 @@ fn extract_tar_archive<R: Read>(
     archive.set_preserve_permissions(true);
     let mut found_prefix = strip_prefix.is_empty();
     let mut available_prefixes = Vec::new();
+    let mut pending_links = Vec::new();
     for entry in archive
         .entries()
         .buck_error_context("Error reading tar archive")?
@@ -242,16 +323,245 @@ fn extract_tar_archive<R: Read>(
         else {
             continue;
         };
-        let destination = output.join(relative_path);
+        let destination = output.join(&relative_path);
         if let Some(parent) = destination.parent() {
             fs::create_dir_all(parent)
                 .with_buck_error_context(|| format!("Error creating `{}`", parent.display()))?;
+        }
+        let entry_type = entry.header().entry_type();
+        if entry_type.is_symlink() || entry_type.is_hard_link() {
+            let target = entry
+                .link_name()
+                .with_buck_error_context(|| format!("Error reading link target from `{path:?}`"))?
+                .ok_or_else(|| {
+                    buck2_error!(
+                        buck2_error::ErrorTag::Input,
+                        "Archive link entry `{}` has no target",
+                        entry_name
+                    )
+                })?;
+            if target.as_os_str().is_empty() {
+                return Err(buck2_error!(
+                    buck2_error::ErrorTag::Input,
+                    "Archive link entry `{}` has an empty target",
+                    entry_name
+                ));
+            }
+            let (kind, target) = if entry_type.is_symlink() {
+                (
+                    PendingArchiveLinkKind::Symlink,
+                    prepare_archive_symlink_target(&relative_path, &target, strip_prefix)?,
+                )
+            } else {
+                let target = prepare_archive_hardlink_target(
+                    &target,
+                    strip_prefix,
+                    strip_components,
+                    rename_files,
+                )?;
+                (PendingArchiveLinkKind::Hardlink, output.join(target))
+            };
+            pending_links.push(PendingArchiveLink {
+                kind,
+                destination,
+                target,
+            });
+            continue;
         }
         entry
             .unpack(&destination)
             .with_buck_error_context(|| format!("Error extracting `{}`", destination.display()))?;
     }
-    ensure_strip_prefix_found(strip_prefix, found_prefix, available_prefixes)
+    ensure_strip_prefix_found(strip_prefix, found_prefix, available_prefixes)?;
+    create_pending_archive_links(&pending_links)
+}
+
+#[derive(Debug)]
+enum PendingArchiveLinkKind {
+    Symlink,
+    Hardlink,
+}
+
+#[derive(Debug)]
+struct PendingArchiveLink {
+    kind: PendingArchiveLinkKind,
+    destination: PathBuf,
+    target: PathBuf,
+}
+
+fn create_pending_archive_links(links: &[PendingArchiveLink]) -> buck2_error::Result<()> {
+    for link in links {
+        if let Some(parent) = link.destination.parent() {
+            fs::create_dir_all(parent)
+                .with_buck_error_context(|| format!("Error creating `{}`", parent.display()))?;
+        }
+        match link.kind {
+            PendingArchiveLinkKind::Symlink => {
+                create_symlink(&link.target, &link.destination)?;
+            }
+            PendingArchiveLinkKind::Hardlink => {
+                create_hard_link(&link.target, &link.destination)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn prepare_archive_symlink_target(
+    destination_relative_path: &Path,
+    target: &Path,
+    strip_prefix: &str,
+) -> buck2_error::Result<PathBuf> {
+    if target.as_os_str().is_empty() {
+        return Err(invalid_archive_link_target(
+            destination_relative_path,
+            target,
+        ));
+    }
+
+    if let Some(stripped_target) = strip_archive_link_prefix(target, strip_prefix) {
+        let stripped_target = normalize_archive_relative_path(&stripped_target)?;
+        let destination_parent = destination_relative_path.parent().unwrap_or(Path::new(""));
+        let target = relative_archive_path(destination_parent, &stripped_target);
+        validate_archive_symlink_target(destination_relative_path, &target)?;
+        return Ok(target);
+    }
+
+    validate_archive_symlink_target(destination_relative_path, target)?;
+    Ok(target.to_owned())
+}
+
+fn prepare_archive_hardlink_target(
+    target: &Path,
+    strip_prefix: &str,
+    strip_components: u32,
+    rename_files: &[(String, String)],
+) -> buck2_error::Result<PathBuf> {
+    let target_name = renamed_archive_entry_name(&target.to_string_lossy(), rename_files);
+    let mut found_prefix = strip_prefix.is_empty();
+    let mut available_prefixes = Vec::new();
+    prepare_archive_entry_path(
+        &target_name,
+        strip_prefix,
+        strip_components,
+        &mut found_prefix,
+        &mut available_prefixes,
+    )?
+    .ok_or_else(|| {
+        buck2_error!(
+            buck2_error::ErrorTag::Input,
+            "Archive hardlink target `{}` is outside the stripped extraction root",
+            target.display()
+        )
+    })
+}
+
+fn strip_archive_link_prefix(target: &Path, strip_prefix: &str) -> Option<PathBuf> {
+    let strip_prefix = strip_prefix.trim_matches('/');
+    if strip_prefix.is_empty() {
+        return None;
+    }
+    target
+        .strip_prefix(Path::new(strip_prefix))
+        .ok()
+        .map(Path::to_owned)
+}
+
+fn validate_archive_symlink_target(
+    destination_relative_path: &Path,
+    target: &Path,
+) -> buck2_error::Result<()> {
+    let destination_parent = destination_relative_path.parent().unwrap_or(Path::new(""));
+    let mut normalized = normalize_archive_relative_path(destination_parent)?;
+    for component in target.components() {
+        match component {
+            Component::CurDir => {}
+            Component::Normal(component) => normalized.push(component),
+            Component::ParentDir => {
+                if !normalized.pop() {
+                    return Err(invalid_archive_link_target(
+                        destination_relative_path,
+                        target,
+                    ));
+                }
+            }
+            Component::RootDir | Component::Prefix(_) => {
+                return Err(invalid_archive_link_target(
+                    destination_relative_path,
+                    target,
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn normalize_archive_relative_path(path: &Path) -> buck2_error::Result<PathBuf> {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::Normal(component) => normalized.push(component),
+            Component::ParentDir => {
+                if !normalized.pop() {
+                    return Err(buck2_error!(
+                        buck2_error::ErrorTag::Input,
+                        "Archive path `{}` escapes the extraction directory",
+                        path.display()
+                    ));
+                }
+            }
+            Component::RootDir | Component::Prefix(_) => {
+                return Err(buck2_error!(
+                    buck2_error::ErrorTag::Input,
+                    "Archive path `{}` escapes the extraction directory",
+                    path.display()
+                ));
+            }
+        }
+    }
+    Ok(normalized)
+}
+
+fn relative_archive_path(from_dir: &Path, to: &Path) -> PathBuf {
+    let from_components = archive_normal_components(from_dir);
+    let to_components = archive_normal_components(to);
+    let common = from_components
+        .iter()
+        .zip(&to_components)
+        .take_while(|(left, right)| left == right)
+        .count();
+
+    let mut result = PathBuf::new();
+    for _ in common..from_components.len() {
+        result.push("..");
+    }
+    for component in &to_components[common..] {
+        result.push(component);
+    }
+    if result.as_os_str().is_empty() {
+        result.push(".");
+    }
+    result
+}
+
+fn archive_normal_components(path: &Path) -> Vec<PathBuf> {
+    path.components()
+        .filter_map(|component| match component {
+            Component::Normal(component) => Some(PathBuf::from(component)),
+            Component::CurDir => None,
+            Component::ParentDir | Component::RootDir | Component::Prefix(_) => None,
+        })
+        .collect()
+}
+
+fn invalid_archive_link_target(destination: &Path, target: &Path) -> buck2_error::Error {
+    buck2_error!(
+        buck2_error::ErrorTag::Input,
+        "Archive link `{}` -> `{}` escapes the extraction directory",
+        destination.display(),
+        target.display()
+    )
 }
 
 fn renamed_archive_entry_name(entry_name: &str, rename_files: &[(String, String)]) -> String {
@@ -375,6 +685,16 @@ fn create_symlink(target: &Path, destination: &Path) -> buck2_error::Result<()> 
     })
 }
 
+fn create_hard_link(target: &Path, destination: &Path) -> buck2_error::Result<()> {
+    fs::hard_link(target, destination).with_buck_error_context(|| {
+        format!(
+            "Error creating hardlink `{}` -> `{}`",
+            destination.display(),
+            target.display()
+        )
+    })
+}
+
 #[cfg(unix)]
 fn set_extracted_file_mode(path: &Path, mode: u32) -> buck2_error::Result<()> {
     use std::os::unix::fs::PermissionsExt;
@@ -391,10 +711,12 @@ fn set_extracted_file_mode(_path: &Path, _mode: u32) -> buck2_error::Result<()> 
 #[cfg(test)]
 mod tests {
     use std::fs;
+    use std::path::PathBuf;
 
     use flate2::Compression;
     use flate2::write::GzEncoder;
     use tar::Builder;
+    use tar::EntryType;
     use zip::ZipWriter;
     use zip::write::SimpleFileOptions;
 
@@ -411,6 +733,22 @@ mod tests {
         assert_eq!(
             archive_kind_from_type_or_url(None, "https://example.com/a.tar.gz"),
             Some(ArchiveKind::TarGz)
+        );
+        assert_eq!(
+            archive_kind_from_type_or_url(None, "https://example.com/a.gz"),
+            Some(ArchiveKind::Gz)
+        );
+        assert_eq!(
+            archive_kind_from_type_or_url(None, "https://example.com/a.xz"),
+            Some(ArchiveKind::Xz)
+        );
+        assert_eq!(
+            archive_kind_from_type_or_url(None, "https://example.com/a.bz2"),
+            Some(ArchiveKind::Bz2)
+        );
+        assert_eq!(
+            archive_kind_from_type_or_url(None, "https://example.com/a.zst"),
+            Some(ArchiveKind::Zst)
         );
         assert_eq!(
             archive_kind_from_type_or_url(None, "https://example.com/a.zip?download=1"),
@@ -473,5 +811,134 @@ mod tests {
             "content"
         );
         Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_extract_zip_deprefixes_symlink_target() -> buck2_error::Result<()> {
+        let dir = tempfile::tempdir().unwrap();
+        let archive = dir.path().join("source.zip");
+        let file = fs::File::create(&archive).unwrap();
+        let mut zip = ZipWriter::new(file);
+        zip.start_file("pkg/file.txt", SimpleFileOptions::default())
+            .unwrap();
+        std::io::Write::write_all(&mut zip, b"content").unwrap();
+        zip.start_file(
+            "pkg/dir/link",
+            SimpleFileOptions::default().unix_permissions(0o120777),
+        )
+        .unwrap();
+        std::io::Write::write_all(&mut zip, b"pkg/file.txt").unwrap();
+        zip.finish().unwrap();
+
+        let output = dir.path().join("out");
+        extract_archive(&archive, &output, ArchiveKind::Zip, "pkg", 0, &[])?;
+
+        assert_eq!(
+            fs::read_link(output.join("dir/link")).unwrap(),
+            PathBuf::from("../file.txt")
+        );
+        assert_eq!(
+            fs::read_to_string(output.join("dir/link")).unwrap(),
+            "content"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_extract_gz_writes_single_file() -> buck2_error::Result<()> {
+        let dir = tempfile::tempdir().unwrap();
+        let archive = dir.path().join("source.txt.gz");
+        let file = fs::File::create(&archive).unwrap();
+        let mut encoder = GzEncoder::new(file, Compression::default());
+        std::io::Write::write_all(&mut encoder, b"content").unwrap();
+        encoder.finish().unwrap();
+
+        let output = dir.path().join("out");
+        extract_archive(
+            &archive,
+            &output,
+            ArchiveKind::Gz,
+            "ignored",
+            1,
+            &[("source.txt".to_owned(), "renamed.txt".to_owned())],
+        )?;
+
+        assert_eq!(
+            fs::read_to_string(output.join("renamed.txt")).unwrap(),
+            "content"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_extract_zip_rejects_escaping_symlink_target() {
+        let dir = tempfile::tempdir().unwrap();
+        let archive = dir.path().join("source.zip");
+        let file = fs::File::create(&archive).unwrap();
+        let mut zip = ZipWriter::new(file);
+        zip.start_file(
+            "pkg/dir/link",
+            SimpleFileOptions::default().unix_permissions(0o120777),
+        )
+        .unwrap();
+        std::io::Write::write_all(&mut zip, b"../../outside").unwrap();
+        zip.finish().unwrap();
+
+        let output = dir.path().join("out");
+        let error = extract_archive(&archive, &output, ArchiveKind::Zip, "pkg", 0, &[])
+            .expect_err("escaping symlink target should be rejected");
+        assert!(format!("{error:#}").contains("escapes the extraction directory"));
+    }
+
+    #[test]
+    fn test_extract_tar_deprefixes_hardlink_target() -> buck2_error::Result<()> {
+        let dir = tempfile::tempdir().unwrap();
+        let archive = dir.path().join("source.tar.gz");
+        let file = fs::File::create(&archive).unwrap();
+        let encoder = GzEncoder::new(file, Compression::default());
+        let mut tar = Builder::new(encoder);
+        let mut header = tar::Header::new_gnu();
+        header.set_size(7);
+        header.set_cksum();
+        tar.append_data(&mut header, "pkg/file.txt", "content".as_bytes())
+            .unwrap();
+        let mut header = tar::Header::new_gnu();
+        header.set_entry_type(EntryType::Link);
+        header.set_size(0);
+        tar.append_link(&mut header, "pkg/link.txt", "pkg/file.txt")
+            .unwrap();
+        let encoder = tar.into_inner().unwrap();
+        encoder.finish().unwrap();
+
+        let output = dir.path().join("out");
+        extract_archive(&archive, &output, ArchiveKind::TarGz, "pkg", 0, &[])?;
+
+        assert_eq!(
+            fs::read_to_string(output.join("link.txt")).unwrap(),
+            "content"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_extract_tar_rejects_escaping_hardlink_target() {
+        let dir = tempfile::tempdir().unwrap();
+        let archive = dir.path().join("source.tar.gz");
+        let file = fs::File::create(&archive).unwrap();
+        let encoder = GzEncoder::new(file, Compression::default());
+        let mut tar = Builder::new(encoder);
+        let mut header = tar::Header::new_gnu();
+        header.set_entry_type(EntryType::Link);
+        header.set_size(0);
+        tar.append_link(&mut header, "pkg/link.txt", "../../outside")
+            .unwrap();
+        let encoder = tar.into_inner().unwrap();
+        encoder.finish().unwrap();
+
+        let output = dir.path().join("out");
+        let error = extract_archive(&archive, &output, ArchiveKind::TarGz, "pkg", 0, &[])
+            .expect_err("escaping hardlink target should be rejected");
+        assert!(format!("{error:#}").contains("escapes the extraction directory"));
     }
 }

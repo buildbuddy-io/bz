@@ -140,25 +140,16 @@ alias(
 
 filegroup(
     name = "test_wrapper",
-    # "tw" is the Windows-native test wrapper. It has a short name because paths
-    # have short limits on Windows.
-    # On other platforms this binary is a no-op.
-    # See https://github.com/bazelbuild/bazel/issues/5508
-    srcs = select({
-        "@bazel_tools//src/conditions:windows": ["tw.exe"],
-        "//conditions:default": ["dummy.sh"],
-    }),
+    # The checked-in bazel_tools package does not vendor Bazel's Windows-native
+    # tw.exe wrapper, so expose the no-op wrapper that is actually present.
+    srcs = ["dummy.sh"],
 )
 
 filegroup(
     name = "xml_writer",
-    # "xml" is the Windows-native test XML writer. It has a short name because
-    # paths have short limits on Windows.
-    # On other platforms this binary is a no-op.
-    srcs = select({
-        "@bazel_tools//src/conditions:windows": ["xml.exe"],
-        "//conditions:default": ["dummy.sh"],
-    }),
+    # The checked-in bazel_tools package does not vendor Bazel's Windows-native
+    # xml.exe writer, so expose the no-op wrapper that is actually present.
+    srcs = ["dummy.sh"],
 )
 
 filegroup(

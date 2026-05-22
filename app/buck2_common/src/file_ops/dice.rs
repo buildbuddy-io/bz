@@ -20,6 +20,7 @@ use async_trait::async_trait;
 use buck2_core::cells::cell_path::CellPath;
 use buck2_core::cells::cell_path::CellPathRef;
 use buck2_core::cells::external::ExternalCellOrigin;
+use buck2_core::cells::external::external_cell_origin_for_cell;
 use buck2_core::cells::name::CellName;
 use buck2_core::cells::paths::CellRelativePath;
 use buck2_error::internal_error;
@@ -530,10 +531,12 @@ fn push_no_watchfs_file_change_event(
 }
 
 fn is_bazel_output_or_external_file_state_path(path: &CellPath) -> bool {
-    path.cell().as_str().starts_with("bzlmod_")
-        || path.path().starts_with(CellRelativePath::unchecked_new(
-            InvocationPaths::buck_out_dir_prefix().as_str(),
-        ))
+    path.path().starts_with(CellRelativePath::unchecked_new(
+        InvocationPaths::buck_out_dir_prefix().as_str(),
+    )) || matches!(
+        external_cell_origin_for_cell(path.cell().as_str()),
+        Some(ExternalCellOrigin::Bzlmod(_) | ExternalCellOrigin::BzlmodGenerated(_))
+    )
 }
 
 fn no_watchfs_file_watcher_kind(
@@ -967,6 +970,8 @@ mod tests {
     use std::collections::BTreeMap;
     use std::sync::Arc;
 
+    use buck2_core::cells::external::BzlmodCellSetup;
+    use buck2_core::cells::external::register_external_cell_origin;
     use buck2_core::cells::paths::CellRelativePathBuf;
     use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
     use dice::UserComputationData;
@@ -978,6 +983,42 @@ mod tests {
 
     fn cell_path(cell: CellName, path: &str) -> CellPath {
         CellPath::new(cell, CellRelativePathBuf::unchecked_new(path.to_owned()))
+    }
+
+    fn test_bzlmod_cell_setup(canonical_repo_name: &str) -> BzlmodCellSetup {
+        BzlmodCellSetup {
+            module_name: Arc::from("test_module"),
+            version: Arc::from("1.0.0"),
+            canonical_repo_name: Arc::from(canonical_repo_name),
+            local_path: None,
+            url: Arc::from("https://example.com/test.tar.gz"),
+            urls: Arc::new(vec![Arc::from("https://example.com/test.tar.gz")]),
+            integrity: Arc::from("sha256-test"),
+            strip_prefix: None,
+            archive_type: None,
+            patches: Arc::new(Vec::new()),
+            overlays: Arc::new(Vec::new()),
+            patch_strip: 0,
+        }
+    }
+
+    #[test]
+    fn bzlmod_prefix_cell_without_external_origin_is_not_file_state_external() {
+        let path = cell_path(CellName::testing_new("bzlmod_regular_cell"), "src/lib.rs");
+
+        assert!(!is_bazel_output_or_external_file_state_path(&path));
+    }
+
+    #[test]
+    fn bzlmod_external_origin_is_file_state_external() {
+        let cell = CellName::testing_new("registered_bzlmod_file_state_cell");
+        register_external_cell_origin(
+            cell,
+            ExternalCellOrigin::Bzlmod(test_bzlmod_cell_setup("registered+repo")),
+        );
+        let path = cell_path(cell, "src/lib.rs");
+
+        assert!(is_bazel_output_or_external_file_state_path(&path));
     }
 
     #[tokio::test]

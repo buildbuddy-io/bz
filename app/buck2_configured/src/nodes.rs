@@ -91,6 +91,7 @@ use buck2_node::nodes::configured_frontend::ConfiguredTargetNodeCalculationImpl;
 use buck2_node::nodes::frontend::TargetGraphCalculation;
 use buck2_node::nodes::unconfigured::TargetNode;
 use buck2_node::nodes::unconfigured::TargetNodeRef;
+use buck2_node::rule::BazelToolchainRequirement;
 use buck2_node::rule::RuleIncomingTransition;
 use buck2_node::rule_type::RuleType;
 use buck2_node::visibility::VisibilityError;
@@ -1964,25 +1965,18 @@ async fn resolve_bazel_toolchain_type_alias(
     Ok(normalize_bazel_toolchain_key(&resolved.to_string()))
 }
 
-async fn resolve_bazel_toolchain_deps(
+pub async fn resolve_bazel_declared_toolchain_deps(
     ctx: &mut DiceComputations<'_>,
     target_label: &ConfiguredTargetLabel,
-    target_node: &TargetNode,
+    declared_toolchain_requirements: Vec<BazelToolchainRequirement>,
     execution_platform_cfg: &ConfigurationNoExec,
 ) -> buck2_error::Result<(Vec<ConfiguredTargetNode>, Vec<BazelResolvedToolchain>)> {
-    if !target_label.cfg().is_bound()
-        || (target_node.bazel_toolchains().is_empty()
-            && target_node.bazel_aspect_toolchains().is_empty())
-    {
+    if !target_label.cfg().is_bound() || declared_toolchain_requirements.is_empty() {
         return Ok((Vec::new(), Vec::new()));
     }
 
-    let all_declared_toolchains = target_node
-        .bazel_toolchains()
-        .iter()
-        .chain(target_node.bazel_aspect_toolchains());
     let mut declared_toolchains = SmallMap::new();
-    for declared in all_declared_toolchains {
+    for declared in declared_toolchain_requirements {
         let declared_key = normalize_bazel_toolchain_key(&declared.toolchain_type);
         let resolution_key = resolve_bazel_toolchain_type_alias(ctx, &declared_key).await?;
         declared_toolchains
@@ -2047,6 +2041,21 @@ async fn resolve_bazel_toolchain_deps(
     }
 
     Ok((deps, resolved))
+}
+
+async fn resolve_bazel_toolchain_deps(
+    ctx: &mut DiceComputations<'_>,
+    target_label: &ConfiguredTargetLabel,
+    target_node: &TargetNode,
+    execution_platform_cfg: &ConfigurationNoExec,
+) -> buck2_error::Result<(Vec<ConfiguredTargetNode>, Vec<BazelResolvedToolchain>)> {
+    resolve_bazel_declared_toolchain_deps(
+        ctx,
+        target_label,
+        target_node.bazel_toolchains().to_vec(),
+        execution_platform_cfg,
+    )
+    .await
 }
 
 /// Compute configured target node ignoring transition for this node.
