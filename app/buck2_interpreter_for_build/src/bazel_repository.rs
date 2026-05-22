@@ -184,6 +184,8 @@ pub(crate) enum BazelRepositoryError {
     RepositoryRuleUnknownAttribute { rule: String, attr: String },
     #[error("repository_ctx output path expected string or path, got `{0}`")]
     RepositoryCtxOutputPathUnsupportedValue(String),
+    #[error("repository_ctx output path `{path}` is outside repository directory `{working_dir}`")]
+    RepositoryCtxOutputPathOutsideRepository { path: String, working_dir: String },
     #[error("repository_ctx.template could not read `{path}`: {error}")]
     RepositoryCtxTemplateReadFile { path: String, error: String },
     #[error("repository_ctx could not write `{path}`: {error}")]
@@ -605,6 +607,40 @@ mod tests {
     fn test_repository_path_display_is_absolute() {
         let path = StarlarkRepositoryPath::new("buck-out/v2/external_cells/repo/file".to_owned());
         assert!(Path::new(&path.to_string()).is_absolute());
+    }
+
+    #[test]
+    fn test_repository_ctx_output_path_rejects_escapes() {
+        let working_dir = "buck-out/v2/external_cells/bzlmod_generated/repo.repository_ctx";
+
+        assert_eq!(
+            repository_ctx_output_path_from_relative_path("dir/../file", working_dir).unwrap(),
+            "file"
+        );
+        assert_eq!(
+            repository_ctx_output_path_from_resolved_path(
+                "buck-out/v2/external_cells/bzlmod_generated/repo.repository_ctx/dir/file",
+                working_dir,
+            )
+            .unwrap(),
+            "dir/file"
+        );
+        assert!(
+            repository_ctx_output_path_from_relative_path("../file", working_dir).is_err(),
+            "relative output paths must not escape the repository root"
+        );
+        assert!(
+            repository_ctx_output_path_from_relative_path("/tmp/file", working_dir).is_err(),
+            "absolute output paths must not be accepted as repository-relative strings"
+        );
+        assert!(
+            repository_ctx_output_path_from_resolved_path(
+                "buck-out/v2/external_cells/bzlmod_generated/other.repository_ctx/file",
+                working_dir,
+            )
+            .is_err(),
+            "path objects must point inside the current repository root"
+        );
     }
 
     #[test]
@@ -3248,20 +3284,114 @@ fn repository_ctx_output_path_from_value(
     working_dir: &str,
 ) -> starlark::Result<String> {
     if let Some(path) = value.downcast_ref::<StarlarkRepositoryPath>() {
-        let prefix = format!("{working_dir}/");
-        return Ok(path
-            .path
-            .strip_prefix(&prefix)
-            .unwrap_or(&path.path)
-            .to_owned());
+        return repository_ctx_output_path_from_resolved_path(&path.path, working_dir);
     }
     if let Some(path) = value.unpack_str() {
-        return Ok(path.to_owned());
+        return repository_ctx_output_path_from_relative_path(path, working_dir);
     }
     Err(buck2_error::Error::from(
         BazelRepositoryError::RepositoryCtxOutputPathUnsupportedValue(value.get_type().to_owned()),
     )
     .into())
+}
+
+fn repository_ctx_output_path_from_value_relative_to(
+    value: Value<'_>,
+    eval: &Evaluator<'_, '_, '_>,
+    working_dir: &str,
+) -> starlark::Result<String> {
+    if let Some(path) = value.unpack_str() {
+        return repository_ctx_output_path_from_relative_path(path, working_dir);
+    }
+    let path = repository_path_from_value_relative_to(value, eval, Some(working_dir))?;
+    repository_ctx_output_path_from_resolved_path(&path, working_dir)
+}
+
+fn repository_ctx_output_abs_path_from_value_relative_to(
+    value: Value<'_>,
+    eval: &Evaluator<'_, '_, '_>,
+    working_dir: &str,
+) -> starlark::Result<String> {
+    let relative_path =
+        repository_ctx_output_path_from_value_relative_to(value, eval, working_dir)?;
+    Ok(Path::new(working_dir)
+        .join(relative_path)
+        .to_string_lossy()
+        .into_owned())
+}
+
+fn repository_ctx_output_path_from_resolved_path(
+    path: &str,
+    working_dir: &str,
+) -> starlark::Result<String> {
+    if path == working_dir {
+        return Ok(String::new());
+    }
+
+    let prefix = format!("{working_dir}/");
+    if let Some(path) = path.strip_prefix(&prefix) {
+        return repository_ctx_output_path_from_relative_path(path, working_dir);
+    }
+
+    let path_buf = Path::new(path);
+    let working_dir_buf = Path::new(working_dir);
+    if path_buf.is_absolute()
+        && working_dir_buf.is_absolute()
+        && path_buf.starts_with(working_dir_buf)
+    {
+        let relative = path_buf.strip_prefix(working_dir_buf).map_err(|_| {
+            buck2_error::Error::from(
+                BazelRepositoryError::RepositoryCtxOutputPathOutsideRepository {
+                    path: path.to_owned(),
+                    working_dir: working_dir.to_owned(),
+                },
+            )
+        })?;
+        let relative = relative.to_string_lossy();
+        return repository_ctx_output_path_from_relative_path(relative.as_ref(), working_dir);
+    }
+
+    Err(buck2_error::Error::from(
+        BazelRepositoryError::RepositoryCtxOutputPathOutsideRepository {
+            path: path.to_owned(),
+            working_dir: working_dir.to_owned(),
+        },
+    )
+    .into())
+}
+
+fn repository_ctx_output_path_from_relative_path(
+    path: &str,
+    working_dir: &str,
+) -> starlark::Result<String> {
+    let mut normalized = PathBuf::new();
+    for component in Path::new(path).components() {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::Normal(part) => normalized.push(part),
+            std::path::Component::ParentDir => {
+                if !normalized.pop() {
+                    return Err(buck2_error::Error::from(
+                        BazelRepositoryError::RepositoryCtxOutputPathOutsideRepository {
+                            path: path.to_owned(),
+                            working_dir: working_dir.to_owned(),
+                        },
+                    )
+                    .into());
+                }
+            }
+            std::path::Component::RootDir | std::path::Component::Prefix(_) => {
+                return Err(buck2_error::Error::from(
+                    BazelRepositoryError::RepositoryCtxOutputPathOutsideRepository {
+                        path: path.to_owned(),
+                        working_dir: working_dir.to_owned(),
+                    },
+                )
+                .into());
+            }
+        }
+    }
+    Ok(normalized.to_string_lossy().into_owned())
 }
 
 pub(crate) fn take_repository_ctx_files<'v>(
@@ -4448,9 +4578,13 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
     ) -> starlark::Result<NoneType> {
         let working_dir = repository_ctx_working_dir(this);
         let target = repository_ctx_path_from_value_relative_to(this, target, eval)?;
-        let link = repository_ctx_path_from_value_relative_to(this, link_name, eval)?;
+        let link = repository_ctx_output_path_from_value_relative_to(link_name, eval, working_dir)?;
         let target_path = repository_path_for_read_abs_relative_to(&target, working_dir);
-        let link_path = repository_path_for_write(&link)?;
+        let link_abs = Path::new(working_dir)
+            .join(&link)
+            .to_string_lossy()
+            .into_owned();
+        let link_path = repository_path_for_write(&link_abs)?;
         if let Some(dep) = repository_ctx_external_input_dep(&target_path) {
             repository_ctx_record_path_dep(this, dep);
         }
@@ -4654,10 +4788,10 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
         let download_headers = module_ctx_download_headers_from_entries(&headers)?;
 
         let urls = module_ctx_urls_from_value(url, eval.heap())?;
-        let output_path = repository_path_from_value_relative_to(
+        let output_path = repository_ctx_output_abs_path_from_value_relative_to(
             output,
             eval,
-            Some(repository_ctx_working_dir(this)),
+            repository_ctx_working_dir(this),
         )?;
         let (result, _) = repository_ctx_download_to_path(
             urls,
@@ -4732,7 +4866,8 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
         if !success {
             return Ok(module_ctx_pending_download(block, result, eval));
         }
-        let output_path = repository_path_from_value_relative_to(output, eval, Some(working_dir))?;
+        let output_path =
+            repository_ctx_output_abs_path_from_value_relative_to(output, eval, working_dir)?;
         let output_path = repository_path_for_write(&output_path)?;
         let archive_path = repository_path_for_write(&archive_path_string)?;
         let strip_prefix = if stripPrefix.is_empty() {
@@ -6632,10 +6767,10 @@ fn module_extension_context_methods(builder: &mut MethodsBuilder) {
 
         let urls = module_ctx_urls_from_value(url, eval.heap())?;
         let output = output.unwrap_or_else(|| eval.heap().alloc(""));
-        let output_path = repository_path_from_value_relative_to(
+        let output_path = repository_ctx_output_abs_path_from_value_relative_to(
             output,
             eval,
-            Some(module_ctx_working_dir(this)),
+            module_ctx_working_dir(this),
         )?;
         let write_path = match repository_path_for_write(&output_path) {
             Ok(path) => path,
