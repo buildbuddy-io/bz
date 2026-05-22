@@ -53,6 +53,7 @@ use buck2_core::cells::external::GitCellSetup;
 use buck2_core::cells::external::GitObjectFormat;
 use buck2_core::cells::external::bzlmod_cell_aliases_for_cell;
 use buck2_core::cells::external::bzlmod_cell_name;
+use buck2_core::cells::external::is_bzlmod_cell_name;
 use buck2_core::cells::external::register_bzlmod_cell_aliases_from_refs;
 use buck2_core::cells::external::register_bzlmod_cell_canonical_repo_name_for_cell;
 use buck2_core::cells::external::register_bzlmod_module_extension_usages_json;
@@ -95,6 +96,7 @@ use serde::Serialize;
 use sha2::Digest;
 use sha2::Sha256;
 
+use crate::bzlmod_integrity::parse_bzlmod_integrity;
 use crate::dice::cells::HasCellResolver;
 use crate::dice::data::HasIoProvider;
 use crate::external_cells::EXTERNAL_CELLS_IMPL;
@@ -345,7 +347,7 @@ impl BuckConfigBasedCells {
         let cell_path = self.cell_resolver.get(cell_name)?.path();
 
         let follow_includes = false;
-        let is_bzlmod_cell = cell_name.as_str().starts_with("bzlmod_");
+        let is_bzlmod_cell = is_bzlmod_cell_name(cell_name.as_str());
 
         let config_paths = if is_bzlmod_cell {
             Vec::new()
@@ -672,12 +674,12 @@ impl BuckConfigBasedCells {
                 continue;
             }
             let destination = CellName::unchecked_new(destination.as_str())?;
-            if !destination.as_str().starts_with("bzlmod_") {
+            if !is_bzlmod_cell_name(destination.as_str()) {
                 cell_resolver.get(destination)?;
             }
             aliases.insert(alias, destination);
         }
-        if cell_name.as_str().starts_with("bzlmod_") || cell_name.as_str() == "bazel_tools" {
+        if is_bzlmod_cell_name(cell_name.as_str()) || cell_name.as_str() == "bazel_tools" {
             for (alias, destination) in bzlmod_cell_aliases_for_cell(cell_name.as_str()) {
                 if alias == "bazel_tools" {
                     continue;
@@ -745,7 +747,7 @@ impl BuckConfigBasedCells {
         cell_name: &str,
         cell_path: &CellRootPath,
     ) -> buck2_error::Result<LegacyBuckConfig> {
-        let is_bzlmod_cell = cell_name.starts_with("bzlmod_");
+        let is_bzlmod_cell = is_bzlmod_cell_name(cell_name);
         if is_bzlmod_cell || cell_name == "bazel_tools" {
             return Ok(LegacyBuckConfig::empty().with_bazel_compat_cell_defaults(
                 &[],
@@ -1523,18 +1525,10 @@ fn bzlmod_external_module_is_configure_repo(module: &BazelCompatExternalModule) 
                     | BzlmodGeneratedCellGenerator::XcodeConfig(_)
                     | BzlmodGeneratedCellGenerator::ShellConfig(_),
                 ) => true,
-                Ok(_) => bzlmod_canonical_repo_name_looks_configure(&module.canonical_repo_name),
-                Err(_) => bzlmod_canonical_repo_name_looks_configure(&module.canonical_repo_name),
+                Ok(_) | Err(_) => false,
             }
         }
     }
-}
-
-fn bzlmod_canonical_repo_name_looks_configure(canonical_repo_name: &str) -> bool {
-    canonical_repo_name.contains("configure")
-        || canonical_repo_name.contains("config")
-        || canonical_repo_name.contains("toolchain")
-        || canonical_repo_name.contains("toolchains")
 }
 
 #[derive(
@@ -2420,8 +2414,11 @@ impl Key for BzlmodRegistryKey {
         }))
     }
 
-    fn equality(_x: &Self::Value, _y: &Self::Value) -> bool {
-        false
+    fn equality(x: &Self::Value, y: &Self::Value) -> bool {
+        match (x, y) {
+            (Ok(x), Ok(y)) => x == y,
+            _ => false,
+        }
     }
 
     fn validity(x: &Self::Value) -> bool {
@@ -3456,8 +3453,11 @@ impl Key for BzlmodRepoDefinitionKey {
         }))
     }
 
-    fn equality(_x: &Self::Value, _y: &Self::Value) -> bool {
-        false
+    fn equality(x: &Self::Value, y: &Self::Value) -> bool {
+        match (x, y) {
+            (Ok(x), Ok(y)) => x == y,
+            _ => false,
+        }
     }
 
     fn validity(x: &Self::Value) -> bool {
@@ -3503,8 +3503,11 @@ impl Key for BzlmodRepositoryDirectoryKey {
         }))
     }
 
-    fn equality(_x: &Self::Value, _y: &Self::Value) -> bool {
-        false
+    fn equality(x: &Self::Value, y: &Self::Value) -> bool {
+        match (x, y) {
+            (Ok(x), Ok(y)) => x == y,
+            _ => false,
+        }
     }
 
     fn validity(x: &Self::Value) -> bool {
@@ -6224,74 +6227,20 @@ fn verify_bzlmod_archive_integrity(
     integrity: &str,
     bytes: &[u8],
 ) -> buck2_error::Result<()> {
-    let Some(expected) = bzlmod_integrity_sha256_bytes(integrity)? else {
+    let Some(expected) = parse_bzlmod_integrity(integrity)? else {
         return Ok(());
     };
-    let got = Sha256::digest(bytes);
-    if got.as_slice() != expected.as_slice() {
+    let got = expected.kind().digest(bytes);
+    if got.as_slice() != expected.bytes() {
         return Err(buck2_error!(
             buck2_error::ErrorTag::Input,
             "archive_override integrity mismatch for `{}`: expected {}, got {}",
             url,
-            hex::encode(expected),
+            hex::encode(expected.bytes()),
             hex::encode(got)
         ));
     }
     Ok(())
-}
-
-fn bzlmod_integrity_sha256_bytes(integrity: &str) -> buck2_error::Result<Option<Vec<u8>>> {
-    if integrity.is_empty() {
-        return Ok(None);
-    }
-    let Some(encoded) = integrity.strip_prefix("sha256-") else {
-        return Err(buck2_error!(
-            buck2_error::ErrorTag::Input,
-            "unsupported bzlmod archive integrity `{}`",
-            integrity
-        ));
-    };
-    let bytes = bzlmod_base64_decode(encoded)?;
-    if bytes.len() != 32 {
-        return Err(buck2_error!(
-            buck2_error::ErrorTag::Input,
-            "invalid bzlmod sha256 integrity `{}`",
-            integrity
-        ));
-    }
-    Ok(Some(bytes))
-}
-
-fn bzlmod_base64_decode(encoded: &str) -> buck2_error::Result<Vec<u8>> {
-    let mut out = Vec::new();
-    let mut buffer = 0u32;
-    let mut bits = 0u8;
-    for ch in encoded.chars() {
-        if ch == '=' {
-            break;
-        }
-        let value = match ch {
-            'A'..='Z' => ch as u32 - 'A' as u32,
-            'a'..='z' => ch as u32 - 'a' as u32 + 26,
-            '0'..='9' => ch as u32 - '0' as u32 + 52,
-            '+' => 62,
-            '/' => 63,
-            _ => {
-                return Err(buck2_error!(
-                    buck2_error::ErrorTag::Input,
-                    "invalid base64 character `{}` in bzlmod integrity",
-                    ch
-                ));
-            }
-        };
-        buffer = (buffer << 6) | value;
-        bits += 6;
-        if bits >= 8 {
-            bits -= 8;
-            out.push(((buffer >> bits) & 0xff) as u8);
-        }
-    }
-    Ok(out)
 }
 
 fn apply_bzlmod_single_version_module_patches(
@@ -8159,11 +8108,7 @@ fn bzlmod_canonical_repo_name(module_name: &str, version: &str, multiple_version
 }
 
 fn bzlmod_cell_name_for_canonical_repo_name(canonical_repo_name: &str) -> String {
-    if canonical_repo_name == "bazel_tools" {
-        "bazel_tools".to_owned()
-    } else {
-        bzlmod_cell_name(canonical_repo_name)
-    }
+    bzlmod_cell_name(canonical_repo_name)
 }
 
 fn is_valid_bzlmod_module_name(name: &str) -> bool {
@@ -9179,6 +9124,44 @@ mod tests {
         assert!(super::validate_bzlmod_module_lines("MODULE.bazel", &lines).is_err());
     }
 
+    #[test]
+    fn test_bzlmod_configure_repo_detection_uses_structured_generator_kind()
+    -> buck2_error::Result<()> {
+        fn generated(
+            canonical_repo_name: &str,
+            generator_json: String,
+        ) -> super::BazelCompatExternalModule {
+            super::BazelCompatExternalModule::Generated(super::BazelCompatGeneratedModule {
+                cell_name: super::bzlmod_cell_name(canonical_repo_name),
+                aliases: Vec::new(),
+                canonical_repo_name: canonical_repo_name.to_owned(),
+                generator_json,
+            })
+        }
+
+        let host_platform_json = serde_json::to_string(
+            &super::BzlmodGeneratedCellGenerator::HostPlatform(super::BzlmodHostPlatformSetup {}),
+        )?;
+        assert!(super::bzlmod_external_module_is_configure_repo(&generated(
+            "platforms+host_platform+host_platform",
+            host_platform_json
+        )));
+
+        let non_configure_json =
+            serde_json::to_string(&super::BzlmodGeneratedCellGenerator::BazelFeaturesVersion(
+                super::BzlmodBazelFeaturesVersionSetup {
+                    bazel_version: Arc::from("9.1.0"),
+                },
+            ))?;
+        assert!(!super::bzlmod_external_module_is_configure_repo(
+            &generated("rules_example+toolchain_config_repo", non_configure_json)
+        ));
+        assert!(!super::bzlmod_external_module_is_configure_repo(
+            &generated("rules_example+configure_repo", "{".to_owned())
+        ));
+        Ok(())
+    }
+
     #[tokio::test]
     async fn test_bazelrc_workspace_import_normalizes_path() -> buck2_error::Result<()> {
         let mut file_ops = TestConfigParserFileOps::new(&[
@@ -9330,14 +9313,14 @@ mod tests {
             resolver.get(CellName::testing_new("root"))?.path().as_str()
         );
         assert_eq!(
-            "bzlmod_rules_go_0_57_0",
+            &bzlmod_cell_name("rules_go+0.57.0"),
             resolver
                 .root_cell_cell_alias_resolver()
                 .resolve("rules_go")?
                 .as_str()
         );
         assert_eq!(
-            "bzlmod_rules_go_0_57_0",
+            &bzlmod_cell_name("rules_go+0.57.0"),
             resolver
                 .root_cell_cell_alias_resolver()
                 .resolve("io_bazel_rules_go")?
@@ -9648,6 +9631,23 @@ mod tests {
             super::bzlmod_archive_override_kind(&archive_override),
             Some(crate::bzlmod_archive::ArchiveKind::TarGz)
         );
+    }
+
+    #[test]
+    fn test_bzlmod_archive_integrity_accepts_sri_algorithms() {
+        for integrity in [
+            "sha1-iEPX+SQWIR3p67lj/0zigSWTKHg=",
+            "sha256-w6uP8Tcg6K2QR905Rms8iXTlksL6OD1KOWBxTK7wxPI=",
+            "sha384-PJww2fZl501RXIQpYNSkUcg6ASX9Pec5LXs3IxrxDHLqWK7fzfiaV2W/kCr5Ps8G",
+            "sha512-ClAmHr0aOQ/tK/Mm8mc8FFWCpjQtUjIElz0CGTN/gWFqgGmwElh89WNfaSXxtWw2AjDBmyc1AO4BPgMGAb8kJQ==",
+        ] {
+            super::verify_bzlmod_archive_integrity(
+                "https://example.com/archive.tar.gz",
+                integrity,
+                b"foobar",
+            )
+            .unwrap();
+        }
     }
 
     #[test]
@@ -10128,11 +10128,13 @@ mod tests {
     #[test]
     fn test_bzlmod_extension_generated_repos_inherit_extension_host_repo_mapping() {
         let mut cell_aliases_by_cell = super::BzlmodCellAliasesByCell::default();
+        let gazelle_cell = bzlmod_cell_name("gazelle+");
+        let package_metadata_cell = bzlmod_cell_name("package_metadata+");
         super::add_bzlmod_cell_alias(
             &mut cell_aliases_by_cell,
-            "bzlmod_gazelle_",
+            &gazelle_cell,
             "package_metadata",
-            "bzlmod_package_metadata_",
+            &package_metadata_cell,
         );
 
         let mut generated = Vec::new();
@@ -10143,7 +10145,7 @@ mod tests {
             &mut cell_aliases_by_cell,
             "root",
             "com_github_example_dep",
-            "bzlmod_gazelle_",
+            &gazelle_cell,
             "gazelle++go_deps+com_github_example_dep",
             "{}".to_owned(),
         );
@@ -10186,7 +10188,7 @@ mod tests {
                 &generated_cell_name,
                 "package_metadata"
             ),
-            Some("bzlmod_package_metadata_")
+            Some(package_metadata_cell.as_str())
         );
         assert_eq!(
             super::bzlmod_cell_alias_target(
@@ -10328,18 +10330,19 @@ mod tests {
             registered_toolchains: Vec::new(),
         };
 
+        let rules_go_cell = bzlmod_cell_name("rules_go+");
         let mut cell_aliases_by_cell = super::BzlmodCellAliasesByCell::default();
         super::add_bzlmod_cell_alias(
             &mut cell_aliases_by_cell,
             "root",
             "io_bazel_rules_go",
-            "bzlmod_rules_go_",
+            &rules_go_cell,
         );
 
         let mut extension_unique_names = std::collections::BTreeMap::new();
         extension_unique_names.insert(
             super::BzlmodExtensionId {
-                bzl_cell_name: "bzlmod_rules_go_".to_owned(),
+                bzl_cell_name: rules_go_cell.clone(),
                 bzl_path: "go/extensions.bzl".to_owned(),
                 extension_name: "go_sdk".to_owned(),
             },
@@ -10347,7 +10350,7 @@ mod tests {
         );
 
         let mut canonical_repo_names_by_cell = std::collections::BTreeMap::new();
-        canonical_repo_names_by_cell.insert("bzlmod_rules_go_".to_owned(), "rules_go+".to_owned());
+        canonical_repo_names_by_cell.insert(rules_go_cell.clone(), "rules_go+".to_owned());
 
         let mut generated = Vec::new();
         let mut generated_repo_declaring_cells = Vec::new();
@@ -10357,7 +10360,7 @@ mod tests {
         insert_test_extension_usages_json(
             &mut extension_usages_json_by_id,
             super::BzlmodExtensionId {
-                bzl_cell_name: "bzlmod_rules_go_".to_owned(),
+                bzl_cell_name: rules_go_cell,
                 bzl_path: "go/extensions.bzl".to_owned(),
                 extension_name: "go_sdk".to_owned(),
             },
@@ -10539,7 +10542,8 @@ mod tests {
     #[test]
     fn test_bzlmod_lockfile_extension_key() -> buck2_error::Result<()> {
         let mut canonical_repo_names_by_cell = std::collections::BTreeMap::new();
-        canonical_repo_names_by_cell.insert("bzlmod_rules_go_".to_owned(), "rules_go+".to_owned());
+        let rules_go_cell = bzlmod_cell_name("rules_go+");
+        canonical_repo_names_by_cell.insert(rules_go_cell.clone(), "rules_go+".to_owned());
 
         assert_eq!(
             super::bzlmod_lockfile_extension_key(
@@ -10555,7 +10559,7 @@ mod tests {
         assert_eq!(
             super::bzlmod_lockfile_extension_key(
                 &super::BzlmodExtensionId {
-                    bzl_cell_name: "bzlmod_rules_go_".to_owned(),
+                    bzl_cell_name: rules_go_cell,
                     bzl_path: "go/extensions.bzl".to_owned(),
                     extension_name: "go_sdk".to_owned(),
                 },
@@ -10570,28 +10574,30 @@ mod tests {
     fn test_bzlmod_registered_toolchains_resolve_declaring_repo_mapping() -> buck2_error::Result<()>
     {
         let mut cell_aliases_by_cell = super::BzlmodCellAliasesByCell::default();
+        let rules_go_cell = bzlmod_cell_name("rules_go+0.57.0");
+        let go_toolchains_cell = bzlmod_cell_name("rules_go+0.57.0+go_sdk+go_toolchains");
         super::add_bzlmod_cell_alias(
             &mut cell_aliases_by_cell,
-            "bzlmod_rules_go_0_57_0",
+            &rules_go_cell,
             "go_toolchains",
-            "bzlmod_rules_go_0_57_0_go_sdk_go_toolchains",
+            &go_toolchains_cell,
         );
 
         assert_eq!(
             super::qualify_bzlmod_registered_toolchain(
                 "@go_toolchains//:all",
-                "bzlmod_rules_go_0_57_0",
+                &rules_go_cell,
                 &cell_aliases_by_cell,
             )?,
-            "bzlmod_rules_go_0_57_0_go_sdk_go_toolchains//:all"
+            format!("{go_toolchains_cell}//:all")
         );
         assert_eq!(
             super::qualify_bzlmod_registered_toolchain(
                 "//:all",
-                "bzlmod_rules_go_0_57_0",
+                &rules_go_cell,
                 &cell_aliases_by_cell,
             )?,
-            "bzlmod_rules_go_0_57_0//:all"
+            format!("{rules_go_cell}//:all")
         );
 
         Ok(())

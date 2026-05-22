@@ -117,6 +117,7 @@ use buck2_execute::materialize::materializer::HasMaterializer;
 use buck2_execute_impl::executors::local::EnvironmentBuilder;
 use buck2_execute_impl::executors::local::apply_local_execution_environment;
 use buck2_execute_impl::executors::local::create_output_dirs;
+use buck2_execute_impl::executors::local::materialize_input_path_aliases;
 use buck2_execute_impl::executors::local::materialize_inputs;
 use buck2_execute_impl::executors::local::prep_scratch_path;
 use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
@@ -925,6 +926,7 @@ impl TestOrchestrator for BuckTestOrchestrator<'_> {
             self.cancellations,
         )
         .await?;
+        materialize_input_path_aliases(&fs, &materialized_inputs)?;
 
         for local_resource_setup_command in setup_commands.iter() {
             let materialized_inputs = materialize_inputs(
@@ -946,6 +948,7 @@ impl TestOrchestrator for BuckTestOrchestrator<'_> {
                 self.cancellations,
             )
             .await?;
+            materialize_input_path_aliases(&fs, &materialized_inputs)?;
         }
 
         Ok(create_prepare_for_local_execution_result(

@@ -166,7 +166,9 @@ impl<'a> ClientCommandContext<'a> {
         matches: BuckArgMatches<'_>,
         events_ctx: &mut EventsCtx,
     ) -> ExitResult {
-        cmd.update_events_ctx(matches, &self, events_ctx);
+        if let Err(error) = cmd.update_events_ctx(matches, &self, events_ctx) {
+            return ExitResult::err(error);
+        }
         events_ctx.buck_log_dir = self.paths().map(|paths| paths.log_dir()).ok();
         events_ctx.command_report_path = cmd
             .event_log_opts()
@@ -370,7 +372,7 @@ pub trait BuckSubcommand {
         _matches: BuckArgMatches<'_>,
         ctx: &ClientCommandContext,
         events_ctx: &mut EventsCtx,
-    ) {
+    ) -> buck2_error::Result<()> {
         let paths = ctx.paths().ok();
         if let Some(recorder) = events_ctx.recorder.as_mut() {
             recorder.update_for_command(
@@ -384,6 +386,7 @@ pub trait BuckSubcommand {
                 paths,
             );
         }
+        Ok(())
     }
 
     fn event_log_opts(&self) -> &CommonEventLogOptions {

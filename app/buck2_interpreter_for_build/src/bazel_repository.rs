@@ -20,13 +20,11 @@ use std::io::Write;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
-use std::process::Stdio;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::OnceLock;
-use std::thread;
+use std::sync::atomic::AtomicU64;
 use std::time::Duration;
-use std::time::Instant;
 use std::time::SystemTime;
 
 use allocative::Allocative;
@@ -57,6 +55,11 @@ use buck2_core::cells::external::bzlmod_cell_name;
 use buck2_core::cells::name::CellName;
 use buck2_core::cells::paths::CellRelativePathBuf;
 use buck2_core::target::label::interner::ConcurrentTargetLabelInterner;
+use buck2_execute_local::CommandEvent;
+use buck2_execute_local::DefaultKillProcess;
+use buck2_execute_local::GatherOutputStatus;
+use buck2_execute_local::spawn_command_and_stream_events;
+use buck2_execute_local::status_decoder::DefaultStatusDecoder;
 use buck2_hash::StdBuckHashMap;
 use buck2_interpreter::file_loader::LoadedModule;
 use buck2_interpreter::load_module::InterpreterCalculation;
@@ -70,6 +73,7 @@ use buck2_node::attrs::configurable::AttrIsConfigurable;
 use buck2_node::attrs::fmt_context::AttrFmtContext;
 use buck2_node::bzl_or_bxl_path::BzlOrBxlPath;
 use buck2_node::rule_type::StarlarkRuleType;
+use buck2_resource_control::ActionFreezeEvent;
 use derive_more::Display;
 use dice::CancellationContext;
 use dice::DiceComputations;
@@ -184,6 +188,8 @@ pub(crate) enum BazelRepositoryError {
     RepositoryRuleUnknownAttribute { rule: String, attr: String },
     #[error("repository_ctx output path expected string or path, got `{0}`")]
     RepositoryCtxOutputPathUnsupportedValue(String),
+    #[error("repository_ctx output path `{path}` is outside repository directory `{working_dir}`")]
+    RepositoryCtxOutputPathOutsideRepository { path: String, working_dir: String },
     #[error("repository_ctx.template could not read `{path}`: {error}")]
     RepositoryCtxTemplateReadFile { path: String, error: String },
     #[error("repository_ctx could not write `{path}`: {error}")]
@@ -200,6 +206,10 @@ pub(crate) enum BazelRepositoryError {
     },
     #[error("repository_ctx.download_and_extract could not extract `{archive}`: {error}")]
     RepositoryCtxExtractArchive { archive: String, error: String },
+    #[error(
+        "{function}(block = False) is not supported because downloads are currently executed synchronously"
+    )]
+    RepositoryCtxNonblockingDownloadUnsupported { function: &'static str },
     #[error("repository_ctx.download_and_extract rename_files key must be a string, got `{0}`")]
     RepositoryCtxRenameFilesKeyUnsupportedValue(String),
     #[error(
@@ -523,8 +533,21 @@ mod tests {
             "bazel_tools"
         ));
         assert!(repository_rule_should_scan_loaded_module_cell(
-            "bzlmod_rules_go_"
+            &bzlmod_cell_name("rules_go+")
         ));
+    }
+
+    #[test]
+    fn test_repository_ctx_rejects_nonblocking_downloads() {
+        repository_ctx_reject_nonblocking_download(true, "repository_ctx.download").unwrap();
+
+        let error = repository_ctx_reject_nonblocking_download(false, "repository_ctx.download")
+            .unwrap_err();
+        let error = format!("{error:?}");
+        assert!(
+            error.contains("repository_ctx.download(block = False) is not supported"),
+            "error: {error}"
+        );
     }
 
     #[test]
@@ -534,7 +557,7 @@ mod tests {
                 "/repo/buck-out/v2/external_cells/bzlmod/gazelle+/internal/list_repository_tools_srcs.go",
             )),
             Some(RepositoryPathLabelDep::cell_path(
-                "bzlmod_gazelle_".to_owned(),
+                bzlmod_cell_name("gazelle+"),
                 "internal/list_repository_tools_srcs.go".to_owned(),
             ))
         );
@@ -543,7 +566,7 @@ mod tests {
                 "/repo/buck-out/v2/external_cells/bzlmod_generated/rules_go++go_sdk+main___download_0/bin/go",
             )),
             Some(RepositoryPathLabelDep::cell_path(
-                "bzlmod_rules_go__go_sdk_main___download_0".to_owned(),
+                bzlmod_cell_name("rules_go++go_sdk+main___download_0"),
                 "bin/go".to_owned(),
             ))
         );
@@ -558,7 +581,7 @@ mod tests {
                 "/repo/buck-out/v2/external_cells/bzlmod/gazelle+",
             )),
             Some(RepositoryPathLabelDep::tree(
-                "bzlmod_gazelle_".to_owned(),
+                bzlmod_cell_name("gazelle+"),
                 None,
             ))
         );
@@ -567,7 +590,7 @@ mod tests {
                 "/repo/buck-out/v2/external_cells/bzlmod/gazelle+/internal",
             )),
             Some(RepositoryPathLabelDep::tree(
-                "bzlmod_gazelle_".to_owned(),
+                bzlmod_cell_name("gazelle+"),
                 Some("internal".to_owned()),
             ))
         );
@@ -602,9 +625,73 @@ mod tests {
     }
 
     #[test]
+    fn test_repository_ctx_patch_strip_rejects_negative() {
+        assert_eq!(repository_ctx_patch_strip(0, "patch.diff").unwrap(), 0);
+        assert_eq!(repository_ctx_patch_strip(2, "patch.diff").unwrap(), 2);
+
+        let error = repository_ctx_patch_strip(-1, "patch.diff")
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("strip must be non-negative"));
+        assert!(error.contains("patch.diff"));
+    }
+
+    #[test]
+    fn test_repository_ctx_renamed_strip_prefix() {
+        assert_eq!(
+            repository_ctx_renamed_strip_prefix("download_and_extract", "new", "").unwrap(),
+            "new"
+        );
+        assert_eq!(
+            repository_ctx_renamed_strip_prefix("download_and_extract", "", "old").unwrap(),
+            "old"
+        );
+
+        let error = repository_ctx_renamed_strip_prefix("download_and_extract", "new", "old")
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("download_and_extract() got multiple values"));
+        assert!(error.contains("stripPrefix"));
+    }
+
+    #[test]
     fn test_repository_path_display_is_absolute() {
         let path = StarlarkRepositoryPath::new("buck-out/v2/external_cells/repo/file".to_owned());
         assert!(Path::new(&path.to_string()).is_absolute());
+    }
+
+    #[test]
+    fn test_repository_ctx_output_path_rejects_escapes() {
+        let working_dir = "buck-out/v2/external_cells/bzlmod_generated/repo.repository_ctx";
+
+        assert_eq!(
+            repository_ctx_output_path_from_relative_path("dir/../file", working_dir).unwrap(),
+            "file"
+        );
+        assert_eq!(
+            repository_ctx_output_path_from_resolved_path(
+                "buck-out/v2/external_cells/bzlmod_generated/repo.repository_ctx/dir/file",
+                working_dir,
+            )
+            .unwrap(),
+            "dir/file"
+        );
+        assert!(
+            repository_ctx_output_path_from_relative_path("../file", working_dir).is_err(),
+            "relative output paths must not escape the repository root"
+        );
+        assert!(
+            repository_ctx_output_path_from_relative_path("/tmp/file", working_dir).is_err(),
+            "absolute output paths must not be accepted as repository-relative strings"
+        );
+        assert!(
+            repository_ctx_output_path_from_resolved_path(
+                "buck-out/v2/external_cells/bzlmod_generated/other.repository_ctx/file",
+                working_dir,
+            )
+            .is_err(),
+            "path objects must point inside the current repository root"
+        );
     }
 
     #[test]
@@ -672,6 +759,184 @@ mod tests {
             module_ctx_download_request_headers_for_url(url, &[], &auth_headers),
             vec![("Authorization", "Bearer user:pass")],
         );
+    }
+
+    fn module_ctx_download_test_dir(name: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |duration| duration.as_nanos());
+        std::env::temp_dir().join(format!(
+            "buck2-module-ctx-download-{name}-{}-{nanos}",
+            std::process::id()
+        ))
+    }
+
+    fn module_ctx_download_tmp_entries(dir: &Path, destination_name: &str) -> Vec<String> {
+        let mut entries = fs::read_dir(dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .filter(|entry| entry.starts_with(&format!(".{destination_name}.tmp.")))
+            .collect::<Vec<_>>();
+        entries.sort();
+        entries
+    }
+
+    #[test]
+    fn test_module_ctx_copy_download_file_publishes_without_tmp_leftovers() {
+        let dir = module_ctx_download_test_dir("success");
+        fs::create_dir_all(&dir).unwrap();
+        let source = dir.join("source");
+        let destination = dir.join("dest");
+        fs::write(&source, b"new").unwrap();
+        fs::write(&destination, b"old").unwrap();
+
+        module_ctx_copy_download_file(&source, &destination, false).unwrap();
+
+        assert_eq!(b"new", fs::read(&destination).unwrap().as_slice());
+        assert_eq!(
+            Vec::<String>::new(),
+            module_ctx_download_tmp_entries(&dir, "dest")
+        );
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn test_module_ctx_copy_download_file_failure_preserves_destination() {
+        let dir = module_ctx_download_test_dir("failure");
+        fs::create_dir_all(&dir).unwrap();
+        let source = dir.join("missing");
+        let destination = dir.join("dest");
+        fs::write(&destination, b"old").unwrap();
+
+        module_ctx_copy_download_file(&source, &destination, false).unwrap_err();
+
+        assert_eq!(b"old", fs::read(&destination).unwrap().as_slice());
+        assert_eq!(
+            Vec::<String>::new(),
+            module_ctx_download_tmp_entries(&dir, "dest")
+        );
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    fn module_ctx_download_test_key(name: &str) -> String {
+        let nanos = SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |duration| duration.as_nanos());
+        format!(
+            "test-module-ctx-download-cache-lock-{name}-{}-{nanos}",
+            std::process::id()
+        )
+    }
+
+    fn module_ctx_download_cache_lock_exists(key: &str) -> bool {
+        MODULE_CTX_DOWNLOAD_CACHE_LOCKS.get().is_some_and(|locks| {
+            locks
+                .lock()
+                .expect("module ctx download cache lock map is poisoned")
+                .contains_key(key)
+        })
+    }
+
+    #[test]
+    fn test_module_ctx_download_cache_lock_release_prunes_unused_lock() {
+        let key = module_ctx_download_test_key("unused");
+        let lock = module_ctx_download_cache_lock(&key);
+        assert!(module_ctx_download_cache_lock_exists(&key));
+
+        module_ctx_download_cache_release_lock(&key, &lock);
+
+        assert!(!module_ctx_download_cache_lock_exists(&key));
+    }
+
+    #[test]
+    fn test_module_ctx_download_cache_lock_release_keeps_shared_lock() {
+        let key = module_ctx_download_test_key("shared");
+        let lock = module_ctx_download_cache_lock(&key);
+        let other = module_ctx_download_cache_lock(&key);
+
+        module_ctx_download_cache_release_lock(&key, &lock);
+
+        assert!(module_ctx_download_cache_lock_exists(&key));
+        drop(other);
+        module_ctx_download_cache_release_lock(&key, &lock);
+        assert!(!module_ctx_download_cache_lock_exists(&key));
+    }
+
+    fn repository_recorded_input_test_dir(name: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |duration| duration.as_nanos());
+        let dir = std::env::temp_dir().join(format!(
+            "buck2-repository-recorded-input-{name}-{}-{nanos}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_repository_recorded_file_value_records_symlink_text() {
+        let dir = repository_recorded_input_test_dir("file-symlink");
+        let target = dir.join("target");
+        let other = dir.join("other");
+        let link = dir.join("link");
+        fs::write(&target, "old").unwrap();
+        fs::write(&other, "other").unwrap();
+        std::os::unix::fs::symlink("target", &link).unwrap();
+
+        let initial = repository_recorded_file_value(&link).unwrap();
+        fs::write(&target, "new").unwrap();
+        assert_eq!(initial, repository_recorded_file_value(&link).unwrap());
+
+        fs::remove_file(&link).unwrap();
+        std::os::unix::fs::symlink("other", &link).unwrap();
+        assert_ne!(initial, repository_recorded_file_value(&link).unwrap());
+
+        assert_eq!("SYMLINK:target", initial);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_repository_recorded_dirents_value_records_symlink_text() {
+        let dir = repository_recorded_input_test_dir("dirents-symlink");
+        let target = dir.join("target");
+        let link = dir.join("link");
+        fs::create_dir_all(&target).unwrap();
+        fs::write(target.join("file"), "old").unwrap();
+        std::os::unix::fs::symlink("target", &link).unwrap();
+
+        let initial = repository_recorded_dirents_value(&link).unwrap();
+        fs::write(target.join("file"), "new").unwrap();
+
+        assert_eq!(initial, repository_recorded_dirents_value(&link).unwrap());
+        assert_eq!("SYMLINK:target", initial);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_repository_recorded_dir_tree_value_records_symlink_text() {
+        let dir = repository_recorded_input_test_dir("tree-symlink");
+        let tree = dir.join("tree");
+        fs::create_dir_all(&tree).unwrap();
+        let target = dir.join("target");
+        let other = dir.join("other");
+        let link = tree.join("link");
+        fs::write(&target, "old").unwrap();
+        fs::write(&other, "other").unwrap();
+        std::os::unix::fs::symlink("../target", &link).unwrap();
+
+        let initial = repository_recorded_dir_tree_value(&tree).unwrap();
+        fs::write(&target, "new").unwrap();
+        assert_eq!(initial, repository_recorded_dir_tree_value(&tree).unwrap());
+
+        fs::remove_file(&link).unwrap();
+        std::os::unix::fs::symlink("../other", &link).unwrap();
+        assert_ne!(initial, repository_recorded_dir_tree_value(&tree).unwrap());
+
+        fs::remove_dir_all(&dir).unwrap();
     }
 }
 
@@ -831,11 +1096,15 @@ fn record_repository_env_var(
 }
 
 fn repository_recorded_file_value(path: &Path) -> io::Result<String> {
-    let metadata = match fs::metadata(path) {
+    let metadata = match fs::symlink_metadata(path) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok("ENOENT".to_owned()),
         Err(error) => return Err(error),
     };
+    if metadata.file_type().is_symlink() {
+        let target = fs::read_link(path)?;
+        return Ok(format!("SYMLINK:{}", target.to_string_lossy()));
+    }
     if metadata.is_dir() {
         return Ok("DIR".to_owned());
     }
@@ -859,7 +1128,7 @@ fn repository_recorded_file_value(path: &Path) -> io::Result<String> {
 }
 
 fn repository_recorded_dirents_value(path: &Path) -> io::Result<String> {
-    let metadata = match fs::metadata(path) {
+    let metadata = match fs::symlink_metadata(path) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok("ENOENT".to_owned()),
         Err(error) => return Err(error),
@@ -884,7 +1153,7 @@ fn repository_recorded_dirents_value(path: &Path) -> io::Result<String> {
 
 fn repository_recorded_dir_tree_value(path: &Path) -> io::Result<String> {
     fn visit(base: &Path, path: &Path, hasher: &mut blake3::Hasher) -> io::Result<()> {
-        let metadata = match fs::metadata(path) {
+        let metadata = match fs::symlink_metadata(path) {
             Ok(metadata) => metadata,
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
                 hasher.update(b"ENOENT");
@@ -895,7 +1164,9 @@ fn repository_recorded_dir_tree_value(path: &Path) -> io::Result<String> {
         let relative = path.strip_prefix(base).unwrap_or(path);
         hasher.update(relative.to_string_lossy().as_bytes());
         hasher.update(&[0]);
-        if metadata.is_dir() {
+        if metadata.file_type().is_symlink() {
+            hasher.update(repository_recorded_file_value(path)?.as_bytes());
+        } else if metadata.is_dir() {
             hasher.update(b"DIR");
             let mut entries = fs::read_dir(path)?
                 .map(|entry| entry.map(|entry| entry.path()))
@@ -3248,20 +3519,114 @@ fn repository_ctx_output_path_from_value(
     working_dir: &str,
 ) -> starlark::Result<String> {
     if let Some(path) = value.downcast_ref::<StarlarkRepositoryPath>() {
-        let prefix = format!("{working_dir}/");
-        return Ok(path
-            .path
-            .strip_prefix(&prefix)
-            .unwrap_or(&path.path)
-            .to_owned());
+        return repository_ctx_output_path_from_resolved_path(&path.path, working_dir);
     }
     if let Some(path) = value.unpack_str() {
-        return Ok(path.to_owned());
+        return repository_ctx_output_path_from_relative_path(path, working_dir);
     }
     Err(buck2_error::Error::from(
         BazelRepositoryError::RepositoryCtxOutputPathUnsupportedValue(value.get_type().to_owned()),
     )
     .into())
+}
+
+fn repository_ctx_output_path_from_value_relative_to(
+    value: Value<'_>,
+    eval: &Evaluator<'_, '_, '_>,
+    working_dir: &str,
+) -> starlark::Result<String> {
+    if let Some(path) = value.unpack_str() {
+        return repository_ctx_output_path_from_relative_path(path, working_dir);
+    }
+    let path = repository_path_from_value_relative_to(value, eval, Some(working_dir))?;
+    repository_ctx_output_path_from_resolved_path(&path, working_dir)
+}
+
+fn repository_ctx_output_abs_path_from_value_relative_to(
+    value: Value<'_>,
+    eval: &Evaluator<'_, '_, '_>,
+    working_dir: &str,
+) -> starlark::Result<String> {
+    let relative_path =
+        repository_ctx_output_path_from_value_relative_to(value, eval, working_dir)?;
+    Ok(Path::new(working_dir)
+        .join(relative_path)
+        .to_string_lossy()
+        .into_owned())
+}
+
+fn repository_ctx_output_path_from_resolved_path(
+    path: &str,
+    working_dir: &str,
+) -> starlark::Result<String> {
+    if path == working_dir {
+        return Ok(String::new());
+    }
+
+    let prefix = format!("{working_dir}/");
+    if let Some(path) = path.strip_prefix(&prefix) {
+        return repository_ctx_output_path_from_relative_path(path, working_dir);
+    }
+
+    let path_buf = Path::new(path);
+    let working_dir_buf = Path::new(working_dir);
+    if path_buf.is_absolute()
+        && working_dir_buf.is_absolute()
+        && path_buf.starts_with(working_dir_buf)
+    {
+        let relative = path_buf.strip_prefix(working_dir_buf).map_err(|_| {
+            buck2_error::Error::from(
+                BazelRepositoryError::RepositoryCtxOutputPathOutsideRepository {
+                    path: path.to_owned(),
+                    working_dir: working_dir.to_owned(),
+                },
+            )
+        })?;
+        let relative = relative.to_string_lossy();
+        return repository_ctx_output_path_from_relative_path(relative.as_ref(), working_dir);
+    }
+
+    Err(buck2_error::Error::from(
+        BazelRepositoryError::RepositoryCtxOutputPathOutsideRepository {
+            path: path.to_owned(),
+            working_dir: working_dir.to_owned(),
+        },
+    )
+    .into())
+}
+
+fn repository_ctx_output_path_from_relative_path(
+    path: &str,
+    working_dir: &str,
+) -> starlark::Result<String> {
+    let mut normalized = PathBuf::new();
+    for component in Path::new(path).components() {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::Normal(part) => normalized.push(part),
+            std::path::Component::ParentDir => {
+                if !normalized.pop() {
+                    return Err(buck2_error::Error::from(
+                        BazelRepositoryError::RepositoryCtxOutputPathOutsideRepository {
+                            path: path.to_owned(),
+                            working_dir: working_dir.to_owned(),
+                        },
+                    )
+                    .into());
+                }
+            }
+            std::path::Component::RootDir | std::path::Component::Prefix(_) => {
+                return Err(buck2_error::Error::from(
+                    BazelRepositoryError::RepositoryCtxOutputPathOutsideRepository {
+                        path: path.to_owned(),
+                        working_dir: working_dir.to_owned(),
+                    },
+                )
+                .into());
+            }
+        }
+    }
+    Ok(normalized.to_string_lossy().into_owned())
 }
 
 pub(crate) fn take_repository_ctx_files<'v>(
@@ -3521,6 +3886,15 @@ fn repository_ctx_clean_working_dir(working_dir: &str) -> buck2_error::Result<()
             working_dir.to_string_lossy(),
             error
         )
+    })
+}
+
+fn repository_ctx_patch_strip(strip: i32, patch: &str) -> buck2_error::Result<u32> {
+    u32::try_from(strip).map_err(|_| {
+        buck2_error::Error::from(BazelRepositoryError::RepositoryCtxPatch {
+            patch: patch.to_owned(),
+            error: format!("strip must be non-negative, got `{strip}`"),
+        })
     })
 }
 
@@ -4078,6 +4452,24 @@ fn repository_ctx_extract_archive(
     .map_err(Into::into)
 }
 
+fn repository_ctx_renamed_strip_prefix<'a>(
+    method: &str,
+    strip_prefix: &'a str,
+    strip_prefix_legacy: &'a str,
+) -> buck2_error::Result<&'a str> {
+    if strip_prefix_legacy.is_empty() {
+        return Ok(strip_prefix);
+    }
+    if strip_prefix.is_empty() {
+        return Ok(strip_prefix_legacy);
+    }
+    Err(buck2_error::buck2_error!(
+        buck2_error::ErrorTag::Input,
+        "{}() got multiple values for parameter 'strip_prefix' (via compatibility alias 'stripPrefix')",
+        method
+    ))
+}
+
 fn repository_ctx_rename_files_from_entries(
     entries: &UnpackDictEntries<Value<'_>, Value<'_>>,
 ) -> starlark::Result<Vec<(String, String)>> {
@@ -4106,89 +4498,112 @@ fn repository_ctx_rename_files_from_entries(
 }
 
 fn repository_ctx_execute_output(
-    command: &mut Command,
+    command: Command,
     timeout: i32,
     quiet: bool,
 ) -> Result<RepositoryCommandOutput, String> {
     if timeout <= 0 {
         return Err(format!("timeout must be positive, got {timeout}"));
     }
-    command.stdout(Stdio::piped()).stderr(Stdio::piped());
-    let mut child = command.spawn().map_err(|error| error.to_string())?;
-    let stdout = child
-        .stdout
-        .take()
-        .ok_or_else(|| "failed to capture stdout".to_owned())?;
-    let stderr = child
-        .stderr
-        .take()
-        .ok_or_else(|| "failed to capture stderr".to_owned())?;
-    let mut stdout_handle = Some(repository_ctx_read_command_output(stdout, quiet));
-    let mut stderr_handle = Some(repository_ctx_read_command_output(stderr, quiet));
-    let deadline = Instant::now() + Duration::from_secs(timeout as u64);
 
-    loop {
-        if let Some(status) = child.try_wait().map_err(|error| error.to_string())? {
-            let stdout =
-                repository_ctx_join_command_output(stdout_handle.take().expect("stdout joined"))?;
-            let stderr =
-                repository_ctx_join_command_output(stderr_handle.take().expect("stderr joined"))?;
-            return Ok(RepositoryCommandOutput {
-                stdout,
-                stderr,
-                return_code: status.code().unwrap_or(1),
-            });
-        }
-
-        let now = Instant::now();
-        if now >= deadline {
-            let _ = child.kill();
-            let _ = child.wait();
-            let _ =
-                repository_ctx_join_command_output(stdout_handle.take().expect("stdout joined"));
-            let _ =
-                repository_ctx_join_command_output(stderr_handle.take().expect("stderr joined"));
-            return Ok(RepositoryCommandOutput {
-                stdout: Vec::new(),
-                stderr: format!("Command timed out after {timeout} seconds").into_bytes(),
-                return_code: 256,
-            });
-        }
-
-        thread::sleep(std::cmp::min(
-            Duration::from_millis(10),
-            deadline.saturating_duration_since(now),
-        ));
-    }
-}
-
-fn repository_ctx_read_command_output<R: Read + Send + 'static>(
-    mut reader: R,
-    quiet: bool,
-) -> thread::JoinHandle<io::Result<Vec<u8>>> {
-    thread::spawn(move || {
-        let mut output = Vec::new();
-        let mut buffer = [0u8; 8192];
-        loop {
-            let len = reader.read(&mut buffer)?;
-            if len == 0 {
-                return Ok(output);
-            }
-            if !quiet {
-                let _ = std::io::stderr().write_all(&buffer[..len]);
-            }
-            output.extend_from_slice(&buffer[..len]);
-        }
+    std::thread::spawn(move || {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|error| format!("could not create repository_ctx.execute runtime: {error}"))?
+            .block_on(repository_ctx_execute_output_async(command, timeout, quiet))
     })
+    .join()
+    .map_err(|_| "repository_ctx.execute worker thread panicked".to_owned())?
 }
 
-fn repository_ctx_join_command_output(
-    handle: thread::JoinHandle<io::Result<Vec<u8>>>,
-) -> Result<Vec<u8>, String> {
-    handle
-        .join()
-        .map_err(|_| "command output reader panicked".to_owned())?
-        .map_err(|error| error.to_string())
+async fn repository_ctx_execute_output_async(
+    command: Command,
+    timeout: i32,
+    quiet: bool,
+) -> Result<RepositoryCommandOutput, String> {
+    let stream = spawn_command_and_stream_events(
+        command,
+        Some(Duration::from_secs(timeout as u64)),
+        futures::future::pending::<buck2_error::Result<GatherOutputStatus>>(),
+        DefaultStatusDecoder,
+        DefaultKillProcess::default(),
+        None,
+        false,
+        None,
+        futures::stream::pending::<ActionFreezeEvent>(),
+    )
+    .await
+    .map_err(|error| error.to_string())?;
+
+    futures::pin_mut!(stream);
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+
+    while let Some(event) = stream.try_next().await.map_err(|error| error.to_string())? {
+        match event {
+            CommandEvent::Stdout(bytes) => {
+                if !quiet {
+                    std::io::stderr()
+                        .write_all(&bytes)
+                        .map_err(|error| error.to_string())?;
+                }
+                stdout.extend_from_slice(&bytes);
+            }
+            CommandEvent::Stderr(bytes) => {
+                if !quiet {
+                    std::io::stderr()
+                        .write_all(&bytes)
+                        .map_err(|error| error.to_string())?;
+                }
+                stderr.extend_from_slice(&bytes);
+            }
+            CommandEvent::Exit(status, _orphan_processes) => {
+                return Ok(match status {
+                    GatherOutputStatus::Finished { exit_code, .. } => RepositoryCommandOutput {
+                        stdout,
+                        stderr,
+                        return_code: exit_code,
+                    },
+                    GatherOutputStatus::TimedOut(_) => RepositoryCommandOutput {
+                        stdout: Vec::new(),
+                        stderr: format!("Command timed out after {timeout} seconds").into_bytes(),
+                        return_code: 256,
+                    },
+                    GatherOutputStatus::Cancelled => RepositoryCommandOutput {
+                        stdout: Vec::new(),
+                        stderr: b"Command was cancelled".to_vec(),
+                        return_code: 256,
+                    },
+                    GatherOutputStatus::SpawnFailed(reason) => RepositoryCommandOutput {
+                        stdout: Vec::new(),
+                        stderr: reason.into_bytes(),
+                        return_code: 256,
+                    },
+                });
+            }
+        }
+    }
+
+    Err("command event stream ended without exit status".to_owned())
+}
+
+fn repository_ctx_latin1_output(bytes: &[u8]) -> String {
+    bytes.iter().map(|&byte| char::from(byte)).collect()
+}
+
+fn repository_ctx_reject_nonblocking_download(
+    block: bool,
+    function: &'static str,
+) -> starlark::Result<()> {
+    if block {
+        Ok(())
+    } else {
+        Err(buck2_error::Error::from(
+            BazelRepositoryError::RepositoryCtxNonblockingDownloadUnsupported { function },
+        )
+        .into())
+    }
 }
 
 #[starlark_module]
@@ -4426,12 +4841,8 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
                 error: error.to_string(),
             })
         })?;
-        apply_unified_patch_file(
-            &working_dir_abs,
-            &patch_path_abs,
-            strip.try_into().unwrap_or(0),
-        )
-        .map_err(|error| {
+        let strip = repository_ctx_patch_strip(strip, &patch_path)?;
+        apply_unified_patch_file(&working_dir_abs, &patch_path_abs, strip).map_err(|error| {
             buck2_error::Error::from(BazelRepositoryError::RepositoryCtxPatch {
                 patch: patch_path,
                 error: error.to_string(),
@@ -4448,9 +4859,13 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
     ) -> starlark::Result<NoneType> {
         let working_dir = repository_ctx_working_dir(this);
         let target = repository_ctx_path_from_value_relative_to(this, target, eval)?;
-        let link = repository_ctx_path_from_value_relative_to(this, link_name, eval)?;
+        let link = repository_ctx_output_path_from_value_relative_to(link_name, eval, working_dir)?;
         let target_path = repository_path_for_read_abs_relative_to(&target, working_dir);
-        let link_path = repository_path_for_write(&link)?;
+        let link_abs = Path::new(working_dir)
+            .join(&link)
+            .to_string_lossy()
+            .into_owned();
+        let link_path = repository_path_for_write(&link_abs)?;
         if let Some(dep) = repository_ctx_external_input_dep(&target_path) {
             repository_ctx_record_path_dep(this, dep);
         }
@@ -4608,23 +5023,22 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
             })
         })?;
         command.current_dir(working_directory);
-        let output =
-            repository_ctx_execute_output(&mut command, timeout, quiet).map_err(|error| {
-                buck2_error::Error::from(BazelRepositoryError::RepositoryCtxExecuteFailed {
-                    program: program.clone(),
-                    error,
-                })
-            })?;
+        let output = repository_ctx_execute_output(command, timeout, quiet).map_err(|error| {
+            buck2_error::Error::from(BazelRepositoryError::RepositoryCtxExecuteFailed {
+                program: program.clone(),
+                error,
+            })
+        })?;
         Ok(eval.heap().alloc(AllocStruct([
             (
                 "stdout",
                 eval.heap()
-                    .alloc(String::from_utf8_lossy(&output.stdout).into_owned()),
+                    .alloc(repository_ctx_latin1_output(&output.stdout)),
             ),
             (
                 "stderr",
                 eval.heap()
-                    .alloc(String::from_utf8_lossy(&output.stderr).into_owned()),
+                    .alloc(repository_ctx_latin1_output(&output.stderr)),
             ),
             ("return_code", eval.heap().alloc(output.return_code)),
         ])))
@@ -4650,14 +5064,15 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
         #[starlark(require = named, default = true)] block: bool,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {
+        repository_ctx_reject_nonblocking_download(block, "repository_ctx.download")?;
         let auth_headers = module_ctx_download_auth_headers_from_entries(&auth)?;
         let download_headers = module_ctx_download_headers_from_entries(&headers)?;
 
         let urls = module_ctx_urls_from_value(url, eval.heap())?;
-        let output_path = repository_path_from_value_relative_to(
+        let output_path = repository_ctx_output_abs_path_from_value_relative_to(
             output,
             eval,
-            Some(repository_ctx_working_dir(this)),
+            repository_ctx_working_dir(this),
         )?;
         let (result, _) = repository_ctx_download_to_path(
             urls,
@@ -4699,6 +5114,7 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
         #[starlark(require = named, default = true)] block: bool,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {
+        repository_ctx_reject_nonblocking_download(block, "repository_ctx.download_and_extract")?;
         let working_dir = repository_ctx_working_dir(this);
         let archive_name = if r#type.is_empty() {
             ".buck2_download_and_extract.archive".to_owned()
@@ -4732,14 +5148,12 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
         if !success {
             return Ok(module_ctx_pending_download(block, result, eval));
         }
-        let output_path = repository_path_from_value_relative_to(output, eval, Some(working_dir))?;
+        let output_path =
+            repository_ctx_output_abs_path_from_value_relative_to(output, eval, working_dir)?;
         let output_path = repository_path_for_write(&output_path)?;
         let archive_path = repository_path_for_write(&archive_path_string)?;
-        let strip_prefix = if stripPrefix.is_empty() {
-            strip_prefix
-        } else {
-            stripPrefix
-        };
+        let strip_prefix =
+            repository_ctx_renamed_strip_prefix("download_and_extract", strip_prefix, stripPrefix)?;
         let result = match repository_ctx_extract_archive(
             &archive_path,
             &output_path,
@@ -5343,6 +5757,7 @@ const MODULE_CTX_HTTP_READ_TIMEOUT: Duration = Duration::from_secs(20);
 const MODULE_CTX_HTTP_WRITE_TIMEOUT: Duration = Duration::from_secs(20);
 
 static MODULE_CTX_HTTP_DOWNLOAD_SEMAPHORE: OnceLock<Arc<tokio::sync::Semaphore>> = OnceLock::new();
+static MODULE_CTX_DOWNLOAD_TMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 fn module_ctx_http_download_semaphore() -> &'static tokio::sync::Semaphore {
     MODULE_CTX_HTTP_DOWNLOAD_SEMAPHORE
@@ -5401,6 +5816,42 @@ fn module_ctx_remove_partial_download(path: &Path) {
     let _unused = fs::remove_file(path);
 }
 
+fn module_ctx_download_tmp_path(destination: &Path) -> PathBuf {
+    let counter =
+        MODULE_CTX_DOWNLOAD_TMP_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let mut file_name = std::ffi::OsString::from(".");
+    file_name.push(
+        destination
+            .file_name()
+            .unwrap_or_else(|| std::ffi::OsStr::new("download")),
+    );
+    file_name.push(format!(".tmp.{}.{}", std::process::id(), counter));
+    destination.with_file_name(file_name)
+}
+
+fn module_ctx_prepare_download_tmp(destination: &Path) -> buck2_error::Result<PathBuf> {
+    if let Some(parent) = destination.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| module_ctx_download_write_error(parent, error))?;
+    }
+    let tmp = module_ctx_download_tmp_path(destination);
+    module_ctx_remove_partial_download(&tmp);
+    Ok(tmp)
+}
+
+fn module_ctx_publish_download_tmp(
+    tmp: &Path,
+    destination: &Path,
+    executable: bool,
+) -> buck2_error::Result<()> {
+    module_ctx_set_executable(tmp, executable)?;
+    if let Err(error) = fs::rename(tmp, destination) {
+        module_ctx_remove_partial_download(tmp);
+        return Err(module_ctx_download_write_error(destination, error));
+    }
+    Ok(())
+}
+
 async fn module_ctx_download_url_to_path(
     client: &buck2_http::HttpClient,
     url: &str,
@@ -5424,14 +5875,13 @@ async fn module_ctx_download_url_to_path(
             }
         })?;
 
-    if let Some(parent) = destination.parent() {
-        fs::create_dir_all(parent).map_err(|error| {
-            ModuleCtxDownloadAttemptError::Fatal(module_ctx_download_write_error(parent, error))
-        })?;
-    }
-
-    let mut file = fs::File::create(destination).map_err(|error| {
-        ModuleCtxDownloadAttemptError::Fatal(module_ctx_download_write_error(destination, error))
+    let tmp_destination = module_ctx_prepare_download_tmp(destination)
+        .map_err(ModuleCtxDownloadAttemptError::Fatal)?;
+    let mut file = fs::File::create(&tmp_destination).map_err(|error| {
+        ModuleCtxDownloadAttemptError::Fatal(module_ctx_download_write_error(
+            &tmp_destination,
+            error,
+        ))
     })?;
     let checksum_kind = expected_checksum
         .map(|checksum| checksum.kind)
@@ -5442,26 +5892,29 @@ async fn module_ctx_download_url_to_path(
     let reader = StreamReader::new(body.map_err(std::io::Error::other));
     if gunzip {
         module_ctx_download_copy_response(
-            destination,
+            &tmp_destination,
             GzipDecoder::new(reader),
             &mut file,
             &mut hasher,
         )
         .await?;
     } else {
-        module_ctx_download_copy_response(destination, reader, &mut file, &mut hasher).await?;
+        module_ctx_download_copy_response(&tmp_destination, reader, &mut file, &mut hasher).await?;
     }
 
     file.flush().map_err(|error| {
-        module_ctx_remove_partial_download(destination);
-        ModuleCtxDownloadAttemptError::Fatal(module_ctx_download_write_error(destination, error))
+        module_ctx_remove_partial_download(&tmp_destination);
+        ModuleCtxDownloadAttemptError::Fatal(module_ctx_download_write_error(
+            &tmp_destination,
+            error,
+        ))
     })?;
     drop(file);
 
     let got = hasher.finalize_hex();
     let checksum = if let Some(expected_checksum) = expected_checksum {
         if expected_checksum.hex != got {
-            module_ctx_remove_partial_download(destination);
+            module_ctx_remove_partial_download(&tmp_destination);
             return Err(ModuleCtxDownloadAttemptError::NonRetryable(
                 BazelRepositoryError::ModuleCtxDownloadChecksumMismatch {
                     path: destination.to_string_lossy().into_owned(),
@@ -5479,7 +5932,7 @@ async fn module_ctx_download_url_to_path(
         }
     };
 
-    module_ctx_set_executable(destination, executable)
+    module_ctx_publish_download_tmp(&tmp_destination, destination, executable)
         .map_err(ModuleCtxDownloadAttemptError::Fatal)?;
     module_ctx_download_result_checksums_verified(&checksum)
         .map_err(ModuleCtxDownloadAttemptError::Fatal)
@@ -5715,6 +6168,20 @@ fn module_ctx_download_cache_lock(key: &str) -> Arc<Mutex<()>> {
         .clone()
 }
 
+fn module_ctx_download_cache_release_lock(key: &str, lock: &Arc<Mutex<()>>) {
+    let Some(locks) = MODULE_CTX_DOWNLOAD_CACHE_LOCKS.get() else {
+        return;
+    };
+    let mut locks = locks
+        .lock()
+        .expect("module ctx download cache lock map is poisoned");
+    if matches!(locks.get(key), Some(stored) if Arc::ptr_eq(stored, lock))
+        && Arc::strong_count(lock) == 2
+    {
+        locks.remove(key);
+    }
+}
+
 fn module_ctx_download_cache_verification_key(
     file: &Path,
     checksum: &ModuleCtxChecksum,
@@ -5844,13 +6311,14 @@ fn module_ctx_copy_download_file(
     destination: &Path,
     executable: bool,
 ) -> buck2_error::Result<()> {
-    if let Some(parent) = destination.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|error| module_ctx_download_write_error(parent, error))?;
+    let tmp = module_ctx_prepare_download_tmp(destination)?;
+    match fs::copy(source, &tmp) {
+        Ok(_) => module_ctx_publish_download_tmp(&tmp, destination, executable),
+        Err(error) => {
+            module_ctx_remove_partial_download(&tmp);
+            Err(module_ctx_download_write_error(destination, error))
+        }
     }
-    fs::copy(source, destination)
-        .map_err(|error| module_ctx_download_write_error(destination, error))?;
-    module_ctx_set_executable(destination, executable)
 }
 
 fn module_ctx_download_cache_get_to_path(
@@ -5942,46 +6410,57 @@ fn module_ctx_download_to_path_blocking(
             canonical_id
         );
         let lock = module_ctx_download_cache_lock(&lock_key);
-        let _guard = lock
-            .lock()
-            .expect("module ctx download cache entry lock is poisoned");
-        if destination.is_file()
-            && module_ctx_validate_download_file_checksum(destination, expected_checksum).is_ok()
-        {
-            module_ctx_set_executable(destination, executable)?;
-            return module_ctx_download_result_checksums_verified(expected_checksum);
-        }
-        if module_ctx_download_cache_get_to_path(
-            expected_checksum,
-            canonical_id,
-            destination,
-            executable,
-        )
-        .unwrap_or(false)
-        {
-            return module_ctx_download_result_checksums_verified(expected_checksum);
-        }
-
-        buck2_events::dispatch::span(
-            buck2_data::DiceStateUpdateStageStart {
-                stage: module_ctx_download_stage_label(urls, destination),
-            },
-            || {
-                (
-                    module_ctx_download_to_path_uncached_blocking(
-                        urls,
-                        destination,
-                        Some(expected_checksum),
-                        executable,
-                        headers,
-                        auth_headers,
-                    ),
-                    buck2_data::DiceStateUpdateStageEnd {},
+        let result: buck2_error::Result<(Option<String>, String)> = {
+            let _guard = lock
+                .lock()
+                .expect("module ctx download cache entry lock is poisoned");
+            (|| {
+                if destination.is_file()
+                    && module_ctx_validate_download_file_checksum(destination, expected_checksum)
+                        .is_ok()
+                {
+                    module_ctx_set_executable(destination, executable)?;
+                    return module_ctx_download_result_checksums_verified(expected_checksum);
+                }
+                if module_ctx_download_cache_get_to_path(
+                    expected_checksum,
+                    canonical_id,
+                    destination,
+                    executable,
                 )
-            },
-        )?;
-        module_ctx_download_cache_put_verified(expected_checksum, canonical_id, destination)?;
-        return module_ctx_download_result_checksums_verified(expected_checksum);
+                .unwrap_or(false)
+                {
+                    return module_ctx_download_result_checksums_verified(expected_checksum);
+                }
+
+                buck2_events::dispatch::span(
+                    buck2_data::DiceStateUpdateStageStart {
+                        stage: module_ctx_download_stage_label(urls, destination),
+                    },
+                    || {
+                        (
+                            module_ctx_download_to_path_uncached_blocking(
+                                urls,
+                                destination,
+                                Some(expected_checksum),
+                                executable,
+                                headers,
+                                auth_headers,
+                            ),
+                            buck2_data::DiceStateUpdateStageEnd {},
+                        )
+                    },
+                )?;
+                module_ctx_download_cache_put_verified(
+                    expected_checksum,
+                    canonical_id,
+                    destination,
+                )?;
+                module_ctx_download_result_checksums_verified(expected_checksum)
+            })()
+        };
+        module_ctx_download_cache_release_lock(&lock_key, &lock);
+        return result;
     }
 
     let checksums = buck2_events::dispatch::span(
@@ -6565,23 +7044,22 @@ fn module_extension_context_methods(builder: &mut MethodsBuilder) {
             })
         })?;
         command.current_dir(working_directory);
-        let output =
-            repository_ctx_execute_output(&mut command, timeout, quiet).map_err(|error| {
-                buck2_error::Error::from(BazelRepositoryError::RepositoryCtxExecuteFailed {
-                    program: program.clone(),
-                    error,
-                })
-            })?;
+        let output = repository_ctx_execute_output(command, timeout, quiet).map_err(|error| {
+            buck2_error::Error::from(BazelRepositoryError::RepositoryCtxExecuteFailed {
+                program: program.clone(),
+                error,
+            })
+        })?;
         Ok(eval.heap().alloc(AllocStruct([
             (
                 "stdout",
                 eval.heap()
-                    .alloc(String::from_utf8_lossy(&output.stdout).into_owned()),
+                    .alloc(repository_ctx_latin1_output(&output.stdout)),
             ),
             (
                 "stderr",
                 eval.heap()
-                    .alloc(String::from_utf8_lossy(&output.stderr).into_owned()),
+                    .alloc(repository_ctx_latin1_output(&output.stderr)),
             ),
             ("return_code", eval.heap().alloc(output.return_code)),
         ])))
@@ -6627,15 +7105,16 @@ fn module_extension_context_methods(builder: &mut MethodsBuilder) {
         #[starlark(require = named, default = true)] block: bool,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<Value<'v>> {
+        repository_ctx_reject_nonblocking_download(block, "module_ctx.download")?;
         let auth_headers = module_ctx_download_auth_headers_from_entries(&auth)?;
         let download_headers = module_ctx_download_headers_from_entries(&headers)?;
 
         let urls = module_ctx_urls_from_value(url, eval.heap())?;
         let output = output.unwrap_or_else(|| eval.heap().alloc(""));
-        let output_path = repository_path_from_value_relative_to(
+        let output_path = repository_ctx_output_abs_path_from_value_relative_to(
             output,
             eval,
-            Some(module_ctx_working_dir(this)),
+            module_ctx_working_dir(this),
         )?;
         let write_path = match repository_path_for_write(&output_path) {
             Ok(path) => path,

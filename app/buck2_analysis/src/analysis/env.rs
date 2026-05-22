@@ -22,6 +22,7 @@ use buck2_build_api::interpreter::rule_defs::artifact::starlark_artifact::Starla
 use buck2_build_api::interpreter::rule_defs::artifact::starlark_declared_artifact::StarlarkDeclaredArtifact;
 use buck2_build_api::interpreter::rule_defs::cmd_args::value::FrozenCommandLineArg;
 use buck2_build_api::interpreter::rule_defs::context::AnalysisContext;
+use buck2_build_api::interpreter::rule_defs::context::AnalysisToolchains;
 use buck2_build_api::interpreter::rule_defs::context::BazelActionsContextOverride;
 use buck2_build_api::interpreter::rule_defs::context::BazelCppOptions;
 use buck2_build_api::interpreter::rule_defs::context::analysis_actions_to_bazel_ctx_with_overrides;
@@ -45,11 +46,14 @@ use buck2_common::dice::cells::HasCellResolver;
 use buck2_common::legacy_configs::dice::HasLegacyConfigs;
 use buck2_common::legacy_configs::key::BuckconfigKeyRef;
 use buck2_common::legacy_configs::view::LegacyBuckConfigView;
+use buck2_configured::nodes::resolve_bazel_declared_toolchain_deps;
 use buck2_core::deferred::base_deferred_key::BaseDeferredKey;
 use buck2_core::deferred::key::DeferredHolderKey;
 use buck2_core::execution_types::execution::ExecutionPlatformResolution;
 use buck2_core::fs::buck_out_path::BazelOutputRoot;
 use buck2_core::fs::buck_out_path::BuckOutPathKind;
+use buck2_core::cells::external::bzlmod_cell_aliases_for_cell;
+use buck2_core::cells::external::bzlmod_cell_name;
 use buck2_core::package::PackageLabel;
 use buck2_core::package::package_relative_path::PackageRelativePath;
 use buck2_core::package::source_path::SourcePath;
@@ -87,6 +91,8 @@ use buck2_node::attrs::inspect_options::AttrInspectOptions;
 use buck2_node::nodes::configured::ConfiguredTargetNodeRef;
 use buck2_node::provider_id_set::ProviderIdSet;
 use buck2_node::rule::BAZEL_OUTPUT_FILE_OUTPUT_ATTR;
+use buck2_node::rule::BazelToolchainRequirement;
+use buck2_node::rule_type::RuleType;
 use buck2_node::rule_type::StarlarkRuleType;
 use dice::CancellationContext;
 use dice::DiceComputations;
@@ -944,6 +950,71 @@ fn provider_requirements_satisfied<'v>(
     Ok(true)
 }
 
+fn bazel_toolchain_mandatory_from_value(value: Value<'_>) -> buck2_error::Result<bool> {
+    StructRef::from_value(value)
+        .and_then(|st| {
+            st.iter()
+                .find_map(|(name, value)| (name.as_str() == "mandatory").then_some(value))
+        })
+        .map(|mandatory| {
+            mandatory.unpack_bool().ok_or_else(|| {
+                internal_error!(
+                    "Bazel toolchain requirement has non-bool mandatory field: `{}`",
+                    mandatory.to_repr()
+                )
+            })
+        })
+        .transpose()
+        .map(|mandatory| mandatory.unwrap_or(true))
+}
+
+fn bazel_toolchain_requirement_from_value(
+    value: Value<'_>,
+) -> buck2_error::Result<BazelToolchainRequirement> {
+    Ok(BazelToolchainRequirement {
+        toolchain_type: AnalysisToolchains::key_from_value(value),
+        mandatory: bazel_toolchain_mandatory_from_value(value)?,
+    })
+}
+
+fn push_bazel_toolchain_key(
+    keys: &mut Vec<String>,
+    seen: &mut StdBuckHashSet<String>,
+    key: &str,
+) {
+    if seen.insert(key.to_owned()) {
+        keys.push(key.to_owned());
+    }
+}
+
+fn push_bazel_toolchain_alias_keys(
+    keys: &mut Vec<String>,
+    seen: &mut StdBuckHashSet<String>,
+    key: &str,
+    context_cell: &str,
+) {
+    let Some((repo, package_and_target)) = key.split_once("//") else {
+        return;
+    };
+    if repo.is_empty() {
+        return;
+    }
+
+    let destination_cell = if repo.contains('+') {
+        bzlmod_cell_name(repo)
+    } else {
+        repo.to_owned()
+    };
+    if destination_cell == context_cell {
+        push_bazel_toolchain_key(keys, seen, &format!("//{package_and_target}"));
+    }
+    for (alias, destination) in bzlmod_cell_aliases_for_cell(context_cell) {
+        if destination == destination_cell {
+            push_bazel_toolchain_key(keys, seen, &format!("{alias}//{package_and_target}"));
+        }
+    }
+}
+
 fn aspect_attrs_struct<'v>(
     eval: &mut Evaluator<'v, '_, '_>,
     attrs_with_hidden: ValueOfUnchecked<'v, StructRef<'static>>,
@@ -1345,6 +1416,72 @@ fn collect_bazel_aspect_analysis_deps(
     Ok(labels.into_iter().collect())
 }
 
+fn collect_bazel_applicable_aspect_toolchains_for_aspect<'v>(
+    target: Value<'v>,
+    aspect: Value<'v>,
+    output: &mut Vec<BazelToolchainRequirement>,
+) -> buck2_error::Result<()> {
+    let aspect_info = frozen_bazel_aspect_info(aspect)?;
+    for required in &aspect_info.requires {
+        collect_bazel_applicable_aspect_toolchains_for_aspect(target, required.to_value(), output)?;
+    }
+
+    if !provider_requirements_satisfied(target, &aspect_info.required_providers)? {
+        return Ok(());
+    }
+
+    for toolchain in &aspect_info.toolchains {
+        let mut toolchain = bazel_toolchain_requirement_from_value(toolchain.to_value())?;
+        // This is a prefetch for analysis-time toolchain values. Mandatory failures are
+        // emitted only once the aspect is known to apply, matching Bazel's ordering.
+        toolchain.mandatory = false;
+        output.push(toolchain);
+    }
+
+    Ok(())
+}
+
+fn collect_bazel_applicable_aspect_toolchains<'v>(
+    eval: &mut Evaluator<'v, '_, '_>,
+    rule_spec: &dyn RuleSpec,
+    node: ConfiguredTargetNodeRef<'_>,
+    dep_analysis_results: &StdBuckHashMap<ConfiguredTargetLabel, FrozenProviderCollectionValue>,
+    module: &Module<'v>,
+) -> buck2_error::Result<Vec<BazelToolchainRequirement>> {
+    let attr_aspects = rule_spec.bazel_attr_aspects(eval)?;
+    let mut toolchains = Vec::new();
+    for (attr_name, aspects) in attr_aspects {
+        let Some(attr) = node.get(&attr_name, AttrInspectOptions::All) else {
+            continue;
+        };
+        let mut dep_labels = Vec::new();
+        collect_configured_attr_dep_labels(&attr.value, &mut dep_labels);
+        for dep_label in dep_labels {
+            if find_direct_dep_node(node, dep_label.target()).is_err() {
+                continue;
+            }
+            let Ok(base_provider_collection) = get_dep(dep_analysis_results, &dep_label, module)
+            else {
+                continue;
+            };
+            let target = eval.heap().alloc(Dependency::new(
+                eval.heap(),
+                dep_label,
+                base_provider_collection,
+                None,
+            ));
+            for aspect in &aspects {
+                collect_bazel_applicable_aspect_toolchains_for_aspect(
+                    target,
+                    *aspect,
+                    &mut toolchains,
+                )?;
+            }
+        }
+    }
+    Ok(toolchains)
+}
+
 fn apply_bazel_aspect_to_dep<'v>(
     eval: &mut Evaluator<'v, '_, '_>,
     ctx: ValueTyped<'v, AnalysisContext<'v>>,
@@ -1406,6 +1543,36 @@ fn apply_bazel_aspect_to_dep<'v>(
         return Ok(providers);
     }
 
+    let aspect_toolchains = ctx
+        .as_ref()
+        .actions
+        .as_ref()
+        .toolchains
+        .as_ref()
+        .with_declared_values(
+            eval.heap(),
+            aspect_info
+                .toolchains
+                .iter()
+                .map(|toolchain| toolchain.to_value()),
+        );
+    for toolchain in &aspect_info.toolchains {
+        let toolchain = toolchain.to_value();
+        if bazel_toolchain_mandatory_from_value(toolchain)?
+            && aspect_toolchains
+                .as_ref()
+                .resolved_value_for(toolchain)
+                .is_none()
+        {
+            return Err(buck2_error::buck2_error!(
+                buck2_error::ErrorTag::Input,
+                "mandatory toolchain type `{}` was not resolved for Bazel aspect applied to `{}`",
+                AnalysisToolchains::key_from_value(toolchain),
+                dep_label,
+            ));
+        }
+    }
+
     let aspect_attrs = aspect_attrs_struct(
         eval,
         attrs_with_hidden,
@@ -1431,19 +1598,6 @@ fn apply_bazel_aspect_to_dep<'v>(
         .alloc_typed(StarlarkConfiguredProvidersLabel::new(dep_label.dupe()));
     let build_file_path = configured_node_build_file_path(dep_node);
     let rule_kind = dep_node.rule_type().name().to_owned();
-    let aspect_toolchains = ctx
-        .as_ref()
-        .actions
-        .as_ref()
-        .toolchains
-        .as_ref()
-        .with_declared_values(
-            eval.heap(),
-            aspect_info
-                .toolchains
-                .iter()
-                .map(|toolchain| toolchain.to_value()),
-        );
     let actions = ctx.as_ref().actions.as_ref();
     let previous_bazel_context =
         actions.replace_bazel_context_override(Some(BazelActionsContextOverride {
@@ -1779,25 +1933,60 @@ async fn run_analysis_with_env_underlying(
             })
             .collect::<SmallMap<_, _>>();
 
-        let bazel_aspect_analysis_deps = if node.is_bazel_rule() {
+        let mut dep_analysis_results = get_deps_from_analysis_results(analysis_env.deps)?;
+        let (bazel_extra_analysis_deps, bazel_aspect_resolved_toolchains) = if node.is_bazel_rule()
+        {
             let eval_kind = StarlarkEvalKind::Analysis(node.label().dupe());
             let eval_provider = StarlarkEvaluatorProvider::new(dice, eval_kind).await?;
             let mut reentrant_eval =
                 eval_provider.make_reentrant_evaluator(&env, analysis_env.cancellation.into())?;
-            reentrant_eval.with_evaluator(|eval| {
-                if let Some(label_resolution_context) = &label_resolution_context {
-                    eval.extra = Some(label_resolution_context);
-                }
-                collect_bazel_aspect_analysis_deps(eval, analysis_env.rule_spec, node)
-            })?
+            let (bazel_aspect_analysis_deps, bazel_aspect_toolchains) = reentrant_eval
+                .with_evaluator(|eval| {
+                    if let Some(label_resolution_context) = &label_resolution_context {
+                        eval.extra = Some(label_resolution_context);
+                    }
+                    buck2_error::Ok((
+                        collect_bazel_aspect_analysis_deps(eval, analysis_env.rule_spec, node)?,
+                        collect_bazel_applicable_aspect_toolchains(
+                            eval,
+                            analysis_env.rule_spec,
+                            node,
+                            &dep_analysis_results,
+                            &env,
+                        )?,
+                    ))
+                })?;
+            let target_label = node.label().dupe();
+            let execution_platform_cfg = node
+                .execution_platform_resolution()
+                .platform()?
+                .cfg_pair_no_exec()
+                .dupe();
+            let (bazel_aspect_toolchain_deps, bazel_aspect_resolved_toolchains) =
+                resolve_bazel_declared_toolchain_deps(
+                    dice,
+                    &target_label,
+                    bazel_aspect_toolchains,
+                    &execution_platform_cfg,
+                )
+                .await?;
+            let bazel_extra_analysis_deps = bazel_aspect_analysis_deps
+                .into_iter()
+                .chain(
+                    bazel_aspect_toolchain_deps
+                        .iter()
+                        .map(|dep| dep.label().dupe()),
+                )
+                .collect::<Vec<_>>();
+            (bazel_extra_analysis_deps, bazel_aspect_resolved_toolchains)
         } else {
-            Vec::new()
+            (Vec::new(), Vec::new())
         };
         // Bazel requests aspect values from Skyframe as a batch. Keep Buck2's
         // synthetic aspect dependencies equally parallel instead of serializing
         // wide Starlark aspect graphs such as rules_go go_proto_library deps.
         let extra_dep_analysis_results =
-            KeepGoing::try_compute_join_all(dice, bazel_aspect_analysis_deps, |dice, dep| {
+            KeepGoing::try_compute_join_all(dice, bazel_extra_analysis_deps, |dice, dep| {
                 async move {
                     let result = dice.get_analysis_result(&dep).await?.require_compatible()?;
                     buck2_error::Ok((dep, result))
@@ -1806,7 +1995,6 @@ async fn run_analysis_with_env_underlying(
             })
             .await?;
 
-        let mut dep_analysis_results = get_deps_from_analysis_results(analysis_env.deps)?;
         for (label, result) in extra_dep_analysis_results {
             dep_analysis_results
                 .entry(label)
@@ -1819,22 +2007,65 @@ async fn run_analysis_with_env_underlying(
             execution_platform_resolution: node.execution_platform_resolution().clone(),
         };
 
+        let target_cell = node.label().pkg().cell_name().as_str().to_owned();
+        let rule_bzl_cell = match node.rule_type() {
+            RuleType::Starlark(rule_type) => match &rule_type.path {
+                buck2_node::bzl_or_bxl_path::BzlOrBxlPath::Bzl(path) => {
+                    Some(path.path().cell().as_str().to_owned())
+                }
+                buck2_node::bzl_or_bxl_path::BzlOrBxlPath::Bxl(_) => None,
+            },
+            _ => None,
+        };
+
         let attributes = node_to_attrs_struct(node, &mut &resolution_ctx)?;
         let plugins = plugins_to_starlark_value(node, &mut &resolution_ctx)?;
         let mut resolved_toolchains = SmallMap::new();
         let mut resolved_toolchain_template_variables = Vec::new();
-        for resolved in node.bazel_resolved_toolchains() {
+        for resolved in node
+            .bazel_resolved_toolchains()
+            .iter()
+            .chain(bazel_aspect_resolved_toolchains.iter())
+        {
             let provider_collection = get_dep(
                 &resolution_ctx.dep_analysis_results,
                 &resolved.toolchain,
                 &env,
             )?;
-            if let Some(toolchain_info) = provider_collection
+            let Some(toolchain_info) = provider_collection
                 .as_ref()
                 .builtin_provider::<FrozenToolchainInfo>()
-            {
-                resolved_toolchains
-                    .insert(resolved.toolchain_type.clone(), toolchain_info.to_value());
+            else {
+                return Err(internal_error!(
+                    "resolved Bazel toolchain target `{}` for type `{}` does not provide ToolchainInfo",
+                    resolved.toolchain,
+                    resolved.toolchain_type,
+                ));
+            };
+            let toolchain_info = toolchain_info.to_value();
+            let mut resolved_keys = Vec::new();
+            let mut resolved_keys_seen = StdBuckHashSet::default();
+            push_bazel_toolchain_key(
+                &mut resolved_keys,
+                &mut resolved_keys_seen,
+                &resolved.toolchain_type,
+            );
+            push_bazel_toolchain_alias_keys(
+                &mut resolved_keys,
+                &mut resolved_keys_seen,
+                &resolved.toolchain_type,
+                &target_cell,
+            );
+            if let Some(rule_bzl_cell) = &rule_bzl_cell {
+                push_bazel_toolchain_alias_keys(
+                    &mut resolved_keys,
+                    &mut resolved_keys_seen,
+                    &resolved.toolchain_type,
+                    rule_bzl_cell,
+                );
+            }
+            for resolved_key in resolved_keys {
+                resolved_toolchains.insert(resolved_key, toolchain_info);
             }
             if let Some(template_variable_info) = provider_collection
                 .as_ref()
@@ -1882,6 +2113,44 @@ async fn run_analysis_with_env_underlying(
                     None
                 };
 
+                let mut bazel_toolchain_keys = Vec::new();
+                let mut bazel_toolchain_keys_seen = StdBuckHashSet::default();
+                for toolchain_type in node
+                    .bazel_toolchains()
+                    .iter()
+                    .map(|toolchain| &toolchain.toolchain_type)
+                    .chain(
+                        node.bazel_resolved_toolchains()
+                            .iter()
+                            .map(|toolchain| &toolchain.toolchain_type),
+                    )
+                    .chain(
+                        bazel_aspect_resolved_toolchains
+                            .iter()
+                            .map(|toolchain| &toolchain.toolchain_type),
+                    )
+                {
+                    push_bazel_toolchain_key(
+                        &mut bazel_toolchain_keys,
+                        &mut bazel_toolchain_keys_seen,
+                        toolchain_type,
+                    );
+                    push_bazel_toolchain_alias_keys(
+                        &mut bazel_toolchain_keys,
+                        &mut bazel_toolchain_keys_seen,
+                        toolchain_type,
+                        &target_cell,
+                    );
+                    if let Some(rule_bzl_cell) = &rule_bzl_cell {
+                        push_bazel_toolchain_alias_keys(
+                            &mut bazel_toolchain_keys,
+                            &mut bazel_toolchain_keys_seen,
+                            toolchain_type,
+                            rule_bzl_cell,
+                        );
+                    }
+                }
+
                 let ctx = AnalysisContext::prepare(
                     eval.heap(),
                     Some(attributes),
@@ -1890,10 +2159,7 @@ async fn run_analysis_with_env_underlying(
                     predeclared_output_files,
                     Some(analysis_env.label),
                     Some(plugins.into()),
-                    node.bazel_toolchains()
-                        .iter()
-                        .map(|toolchain| toolchain.toolchain_type.clone())
-                        .collect(),
+                    bazel_toolchain_keys,
                     resolved_toolchains,
                     resolved_toolchain_template_variables,
                     bazel_cpp_options,

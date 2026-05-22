@@ -19,6 +19,7 @@ use buck2_core::cells::CellResolver;
 use buck2_core::cells::cell_path::CellPath;
 use buck2_core::cells::cell_path_with_allowed_relative_dir::CellPathWithAllowedRelativeDir;
 use buck2_core::cells::external::bzlmod_cell_name;
+use buck2_core::cells::external::is_bzlmod_cell_name;
 use buck2_core::cells::external::register_bzlmod_cell_canonical_repo_name_for_cell;
 use buck2_core::cells::name::CellName;
 use buck2_core::cells::paths::CellRelativePathBuf;
@@ -124,7 +125,7 @@ impl BuildAttrCoercionContext {
         let cell = self.cell_name.as_str();
         cell == "root"
             || cell == "bazel_tools"
-            || cell.starts_with("bzlmod_")
+            || is_bzlmod_cell_name(cell)
             || (self.cell_name == self.cell_resolver.root_cell()
                 && self.cell_alias_resolver.resolve("bazel_tools").is_ok())
     }

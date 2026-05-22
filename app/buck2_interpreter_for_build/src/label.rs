@@ -14,6 +14,7 @@ use buck2_core::cells::alias::NonEmptyCellAlias;
 use buck2_core::cells::external::bzlmod_canonical_repo_name_for_cell;
 use buck2_core::cells::external::bzlmod_cell_aliases_for_cell;
 use buck2_core::cells::external::bzlmod_cell_name;
+use buck2_core::cells::external::is_bzlmod_cell_name;
 use buck2_core::cells::external::register_bzlmod_cell_canonical_repo_name_for_cell;
 use buck2_core::cells::name::CellName;
 use buck2_core::cells::paths::CellRelativePathBuf;
@@ -70,7 +71,7 @@ struct LabelParseContextData<'a, 'e> {
 
 fn is_bazel_compat_cell(cell_name: CellName) -> bool {
     let cell = cell_name.as_str();
-    cell == "root" || cell == "bazel_tools" || cell.starts_with("bzlmod_")
+    cell == "root" || cell == "bazel_tools" || is_bzlmod_cell_name(cell)
 }
 
 fn default_label_parse_context(c: &BuildContext<'_>) -> LabelParseContext {

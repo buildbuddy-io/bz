@@ -23,10 +23,11 @@ use std::sync::OnceLock;
 use std::sync::atomic::AtomicU64;
 use std::time::Duration;
 
-use base64::Engine;
 use buck2_build_api::actions::artifact::get_artifact_fs::GetArtifactFs;
 use buck2_common::bzlmod_archive::archive_kind_from_type_or_url;
 use buck2_common::bzlmod_archive::extract_archive as extract_bazel_archive;
+use buck2_common::bzlmod_integrity::BzlmodIntegrityKind;
+use buck2_common::bzlmod_integrity::parse_bzlmod_integrity;
 use buck2_common::bzlmod_patch::apply_unified_patch_file;
 use buck2_common::dice::data::HasIoProvider;
 use buck2_common::file_ops::delegate::FileOpsDelegate;
@@ -96,8 +97,8 @@ use buck2_execute::materialize::materializer::HasMaterializer;
 use buck2_execute::materialize::materializer::Materializer;
 use buck2_fs::error::IoResultExt;
 use buck2_fs::fs_util;
-use buck2_fs::paths::abs_path::AbsPath;
 use buck2_fs::paths::abs_norm_path::AbsNormPath;
+use buck2_fs::paths::abs_path::AbsPath;
 use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
 use buck2_http::HttpClient;
 use buck2_http::HttpClientBuilder;
@@ -135,6 +136,7 @@ static BZLMOD_MODULE_EXTENSION_REPO_MAPPING_REGISTRATIONS: OnceLock<
 static BZLMOD_DOWNLOAD_HTTP_CLIENT: LazyLock<tokio::sync::OnceCell<HttpClient>> =
     LazyLock::new(tokio::sync::OnceCell::new);
 static BZLMOD_GENERATED_CACHE_ENTRY_COUNTER: AtomicU64 = AtomicU64::new(0);
+static BZLMOD_CACHE_ALIAS_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 const BZLMOD_DOWNLOAD_MAX_PARALLEL_DOWNLOADS: usize = 8;
 const BZLMOD_DOWNLOAD_MAX_REDIRECTS: usize = 40;
@@ -152,8 +154,6 @@ enum BzlmodError {
     MissingExtractedDirectory(String),
     #[error("Expected bzlmod materialization to create a directory")]
     NoDirectory,
-    #[error("Invalid bzlmod integrity `{0}`")]
-    InvalidIntegrity(String),
     #[error("Invalid generated bzlmod repo path `{0}`")]
     InvalidGeneratedRepoPath(String),
     #[error("Could not find `{dict}` in bazel_features globals at `{path}`")]
@@ -314,18 +314,7 @@ impl IoRequest for BzlmodExtractIoRequest {
         fs_util::create_dir_all(cache_tmp.clone())?;
 
         extract_archive(&self.setup, &archive, &temp)?;
-
-        let source = match self.setup.strip_prefix.as_ref() {
-            Some(strip_prefix) if !strip_prefix.is_empty() => {
-                temp.join(ForwardRelativePath::new(&**strip_prefix)?)
-            }
-            _ => temp.clone(),
-        };
-        if !source.exists() {
-            return Err(BzlmodError::MissingExtractedDirectory(source.to_string()).into());
-        }
-
-        copy_dir_contents(&source, &cache_tmp)?;
+        copy_dir_contents(&temp, &cache_tmp)?;
 
         for patch in &self.patch_files {
             apply_patch(project_fs, &cache_tmp, &patch.path, patch.patch_strip)?;
@@ -421,17 +410,7 @@ impl IoRequest for BzlmodGeneratedHttpArchiveIoRequest {
             patch_strip: 0,
         };
         extract_archive(&extract_setup, &archive, &temp)?;
-
-        let source = match self.setup.strip_prefix.as_ref() {
-            Some(strip_prefix) if !strip_prefix.is_empty() => {
-                temp.join(ForwardRelativePath::new(&**strip_prefix)?)
-            }
-            _ => temp.clone(),
-        };
-        if !source.exists() {
-            return Err(BzlmodError::MissingExtractedDirectory(source.to_string()).into());
-        }
-        copy_dir_contents(&source, &dest)?;
+        copy_dir_contents(&temp, &dest)?;
         write_generated_module_file(&dest, &self.setup.repo_name)?;
         Ok(())
     }
@@ -535,7 +514,6 @@ fn write_repository_rule_repo(
         let source_dir = ProjectRelativePath::new(source_dir.as_ref())?;
         let source = project_fs.resolve(source_dir);
         copy_dir_contents(&source, dest)?;
-        replant_copied_repository_symlinks(&source, dest, dest)?;
     }
     write_generated_module_file(dest, canonical_repo_name)?;
     for file in setup.files.iter() {
@@ -1743,6 +1721,63 @@ mod tests {
     }
 
     #[test]
+    fn bzlmod_repo_contents_cache_alias_is_published_atomically() -> buck2_error::Result<()> {
+        let project_root = ProjectRootTemp::new()?;
+        let cache_repo_a =
+            ProjectRelativePathBuf::testing_new("buck-out/v2/cache/bzlmod_repo_contents/a");
+        let cache_repo_b =
+            ProjectRelativePathBuf::testing_new("buck-out/v2/cache/bzlmod_repo_contents/b");
+        let cache_alias = ProjectRelativePathBuf::testing_new(
+            "buck-out/v2/cache/bzlmod_repo_contents/by_canonical/repo",
+        );
+
+        fs_util::create_dir_all(project_root.path().resolve(&cache_repo_a))?;
+        fs_util::create_dir_all(project_root.path().resolve(&cache_repo_b))?;
+
+        record_bzlmod_repo_contents_cache_alias(project_root.path(), &cache_alias, &cache_repo_a)?;
+        record_bzlmod_repo_contents_cache_alias(project_root.path(), &cache_alias, &cache_repo_b)?;
+
+        assert_eq!(
+            cache_repo_b.as_str(),
+            fs::read_to_string(project_root.path().resolve(&cache_alias)).with_buck_error_context(
+                || {
+                    format!(
+                        "Error reading bzlmod cache alias `{}`",
+                        cache_alias.as_str()
+                    )
+                }
+            )?
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn bzlmod_repo_contents_cache_alias_rejects_missing_repo() -> buck2_error::Result<()> {
+        let project_root = ProjectRootTemp::new()?;
+        let missing_cache_repo =
+            ProjectRelativePathBuf::testing_new("buck-out/v2/cache/bzlmod_repo_contents/missing");
+        let cache_alias = ProjectRelativePathBuf::testing_new(
+            "buck-out/v2/cache/bzlmod_repo_contents/by_canonical/repo",
+        );
+
+        assert!(
+            record_bzlmod_repo_contents_cache_alias(
+                project_root.path(),
+                &cache_alias,
+                &missing_cache_repo,
+            )
+            .is_err()
+        );
+        assert!(
+            fs_util::symlink_metadata_if_exists(project_root.path().resolve(&cache_alias))?
+                .is_none()
+        );
+
+        Ok(())
+    }
+
+    #[test]
     fn repository_rule_build_directory_is_not_mirrored_as_build_bazel() -> buck2_error::Result<()> {
         let project_root = ProjectRootTemp::new()?;
         let dest_rel = ProjectRelativePath::new("repo")?;
@@ -1769,11 +1804,102 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
+    fn copy_dir_contents_rewrites_in_tree_absolute_symlink() -> buck2_error::Result<()> {
+        let project_root = ProjectRootTemp::new()?;
+        let from = project_root.path().resolve(ProjectRelativePath::new("from")?);
+        let to = project_root.path().resolve(ProjectRelativePath::new("to")?);
+        let target_rel = ForwardRelativePath::new(".tmp_git_root/shed/pkg/Cargo.toml")?;
+        let target = from.join(target_rel);
+        fs_util::create_dir_all(target.parent().expect("target has parent"))?;
+        fs_util::write(&target, "[package]\n").categorize_internal()?;
+        let link = from.join(ForwardRelativePath::new("Cargo.toml")?);
+        fs_util::symlink(&target, &link).categorize_internal()?;
+
+        copy_dir_contents(&from, &to)?;
+
+        let copied_link = to.join(ForwardRelativePath::new("Cargo.toml")?);
+        assert!(
+            fs_util::symlink_metadata_if_exists(&copied_link)?
+                .is_some_and(|metadata| metadata.file_type().is_symlink())
+        );
+        assert_eq!(
+            PathBuf::from(".tmp_git_root/shed/pkg/Cargo.toml"),
+            fs_util::read_link(&copied_link).categorize_internal()?
+        );
+        assert_eq!(
+            "[package]\n",
+            fs_util::read_to_string(&copied_link).categorize_internal()?
+        );
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn generated_repo_symlink_check_rejects_broken_link() -> buck2_error::Result<()> {
+        let project_root = ProjectRootTemp::new()?;
+        let repo = project_root.path().resolve(ProjectRelativePath::new("repo")?);
+        fs_util::create_dir_all(&repo)?;
+        let link = repo.join(ForwardRelativePath::new("Cargo.toml")?);
+        let missing = project_root.path().resolve(ProjectRelativePath::new("missing")?);
+        fs_util::symlink(&missing, &link).categorize_internal()?;
+
+        assert!(!bzlmod_generated_repo_symlink_targets_exist(&repo)?);
+        Ok(())
+    }
+
+    #[test]
     fn checksum_from_integrity_allows_empty_integrity() {
         assert!(matches!(
             checksum_from_integrity("").unwrap(),
             Checksum::None
         ));
+    }
+
+    #[test]
+    fn checksum_from_integrity_accepts_sri_algorithms() {
+        let cases = [
+            (
+                "sha1-iEPX+SQWIR3p67lj/0zigSWTKHg=",
+                Some("8843d7f92416211de9ebb963ff4ce28125932878"),
+                None,
+                None,
+                None,
+            ),
+            (
+                "sha256-w6uP8Tcg6K2QR905Rms8iXTlksL6OD1KOWBxTK7wxPI=",
+                None,
+                Some("c3ab8ff13720e8ad9047dd39466b3c8974e592c2fa383d4a3960714caef0c4f2"),
+                None,
+                None,
+            ),
+            (
+                "sha384-PJww2fZl501RXIQpYNSkUcg6ASX9Pec5LXs3IxrxDHLqWK7fzfiaV2W/kCr5Ps8G",
+                None,
+                None,
+                Some(
+                    "3c9c30d9f665e74d515c842960d4a451c83a0125fd3de7392d7b37231af10c72ea58aedfcdf89a5765bf902af93ecf06",
+                ),
+                None,
+            ),
+            (
+                "sha512-ClAmHr0aOQ/tK/Mm8mc8FFWCpjQtUjIElz0CGTN/gWFqgGmwElh89WNfaSXxtWw2AjDBmyc1AO4BPgMGAb8kJQ==",
+                None,
+                None,
+                None,
+                Some(
+                    "0a50261ebd1a390fed2bf326f2673c145582a6342d523204973d0219337f81616a8069b012587cf5635f6925f1b56c360230c19b273500ee013e030601bf2425",
+                ),
+            ),
+        ];
+
+        for (integrity, sha1, sha256, sha384, sha512) in cases {
+            let checksum = checksum_from_integrity(integrity).unwrap();
+            assert_eq!(checksum.sha1(), sha1);
+            assert_eq!(checksum.sha256(), sha256);
+            assert_eq!(checksum.sha384(), sha384);
+            assert_eq!(checksum.sha512(), sha512);
+        }
     }
 
     fn hidden_lockfile_evaluation(
@@ -1884,8 +2010,15 @@ fn extract_archive(
     let archive_type = setup.archive_type.as_deref();
     let kind = archive_kind_from_type_or_url(archive_type, primary_url)
         .ok_or_else(|| BzlmodError::UnsupportedArchiveType(primary_url.to_owned()))?;
-    extract_bazel_archive(archive.as_path(), temp.as_path(), kind, "", 0, &[])
-        .buck_error_context("Could not extract archive for bzlmod external cell")
+    extract_bazel_archive(
+        archive.as_path(),
+        temp.as_path(),
+        kind,
+        setup.strip_prefix.as_deref().unwrap_or(""),
+        0,
+        &[],
+    )
+    .buck_error_context("Could not extract archive for bzlmod external cell")
 }
 
 fn bzlmod_cell_setup_primary_url(setup: &BzlmodCellSetup) -> &str {
@@ -1923,6 +2056,15 @@ fn apply_patch(
 }
 
 fn copy_dir_contents(from: &AbsNormPath, to: &AbsNormPath) -> buck2_error::Result<()> {
+    copy_dir_contents_impl(from, to, from, to)
+}
+
+fn copy_dir_contents_impl(
+    root_from: &AbsNormPath,
+    root_to: &AbsNormPath,
+    from: &AbsNormPath,
+    to: &AbsNormPath,
+) -> buck2_error::Result<()> {
     for entry in fs_util::read_dir(from).categorize_internal()? {
         let entry = entry?;
         let from_path = entry.path();
@@ -1930,72 +2072,56 @@ fn copy_dir_contents(from: &AbsNormPath, to: &AbsNormPath) -> buck2_error::Resul
         let file_type = entry.file_type()?;
         if file_type.is_dir() {
             fs_util::create_dir_all(&to_path)?;
-            copy_dir_contents(&from_path, &to_path)?;
+            copy_dir_contents_impl(root_from, root_to, &from_path, &to_path)?;
         } else if file_type.is_file() {
             link_or_copy_file(&from_path, &to_path)?;
         } else if file_type.is_symlink() {
             let target = fs_util::read_link(&from_path).categorize_internal()?;
+            let target = copy_dir_symlink_target(root_from, root_to, &to_path, target);
             fs_util::symlink(target, &to_path).categorize_internal()?;
         }
     }
     Ok(())
 }
 
-fn relative_path_from_path_to_path(target: &Path, dest: &Path) -> PathBuf {
-    let Some(dest_parent) = dest.parent() else {
-        return target.to_owned();
+fn copy_dir_symlink_target(
+    root_from: &AbsNormPath,
+    root_to: &AbsNormPath,
+    link: &AbsNormPath,
+    target: PathBuf,
+) -> PathBuf {
+    if !target.is_absolute() {
+        return target;
+    }
+    let Ok(target_relative) = target.strip_prefix(root_from.as_path()) else {
+        return target;
+    };
+    let copied_target = root_to.as_path().join(target_relative);
+    path_relative_to_link(&copied_target, link.as_path())
+}
+
+fn path_relative_to_link(target: &Path, link: &Path) -> PathBuf {
+    let Some(link_parent) = link.parent() else {
+        return target.to_path_buf();
     };
     let target_components = target.components().collect::<Vec<_>>();
-    let dest_components = dest_parent.components().collect::<Vec<_>>();
-    let common = target_components
-        .iter()
-        .zip(&dest_components)
-        .take_while(|(target, dest)| target == dest)
-        .count();
-    if common == 0 {
-        return target.to_owned();
+    let parent_components = link_parent.components().collect::<Vec<_>>();
+    let mut shared = 0;
+    while target_components.get(shared) == parent_components.get(shared) {
+        shared += 1;
     }
 
     let mut relative = PathBuf::new();
-    for _ in common..dest_components.len() {
+    for _ in shared..parent_components.len() {
         relative.push("..");
     }
-    for component in &target_components[common..] {
+    for component in target_components.iter().skip(shared) {
         relative.push(component.as_os_str());
     }
     if relative.as_os_str().is_empty() {
         relative.push(".");
     }
     relative
-}
-
-fn replant_copied_repository_symlinks(
-    source_root: &AbsNormPath,
-    dest_root: &AbsNormPath,
-    dir: &AbsNormPath,
-) -> buck2_error::Result<()> {
-    for entry in fs_util::read_dir(dir).categorize_internal()? {
-        let entry = entry?;
-        let path = entry.path();
-        let file_type = entry.file_type()?;
-        if file_type.is_dir() {
-            replant_copied_repository_symlinks(source_root, dest_root, &path)?;
-        } else if file_type.is_symlink() {
-            let target = fs_util::read_link(&path).categorize_internal()?;
-            let Some(target_under_source) = target
-                .is_absolute()
-                .then(|| target.strip_prefix(source_root.as_path()).ok())
-                .flatten()
-            else {
-                continue;
-            };
-            let replanted_target = dest_root.as_path().join(target_under_source);
-            let relative_target = relative_path_from_path_to_path(&replanted_target, path.as_path());
-            fs_util::remove_file(&path).categorize_internal()?;
-            fs_util::symlink(relative_target, &path).categorize_internal()?;
-        }
-    }
-    Ok(())
 }
 
 fn link_or_copy_file(from: &AbsNormPath, to: &AbsNormPath) -> buck2_error::Result<()> {
@@ -2008,24 +2134,15 @@ fn link_or_copy_file(from: &AbsNormPath, to: &AbsNormPath) -> buck2_error::Resul
     }
 }
 
-fn integrity_to_sha256_hex(integrity: &str) -> buck2_error::Result<String> {
-    let Some(encoded) = integrity.strip_prefix("sha256-") else {
-        return Err(BzlmodError::InvalidIntegrity(integrity.to_owned()).into());
-    };
-    let bytes = base64::engine::general_purpose::STANDARD
-        .decode(encoded)
-        .map_err(|_| BzlmodError::InvalidIntegrity(integrity.to_owned()))?;
-    if bytes.len() != 32 {
-        return Err(BzlmodError::InvalidIntegrity(integrity.to_owned()).into());
-    }
-    Ok(hex::encode(bytes))
-}
-
 fn checksum_from_integrity(integrity: &str) -> buck2_error::Result<Checksum> {
-    if integrity.is_empty() {
-        Ok(Checksum::none())
-    } else {
-        Checksum::new(None, Some(&integrity_to_sha256_hex(integrity)?))
+    let Some(integrity) = parse_bzlmod_integrity(integrity)? else {
+        return Ok(Checksum::none());
+    };
+    match integrity.kind() {
+        BzlmodIntegrityKind::Sha1 => Checksum::new(Some(&hex::encode(integrity.bytes())), None),
+        BzlmodIntegrityKind::Sha256 => Checksum::new(None, Some(&hex::encode(integrity.bytes()))),
+        BzlmodIntegrityKind::Sha384 => Checksum::new_sha384(&hex::encode(integrity.bytes())),
+        BzlmodIntegrityKind::Sha512 => Checksum::new_sha512(&hex::encode(integrity.bytes())),
     }
 }
 
@@ -2153,11 +2270,61 @@ fn record_bzlmod_repo_contents_cache_alias(
     cache_alias: &ProjectRelativePath,
     cache_repo: &ProjectRelativePath,
 ) -> buck2_error::Result<()> {
-    let cache_alias = project_fs.resolve(cache_alias);
-    if let Some(parent) = cache_alias.parent() {
-        fs_util::create_dir_all(parent)?;
+    let cache_repo_abs = project_fs.resolve(cache_repo);
+    let cache_repo_metadata = fs_util::metadata(&cache_repo_abs)
+        .categorize_internal()
+        .with_buck_error_context(|| {
+            format!(
+                "Error checking bzlmod cache repo `{}` before publishing alias `{}`",
+                cache_repo.as_str(),
+                cache_alias.as_str()
+            )
+        })?;
+    if !cache_repo_metadata.is_dir() {
+        return Err(buck2_error::buck2_error!(
+            buck2_error::ErrorTag::Tier0,
+            "Cannot publish bzlmod cache alias `{}` to non-directory cache repo `{}`",
+            cache_alias.as_str(),
+            cache_repo.as_str()
+        ));
     }
-    fs_util::write(cache_alias, cache_repo.as_str()).categorize_internal()
+
+    let cache_alias = project_fs.resolve(cache_alias);
+    let cache_alias_parent = cache_alias.parent().ok_or_else(|| {
+        internal_error!(
+            "bzlmod cache alias path has no parent: `{}`",
+            cache_alias.display()
+        )
+    })?;
+    fs_util::create_dir_all(cache_alias_parent)?;
+
+    let alias_file_name = cache_alias
+        .as_path()
+        .file_name()
+        .and_then(|file_name| file_name.to_str())
+        .ok_or_else(|| {
+            internal_error!(
+                "bzlmod cache alias path has no UTF-8 filename: `{}`",
+                cache_alias.display()
+            )
+        })?;
+    let tmp_counter = BZLMOD_CACHE_ALIAS_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let tmp_file_name = format!(
+        ".{}.tmp.{}.{}",
+        alias_file_name,
+        std::process::id(),
+        tmp_counter
+    );
+    let tmp_cache_alias = cache_alias_parent.join(ForwardRelativePath::new(&tmp_file_name)?);
+
+    fs_util::write(&tmp_cache_alias, cache_repo.as_str()).categorize_internal()?;
+    match fs_util::rename(&tmp_cache_alias, &cache_alias) {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            let _ignored = fs_util::remove_file(&tmp_cache_alias);
+            Err(error.categorize_internal())
+        }
+    }
 }
 
 fn prepare_bzlmod_external_cell_root(
@@ -2242,7 +2409,8 @@ async fn bzlmod_generated_repo_contents_cache_candidates(
             if !bzlmod_repo_contents_cache_exists(&project_root, &repo)? {
                 continue;
             }
-            if !bzlmod_generated_repo_symlink_targets_exist(&project_root.resolve(&repo))? {
+            let repo_abs = project_root.resolve(&repo);
+            if !bzlmod_generated_repo_symlink_targets_exist(&repo_abs)? {
                 continue;
             }
             let modified = entry

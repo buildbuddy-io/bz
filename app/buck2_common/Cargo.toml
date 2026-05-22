@@ -8,7 +8,9 @@ version = "0.1.0"
 [dependencies]
 async-scoped = { workspace = true }
 async-trait = { workspace = true }
+base64 = { workspace = true }
 blake3 = { workspace = true }
+brotli = { workspace = true }
 bytes = { workspace = true }
 bzip2 = { workspace = true }
 chrono = { workspace = true }
@@ -19,6 +21,7 @@ derive_more = { workspace = true }
 digest = { workspace = true }
 dirs = { workspace = true }
 fbinit = { workspace = true }
+filetime = { workspace = true }
 fs4 = { workspace = true }
 futures = { workspace = true }
 flate2 = { workspace = true }
@@ -29,6 +32,7 @@ indexmap = { workspace = true }
 itertools = { workspace = true }
 lru = { workspace = true }
 num_enum = { workspace = true }
+object = { workspace = true }
 once_cell = { workspace = true }
 parking_lot = { workspace = true }
 prost-types = { workspace = true }
@@ -39,6 +43,7 @@ ring = { workspace = true }
 rusqlite = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+sevenz-rust = { workspace = true }
 sha1 = { workspace = true }
 sha2 = { workspace = true }
 smallvec = { workspace = true }

@@ -34,6 +34,9 @@ use buck2_common::legacy_configs::dice::HasLegacyConfigs;
 use buck2_common::legacy_configs::key::BuckconfigKeyRef;
 use buck2_common::legacy_configs::view::LegacyBuckConfigView;
 use buck2_common::pattern::resolve::ResolveTargetPatterns;
+use buck2_core::cells::external::bazel_canonical_label_key;
+use buck2_core::cells::external::bzlmod_cell_name;
+use buck2_core::cells::external::is_bzlmod_cell_name;
 use buck2_core::configuration::compatibility::IncompatiblePlatformReason;
 use buck2_core::configuration::compatibility::IncompatiblePlatformReasonCause;
 use buck2_core::configuration::compatibility::MaybeCompatible;
@@ -91,6 +94,7 @@ use buck2_node::nodes::configured_frontend::ConfiguredTargetNodeCalculationImpl;
 use buck2_node::nodes::frontend::TargetGraphCalculation;
 use buck2_node::nodes::unconfigured::TargetNode;
 use buck2_node::nodes::unconfigured::TargetNodeRef;
+use buck2_node::rule::BazelToolchainRequirement;
 use buck2_node::rule::RuleIncomingTransition;
 use buck2_node::rule_type::RuleType;
 use buck2_node::visibility::VisibilityError;
@@ -1341,14 +1345,26 @@ fn normalize_bazel_toolchain_key(key: &str) -> String {
     key.trim_start_matches('@').to_owned()
 }
 
+fn buck_label_for_bazel_canonical_key(key: &str) -> buck2_error::Result<String> {
+    let key = normalize_bazel_toolchain_key(key);
+    let Some((repo, package_and_target)) = key.split_once("//") else {
+        return Ok(key);
+    };
+    if repo.is_empty() || is_bzlmod_cell_name(repo) {
+        return Ok(key);
+    }
+    if repo.contains('+') {
+        return Ok(format!(
+            "{}//{}",
+            bzlmod_cell_name(repo),
+            package_and_target
+        ));
+    }
+    Ok(key)
+}
+
 fn bazel_toolchain_keys_match(declared: &str, candidate: &str) -> bool {
     declared == candidate
-        || declared
-            .split_once("//")
-            .zip(candidate.split_once("//"))
-            .is_some_and(|((_, declared_rest), (_, candidate_rest))| {
-                declared_rest == candidate_rest
-            })
 }
 
 fn bazel_rule_kind_is(node: &TargetNode, kind: &str) -> bool {
@@ -1827,7 +1843,9 @@ async fn compute_registered_bazel_toolchain_nodes(
             };
             let toolchain_type = resolve_bazel_alias(ctx, &toolchain_type).await?;
             toolchains.push(BazelRegisteredToolchain {
-                toolchain_type: normalize_bazel_toolchain_key(&toolchain_type.to_string()),
+                toolchain_type: normalize_bazel_toolchain_key(&bazel_canonical_label_key(
+                    &toolchain_type,
+                )),
                 node,
             });
         }
@@ -1956,33 +1974,33 @@ async fn resolve_bazel_toolchain_type_alias(
     let cell_resolver = ctx.get_cell_resolver().await?;
     let root_cell = cell_resolver.root_cell();
     let alias_resolver = ctx.get_cell_alias_resolver(root_cell).await?;
-    let Ok(label) = TargetLabel::parse(toolchain_type, root_cell, &cell_resolver, &alias_resolver)
-    else {
-        return Ok(toolchain_type.to_owned());
-    };
+    let label = TargetLabel::parse(
+        &buck_label_for_bazel_canonical_key(toolchain_type)?,
+        root_cell,
+        &cell_resolver,
+        &alias_resolver,
+    )
+    .with_buck_error_context(|| {
+        format!("resolving Bazel toolchain type `{toolchain_type}` to a target label")
+    })?;
     let resolved = resolve_bazel_alias(ctx, &label).await?;
-    Ok(normalize_bazel_toolchain_key(&resolved.to_string()))
+    Ok(normalize_bazel_toolchain_key(&bazel_canonical_label_key(
+        &resolved,
+    )))
 }
 
-async fn resolve_bazel_toolchain_deps(
+pub async fn resolve_bazel_declared_toolchain_deps(
     ctx: &mut DiceComputations<'_>,
     target_label: &ConfiguredTargetLabel,
-    target_node: &TargetNode,
+    declared_toolchain_requirements: Vec<BazelToolchainRequirement>,
     execution_platform_cfg: &ConfigurationNoExec,
 ) -> buck2_error::Result<(Vec<ConfiguredTargetNode>, Vec<BazelResolvedToolchain>)> {
-    if !target_label.cfg().is_bound()
-        || (target_node.bazel_toolchains().is_empty()
-            && target_node.bazel_aspect_toolchains().is_empty())
-    {
+    if !target_label.cfg().is_bound() || declared_toolchain_requirements.is_empty() {
         return Ok((Vec::new(), Vec::new()));
     }
 
-    let all_declared_toolchains = target_node
-        .bazel_toolchains()
-        .iter()
-        .chain(target_node.bazel_aspect_toolchains());
     let mut declared_toolchains = SmallMap::new();
-    for declared in all_declared_toolchains {
+    for declared in declared_toolchain_requirements {
         let declared_key = normalize_bazel_toolchain_key(&declared.toolchain_type);
         let resolution_key = resolve_bazel_toolchain_type_alias(ctx, &declared_key).await?;
         declared_toolchains
@@ -1991,7 +2009,7 @@ async fn resolve_bazel_toolchain_deps(
             .or_insert((resolution_key, declared.mandatory));
     }
 
-    let selected_toolchain_impls: Vec<(String, bool, Option<TargetLabel>)> = ctx
+    let selected_toolchain_impls: Vec<(String, String, bool, Option<TargetLabel>)> = ctx
         .try_compute_join(
             declared_toolchains.iter(),
             |ctx, (declared, (resolution_key, mandatory))| {
@@ -2003,7 +2021,12 @@ async fn resolve_bazel_toolchain_deps(
                         execution_platform_cfg.cfg().dupe(),
                     )
                     .await?;
-                    buck2_error::Ok((declared.clone(), *mandatory, toolchain_impl))
+                    buck2_error::Ok((
+                        declared.clone(),
+                        resolution_key.clone(),
+                        *mandatory,
+                        toolchain_impl,
+                    ))
                 }
                 .boxed()
             },
@@ -2011,7 +2034,7 @@ async fn resolve_bazel_toolchain_deps(
         .await?;
 
     let mut resolved_toolchain_impls = Vec::new();
-    for (declared, mandatory, toolchain_impl) in selected_toolchain_impls {
+    for (declared, resolution_key, mandatory, toolchain_impl) in selected_toolchain_impls {
         let Some(toolchain_impl) = toolchain_impl else {
             if mandatory {
                 return Err(buck2_error::buck2_error!(
@@ -2029,24 +2052,45 @@ async fn resolve_bazel_toolchain_deps(
         );
         let provider_label =
             ConfiguredProvidersLabel::new(configured.dupe(), ProvidersName::Default);
-        resolved_toolchain_impls.push((declared, configured, provider_label));
+        let mut requested_labels = vec![declared];
+        if requested_labels[0] != resolution_key {
+            requested_labels.push(resolution_key);
+        }
+        resolved_toolchain_impls.push((requested_labels, configured, provider_label));
     }
 
     let mut deps = Vec::with_capacity(resolved_toolchain_impls.len());
     let mut resolved = Vec::with_capacity(resolved_toolchain_impls.len());
-    for (declared, configured, provider_label) in resolved_toolchain_impls {
+    for (requested_labels, configured, provider_label) in resolved_toolchain_impls {
         let dep = ctx
             .get_internal_configured_target_node(&configured)
             .await
             .require_compatible()?;
         deps.push(dep);
-        resolved.push(BazelResolvedToolchain {
-            toolchain_type: declared,
-            toolchain: provider_label,
-        });
+        for toolchain_type in requested_labels {
+            resolved.push(BazelResolvedToolchain {
+                toolchain_type,
+                toolchain: provider_label.dupe(),
+            });
+        }
     }
 
     Ok((deps, resolved))
+}
+
+async fn resolve_bazel_toolchain_deps(
+    ctx: &mut DiceComputations<'_>,
+    target_label: &ConfiguredTargetLabel,
+    target_node: &TargetNode,
+    execution_platform_cfg: &ConfigurationNoExec,
+) -> buck2_error::Result<(Vec<ConfiguredTargetNode>, Vec<BazelResolvedToolchain>)> {
+    resolve_bazel_declared_toolchain_deps(
+        ctx,
+        target_label,
+        target_node.bazel_toolchains().to_vec(),
+        execution_platform_cfg,
+    )
+    .await
 }
 
 /// Compute configured target node ignoring transition for this node.
@@ -2845,4 +2889,39 @@ fn _assert_compute_configured_forward_target_node_size() {
         sz(&compute_configured_forward_target_node) <= 700,
         "compute_configured_forward_target_node size is larger than 700 bytes",
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::bazel_toolchain_keys_match;
+    use super::buck_label_for_bazel_canonical_key;
+
+    #[test]
+    fn bazel_toolchain_keys_match_preserves_repository_identity() {
+        assert!(bazel_toolchain_keys_match(
+            "repo_a//pkg:toolchain_type",
+            "repo_a//pkg:toolchain_type"
+        ));
+        assert!(!bazel_toolchain_keys_match(
+            "repo_a//pkg:toolchain_type",
+            "repo_b//pkg:toolchain_type"
+        ));
+    }
+
+    #[test]
+    fn buck_label_for_bazel_canonical_key_maps_bzlmod_repos_to_cells() {
+        assert_eq!(
+            buck_label_for_bazel_canonical_key("aspect_bazel_lib+//lib:coreutils_toolchain_type")
+                .unwrap(),
+            "aspect_bazel_lib+//lib:coreutils_toolchain_type"
+        );
+        assert_eq!(
+            buck_label_for_bazel_canonical_key("@@rules_js++npm+npm__react_18.3.1//:pkg").unwrap(),
+            "rules_js++npm+npm__react_18.3.1//:pkg"
+        );
+        assert_eq!(
+            buck_label_for_bazel_canonical_key("root//app:target").unwrap(),
+            "root//app:target"
+        );
+    }
 }

@@ -16,6 +16,7 @@ use std::fmt::Formatter;
 use std::sync::OnceLock;
 
 use allocative::Allocative;
+use buck2_core::cells::external::bazel_canonical_label_key;
 use buck2_core::cells::external::bzlmod_canonical_repo_name_for_cell;
 use buck2_core::cells::external::bzlmod_cell_aliases_for_cell;
 use buck2_core::configuration::data::BazelBuildSettingValue;
@@ -260,12 +261,6 @@ impl<'v> AnalysisToolchains<'v> {
 
     fn keys_match(requested: &str, declared: &str) -> bool {
         requested == declared
-            || requested
-                .split_once("//")
-                .zip(declared.split_once("//"))
-                .is_some_and(|((_, requested_rest), (_, declared_rest))| {
-                    requested_rest == declared_rest
-                })
     }
 
     fn declared_key_for(&self, key: &str) -> Option<&str> {
@@ -275,15 +270,17 @@ impl<'v> AnalysisToolchains<'v> {
             .map(String::as_str)
     }
 
-    fn key_from_value(value: Value<'_>) -> String {
+    pub fn key_from_value(value: Value<'_>) -> String {
         if let Some(label) = StarlarkProvidersLabel::from_value(value) {
-            return Self::normalize_key(&label.label().target().to_string());
+            return Self::normalize_key(&bazel_canonical_label_key(label.label().target()));
         }
         if let Some(label) = StarlarkConfiguredProvidersLabel::from_value(value) {
-            return Self::normalize_key(&label.label().target().unconfigured().to_string());
+            return Self::normalize_key(&bazel_canonical_label_key(
+                label.label().target().unconfigured(),
+            ));
         }
         if let Some(label) = StarlarkTargetLabel::from_value(value) {
-            return Self::normalize_key(&label.label().to_string());
+            return Self::normalize_key(&bazel_canonical_label_key(label.label()));
         }
         if let Some(key) = value.unpack_str() {
             return Self::normalize_key(key);
@@ -313,6 +310,12 @@ impl<'v> AnalysisToolchains<'v> {
     fn contains_value(&self, value: Value<'_>) -> bool {
         let key = Self::key_from_value(value);
         self.declared_key_for(&key).is_some()
+    }
+
+    pub fn resolved_value_for(&self, value: Value<'_>) -> Option<Value<'v>> {
+        let key = Self::key_from_value(value);
+        let declared_key = self.declared_key_for(&key)?;
+        self.resolved.get(declared_key).copied()
     }
 }
 
@@ -3601,4 +3604,27 @@ pub static ANALYSIS_ACTIONS_METHODS_ANON_TARGET: LateBinding<fn(&mut MethodsBuil
 
 pub(crate) fn init_analysis_context_ty() {
     AnalysisContextReprLate::init(AnalysisContext::starlark_type_repr());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AnalysisToolchains;
+
+    #[test]
+    fn analysis_toolchains_preserve_repository_identity() {
+        let toolchains = AnalysisToolchains::new(
+            vec!["repo_a//pkg:toolchain_type".to_owned()],
+            starlark::collections::SmallMap::new(),
+            Vec::new(),
+        );
+
+        assert_eq!(
+            toolchains.declared_key_for("repo_a//pkg:toolchain_type"),
+            Some("repo_a//pkg:toolchain_type")
+        );
+        assert_eq!(
+            toolchains.declared_key_for("repo_b//pkg:toolchain_type"),
+            None
+        );
+    }
 }

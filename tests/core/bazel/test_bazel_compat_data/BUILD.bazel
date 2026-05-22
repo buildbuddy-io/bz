@@ -3,7 +3,7 @@ load("@io_bazel_rules_go//proto:compiler.bzl", "go_proto_compiler")
 load("@io_bazel_rules_go//proto:def.bzl", "go_proto_library")
 load("@rules_proto//proto:defs.bzl", "proto_library")
 load(":aspect_rule_attrs.bzl", "go_proto_like", "proto_like")
-load(":aspect_toolchains.bzl", "consumer", "leaf")
+load(":aspect_toolchains.bzl", "consumer", "leaf", "missing_toolchain_consumer", "required_leaf")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -57,11 +57,25 @@ toolchain_type(name = "consumer_toolchain_type")
 
 toolchain_type(name = "aspect_toolchain_type")
 
+toolchain_type(name = "missing_aspect_toolchain_type")
+
 leaf(name = "aspect_leaf")
+
+required_leaf(name = "missing_aspect_toolchain_leaf")
 
 consumer(
     name = "aspect_toolchain_ctx",
     dep = ":aspect_leaf",
+)
+
+missing_toolchain_consumer(
+    name = "missing_mandatory_aspect_toolchain_not_applicable",
+    dep = ":aspect_leaf",
+)
+
+missing_toolchain_consumer(
+    name = "missing_mandatory_aspect_toolchain_applicable",
+    dep = ":missing_aspect_toolchain_leaf",
 )
 
 proto_like(
@@ -86,4 +100,13 @@ go_proto_like(
     proto = ":aspect_mid_proto",
     deps = [":aspect_leaf_go_proto"],
     expected_imports = ["leaf.proto=example.com/leaf"],
+)
+
+genrule(
+    name = "local_output_to_bindir_genrule",
+    outs = ["local_output_to_bindir_genrule.txt"],
+    cmd = "echo ok > $@",
+    local = True,
+    message = "Generating local output_to_bindir genrule",
+    output_to_bindir = True,
 )

@@ -34,6 +34,7 @@ rust_library(
         "//app/buck2_build_api:buck2_build_api",
         "//app/buck2_build_signals:buck2_build_signals",
         "//app/buck2_common:buck2_common",
+        "//app/buck2_configured:buck2_configured",
         "//app/buck2_core:buck2_core",
         "//app/buck2_data:buck2_data",
         "//app/buck2_error:buck2_error",

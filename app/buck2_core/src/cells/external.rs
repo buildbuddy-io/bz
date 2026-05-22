@@ -27,6 +27,7 @@ use serde::Deserialize;
 use serde::Serialize;
 
 use crate::cells::name::CellName;
+use crate::target::label::label::TargetLabel;
 
 pub const BZLMOD_BAZEL_COMPAT_VERSION: &str = "9.1.0";
 pub const EXTERNAL_CELLS_ROOT: &str = "buck-out/v2/external_cells";
@@ -46,16 +47,12 @@ pub fn external_cell_source_path(kind: &str, canonical_repo_name: &str) -> Strin
 }
 
 pub fn bzlmod_cell_name(canonical_repo_name: &str) -> String {
-    let mut cell = String::with_capacity("bzlmod_".len() + canonical_repo_name.len());
-    cell.push_str("bzlmod_");
-    for ch in canonical_repo_name.bytes() {
-        if ch == b'_' || ch.is_ascii_alphanumeric() {
-            cell.push(ch as char);
-        } else {
-            cell.push('_');
-        }
-    }
-    cell
+    canonical_repo_name.to_owned()
+}
+
+pub fn is_bzlmod_cell_name(cell_name: &str) -> bool {
+    cell_name.contains('+')
+        || bzlmod_canonical_repo_name_for_cell(cell_name).is_some_and(|repo| !repo.is_empty())
 }
 
 static BZLMOD_CANONICAL_REPO_NAMES: Lazy<Mutex<StdBuckHashMap<String, String>>> =
@@ -94,6 +91,20 @@ pub fn bzlmod_canonical_repo_name_for_cell(cell_name: &str) -> Option<String> {
         .expect("bzlmod canonical repo map poisoned")
         .get(cell_name)
         .cloned()
+}
+
+pub fn bazel_canonical_label_key(label: &TargetLabel) -> String {
+    let package = label.pkg();
+    let cell = package.cell_name();
+    let repo = bzlmod_canonical_repo_name_for_cell(cell.as_str())
+        .filter(|repo| !repo.is_empty())
+        .unwrap_or_else(|| cell.to_string());
+    format!(
+        "{}//{}:{}",
+        repo,
+        package.cell_relative_path().as_str(),
+        label.name()
+    )
 }
 
 pub fn register_bzlmod_cell_aliases(
@@ -700,5 +711,23 @@ impl GitObjectFormat {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::bzlmod_cell_name;
+
+    #[test]
+    fn bzlmod_cell_name_preserves_bazel_canonical_repo_names() {
+        assert_eq!(bzlmod_cell_name(""), "");
+        assert_eq!(bzlmod_cell_name("bazel_tools"), "bazel_tools");
+        assert_eq!(bzlmod_cell_name("platforms"), "platforms");
+        assert_eq!(bzlmod_cell_name("rules_cc+"), "rules_cc+");
+        assert_eq!(bzlmod_cell_name("rules_go+0.57.0"), "rules_go+0.57.0");
+        assert_eq!(
+            bzlmod_cell_name("rules_python++python+python_3_11"),
+            "rules_python++python+python_3_11"
+        );
     }
 }

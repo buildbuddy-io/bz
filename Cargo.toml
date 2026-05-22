@@ -159,6 +159,7 @@ backtrace = "0.3.76"
 base64 = "0.22.1"
 bincode = { version = "2.0.1", features = ["serde"] }
 blake3 = { version = "=1.8.2", features = ["default", "rayon", "std", "traits-preview"] }
+brotli = "8.0.2"
 bumpalo = "3.19.1"
 bzip2 = "0.5.2"
 bytemuck = { version = "1.24", features = ["const_zeroed", "derive", "min_const_generics", "must_cast", "nightly_portable_simd", "nightly_stdsimd"] }
@@ -197,6 +198,7 @@ equivalent = "1.0.2"
 erased-serde = "0.4.9"
 faccess = "0.2.4"
 fancy-regex = "0.16.2"
+filetime = "0.2.27"
 flate2 = "1.1.9"
 fnv = "1.0"
 fs4 = { version = "0.9.1", features = ["sync"] }
@@ -299,6 +301,7 @@ sequence_trie = "0.3.6"
 serde = { version = "1.0.228", features = ["derive", "rc"] }
 serde_json = { version = "1.0.149", features = ["raw_value"] }
 serde_path_to_error = "0.1"
+sevenz-rust = "0.6.1"
 sha1 = "0.10.5"
 sha2 = "0.10.6"
 shlex = "1.3"

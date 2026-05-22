@@ -9,6 +9,7 @@
  */
 
 use std::path::Path;
+use std::process::Stdio;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::AtomicBool;
@@ -133,13 +134,20 @@ impl CleanCommand {
             };
             ctx.exec(cmd, matches, events_ctx)
         } else {
-            let use_expunge_path = self.expunge || self.background || self.expunge_bzlmod_caches;
-            if self.dry_run || use_expunge_path {
+            let clean_mode = clean_mode(
+                self.dry_run,
+                self.background,
+                self.expunge,
+                self.expunge_bzlmod_caches,
+            );
+            if clean_mode.use_inner_clean {
                 ctx.exec(
                     InnerCleanCommand {
                         dry_run: self.dry_run,
                         background: self.background,
-                        preserve_bzlmod_caches: !(self.expunge || self.expunge_bzlmod_caches),
+                        stop_daemon: clean_mode.stop_daemon,
+                        delete_daemon_dir: clean_mode.delete_daemon_dir,
+                        preserve_bzlmod_caches: clean_mode.preserve_bzlmod_caches,
                         common_opts: self.common_opts,
                     },
                     matches,
@@ -166,9 +174,77 @@ impl CleanCommand {
     }
 }
 
+#[derive(Debug, Eq, PartialEq)]
+struct CleanMode {
+    use_inner_clean: bool,
+    stop_daemon: bool,
+    delete_daemon_dir: bool,
+    preserve_bzlmod_caches: bool,
+}
+
+fn clean_mode(
+    dry_run: bool,
+    background: bool,
+    expunge: bool,
+    expunge_bzlmod_caches: bool,
+) -> CleanMode {
+    CleanMode {
+        use_inner_clean: dry_run || background || expunge || expunge_bzlmod_caches,
+        stop_daemon: expunge,
+        delete_daemon_dir: expunge,
+        preserve_bzlmod_caches: !(expunge || expunge_bzlmod_caches),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn clean_mode_background_does_not_stop_daemon() {
+        assert_eq!(
+            clean_mode(false, true, false, false),
+            CleanMode {
+                use_inner_clean: true,
+                stop_daemon: false,
+                delete_daemon_dir: false,
+                preserve_bzlmod_caches: true,
+            }
+        );
+    }
+
+    #[test]
+    fn clean_mode_expunge_bzlmod_caches_does_not_stop_daemon() {
+        assert_eq!(
+            clean_mode(false, false, false, true),
+            CleanMode {
+                use_inner_clean: true,
+                stop_daemon: false,
+                delete_daemon_dir: false,
+                preserve_bzlmod_caches: false,
+            }
+        );
+    }
+
+    #[test]
+    fn clean_mode_expunge_stops_daemon_and_deletes_daemon_dir() {
+        assert_eq!(
+            clean_mode(false, false, true, false),
+            CleanMode {
+                use_inner_clean: true,
+                stop_daemon: true,
+                delete_daemon_dir: true,
+                preserve_bzlmod_caches: false,
+            }
+        );
+    }
+}
+
 struct InnerCleanCommand {
     dry_run: bool,
     background: bool,
+    stop_daemon: bool,
+    delete_daemon_dir: bool,
     preserve_bzlmod_caches: bool,
     common_opts: CommonCommandOptions,
 }
@@ -267,22 +343,29 @@ impl BuckSubcommand for InnerCleanCommand {
                 console,
                 self.common_opts.console_opts.console_type,
                 None,
+                true,
                 self.background,
+                self.delete_daemon_dir,
                 self.preserve_bzlmod_caches,
             )
             .await
             .into();
         }
 
-        // Kill the daemon and make sure a new daemon does not spin up while we're performing clean up operations
-        // This will ensure we have exclusive access to the directories in question
-        let lifecycle_lock = BuckdLifecycleLock::lock_with_timeout(
-            daemon_dir.clone(),
-            StartupDeadline::duration_from_now(Duration::from_secs(10))?,
-        )
-        .await?;
+        let lifecycle_lock = if self.stop_daemon {
+            // Kill the daemon and make sure a new daemon does not spin up while we're performing
+            // clean up operations. This ensures exclusive access to daemon state for expunge.
+            let lifecycle_lock = BuckdLifecycleLock::lock_with_timeout(
+                daemon_dir.clone(),
+                StartupDeadline::duration_from_now(Duration::from_secs(10))?,
+            )
+            .await?;
 
-        kill_command_impl(&lifecycle_lock, "`buck2 clean` was invoked").await?;
+            kill_command_impl(&lifecycle_lock, "`buck2 clean --expunge` was invoked").await?;
+            Some(lifecycle_lock)
+        } else {
+            None
+        };
 
         clean(
             buck_out_dir,
@@ -290,8 +373,10 @@ impl BuckSubcommand for InnerCleanCommand {
             trash_dir,
             console,
             self.common_opts.console_opts.console_type,
-            Some(&lifecycle_lock),
+            lifecycle_lock.as_ref(),
+            false,
             self.background,
+            self.delete_daemon_dir,
             self.preserve_bzlmod_caches,
         )
         .await
@@ -309,14 +394,26 @@ async fn clean(
     trash_dir: AbsNormPathBuf,
     console: &FinalConsole,
     console_type: ConsoleType,
-    // None means "dry run".
     lifecycle_lock: Option<&BuckdLifecycleLock>,
+    dry_run: bool,
     background: bool,
+    delete_daemon_dir: bool,
     preserve_bzlmod_caches: bool,
 ) -> buck2_error::Result<()> {
-    let paths_to_clean = if background {
+    let paths_to_clean = if dry_run {
+        let mut paths_to_clean = Vec::new();
+        if buck_out_dir.exists() {
+            paths_to_clean = collect_paths_to_clean(&buck_out_dir, preserve_bzlmod_caches)?
+                .map(|path| path.display().to_string());
+        }
+        if delete_daemon_dir && daemon_dir.path.exists() {
+            paths_to_clean.push(daemon_dir.to_string());
+        }
+        paths_to_clean
+    } else if background {
         let trash_uuid = Uuid::new_v4();
         let trash_target = trash_dir.as_abs_path().join(trash_uuid.to_string());
+        let mut trash_target_normalized = None;
 
         // Create trash directory if it doesn't exist
         if !trash_dir.exists() {
@@ -331,39 +428,28 @@ async fn clean(
                 trash_target.display()
             ))?;
             fs_util::rename(&buck_out_dir, &trash_target).categorize_internal()?;
-            let trash_target_normalized = AbsNormPathBuf::new(trash_target.to_path_buf())?;
+            let normalized = AbsNormPathBuf::new(trash_target.to_path_buf())?;
             if preserve_bzlmod_caches {
-                restore_preserved_bzlmod_paths(&trash_target_normalized, &buck_out_dir)?;
+                restore_preserved_bzlmod_paths(&normalized, &buck_out_dir)?;
             }
+            trash_target_normalized = Some(normalized);
         }
 
         // Clean the daemon_dir first
         let mut paths_to_clean = Vec::new();
-        if daemon_dir.path.exists() {
+        if delete_daemon_dir && daemon_dir.path.exists() {
             paths_to_clean.push(daemon_dir.to_string());
             if let Some(lifecycle_lock) = lifecycle_lock {
                 lifecycle_lock.clean_daemon_dir(false)?;
             }
         }
 
-        console.print_stderr("Buck-out moved to trash. Now cleaning up...")?;
-        console.print_stderr(
-            "Tip: Use Ctrl-Z to put this in the background, or run in a new terminal.",
-        )?;
-        console.print_stderr("You can run other buck2 commands while this completes.")?;
-
-        // Delete the moved directory
-        let trash_target_normalized = AbsNormPathBuf::new(trash_target.to_path_buf())?;
-        if trash_target_normalized.exists() {
-            paths_to_clean.extend(
-                collect_paths_to_clean(&trash_target_normalized, false)?
-                    .map(|path| path.display().to_string()),
-            );
-            tokio::task::spawn_blocking(move || {
-                clean_buck_out_with_retry(&trash_target_normalized, console_type, false)
-            })
-            .await?
-            .buck_error_context("Failed to spawn clean")?;
+        if let Some(trash_target_normalized) = trash_target_normalized {
+            console
+                .print_stderr("Buck-out moved to trash. Deletion continues in the background.")?;
+            console.print_stderr("You can run other buck2 commands while this completes.")?;
+            paths_to_clean.push(trash_target_normalized.display().to_string());
+            spawn_background_cleaner(&trash_target_normalized)?;
         }
         paths_to_clean
     } else {
@@ -372,16 +458,14 @@ async fn clean(
         if buck_out_dir.exists() {
             paths_to_clean = collect_paths_to_clean(&buck_out_dir, preserve_bzlmod_caches)?
                 .map(|path| path.display().to_string());
-            if lifecycle_lock.is_some() {
-                tokio::task::spawn_blocking(move || {
-                    clean_buck_out_with_retry(&buck_out_dir, console_type, preserve_bzlmod_caches)
-                })
-                .await?
-                .buck_error_context("Failed to spawn clean")?;
-            }
+            tokio::task::spawn_blocking(move || {
+                clean_buck_out_with_retry(&buck_out_dir, console_type, preserve_bzlmod_caches)
+            })
+            .await?
+            .buck_error_context("Failed to spawn clean")?;
         }
 
-        if daemon_dir.path.exists() {
+        if delete_daemon_dir && daemon_dir.path.exists() {
             paths_to_clean.push(daemon_dir.to_string());
             if let Some(lifecycle_lock) = lifecycle_lock {
                 lifecycle_lock.clean_daemon_dir(false)?;
@@ -399,6 +483,52 @@ async fn clean(
     }
 
     Ok(())
+}
+
+fn spawn_background_cleaner(path: &AbsNormPathBuf) -> buck2_error::Result<()> {
+    #[cfg(unix)]
+    {
+        let child = std::process::Command::new("/bin/sh")
+            .arg("-c")
+            .arg(
+                "/usr/bin/find \"$1\" -type d -not -perm -u=rwx -exec /bin/chmod -f u=rwx {} + 2>/dev/null; /bin/rm -rf \"$1\"",
+            )
+            .arg("buck2-background-clean")
+            .arg(path.as_path())
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .buck_error_context("Failed to start background clean process")?;
+        tracing::info!(
+            path = %path.display(),
+            pid = child.id(),
+            "started background clean process"
+        );
+        drop(child);
+        Ok(())
+    }
+    #[cfg(windows)]
+    {
+        let child = std::process::Command::new("cmd")
+            .arg("/C")
+            .arg("rmdir")
+            .arg("/S")
+            .arg("/Q")
+            .arg(path.as_path())
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .buck_error_context("Failed to start background clean process")?;
+        tracing::info!(
+            path = %path.display(),
+            pid = child.id(),
+            "started background clean process"
+        );
+        drop(child);
+        Ok(())
+    }
 }
 
 const PRESERVED_BZLMOD_PATHS: &[&str] = &[
@@ -659,8 +789,15 @@ fn clean_buck_out(
     for dir_entry in walk
         .into_iter()
         .filter_entry(|entry| !is_preserved_path(entry.path(), &preserved_paths))
-        .flatten()
     {
+        let dir_entry = dir_entry.map_err(|error| {
+            buck2_error::buck2_error!(
+                buck2_error::ErrorTag::Tier0,
+                "failed to walk `{}` while cleaning: {}",
+                path,
+                error
+            )
+        })?;
         let file_type = dir_entry.file_type();
         // As in the daemon, heavily parallel writes to directories in btrfs perform really poorly,
         // so we only parallelize file deletions and do the rest synchronously.

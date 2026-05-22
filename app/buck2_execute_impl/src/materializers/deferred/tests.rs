@@ -565,6 +565,7 @@ mod state_machine {
             assert_eq!(dm.io.take_log(), &[(Op::Materialize, path.clone())]);
 
             dm.testing_materialization_finished(path.clone(), Utc::now(), res);
+            dm.io.fs().write_file(&path, b"", false)?;
             assert_eq!(dm.io.take_log(), &[]);
 
             // When redeclaring the same artifact nothing happens.
@@ -581,6 +582,35 @@ mod state_machine {
                 .ok_or_else(|| internal_error!("Expected a future"))?
                 .await;
             assert_eq!(dm.io.take_log(), &[(Op::Materialize, path2.clone())]);
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_declare_rejects_missing_materialized_path() -> buck2_error::Result<()> {
+        ignore_stack_overflow_checks_for_future(async {
+            let (mut dm, _) = make_processor(Default::default());
+            let digest_config = dm.io.digest_config();
+
+            let path = make_path("foo/missing");
+            let value = ArtifactValue::file(digest_config.empty_file());
+
+            dm.testing_declare(&path, value.dupe());
+            assert_eq!(dm.io.take_log(), &[(Op::Clean, path.clone())]);
+
+            let res = dm
+                .materialize_artifact(&path, EventDispatcher::null())
+                .ok_or_else(|| internal_error!("Expected a future"))?
+                .await;
+            assert_eq!(dm.io.take_log(), &[(Op::Materialize, path.clone())]);
+
+            dm.testing_materialization_finished(path.clone(), Utc::now(), res);
+            assert!(!dm.io.fs().resolve(&path).as_path().exists());
+
+            dm.testing_declare(&path, value);
+            assert_eq!(dm.io.take_log(), &[(Op::Clean, path.clone())]);
 
             Ok(())
         })

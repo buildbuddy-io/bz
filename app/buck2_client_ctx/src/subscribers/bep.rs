@@ -64,9 +64,11 @@ impl BuildEventProtocolConfig {
         cmd: &T,
         ctx: &ClientCommandContext,
         paths: Option<&buck2_common::invocation_paths::InvocationPaths>,
-    ) -> Option<Self> {
+    ) -> buck2_error::Result<Option<Self>> {
         let event_log_opts = cmd.event_log_opts();
-        let backend = event_log_opts.bes_backend.as_ref()?.to_owned();
+        let Some(backend) = event_log_opts.bes_backend.as_ref().map(ToOwned::to_owned) else {
+            return Ok(None);
+        };
         let sanitized_argv = cmd.sanitize_argv(ctx.argv.clone());
         let argv = redact_bes_headers(sanitized_argv.argv);
         let target_patterns = cmd.build_event_protocol_target_patterns();
@@ -75,15 +77,9 @@ impl BuildEventProtocolConfig {
             .unwrap_or_else(|| ctx.working_dir.to_string());
         let keywords = keywords(T::COMMAND_NAME, &event_log_opts.bes_keywords);
         let project_id = event_log_opts.bes_instance_name.clone().unwrap_or_default();
-        let timeout = match &event_log_opts.bes_timeout {
-            Some(timeout) => match humantime::parse_duration(timeout) {
-                Ok(timeout) => Some(timeout),
-                Err(_) => Some(Duration::from_secs(0)),
-            },
-            None => None,
-        };
+        let timeout = event_log_opts.bes_timeout_duration()?;
 
-        Some(Self {
+        Ok(Some(Self {
             backend,
             headers: event_log_opts.bes_header.clone(),
             project_id,
@@ -98,7 +94,7 @@ impl BuildEventProtocolConfig {
             start_time: ctx.start_time,
             working_directory: ctx.working_dir.to_string(),
             workspace_directory,
-        })
+        }))
     }
 }
 
@@ -154,6 +150,7 @@ pub(crate) struct BuildEventProtocolSubscriber {
     sender: Option<mpsc::UnboundedSender<publish_build_event::PublishBuildToolEventStreamRequest>>,
     upload: Option<JoinHandle<buck2_error::Result<UploadSummary>>>,
     sequence_number: i64,
+    progress_count: i32,
     config: BuildEventProtocolConfig,
     exit_code: Option<(String, u32)>,
     error_seen: bool,
@@ -169,6 +166,7 @@ impl BuildEventProtocolSubscriber {
             sender: Some(sender),
             upload: Some(upload),
             sequence_number: 0,
+            progress_count: 0,
             config,
             exit_code: None,
             error_seen: false,
@@ -248,6 +246,7 @@ impl BuildEventProtocolSubscriber {
 
     fn started_event(&self) -> build_event_stream::BuildEvent {
         let mut children = vec![
+            progress_id(0),
             options_parsed_id(),
             workspace_status_id(),
             build_finished_id(),
@@ -269,7 +268,9 @@ impl BuildEventProtocolSubscriber {
                     command: self.config.command_name.clone(),
                     working_directory: self.config.working_directory.clone(),
                     workspace_directory: self.config.workspace_directory.clone(),
-                    server_pid: std::process::id().into(),
+                    // The BEP subscriber runs in the client, so leave this unset until buckd's
+                    // PID is explicitly threaded here.
+                    server_pid: 0,
                     host: host(),
                     user: user(),
                 },
@@ -412,20 +413,45 @@ impl BuildEventProtocolSubscriber {
         }
     }
 
+    fn next_progress_event(
+        &mut self,
+        stdout: String,
+        stderr: String,
+    ) -> build_event_stream::BuildEvent {
+        let current_progress = self.progress_count;
+        self.progress_count += 1;
+        build_event_stream::BuildEvent {
+            id: Some(progress_id(current_progress)),
+            children: vec![progress_id(self.progress_count)],
+            last_message: false,
+            payload: Some(build_event_stream::build_event::Payload::Progress(
+                build_event_stream::Progress { stdout, stderr },
+            )),
+        }
+    }
+
+    fn final_progress_event(&self) -> build_event_stream::BuildEvent {
+        build_event_stream::BuildEvent {
+            id: Some(progress_id(self.progress_count)),
+            children: Vec::new(),
+            last_message: false,
+            payload: Some(build_event_stream::build_event::Payload::Progress(
+                build_event_stream::Progress {
+                    stdout: String::new(),
+                    stderr: String::new(),
+                },
+            )),
+        }
+    }
+
     fn send_progress_text(&mut self, stdout: Option<String>, stderr: Option<String>) {
         let stdout = stdout.unwrap_or_default();
         let stderr = stderr.unwrap_or_default();
         if stdout.is_empty() && stderr.is_empty() {
             return;
         }
-        self.send_bazel_event(build_event_stream::BuildEvent {
-            id: Some(progress_id(self.sequence_number as i32 + 1)),
-            children: Vec::new(),
-            last_message: false,
-            payload: Some(build_event_stream::build_event::Payload::Progress(
-                build_event_stream::Progress { stdout, stderr },
-            )),
-        });
+        let event = self.next_progress_event(stdout, stderr);
+        self.send_bazel_event(event);
     }
 
     fn send_progress_bytes(&mut self, stdout: Option<&[u8]>, stderr: Option<&[u8]>) {
@@ -447,6 +473,7 @@ impl BuildEventProtocolSubscriber {
         }
         self.finished_sent = true;
         self.send_workspace_status();
+        self.send_bazel_event(self.final_progress_event());
 
         let (name, code) = self.exit_code.clone().unwrap_or_else(|| {
             if self.error_seen {
@@ -1297,10 +1324,10 @@ pub(crate) fn get_bep_subscriber<T: crate::streaming::StreamingCommand>(
     cmd: &T,
     ctx: &ClientCommandContext,
     paths: Option<&buck2_common::invocation_paths::InvocationPaths>,
-) -> Option<Box<dyn EventSubscriber>> {
-    BuildEventProtocolConfig::from_command(cmd, ctx, paths)
+) -> buck2_error::Result<Option<Box<dyn EventSubscriber>>> {
+    Ok(BuildEventProtocolConfig::from_command(cmd, ctx, paths)?
         .map(BuildEventProtocolSubscriber::new)
-        .map(|subscriber| Box::new(subscriber) as Box<dyn EventSubscriber>)
+        .map(|subscriber| Box::new(subscriber) as Box<dyn EventSubscriber>))
 }
 
 #[cfg(test)]
@@ -1308,6 +1335,43 @@ mod tests {
     use prost::Message;
 
     use super::*;
+
+    fn test_config() -> BuildEventProtocolConfig {
+        BuildEventProtocolConfig {
+            backend: "grpc://localhost:1985".to_owned(),
+            headers: Vec::new(),
+            project_id: String::new(),
+            keywords: Vec::new(),
+            timeout: None,
+            results_url: None,
+            invocation_id: "invocation".to_owned(),
+            build_id: "build".to_owned(),
+            command_name: "build".to_owned(),
+            argv: vec![
+                "buck2".to_owned(),
+                "build".to_owned(),
+                "//:target".to_owned(),
+            ],
+            target_patterns: vec!["//:target".to_owned()],
+            start_time: UNIX_EPOCH,
+            working_directory: "/workspace".to_owned(),
+            workspace_directory: "/workspace".to_owned(),
+        }
+    }
+
+    fn test_subscriber() -> BuildEventProtocolSubscriber {
+        BuildEventProtocolSubscriber {
+            sender: None,
+            upload: None,
+            sequence_number: 0,
+            progress_count: 0,
+            config: test_config(),
+            exit_code: None,
+            error_seen: false,
+            workspace_status_sent: false,
+            finished_sent: false,
+        }
+    }
 
     #[test]
     fn redacts_bes_header_values_from_argv() {
@@ -1331,6 +1395,40 @@ mod tests {
                 "//:target"
             ]
         );
+    }
+
+    #[test]
+    fn started_event_does_not_report_client_pid_as_server_pid() {
+        let event = test_subscriber().started_event();
+        let Some(build_event_stream::build_event::Payload::Started(started)) = event.payload else {
+            panic!("expected started event payload");
+        };
+
+        assert_eq!(0, started.server_pid);
+    }
+
+    #[test]
+    fn started_event_announces_initial_progress() {
+        let event = test_subscriber().started_event();
+
+        assert!(event.children.contains(&progress_id(0)));
+    }
+
+    #[test]
+    fn progress_events_form_a_chain() {
+        let mut subscriber = test_subscriber();
+
+        let first = subscriber.next_progress_event("stdout".to_owned(), String::new());
+        assert_eq!(Some(progress_id(0)), first.id);
+        assert_eq!(vec![progress_id(1)], first.children);
+
+        let second = subscriber.next_progress_event(String::new(), "stderr".to_owned());
+        assert_eq!(Some(progress_id(1)), second.id);
+        assert_eq!(vec![progress_id(2)], second.children);
+
+        let final_progress = subscriber.final_progress_event();
+        assert_eq!(Some(progress_id(2)), final_progress.id);
+        assert!(final_progress.children.is_empty());
     }
 
     #[test]

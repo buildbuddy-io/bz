@@ -93,6 +93,7 @@ pub enum CommandExecutionInput {
         path: ProjectRelativePathBuf,
         value: ArtifactValue,
     },
+    EmptyFile(ProjectRelativePathBuf),
     ActionMetadata(ActionMetadataBlob),
     ScratchPath(BuckOutScratchPath),
     IncrementalRemoteOutput(
@@ -436,6 +437,9 @@ pub struct CommandExecutionRequest {
     outputs_for_error_handler: Vec<BuildArtifactPath>,
     /// String representation of a key that uniquely identifies a RunAction
     run_action_key: Option<String>,
+    /// Bazel-compatible shared action identity. Bazel coalesces equivalent shared actions by
+    /// ownerless primary output, not by every input path.
+    bazel_shared_action_primary_output: Option<ProjectRelativePathBuf>,
     local_action_cache_key: Option<LocalActionCacheKey>,
 
     is_test: bool,
@@ -480,6 +484,7 @@ impl CommandExecutionRequest {
             meta_internal_extra_params: MetaInternalExtraParams::default_arc(),
             outputs_for_error_handler: Vec::new(),
             run_action_key: None,
+            bazel_shared_action_primary_output: None,
             local_action_cache_key: None,
             is_test: false,
             skip_resource_control: false,
@@ -755,6 +760,18 @@ impl CommandExecutionRequest {
 
     pub fn run_action_key(&self) -> &Option<String> {
         &self.run_action_key
+    }
+
+    pub fn with_bazel_shared_action_primary_output(
+        mut self,
+        primary_output: Option<ProjectRelativePathBuf>,
+    ) -> Self {
+        self.bazel_shared_action_primary_output = primary_output;
+        self
+    }
+
+    pub fn bazel_shared_action_primary_output(&self) -> Option<&ProjectRelativePath> {
+        self.bazel_shared_action_primary_output.as_deref()
     }
 
     pub fn with_local_action_cache_key(

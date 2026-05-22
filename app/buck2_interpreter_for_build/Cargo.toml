@@ -52,6 +52,7 @@ buck2_data = { workspace = true }
 buck2_error = { workspace = true }
 buck2_event_observer = { workspace = true }
 buck2_events = { workspace = true }
+buck2_execute_local = { workspace = true }
 buck2_fs = { workspace = true }
 buck2_hash = { workspace = true }
 buck2_http = { workspace = true }
@@ -60,5 +61,6 @@ buck2_build_api = { workspace = true }
 buck2_node = { workspace = true }
 buck2_query = { workspace = true }
 buck2_query_parser = { workspace = true }
+buck2_resource_control = { workspace = true }
 buck2_util = { workspace = true }
 dice_futures = { workspace = true }

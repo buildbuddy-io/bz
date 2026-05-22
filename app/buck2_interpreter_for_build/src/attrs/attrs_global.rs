@@ -12,6 +12,7 @@ use std::sync::Arc;
 
 use buck2_common::package_listing::listing::PackageListing;
 use buck2_core::cells::cell_path_with_allowed_relative_dir::CellPathWithAllowedRelativeDir;
+use buck2_core::cells::external::is_bzlmod_cell_name;
 use buck2_core::cells::name::CellName;
 use buck2_core::configuration::transition::id::TransitionId;
 use buck2_core::package::PackageLabel;
@@ -359,7 +360,7 @@ pub(crate) fn attr_coercion_context_for_bzl<'v>(
                 .get(CellName::unchecked_new("bazel_tools")?)
                 .is_ok();
         if bzl_cell.as_str() == "bazel_tools"
-            || bzl_cell.as_str().starts_with("bzlmod_")
+            || is_bzlmod_cell_name(bzl_cell.as_str())
             || root_bazel_compat
         {
             let package = PackageLabel::from_cell_path(bzl.bzl_path.path_parent())?;

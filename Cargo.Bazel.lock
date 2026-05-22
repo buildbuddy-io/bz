@@ -550,6 +550,15 @@ dependencies = [
 
 [[package]]
 name = "bit-set"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f0481a0e032742109b1133a095184ee93d88f3dc9e0d28a5d033dc77a073f44f"
+dependencies = [
+ "bit-vec 0.7.0",
+]
+
+[[package]]
+name = "bit-set"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "08807e080ed7f9d5433fa9b275196cfc35414f66a0c79d864dc51a0d825231a3"
@@ -562,6 +571,12 @@ name = "bit-vec"
 version = "0.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "349f9b6a179ed607305526ca489b34ad0a41aed5f7980fa90eb03160b69598fb"
+
+[[package]]
+name = "bit-vec"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d2c54ff287cfc0a34f38a6b832ea1bd8e448a330b3e40a50859e6488bee07f22"
 
 [[package]]
 name = "bit-vec"
@@ -816,6 +831,7 @@ dependencies = [
  "buck2_build_api",
  "buck2_build_signals",
  "buck2_common",
+ "buck2_configured",
  "buck2_core",
  "buck2_data",
  "buck2_error",
@@ -1665,7 +1681,9 @@ dependencies = [
  "assert_matches",
  "async-scoped",
  "async-trait",
+ "base64",
  "blake3",
+ "brotli",
  "buck2_cli_proto",
  "buck2_core",
  "buck2_data",
@@ -1690,6 +1708,7 @@ dependencies = [
  "dirs",
  "dupe",
  "fbinit",
+ "filetime",
  "flate2",
  "fs4",
  "futures 0.3.32",
@@ -1704,6 +1723,7 @@ dependencies = [
  "lru",
  "nix 0.30.1",
  "num_enum",
+ "object 0.36.7",
  "once_cell",
  "pagable",
  "parking_lot 0.12.5",
@@ -1715,6 +1735,7 @@ dependencies = [
  "rusqlite",
  "serde",
  "serde_json",
+ "sevenz-rust",
  "sha1",
  "sha2",
  "smallvec",
@@ -2266,7 +2287,6 @@ version = "0.1.0"
 dependencies = [
  "allocative",
  "async-trait",
- "base64",
  "blake3",
  "buck2_build_api",
  "buck2_common",
@@ -2576,6 +2596,7 @@ dependencies = [
  "buck2_error",
  "buck2_event_observer",
  "buck2_events",
+ "buck2_execute_local",
  "buck2_fs",
  "buck2_hash",
  "buck2_http",
@@ -2583,6 +2604,7 @@ dependencies = [
  "buck2_node",
  "buck2_query",
  "buck2_query_parser",
+ "buck2_resource_control",
  "buck2_util",
  "bumpalo",
  "cmp_any",
@@ -4593,6 +4615,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "filetime_creation"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c25b5d475550e559de5b0c0084761c65325444e3b6c9e298af9cefe7a9ef3a5f"
+dependencies = [
+ "cfg-if",
+ "filetime",
+ "windows-sys 0.52.0",
+]
+
+[[package]]
 name = "find-msvc-tools"
 version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5935,6 +5968,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "lzma-rust"
+version = "0.1.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5baab2bbbd7d75a144d671e9ff79270e903957d92fb7386fd39034c709bd2661"
+dependencies = [
+ "byteorder",
+]
+
+[[package]]
 name = "lzma-sys"
 version = "0.1.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6230,6 +6272,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "42b8cfee0e339a0337359f3c88165702ac6e600dc01c0cc9579a92d62b08477a"
 dependencies = [
  "bitflags 2.11.1",
+]
+
+[[package]]
+name = "nt-time"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2de419e64947cd8830e66beb584acc3fb42ed411d103e3c794dda355d1b374b5"
+dependencies = [
+ "chrono",
+ "time",
 ]
 
 [[package]]
@@ -7977,6 +8029,23 @@ dependencies = [
  "rand 0.10.1",
  "rand_distr 0.6.0",
  "rand_xoshiro 0.8.0",
+]
+
+[[package]]
+name = "sevenz-rust"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "26482cf1ecce4540dc782fc70019eba89ffc4d87b3717eb5ec524b5db6fdefef"
+dependencies = [
+ "bit-set 0.6.0",
+ "byteorder",
+ "crc",
+ "filetime_creation",
+ "js-sys",
+ "lzma-rust",
+ "nt-time",
+ "sha2",
+ "wasm-bindgen",
 ]
 
 [[package]]
