@@ -55,7 +55,7 @@ fn update_events_ctx<T: StreamingCommand>(
     matches: BuckArgMatches<'_>,
     ctx: &ClientCommandContext,
     events_ctx: &mut EventsCtx,
-) {
+) -> buck2_error::Result<()> {
     let console_opts = cmd.console_opts();
     let event_log_opts = cmd.event_log_opts();
     let mut subscribers = vec![];
@@ -126,7 +126,7 @@ fn update_events_ctx<T: StreamingCommand>(
     if let Some(build_graph_stats) = get_build_graph_stats(cmd, ctx) {
         subscribers.push(build_graph_stats)
     }
-    if let Some(bep_subscriber) = get_bep_subscriber(cmd, ctx, paths) {
+    if let Some(bep_subscriber) = get_bep_subscriber(cmd, ctx, paths)? {
         subscribers.push(bep_subscriber);
     }
     let representative_config_flags = if ctx.paths().is_ok() {
@@ -154,6 +154,7 @@ fn update_events_ctx<T: StreamingCommand>(
 
     subscribers.extend(cmd.extra_subscribers());
     events_ctx.subscribers = subscribers;
+    Ok(())
 }
 
 /// Trait to generalize the behavior of executable buck2 commands that rely on a server.
@@ -289,8 +290,8 @@ impl<T: StreamingCommand> BuckSubcommand for T {
         matches: BuckArgMatches<'_>,
         ctx: &ClientCommandContext,
         events_ctx: &mut EventsCtx,
-    ) {
-        update_events_ctx(self, matches, ctx, events_ctx);
+    ) -> buck2_error::Result<()> {
+        update_events_ctx(self, matches, ctx, events_ctx)
     }
 
     fn event_log_opts(&self) -> &CommonEventLogOptions {

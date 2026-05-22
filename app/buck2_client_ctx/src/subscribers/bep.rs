@@ -64,9 +64,11 @@ impl BuildEventProtocolConfig {
         cmd: &T,
         ctx: &ClientCommandContext,
         paths: Option<&buck2_common::invocation_paths::InvocationPaths>,
-    ) -> Option<Self> {
+    ) -> buck2_error::Result<Option<Self>> {
         let event_log_opts = cmd.event_log_opts();
-        let backend = event_log_opts.bes_backend.as_ref()?.to_owned();
+        let Some(backend) = event_log_opts.bes_backend.as_ref().map(ToOwned::to_owned) else {
+            return Ok(None);
+        };
         let sanitized_argv = cmd.sanitize_argv(ctx.argv.clone());
         let argv = redact_bes_headers(sanitized_argv.argv);
         let target_patterns = cmd.build_event_protocol_target_patterns();
@@ -75,15 +77,9 @@ impl BuildEventProtocolConfig {
             .unwrap_or_else(|| ctx.working_dir.to_string());
         let keywords = keywords(T::COMMAND_NAME, &event_log_opts.bes_keywords);
         let project_id = event_log_opts.bes_instance_name.clone().unwrap_or_default();
-        let timeout = match &event_log_opts.bes_timeout {
-            Some(timeout) => match humantime::parse_duration(timeout) {
-                Ok(timeout) => Some(timeout),
-                Err(_) => Some(Duration::from_secs(0)),
-            },
-            None => None,
-        };
+        let timeout = event_log_opts.bes_timeout_duration()?;
 
-        Some(Self {
+        Ok(Some(Self {
             backend,
             headers: event_log_opts.bes_header.clone(),
             project_id,
@@ -98,7 +94,7 @@ impl BuildEventProtocolConfig {
             start_time: ctx.start_time,
             working_directory: ctx.working_dir.to_string(),
             workspace_directory,
-        })
+        }))
     }
 }
 
@@ -1297,10 +1293,10 @@ pub(crate) fn get_bep_subscriber<T: crate::streaming::StreamingCommand>(
     cmd: &T,
     ctx: &ClientCommandContext,
     paths: Option<&buck2_common::invocation_paths::InvocationPaths>,
-) -> Option<Box<dyn EventSubscriber>> {
-    BuildEventProtocolConfig::from_command(cmd, ctx, paths)
+) -> buck2_error::Result<Option<Box<dyn EventSubscriber>>> {
+    Ok(BuildEventProtocolConfig::from_command(cmd, ctx, paths)?
         .map(BuildEventProtocolSubscriber::new)
-        .map(|subscriber| Box::new(subscriber) as Box<dyn EventSubscriber>)
+        .map(|subscriber| Box::new(subscriber) as Box<dyn EventSubscriber>))
 }
 
 #[cfg(test)]
