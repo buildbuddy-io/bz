@@ -20,14 +20,11 @@ use std::io::Write;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
-use std::process::Stdio;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::OnceLock;
 use std::sync::atomic::AtomicU64;
-use std::thread;
 use std::time::Duration;
-use std::time::Instant;
 use std::time::SystemTime;
 
 use allocative::Allocative;
@@ -58,6 +55,11 @@ use buck2_core::cells::external::bzlmod_cell_name;
 use buck2_core::cells::name::CellName;
 use buck2_core::cells::paths::CellRelativePathBuf;
 use buck2_core::target::label::interner::ConcurrentTargetLabelInterner;
+use buck2_execute_local::CommandEvent;
+use buck2_execute_local::DefaultKillProcess;
+use buck2_execute_local::GatherOutputStatus;
+use buck2_execute_local::spawn_command_and_stream_events;
+use buck2_execute_local::status_decoder::DefaultStatusDecoder;
 use buck2_hash::StdBuckHashMap;
 use buck2_interpreter::file_loader::LoadedModule;
 use buck2_interpreter::load_module::InterpreterCalculation;
@@ -71,6 +73,7 @@ use buck2_node::attrs::configurable::AttrIsConfigurable;
 use buck2_node::attrs::fmt_context::AttrFmtContext;
 use buck2_node::bzl_or_bxl_path::BzlOrBxlPath;
 use buck2_node::rule_type::StarlarkRuleType;
+use buck2_resource_control::ActionFreezeEvent;
 use derive_more::Display;
 use dice::CancellationContext;
 use dice::DiceComputations;
@@ -4495,89 +4498,98 @@ fn repository_ctx_rename_files_from_entries(
 }
 
 fn repository_ctx_execute_output(
-    command: &mut Command,
+    command: Command,
     timeout: i32,
     quiet: bool,
 ) -> Result<RepositoryCommandOutput, String> {
     if timeout <= 0 {
         return Err(format!("timeout must be positive, got {timeout}"));
     }
-    command.stdout(Stdio::piped()).stderr(Stdio::piped());
-    let mut child = command.spawn().map_err(|error| error.to_string())?;
-    let stdout = child
-        .stdout
-        .take()
-        .ok_or_else(|| "failed to capture stdout".to_owned())?;
-    let stderr = child
-        .stderr
-        .take()
-        .ok_or_else(|| "failed to capture stderr".to_owned())?;
-    let mut stdout_handle = Some(repository_ctx_read_command_output(stdout, quiet));
-    let mut stderr_handle = Some(repository_ctx_read_command_output(stderr, quiet));
-    let deadline = Instant::now() + Duration::from_secs(timeout as u64);
 
-    loop {
-        if let Some(status) = child.try_wait().map_err(|error| error.to_string())? {
-            let stdout =
-                repository_ctx_join_command_output(stdout_handle.take().expect("stdout joined"))?;
-            let stderr =
-                repository_ctx_join_command_output(stderr_handle.take().expect("stderr joined"))?;
-            return Ok(RepositoryCommandOutput {
-                stdout,
-                stderr,
-                return_code: status.code().unwrap_or(1),
-            });
-        }
-
-        let now = Instant::now();
-        if now >= deadline {
-            let _ = child.kill();
-            let _ = child.wait();
-            let _ =
-                repository_ctx_join_command_output(stdout_handle.take().expect("stdout joined"));
-            let _ =
-                repository_ctx_join_command_output(stderr_handle.take().expect("stderr joined"));
-            return Ok(RepositoryCommandOutput {
-                stdout: Vec::new(),
-                stderr: format!("Command timed out after {timeout} seconds").into_bytes(),
-                return_code: 256,
-            });
-        }
-
-        thread::sleep(std::cmp::min(
-            Duration::from_millis(10),
-            deadline.saturating_duration_since(now),
-        ));
-    }
-}
-
-fn repository_ctx_read_command_output<R: Read + Send + 'static>(
-    mut reader: R,
-    quiet: bool,
-) -> thread::JoinHandle<io::Result<Vec<u8>>> {
-    thread::spawn(move || {
-        let mut output = Vec::new();
-        let mut buffer = [0u8; 8192];
-        loop {
-            let len = reader.read(&mut buffer)?;
-            if len == 0 {
-                return Ok(output);
-            }
-            if !quiet {
-                let _ = std::io::stderr().write_all(&buffer[..len]);
-            }
-            output.extend_from_slice(&buffer[..len]);
-        }
+    std::thread::spawn(move || {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|error| format!("could not create repository_ctx.execute runtime: {error}"))?
+            .block_on(repository_ctx_execute_output_async(command, timeout, quiet))
     })
+    .join()
+    .map_err(|_| "repository_ctx.execute worker thread panicked".to_owned())?
 }
 
-fn repository_ctx_join_command_output(
-    handle: thread::JoinHandle<io::Result<Vec<u8>>>,
-) -> Result<Vec<u8>, String> {
-    handle
-        .join()
-        .map_err(|_| "command output reader panicked".to_owned())?
-        .map_err(|error| error.to_string())
+async fn repository_ctx_execute_output_async(
+    command: Command,
+    timeout: i32,
+    quiet: bool,
+) -> Result<RepositoryCommandOutput, String> {
+    let stream = spawn_command_and_stream_events(
+        command,
+        Some(Duration::from_secs(timeout as u64)),
+        futures::future::pending::<buck2_error::Result<GatherOutputStatus>>(),
+        DefaultStatusDecoder,
+        DefaultKillProcess::default(),
+        None,
+        false,
+        None,
+        futures::stream::pending::<ActionFreezeEvent>(),
+    )
+    .await
+    .map_err(|error| error.to_string())?;
+
+    futures::pin_mut!(stream);
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+
+    while let Some(event) = stream.try_next().await.map_err(|error| error.to_string())? {
+        match event {
+            CommandEvent::Stdout(bytes) => {
+                if !quiet {
+                    std::io::stderr()
+                        .write_all(&bytes)
+                        .map_err(|error| error.to_string())?;
+                }
+                stdout.extend_from_slice(&bytes);
+            }
+            CommandEvent::Stderr(bytes) => {
+                if !quiet {
+                    std::io::stderr()
+                        .write_all(&bytes)
+                        .map_err(|error| error.to_string())?;
+                }
+                stderr.extend_from_slice(&bytes);
+            }
+            CommandEvent::Exit(status, _orphan_processes) => {
+                return Ok(match status {
+                    GatherOutputStatus::Finished { exit_code, .. } => RepositoryCommandOutput {
+                        stdout,
+                        stderr,
+                        return_code: exit_code,
+                    },
+                    GatherOutputStatus::TimedOut(_) => RepositoryCommandOutput {
+                        stdout: Vec::new(),
+                        stderr: format!("Command timed out after {timeout} seconds").into_bytes(),
+                        return_code: 256,
+                    },
+                    GatherOutputStatus::Cancelled => RepositoryCommandOutput {
+                        stdout: Vec::new(),
+                        stderr: b"Command was cancelled".to_vec(),
+                        return_code: 256,
+                    },
+                    GatherOutputStatus::SpawnFailed(reason) => RepositoryCommandOutput {
+                        stdout: Vec::new(),
+                        stderr: reason.into_bytes(),
+                        return_code: 256,
+                    },
+                });
+            }
+        }
+    }
+
+    Err("command event stream ended without exit status".to_owned())
+}
+
+fn repository_ctx_latin1_output(bytes: &[u8]) -> String {
+    bytes.iter().map(|&byte| char::from(byte)).collect()
 }
 
 fn repository_ctx_reject_nonblocking_download(
@@ -5011,23 +5023,22 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
             })
         })?;
         command.current_dir(working_directory);
-        let output =
-            repository_ctx_execute_output(&mut command, timeout, quiet).map_err(|error| {
-                buck2_error::Error::from(BazelRepositoryError::RepositoryCtxExecuteFailed {
-                    program: program.clone(),
-                    error,
-                })
-            })?;
+        let output = repository_ctx_execute_output(command, timeout, quiet).map_err(|error| {
+            buck2_error::Error::from(BazelRepositoryError::RepositoryCtxExecuteFailed {
+                program: program.clone(),
+                error,
+            })
+        })?;
         Ok(eval.heap().alloc(AllocStruct([
             (
                 "stdout",
                 eval.heap()
-                    .alloc(String::from_utf8_lossy(&output.stdout).into_owned()),
+                    .alloc(repository_ctx_latin1_output(&output.stdout)),
             ),
             (
                 "stderr",
                 eval.heap()
-                    .alloc(String::from_utf8_lossy(&output.stderr).into_owned()),
+                    .alloc(repository_ctx_latin1_output(&output.stderr)),
             ),
             ("return_code", eval.heap().alloc(output.return_code)),
         ])))
@@ -7033,23 +7044,22 @@ fn module_extension_context_methods(builder: &mut MethodsBuilder) {
             })
         })?;
         command.current_dir(working_directory);
-        let output =
-            repository_ctx_execute_output(&mut command, timeout, quiet).map_err(|error| {
-                buck2_error::Error::from(BazelRepositoryError::RepositoryCtxExecuteFailed {
-                    program: program.clone(),
-                    error,
-                })
-            })?;
+        let output = repository_ctx_execute_output(command, timeout, quiet).map_err(|error| {
+            buck2_error::Error::from(BazelRepositoryError::RepositoryCtxExecuteFailed {
+                program: program.clone(),
+                error,
+            })
+        })?;
         Ok(eval.heap().alloc(AllocStruct([
             (
                 "stdout",
                 eval.heap()
-                    .alloc(String::from_utf8_lossy(&output.stdout).into_owned()),
+                    .alloc(repository_ctx_latin1_output(&output.stdout)),
             ),
             (
                 "stderr",
                 eval.heap()
-                    .alloc(String::from_utf8_lossy(&output.stderr).into_owned()),
+                    .alloc(repository_ctx_latin1_output(&output.stderr)),
             ),
             ("return_code", eval.heap().alloc(output.return_code)),
         ])))
