@@ -76,12 +76,10 @@ use buck2_server_ctx::partial_result_dispatcher::PartialResultDispatcher;
 use buck2_server_ctx::target_resolution_config::TargetResolutionConfig;
 use buck2_server_ctx::template::ServerCommandTemplate;
 use buck2_server_ctx::template::run_server_command;
+use dice::DiceComputations;
 use dice::DiceTransaction;
-use dice::LinearRecomputeDiceComputations;
 use dupe::Dupe;
 use futures::future::FutureExt;
-use futures::stream::StreamExt;
-use futures::stream::futures_unordered::FuturesUnordered;
 use itertools::Either;
 use itertools::Itertools;
 use tokio::sync::mpsc::UnboundedSender;
@@ -309,23 +307,20 @@ async fn build(
 
     let build_start = Instant::now();
     let cloned_ctx = ctx.clone(); // build_future does a mutable borrow on the context, so we clone it first
-    let build_future = ctx.with_linear_recompute(|ctx| async move {
-        build_targets(
-            &ctx,
-            resolved_pattern,
-            target_resolution_config,
-            build_providers,
-            (final_artifact_materializations, final_artifact_uploads).into(),
-            build_opts.fail_fast,
-            MissingTargetBehavior::from_skip(build_opts.skip_missing_targets),
-            build_opts.skip_incompatible_targets,
-            graph_properties.dupe(),
-            timeout_observer.as_ref(),
-            build_command_streaming_build_result_tx,
-            build_start,
-        )
-        .await
-    });
+    let build_future = build_targets(
+        &mut ctx,
+        resolved_pattern,
+        target_resolution_config,
+        build_providers,
+        (final_artifact_materializations, final_artifact_uploads).into(),
+        build_opts.fail_fast,
+        MissingTargetBehavior::from_skip(build_opts.skip_missing_targets),
+        build_opts.skip_incompatible_targets,
+        graph_properties.dupe(),
+        timeout_observer.as_ref(),
+        build_command_streaming_build_result_tx,
+        build_start,
+    );
 
     let build_result = maybe_stream_build_reports(
         build_future,
@@ -619,7 +614,7 @@ async fn process_build_result(
 }
 
 async fn build_targets(
-    ctx: &LinearRecomputeDiceComputations<'_>,
+    ctx: &mut DiceComputations<'_>,
     spec: ResolvedPattern<ConfiguredProvidersPatternExtra>,
     target_resolution_config: TargetResolutionConfig,
     build_providers: Arc<BuildProviders>,
@@ -634,8 +629,7 @@ async fn build_targets(
 ) -> buck2_error::Result<BuildTargetResult> {
     let (builder, consumer) =
         AsyncBuildTargetResultBuilder::new(streaming_build_result_tx, build_start);
-    ctx.get()
-        .per_transaction_data()
+    ctx.per_transaction_data()
         .set_build_event_sink(consumer.clone())?;
     let fut = match target_resolution_config {
         TargetResolutionConfig::Default(global_cfg_options) => {
@@ -674,7 +668,7 @@ async fn build_targets(
 
 async fn request_build_driver(
     event_consumer: &BuildEventSink,
-    ctx: &LinearRecomputeDiceComputations<'_>,
+    ctx: &mut DiceComputations<'_>,
     materialization_and_upload: MaterializationAndUploadContext,
     providers_label: ConfiguredProvidersLabel,
     providers_to_build: &ProvidersToBuild,
@@ -689,7 +683,7 @@ async fn request_build_driver(
         opts.skippable,
     );
 
-    let build = async { ctx.get().compute(&key).await };
+    let build = async { ctx.compute(&key).await };
 
     match timeout_observer {
         Some(timeout_observer) => {
@@ -713,7 +707,7 @@ async fn request_build_driver(
 
 async fn build_targets_in_universe(
     event_consumer: &BuildEventSink,
-    ctx: &LinearRecomputeDiceComputations<'_>,
+    ctx: &mut DiceComputations<'_>,
     spec: ResolvedPattern<ConfiguredProvidersPatternExtra>,
     universe: CqueryUniverse,
     build_providers: Arc<BuildProviders>,
@@ -729,33 +723,31 @@ async fn build_targets_in_universe(
                 .to_owned(),
         );
     }
-    provider_labels
-        .into_iter()
-        .map(|p| {
-            buck2_util::async_move_clone!(providers_to_build, {
-                request_build_driver(
-                    event_consumer,
-                    ctx,
-                    materialization_and_upload,
-                    p,
-                    &providers_to_build,
-                    build::BuildConfiguredLabelOptions {
-                        skippable: false,
-                        graph_properties,
-                    },
-                    timeout_observer,
-                )
-                .await
-            })
-        })
-        .collect::<FuturesUnordered<_>>()
-        .collect()
-        .await
+    let providers_to_build = &providers_to_build;
+    ctx.compute_join(provider_labels, |ctx, p| {
+        async move {
+            request_build_driver(
+                event_consumer,
+                ctx,
+                materialization_and_upload,
+                p,
+                providers_to_build,
+                build::BuildConfiguredLabelOptions {
+                    skippable: false,
+                    graph_properties,
+                },
+                timeout_observer,
+            )
+            .await
+        }
+        .boxed()
+    })
+    .await;
 }
 
 async fn build_targets_with_global_target_platform<'a>(
     event_consumer: &'a BuildEventSink,
-    ctx: &'a LinearRecomputeDiceComputations<'_>,
+    ctx: &'a mut DiceComputations<'_>,
     spec: ResolvedPattern<ProvidersPatternExtra>,
     global_cfg_options: GlobalCfgOptions,
     build_providers: Arc<BuildProviders>,
@@ -767,9 +759,8 @@ async fn build_targets_with_global_target_platform<'a>(
 ) {
     let global_cfg_options = &global_cfg_options;
     let build_providers = &build_providers;
-    spec.specs
-        .into_iter()
-        .map(move |(package_with_modifiers, spec)| async move {
+    ctx.compute_join(spec.specs, |ctx, (package_with_modifiers, spec)| {
+        async move {
             build_targets_for_spec(
                 event_consumer,
                 ctx,
@@ -784,10 +775,10 @@ async fn build_targets_with_global_target_platform<'a>(
                 timeout_observer,
             )
             .await
-        })
-        .collect::<FuturesUnordered<_>>()
-        .collect()
-        .await
+        }
+        .boxed()
+    })
+    .await;
 }
 
 struct TargetBuildSpec {
@@ -822,7 +813,7 @@ fn build_providers_to_providers_to_build(build_providers: &BuildProviders) -> Pr
 
 async fn build_targets_for_spec(
     event_consumer: &BuildEventSink,
-    ctx: &LinearRecomputeDiceComputations<'_>,
+    ctx: &mut DiceComputations<'_>,
     spec: PackageSpec<ProvidersPatternExtra>,
     package_with_modifiers: PackageLabelWithModifiers,
     global_cfg_options: GlobalCfgOptions,
@@ -840,7 +831,7 @@ async fn build_targets_for_spec(
 
     let PackageLabelWithModifiers { package, modifiers } = package_with_modifiers;
 
-    let res = match ctx.get().get_interpreter_results(package.dupe()).await {
+    let res = match ctx.get_interpreter_results(package.dupe()).await {
         Ok(res) => res,
         Err(e) => {
             let e: buck2_error::Error = e;
@@ -901,29 +892,27 @@ async fn build_targets_for_spec(
 
     let providers_to_build = build_providers_to_providers_to_build(&build_providers);
 
-    todo_targets
-        .into_iter()
-        .map(|build_spec| {
-            buck2_util::async_move_clone!(providers_to_build, {
-                build_target(
-                    event_consumer,
-                    ctx,
-                    build_spec,
-                    &providers_to_build,
-                    materialization_and_upload,
-                    timeout_observer,
-                )
-                .await
-            })
-        })
-        .collect::<FuturesUnordered<_>>()
-        .collect()
-        .await
+    let providers_to_build = &providers_to_build;
+    ctx.compute_join(todo_targets, |ctx, build_spec| {
+        async move {
+            build_target(
+                event_consumer,
+                ctx,
+                build_spec,
+                providers_to_build,
+                materialization_and_upload,
+                timeout_observer,
+            )
+            .await
+        }
+        .boxed()
+    })
+    .await;
 }
 
 async fn build_target(
     event_consumer: &BuildEventSink,
-    ctx: &LinearRecomputeDiceComputations<'_>,
+    ctx: &mut DiceComputations<'_>,
     spec: TargetBuildSpec,
     providers_to_build: &ProvidersToBuild,
     materialization_and_upload: MaterializationAndUploadContext,
@@ -937,7 +926,6 @@ async fn build_target(
         },
     };
     let providers_label = match ctx
-        .get()
         .get_configured_provider_label(&spec.target, &local_cfg_options)
         .await
     {
