@@ -2008,7 +2008,7 @@ pub async fn resolve_bazel_declared_toolchain_deps(
             .or_insert((resolution_key, declared.mandatory));
     }
 
-    let selected_toolchain_impls: Vec<(String, bool, Option<TargetLabel>)> = ctx
+    let selected_toolchain_impls: Vec<(String, String, bool, Option<TargetLabel>)> = ctx
         .try_compute_join(
             declared_toolchains.iter(),
             |ctx, (declared, (resolution_key, mandatory))| {
@@ -2020,7 +2020,12 @@ pub async fn resolve_bazel_declared_toolchain_deps(
                         execution_platform_cfg.cfg().dupe(),
                     )
                     .await?;
-                    buck2_error::Ok((declared.clone(), *mandatory, toolchain_impl))
+                    buck2_error::Ok((
+                        declared.clone(),
+                        resolution_key.clone(),
+                        *mandatory,
+                        toolchain_impl,
+                    ))
                 }
                 .boxed()
             },
@@ -2028,7 +2033,7 @@ pub async fn resolve_bazel_declared_toolchain_deps(
         .await?;
 
     let mut resolved_toolchain_impls = Vec::new();
-    for (declared, mandatory, toolchain_impl) in selected_toolchain_impls {
+    for (declared, resolution_key, mandatory, toolchain_impl) in selected_toolchain_impls {
         let Some(toolchain_impl) = toolchain_impl else {
             if mandatory {
                 return Err(buck2_error::buck2_error!(
@@ -2046,21 +2051,27 @@ pub async fn resolve_bazel_declared_toolchain_deps(
         );
         let provider_label =
             ConfiguredProvidersLabel::new(configured.dupe(), ProvidersName::Default);
-        resolved_toolchain_impls.push((declared, configured, provider_label));
+        let mut requested_labels = vec![declared];
+        if requested_labels[0] != resolution_key {
+            requested_labels.push(resolution_key);
+        }
+        resolved_toolchain_impls.push((requested_labels, configured, provider_label));
     }
 
     let mut deps = Vec::with_capacity(resolved_toolchain_impls.len());
     let mut resolved = Vec::with_capacity(resolved_toolchain_impls.len());
-    for (declared, configured, provider_label) in resolved_toolchain_impls {
+    for (requested_labels, configured, provider_label) in resolved_toolchain_impls {
         let dep = ctx
             .get_internal_configured_target_node(&configured)
             .await
             .require_compatible()?;
         deps.push(dep);
-        resolved.push(BazelResolvedToolchain {
-            toolchain_type: declared,
-            toolchain: provider_label,
-        });
+        for toolchain_type in requested_labels {
+            resolved.push(BazelResolvedToolchain {
+                toolchain_type,
+                toolchain: provider_label.dupe(),
+            });
+        }
     }
 
     Ok((deps, resolved))

@@ -2033,6 +2033,28 @@ async fn run_analysis_with_env_underlying(
                     None
                 };
 
+                let mut bazel_toolchain_keys = Vec::new();
+                let mut bazel_toolchain_keys_seen = StdBuckHashSet::default();
+                for toolchain_type in node
+                    .bazel_toolchains()
+                    .iter()
+                    .map(|toolchain| &toolchain.toolchain_type)
+                    .chain(
+                        node.bazel_resolved_toolchains()
+                            .iter()
+                            .map(|toolchain| &toolchain.toolchain_type),
+                    )
+                    .chain(
+                        bazel_aspect_resolved_toolchains
+                            .iter()
+                            .map(|toolchain| &toolchain.toolchain_type),
+                    )
+                {
+                    if bazel_toolchain_keys_seen.insert(toolchain_type.clone()) {
+                        bazel_toolchain_keys.push(toolchain_type.clone());
+                    }
+                }
+
                 let ctx = AnalysisContext::prepare(
                     eval.heap(),
                     Some(attributes),
@@ -2041,10 +2063,7 @@ async fn run_analysis_with_env_underlying(
                     predeclared_output_files,
                     Some(analysis_env.label),
                     Some(plugins.into()),
-                    node.bazel_toolchains()
-                        .iter()
-                        .map(|toolchain| toolchain.toolchain_type.clone())
-                        .collect(),
+                    bazel_toolchain_keys,
                     resolved_toolchains,
                     resolved_toolchain_template_variables,
                     bazel_cpp_options,
