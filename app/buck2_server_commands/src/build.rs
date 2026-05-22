@@ -9,6 +9,7 @@
  */
 
 use std::sync::Arc;
+use std::time::Duration;
 use std::time::Instant;
 
 use async_trait::async_trait;
@@ -31,6 +32,7 @@ use buck2_build_api::build::detailed_aggregated_metrics::dice::HasDetailedAggreg
 use buck2_build_api::build::detailed_aggregated_metrics::types::ActionGraphSketchResult;
 use buck2_build_api::build::detailed_aggregated_metrics::types::DetailedAggregatedMetrics;
 use buck2_build_api::build::graph_properties::GraphPropertiesOptions;
+use buck2_build_api::build::overlap::HasBuildOverlapTracker;
 use buck2_build_api::materialize::MaterializationAndUploadContext;
 use buck2_cli_proto::CommonBuildOptions;
 use buck2_cli_proto::build_request::BuildProviders;
@@ -332,6 +334,8 @@ async fn build(
         streaming_build_result_rx,
     )
     .await?;
+
+    maybe_report_analysis_execution_overlap(&ctx);
 
     let want_detailed_metrics = ctx
         .parse_legacy_config_property(
@@ -684,6 +688,7 @@ async fn request_build_driver(
     );
 
     let build = async { ctx.compute(&key).await };
+    let error_label = providers_label.dupe();
 
     match timeout_observer {
         Some(timeout_observer) => {
@@ -696,12 +701,56 @@ async fn request_build_driver(
                 futures::future::Either::Left((timeout, _build)) => {
                     event_consumer.consume(BuildEvent::new_configured(providers_label, timeout));
                 }
-                futures::future::Either::Right((_value, _alive)) => {}
+                futures::future::Either::Right((Err(e), _alive)) => {
+                    event_consumer.consume(BuildEvent::new_configured(
+                        error_label,
+                        ConfiguredBuildEventVariant::Error { err: e.into() },
+                    ));
+                }
+                futures::future::Either::Right((Ok(_), _alive)) => {}
             }
         }
         None => {
-            let _value = build.await;
+            if let Err(e) = build.await {
+                event_consumer.consume(BuildEvent::new_configured(
+                    error_label,
+                    ConfiguredBuildEventVariant::Error { err: e.into() },
+                ));
+            }
         }
+    }
+}
+
+fn maybe_report_analysis_execution_overlap(ctx: &DiceTransaction) {
+    let Some(summary) = ctx.per_transaction_data().build_overlap_summary() else {
+        return;
+    };
+    let Some(first_overlap) = summary.first_overlap else {
+        return;
+    };
+
+    let first_action_after_first_analysis = summary
+        .first_action_after_first_analysis
+        .map(format_duration)
+        .unwrap_or_else(|| "unknown".to_owned());
+
+    console_message(format!(
+        "Analysis/execution overlap confirmed: {} actions started while analysis was active; first overlap was {} after analysis began, with {} analyses active, on {}. Totals: {} analyses started, {} analyses finished, {} actions started.",
+        summary.actions_started_while_analysis_active,
+        first_action_after_first_analysis,
+        first_overlap.active_analyses,
+        first_overlap.action,
+        summary.analyses_started,
+        summary.analyses_finished,
+        summary.actions_started,
+    ));
+}
+
+fn format_duration(duration: Duration) -> String {
+    if duration.as_secs() > 0 {
+        format!("{:.1}s", duration.as_secs_f64())
+    } else {
+        format!("{}ms", duration.as_millis())
     }
 }
 

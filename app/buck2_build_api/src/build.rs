@@ -53,6 +53,7 @@ pub mod detailed_aggregated_metrics;
 mod driver;
 pub mod graph_properties;
 pub mod outputs;
+pub mod overlap;
 pub(crate) mod sketch_impl;
 
 pub use driver::BuildDriverKey;

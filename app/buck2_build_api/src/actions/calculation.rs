@@ -90,6 +90,7 @@ use crate::artifact_groups::ArtifactGroupValues;
 use crate::artifact_groups::calculation::ArtifactGroupCalculation;
 use crate::build::detailed_aggregated_metrics::dice::HasDetailedAggregatedMetrics;
 use crate::build::detailed_aggregated_metrics::types::ActionExecutionMetrics;
+use crate::build::overlap::HasBuildOverlapTracker;
 use crate::deferred::calculation::ActionLookup;
 use crate::deferred::calculation::lookup_deferred_holder;
 use crate::keep_going::KeepGoing;
@@ -189,6 +190,8 @@ async fn build_action_no_redirect(
 
         if let Some(execute_result) = execute_result {
             let start_event = action_execution_start_event(&action);
+            ctx.per_transaction_data()
+                .record_action_started_for_overlap(|| action.key().to_string());
             let now = TimeSpan::start_now();
             let fut = build_action_result(
                 ctx,
@@ -255,6 +258,8 @@ async fn build_action_after_inputs(
     is_expected_eligible_for_dedupe: buck2_data::ExpectedEligibleForDedupe,
 ) -> buck2_error::Result<ActionOutputs> {
     let start_event = action_execution_start_event(&action);
+    ctx.per_transaction_data()
+        .record_action_started_for_overlap(|| action.key().to_string());
 
     let now = TimeSpan::start_now();
     let action = &action;

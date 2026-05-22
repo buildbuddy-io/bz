@@ -186,6 +186,7 @@ pub async fn build_configured_label(
     );
 
     let build = async { ctx.get().compute(&key).await };
+    let error_label = providers_label.dupe();
 
     match timeout_observer {
         Some(timeout_observer) => {
@@ -201,11 +202,22 @@ pub async fn build_configured_label(
                         variant: timeout,
                     });
                 }
-                Either::Right((_value, _alive)) => {}
+                Either::Right((Err(e), _alive)) => {
+                    event_consumer.consume_configured(ConfiguredBuildEvent {
+                        label: error_label,
+                        variant: ConfiguredBuildEventVariant::Error { err: e.into() },
+                    });
+                }
+                Either::Right((Ok(_), _alive)) => {}
             }
         }
         None => {
-            let _value = build.await;
+            if let Err(e) = build.await {
+                event_consumer.consume_configured(ConfiguredBuildEvent {
+                    label: error_label,
+                    variant: ConfiguredBuildEventVariant::Error { err: e.into() },
+                });
+            }
         }
     }
 }

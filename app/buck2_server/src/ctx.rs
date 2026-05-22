@@ -27,6 +27,7 @@ use buck2_build_api::actions::impls::run_action_knobs::RunActionKnobs;
 use buck2_build_api::build::HasBuildEventSink;
 use buck2_build_api::build::HasCreateUnhashedSymlinkLock;
 use buck2_build_api::build::detailed_aggregated_metrics::dice::SetDetailedAggregatedMetricsEventsHolder;
+use buck2_build_api::build::overlap::HasBuildOverlapTracker;
 use buck2_build_api::build_signals::BuildSignalsInstaller;
 use buck2_build_api::build_signals::SetBuildSignals;
 use buck2_build_api::build_signals::create_build_signals;
@@ -1216,6 +1217,7 @@ impl DiceCommandUpdater<'_, '_> {
         data.set_materializer(self.cmd_ctx.base_context.daemon.materializer.dupe());
         data.init_materialization_queue_tracker();
         data.init_build_event_sink();
+        data.init_build_overlap_tracker();
         data.set_build_signals(self.build_signals.build_signals.dupe());
         data.set_run_action_knobs(run_action_knobs);
         data.set_create_unhashed_symlink_lock(

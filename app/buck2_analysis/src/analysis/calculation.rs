@@ -19,6 +19,7 @@ use buck2_build_api::analysis::calculation::RULE_ANALYSIS_CALCULATION;
 use buck2_build_api::analysis::calculation::RuleAnalysisCalculation;
 use buck2_build_api::analysis::calculation::RuleAnalysisCalculationImpl;
 use buck2_build_api::build::detailed_aggregated_metrics::dice::HasDetailedAggregatedMetrics;
+use buck2_build_api::build::overlap::HasBuildOverlapTracker;
 use buck2_build_api::deferred::calculation::DeferredHolder;
 use buck2_build_api::keep_going::KeepGoing;
 use buck2_build_signals::env::WaitingData;
@@ -105,9 +106,14 @@ impl Key for AnalysisKey {
     ) -> Self::Value {
         let deferred_key = DeferredHolderKey::Base(BaseDeferredKey::TargetLabel(self.0.dupe()));
         ctx.analysis_started(&deferred_key)?;
+        ctx.per_transaction_data()
+            .record_analysis_started_for_overlap();
         let res = get_analysis_result(ctx, &self.0, cancellation)
             .await
-            .with_buck_error_context(|| format!("Error running analysis for `{}`", &self.0))?;
+            .with_buck_error_context(|| format!("Error running analysis for `{}`", &self.0));
+        ctx.per_transaction_data()
+            .record_analysis_finished_for_overlap();
+        let res = res?;
         if let MaybeCompatible::Compatible(v) = &res {
             ctx.analysis_complete(&deferred_key, &DeferredHolder::Analysis(v.dupe()))?;
         }
