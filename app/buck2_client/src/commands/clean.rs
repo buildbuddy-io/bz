@@ -659,8 +659,15 @@ fn clean_buck_out(
     for dir_entry in walk
         .into_iter()
         .filter_entry(|entry| !is_preserved_path(entry.path(), &preserved_paths))
-        .flatten()
     {
+        let dir_entry = dir_entry.map_err(|error| {
+            buck2_error::buck2_error!(
+                buck2_error::ErrorTag::Tier0,
+                "failed to walk `{}` while cleaning: {}",
+                path,
+                error
+            )
+        })?;
         let file_type = dir_entry.file_type();
         // As in the daemon, heavily parallel writes to directories in btrfs perform really poorly,
         // so we only parallelize file deletions and do the rest synchronously.
