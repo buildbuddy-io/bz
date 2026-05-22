@@ -3301,18 +3301,12 @@ impl RunAction {
         let mut aliases = BuckIndexSet::new();
         for artifact_group_values in artifact_inputs {
             for (artifact, value) in artifact_group_values.iter() {
-                let source_path = artifact
-                    .get_path()
-                    .resolve(
-                        artifact_fs,
-                        if artifact.path_resolution_requires_artifact_value() {
-                            Some(value.content_based_path_hash())
-                        } else {
-                            None
-                        }
-                        .as_ref(),
-                    )
-                    .buck_error_context("Invalid Bazel execroot source path")?;
+                let source_path = Self::bazel_artifact_source_path(
+                    artifact,
+                    value,
+                    artifact_fs,
+                    "Invalid Bazel execroot source path",
+                )?;
                 let source_requires_materialization =
                     artifact.requires_materialization(artifact_fs);
 
@@ -3359,6 +3353,26 @@ impl RunAction {
         }
 
         Ok(())
+    }
+
+    fn bazel_artifact_source_path(
+        artifact: &Artifact,
+        value: &ArtifactValue,
+        artifact_fs: &ArtifactFs,
+        context: &'static str,
+    ) -> buck2_error::Result<ProjectRelativePathBuf> {
+        artifact
+            .get_path()
+            .resolve(
+                artifact_fs,
+                if artifact.path_resolution_requires_artifact_value() {
+                    Some(value.content_based_path_hash())
+                } else {
+                    None
+                }
+                .as_ref(),
+            )
+            .buck_error_context(context)
     }
 
     fn bazel_execroot_source_forest_covers_alias(
@@ -3768,11 +3782,19 @@ impl RunAction {
             }
         }
 
-        let mut host_sharing_tokens = shared_content_based_paths;
+        let mut host_sharing_tokens: BuckIndexSet<String> =
+            shared_content_based_paths.into_iter().collect();
         let outputs = self
             .outputs
             .iter()
             .map(|b| {
+                if bazel_paths {
+                    let declared_path = fs.resolve_build(
+                        b.get_path(),
+                        Some(&ContentBasedPathHash::for_output_artifact()),
+                    )?;
+                    host_sharing_tokens.insert(declared_path.as_str().to_owned());
+                }
                 let produced_path = if let Some(bazel_execroot) = bazel_execroot.as_deref() {
                     let bazel_path =
                         if let Some(path) = visitor.bazel_output_exec_paths.get(b.get_path()) {
@@ -3788,7 +3810,7 @@ impl RunAction {
                     None
                 };
                 if let Some(produced_path) = &produced_path {
-                    host_sharing_tokens.push(produced_path.as_str().to_owned());
+                    host_sharing_tokens.insert(produced_path.as_str().to_owned());
                 }
                 Ok(CommandExecutionOutput::BuildArtifact {
                     path: b.get_path().dupe(),
@@ -3801,7 +3823,10 @@ impl RunAction {
 
         // TODO(ianc) Only do this if we're actually going to run the action?
         let host_sharing_requirements = if !host_sharing_tokens.is_empty() {
-            HostSharingRequirements::OnePerTokens(host_sharing_tokens.into(), self.inner.weight)
+            HostSharingRequirements::OnePerTokens(
+                host_sharing_tokens.into_iter().collect::<Vec<_>>().into(),
+                self.inner.weight,
+            )
         } else {
             HostSharingRequirements::Shared(self.inner.weight)
         };
