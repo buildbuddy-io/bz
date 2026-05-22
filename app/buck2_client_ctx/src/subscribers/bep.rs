@@ -269,7 +269,9 @@ impl BuildEventProtocolSubscriber {
                     command: self.config.command_name.clone(),
                     working_directory: self.config.working_directory.clone(),
                     workspace_directory: self.config.workspace_directory.clone(),
-                    server_pid: std::process::id().into(),
+                    // The BEP subscriber runs in the client, so leave this unset until buckd's
+                    // PID is explicitly threaded here.
+                    server_pid: 0,
                     host: host(),
                     user: user(),
                 },
@@ -1309,6 +1311,42 @@ mod tests {
 
     use super::*;
 
+    fn test_config() -> BuildEventProtocolConfig {
+        BuildEventProtocolConfig {
+            backend: "grpc://localhost:1985".to_owned(),
+            headers: Vec::new(),
+            project_id: String::new(),
+            keywords: Vec::new(),
+            timeout: None,
+            results_url: None,
+            invocation_id: "invocation".to_owned(),
+            build_id: "build".to_owned(),
+            command_name: "build".to_owned(),
+            argv: vec![
+                "buck2".to_owned(),
+                "build".to_owned(),
+                "//:target".to_owned(),
+            ],
+            target_patterns: vec!["//:target".to_owned()],
+            start_time: UNIX_EPOCH,
+            working_directory: "/workspace".to_owned(),
+            workspace_directory: "/workspace".to_owned(),
+        }
+    }
+
+    fn test_subscriber() -> BuildEventProtocolSubscriber {
+        BuildEventProtocolSubscriber {
+            sender: None,
+            upload: None,
+            sequence_number: 0,
+            config: test_config(),
+            exit_code: None,
+            error_seen: false,
+            workspace_status_sent: false,
+            finished_sent: false,
+        }
+    }
+
     #[test]
     fn redacts_bes_header_values_from_argv() {
         let argv = vec![
@@ -1331,6 +1369,16 @@ mod tests {
                 "//:target"
             ]
         );
+    }
+
+    #[test]
+    fn started_event_does_not_report_client_pid_as_server_pid() {
+        let event = test_subscriber().started_event();
+        let Some(build_event_stream::build_event::Payload::Started(started)) = event.payload else {
+            panic!("expected started event payload");
+        };
+
+        assert_eq!(0, started.server_pid);
     }
 
     #[test]
