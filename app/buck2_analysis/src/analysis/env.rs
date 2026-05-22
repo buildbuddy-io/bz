@@ -2018,13 +2018,17 @@ async fn run_analysis_with_env_underlying(
                 &resolved.toolchain,
                 &env,
             )?;
-            if let Some(toolchain_info) = provider_collection
+            let Some(toolchain_info) = provider_collection
                 .as_ref()
                 .builtin_provider::<FrozenToolchainInfo>()
-            {
-                resolved_toolchains
-                    .insert(resolved.toolchain_type.clone(), toolchain_info.to_value());
-            }
+            else {
+                return Err(internal_error!(
+                    "resolved Bazel toolchain target `{}` for type `{}` does not provide ToolchainInfo",
+                    resolved.toolchain,
+                    resolved.toolchain_type,
+                ));
+            };
+            resolved_toolchains.insert(resolved.toolchain_type.clone(), toolchain_info.to_value());
             if let Some(template_variable_info) = provider_collection
                 .as_ref()
                 .builtin_provider::<FrozenTemplateVariableInfo>()
