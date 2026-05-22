@@ -497,7 +497,7 @@
           "REPO_MAPPING:rules_rust+,bazel_tools bazel_tools",
           "REPO_MAPPING:rules_rust+,rules_cc rules_cc+",
           "REPO_MAPPING:rules_rust+,rules_rust rules_rust+",
-          "FILE:@@//Cargo.Bazel.lock be3e9bca0dbfc9bcc51a3a1a90cf8682e8dcebc5429e626ca755c5079059de32",
+          "FILE:@@//Cargo.Bazel.lock 540aefc643e347e84236d804ad8e7bb6a3fd04287bb15f8236f0cf328069069f",
           "FILE:@@//Cargo.toml 151a25571efa116558fe697b4e61107ade80dbc71f2a8e48009a5e18fd6a735a",
           "FILE:@@//allocative/allocative/Cargo.toml a76a453d5d6cc26e4963a929974a4b91a9006796b579af0e59ae39ea88ace836",
           "FILE:@@//allocative/allocative_derive/Cargo.toml d1fb4024940b51578c9548f4cb7d72fa0c8d9c33b84116e4ccfee9017dd30c13",

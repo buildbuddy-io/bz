@@ -34,6 +34,7 @@ use buck2_node::attrs::attr_type::dict::DictLiteral;
 use buck2_node::attrs::attr_type::list::ListLiteral;
 use buck2_node::attrs::attr_type::string::StringLiteral;
 use buck2_node::attrs::coerced_attr::CoercedAttr;
+use buck2_node::attrs::coercion_context::AttrCoercionContext;
 use buck2_node::attrs::display::AttrDisplayWithContextExt;
 use buck2_node::attrs::spec::AttributeSpec;
 use buck2_node::bzl_or_bxl_path::BzlOrBxlPath;
@@ -96,6 +97,7 @@ use starlark::values::typing::StarlarkCallable;
 use starlark::values::typing::StarlarkCallableChecked;
 use starlark_map::small_map::SmallMap;
 
+use crate::attrs::attrs_global::attr_coercion_context_for_bzl;
 use crate::attrs::starlark_attribute::BazelComputedDefault;
 use crate::attrs::starlark_attribute::FrozenBazelComputedDefault;
 use crate::attrs::starlark_attribute::StarlarkAttribute;
@@ -722,7 +724,10 @@ fn normalize_bazel_toolchain_key(key: &str) -> String {
     key.trim_start_matches('@').to_owned()
 }
 
-fn bazel_toolchain_key_from_value(value: Value<'_>) -> buck2_error::Result<String> {
+fn bazel_toolchain_key_from_value(
+    value: Value<'_>,
+    label_ctx: &dyn AttrCoercionContext,
+) -> buck2_error::Result<String> {
     if let Some(toolchain) = StarlarkProvidersLabel::from_value(value) {
         return Ok(normalize_bazel_toolchain_key(
             &toolchain.label().target().to_string(),
@@ -734,19 +739,25 @@ fn bazel_toolchain_key_from_value(value: Value<'_>) -> buck2_error::Result<Strin
         ));
     }
     if let Some(toolchain) = value.unpack_str() {
-        return Ok(normalize_bazel_toolchain_key(toolchain));
+        return Ok(normalize_bazel_toolchain_key(
+            &label_ctx
+                .coerce_providers_label(toolchain)?
+                .target()
+                .to_string(),
+        ));
     }
     if let Some(toolchain_type) = StructRef::from_value(value).and_then(|st| {
         st.iter()
             .find_map(|(name, value)| (name.as_str() == "toolchain_type").then_some(value))
     }) {
-        return bazel_toolchain_key_from_value(toolchain_type);
+        return bazel_toolchain_key_from_value(toolchain_type, label_ctx);
     }
     Err(RuleError::UnsupportedBazelToolchain(value.to_repr()).into())
 }
 
 fn bazel_toolchain_requirement_from_value(
     value: Value<'_>,
+    label_ctx: &dyn AttrCoercionContext,
 ) -> buck2_error::Result<BazelToolchainRequirement> {
     let mandatory = StructRef::from_value(value)
         .and_then(|st| {
@@ -761,7 +772,7 @@ fn bazel_toolchain_requirement_from_value(
         .transpose()?
         .unwrap_or(true);
     Ok(BazelToolchainRequirement {
-        toolchain_type: bazel_toolchain_key_from_value(value)?,
+        toolchain_type: bazel_toolchain_key_from_value(value, label_ctx)?,
         mandatory,
     })
 }
@@ -881,9 +892,12 @@ impl<'v> StarlarkRuleCallable<'v> {
         for aspects in bazel_attr_aspects.values() {
             collect_bazel_aspect_toolchains(aspects, &mut bazel_aspect_toolchains);
         }
+        let toolchain_label_ctx = attr_coercion_context_for_bzl(eval)?;
         let bazel_aspect_toolchains = bazel_aspect_toolchains
             .into_iter()
-            .map(bazel_toolchain_requirement_from_value)
+            .map(|toolchain| {
+                bazel_toolchain_requirement_from_value(toolchain, &toolchain_label_ctx)
+            })
             .collect::<buck2_error::Result<Vec<_>>>()?;
         let is_bazel_build_setting = build_setting.is_some();
         let build_setting_attrs = bazel_build_setting_attrs(build_setting)?;
@@ -1639,10 +1653,13 @@ pub fn register_rule_function(builder: &mut GlobalsBuilder) {
             .iter()
             .filter_map(|(name, _)| (!name.starts_with('_')).then_some((*name).to_owned()))
             .collect::<Vec<_>>();
+        let toolchain_label_ctx = attr_coercion_context_for_bzl(eval)?;
         let bazel_toolchains = toolchains
             .items
             .into_iter()
-            .map(bazel_toolchain_requirement_from_value)
+            .map(|toolchain| {
+                bazel_toolchain_requirement_from_value(toolchain, &toolchain_label_ctx)
+            })
             .collect::<buck2_error::Result<Vec<_>>>()?;
         let bazel_implicit_outputs = bazel_implicit_outputs_from_value(outputs)?;
 
