@@ -1524,18 +1524,10 @@ fn bzlmod_external_module_is_configure_repo(module: &BazelCompatExternalModule) 
                     | BzlmodGeneratedCellGenerator::XcodeConfig(_)
                     | BzlmodGeneratedCellGenerator::ShellConfig(_),
                 ) => true,
-                Ok(_) => bzlmod_canonical_repo_name_looks_configure(&module.canonical_repo_name),
-                Err(_) => bzlmod_canonical_repo_name_looks_configure(&module.canonical_repo_name),
+                Ok(_) | Err(_) => false,
             }
         }
     }
-}
-
-fn bzlmod_canonical_repo_name_looks_configure(canonical_repo_name: &str) -> bool {
-    canonical_repo_name.contains("configure")
-        || canonical_repo_name.contains("config")
-        || canonical_repo_name.contains("toolchain")
-        || canonical_repo_name.contains("toolchains")
 }
 
 #[derive(
@@ -9133,6 +9125,44 @@ mod tests {
             "load(\"//:defs.bzl\", \"dep\")".to_owned(),
         ];
         assert!(super::validate_bzlmod_module_lines("MODULE.bazel", &lines).is_err());
+    }
+
+    #[test]
+    fn test_bzlmod_configure_repo_detection_uses_structured_generator_kind()
+    -> buck2_error::Result<()> {
+        fn generated(
+            canonical_repo_name: &str,
+            generator_json: String,
+        ) -> super::BazelCompatExternalModule {
+            super::BazelCompatExternalModule::Generated(super::BazelCompatGeneratedModule {
+                cell_name: super::bzlmod_cell_name(canonical_repo_name),
+                aliases: Vec::new(),
+                canonical_repo_name: canonical_repo_name.to_owned(),
+                generator_json,
+            })
+        }
+
+        let host_platform_json = serde_json::to_string(
+            &super::BzlmodGeneratedCellGenerator::HostPlatform(super::BzlmodHostPlatformSetup {}),
+        )?;
+        assert!(super::bzlmod_external_module_is_configure_repo(&generated(
+            "platforms+host_platform+host_platform",
+            host_platform_json
+        )));
+
+        let non_configure_json =
+            serde_json::to_string(&super::BzlmodGeneratedCellGenerator::BazelFeaturesVersion(
+                super::BzlmodBazelFeaturesVersionSetup {
+                    bazel_version: Arc::from("9.1.0"),
+                },
+            ))?;
+        assert!(!super::bzlmod_external_module_is_configure_repo(
+            &generated("rules_example+toolchain_config_repo", non_configure_json)
+        ));
+        assert!(!super::bzlmod_external_module_is_configure_repo(
+            &generated("rules_example+configure_repo", "{".to_owned())
+        ));
+        Ok(())
     }
 
     #[tokio::test]
