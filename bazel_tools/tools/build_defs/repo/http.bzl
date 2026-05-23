@@ -103,8 +103,6 @@ SUPPORTED_ARCHIVE_FORMATS = [
     "ar",
     "deb",
     "7z",
-    "tar.br",
-    "br",
 ]
 
 # Put quotes around the formats for documentation (i.e. `"zip"`)
@@ -150,24 +148,24 @@ as the value for the <code>Authorization</code> field of the HTTP request.
 
 Example attribute and netrc for a http download to an oauth2 enabled API using a bearer token:
 
-```
+<pre>
 auth_patterns = {
-    "storage.cloudprovider.com": "Bearer <password>"
+    "storage.cloudprovider.com": "Bearer &lt;password&gt;"
 }
-```
+</pre>
 
 netrc:
 
-```
+<pre>
 machine storage.cloudprovider.com
         password RANDOM-TOKEN
-```
+</pre>
 
 The final HTTP request would have the following header:
 
-```
+<pre>
 Authorization: Bearer RANDOM-TOKEN
-```
+</pre>
 """
 
 def _update_integrity_attr(ctx, attrs, download_info):
@@ -198,9 +196,6 @@ def _http_archive_impl(ctx):
     if ctx.attr.build_file and ctx.attr.build_file_content:
         fail("Only one of build_file and build_file_content can be provided.")
 
-    if ctx.attr.strip_prefix and ctx.attr.strip_components:
-        fail("Only one of strip_prefix and strip_components can be provided.")
-
     source_urls = _get_source_urls(ctx)
     download_info = ctx.download_and_extract(
         source_urls,
@@ -208,7 +203,6 @@ def _http_archive_impl(ctx):
         ctx.attr.sha256,
         ctx.attr.type,
         ctx.attr.strip_prefix,
-        strip_components = ctx.attr.strip_components,
         canonical_id = ctx.attr.canonical_id or get_default_canonical_id(ctx, source_urls),
         auth = get_auth(ctx, source_urls),
         integrity = ctx.attr.integrity,
@@ -238,40 +232,6 @@ filegroup(
 )
 """
 
-_HTTP_FILE_ROOT_BUILD = """\
-package(default_visibility = ["//visibility:public"])
-
-# Convenience target so users can reference @repo//:file and get a useful
-# error message/suggestion instead of "BUILD file not found" when they
-# accidentally reference the repo root.
-alias(
-    name = "file",
-    actual = "//file:file",
-)
-{repo_name_alias}
-{downloaded_file_alias}
-"""
-
-_HTTP_FILE_ROOT_REPO_ALIAS = """
-
-# Expose the repository name at the root so labels like @repo//:repo and
-# the shorthand @repo resolve to the downloaded file.
-alias(
-    name = {target_name},
-    actual = "//file:file",
-)
-"""
-
-_HTTP_FILE_ROOT_NAME_ALIAS = """
-
-# Expose the downloaded file's basename at the repository root so labels like
-# @repo//:<downloaded filename> resolve to the downloaded file.
-alias(
-    name = {target_name},
-    actual = "//file:file",
-)
-"""
-
 def _http_file_impl(ctx):
     """Implementation of the http_file rule."""
     repo_root = ctx.path(".")
@@ -284,8 +244,6 @@ def _http_file_impl(ctx):
         ctx.path("file/BUILD.bazel"),
     ]
     downloaded_file_path = ctx.attr.downloaded_file_path
-    downloaded_file_name = downloaded_file_path.split("/")[-1]
-    apparent_repo_name = ctx.original_name
     download_path = ctx.path("file/" + downloaded_file_path)
     if download_path in forbidden_files or not str(download_path).startswith(str(repo_root)):
         fail("'%s' cannot be used as downloaded_file_path in http_file" % ctx.attr.downloaded_file_path)
@@ -299,27 +257,13 @@ def _http_file_impl(ctx):
         auth = get_auth(ctx, source_urls),
         integrity = ctx.attr.integrity,
     )
-    repo_name_alias = ""
-    if apparent_repo_name != "file":
-        repo_name_alias = _HTTP_FILE_ROOT_REPO_ALIAS.format(
-            target_name = repr(apparent_repo_name),
-        )
-    downloaded_file_alias = ""
-    if downloaded_file_name not in ["file", apparent_repo_name]:
-        downloaded_file_alias = _HTTP_FILE_ROOT_NAME_ALIAS.format(
-            target_name = repr(downloaded_file_name),
-        )
     ctx.file("WORKSPACE", "workspace(name = \"{name}\")".format(name = ctx.name))
-    ctx.file("BUILD.bazel", _HTTP_FILE_ROOT_BUILD.format(
-        repo_name_alias = repo_name_alias,
-        downloaded_file_alias = downloaded_file_alias,
-    ))
     ctx.file("file/BUILD", _HTTP_FILE_BUILD.format(path = repr(downloaded_file_path)))
 
     return _update_integrity_attr(ctx, _http_file_attrs, download_info)
 
 _HTTP_JAR_BUILD = """\
-load("{java_import_bzl}", "java_import")
+load("@rules_java//java:java_import.bzl", "java_import")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -351,7 +295,6 @@ def _http_jar_impl(ctx):
     )
     ctx.file("WORKSPACE", "workspace(name = \"{name}\")".format(name = ctx.name))
     ctx.file("jar/BUILD", _HTTP_JAR_BUILD.format(
-        java_import_bzl = str(Label("@rules_java//java:java_import.bzl")),
         file_name = downloaded_file_name,
     ))
 
@@ -403,16 +346,7 @@ Note that if there are files outside of this directory, they will be
 discarded and inaccessible (e.g., a top-level license file). This includes
 files/directories that start with the prefix but are not in the directory
 (e.g., `foo-lib-1.2.3.release-notes`). If the specified prefix does not
-match a directory in the archive, Bazel will return an error.
-
-Only one of `strip_prefix` and `strip_components` can be set.""",
-    ),
-    "strip_components": attr.int(
-        default = 0,
-        doc = """Strip the given number of leading components from file paths
-        on extraction.
-
-        Only one of `strip_components` and `strip_prefix` can be set.""",
+match a directory in the archive, Bazel will return an error.""",
     ),
     "add_prefix": attr.string(
         default = "",

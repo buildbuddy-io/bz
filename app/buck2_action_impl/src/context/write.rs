@@ -15,6 +15,7 @@ use allocative::Allocative;
 use buck2_artifact::artifact::artifact_type::Artifact;
 use buck2_artifact::artifact::artifact_type::OutputArtifact;
 use buck2_build_api::actions::impls::json::JsonUnpack;
+use buck2_build_api::actions::impls::workspace_status::WorkspaceStatusKind;
 use buck2_build_api::artifact_groups::ArtifactGroup;
 use buck2_build_api::interpreter::rule_defs::artifact::associated::AssociatedArtifacts;
 use buck2_build_api::interpreter::rule_defs::artifact::output_artifact_like::OutputArtifactArg;
@@ -32,6 +33,8 @@ use buck2_build_api::interpreter::rule_defs::cmd_args::value::CommandLineArg;
 use buck2_build_api::interpreter::rule_defs::context::AnalysisActions;
 use buck2_build_api::interpreter::rule_defs::depset::bazel_depset_to_list;
 use buck2_build_api::interpreter::rule_defs::resolved_macro::ResolvedMacro;
+use buck2_core::fs::buck_out_path::BazelOutputPathKind;
+use buck2_core::fs::buck_out_path::BuckOutPathKind;
 use buck2_execute::execute::request::OutputType;
 use buck2_hash::BuckHashMap;
 use buck2_hash::buck_indexset;
@@ -56,6 +59,8 @@ use starlark::values::UnpackValue;
 use starlark::values::Value;
 use starlark::values::ValueOf;
 use starlark::values::ValueTyped;
+use starlark::values::dict::AllocDict;
+use starlark::values::dict::DictRef;
 use starlark::values::dict::UnpackDictEntries;
 use starlark::values::list::ListRef;
 use starlark::values::none::NoneOr;
@@ -315,6 +320,95 @@ impl<'v> CommandLineArtifactVisitor<'v> for CommandLineInputVisitor {
     }
 }
 
+fn bazel_build_info_substitutions<'v>(
+    transform_func: StarlarkCallable<'v>,
+    kind: WorkspaceStatusKind,
+    eval: &mut Evaluator<'v, '_, '_>,
+) -> starlark::Result<Vec<(String, String)>> {
+    let entries = kind
+        .entries()
+        .iter()
+        .map(|(key, value)| {
+            (
+                eval.heap().alloc_str(key).to_value(),
+                eval.heap().alloc_str(value).to_value(),
+            )
+        })
+        .collect::<Vec<_>>();
+    let values = eval.heap().alloc(AllocDict(entries));
+    let response = eval.eval_function(transform_func.0, &[values], &[])?;
+    let dict = DictRef::from_value(response).ok_or_else(|| {
+        buck2_error::buck2_error!(
+            buck2_error::ErrorTag::Input,
+            "build info transform callback must return a dict, got `{}`",
+            response.get_type()
+        )
+    })?;
+
+    let mut substitutions = Vec::with_capacity(dict.len());
+    for (key, value) in dict.iter() {
+        let Some(key) = key.unpack_str() else {
+            return Err(buck2_error::buck2_error!(
+                buck2_error::ErrorTag::Input,
+                "build info transform callback keys must be strings, got `{}`",
+                key.get_type()
+            )
+            .into());
+        };
+        let Some(value) = value.unpack_str() else {
+            return Err(buck2_error::buck2_error!(
+                buck2_error::ErrorTag::Input,
+                "build info transform callback values must be strings, got `{}`",
+                value.get_type()
+            )
+            .into());
+        };
+        substitutions.push((key.to_owned(), value.to_owned()));
+    }
+    Ok(substitutions)
+}
+
+fn transform_build_info_file<'v>(
+    this: &AnalysisActions<'v>,
+    transform_func: StarlarkCallable<'v>,
+    template: ValueAsInputArtifactLike<'v>,
+    output_file_name: &str,
+    kind: WorkspaceStatusKind,
+    eval: &mut Evaluator<'v, '_, '_>,
+) -> starlark::Result<ValueTyped<'v, StarlarkDeclaredArtifact<'v>>> {
+    let substitutions = bazel_build_info_substitutions(transform_func, kind, eval)?;
+    let template = template.0;
+    let template_artifact = template.get_artifact_group()?;
+
+    let mut state = this.state()?;
+    let declared = state.declare_bazel_shareable_output(
+        output_file_name,
+        OutputType::File,
+        eval.call_stack_top_location(),
+        BuckOutPathKind::Configuration,
+        this.bazel_owner(),
+        this.bazel_output_root,
+        BazelOutputPathKind::PackageRelative,
+        eval.heap(),
+    )?;
+    let output_artifact = declared.as_output();
+    let action_signature = format!("{kind:?}:{template_artifact:?}:{substitutions:?}");
+    if state.should_register_bazel_shareable_action(&output_artifact, action_signature)? {
+        state.register_action(
+            buck_indexset![output_artifact],
+            UnregisteredTemplateExpansionAction::new(template_artifact, substitutions, false),
+            None,
+            None,
+        )?;
+    }
+
+    Ok(eval.heap().alloc_typed(StarlarkDeclaredArtifact::new(
+        eval.call_stack_top_location(),
+        declared,
+        AssociatedArtifacts::new(),
+    )))
+}
+
 #[starlark_module]
 pub(crate) fn analysis_actions_methods_write(methods: &mut MethodsBuilder) {
     /// Returns a Bazel-compatible template dictionary for computed substitutions.
@@ -371,6 +465,42 @@ pub(crate) fn analysis_actions_methods_write(methods: &mut MethodsBuilder) {
             this.get_or_declare_output(eval, output, OutputType::File, None)?;
         this.register_action(buck_indexset![output_artifact], action, None, None)?;
         Ok(Value::new_none())
+    }
+
+    /// Bazel internal API for transforming the volatile workspace status file through a template.
+    fn transform_version_file<'v>(
+        this: &AnalysisActions<'v>,
+        #[starlark(require = named)] transform_func: StarlarkCallable<'v>,
+        #[starlark(require = named)] template: ValueAsInputArtifactLike<'v>,
+        #[starlark(require = named)] output_file_name: &str,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<ValueTyped<'v, StarlarkDeclaredArtifact<'v>>> {
+        transform_build_info_file(
+            this,
+            transform_func,
+            template,
+            output_file_name,
+            WorkspaceStatusKind::Volatile,
+            eval,
+        )
+    }
+
+    /// Bazel internal API for transforming the stable workspace status file through a template.
+    fn transform_info_file<'v>(
+        this: &AnalysisActions<'v>,
+        #[starlark(require = named)] transform_func: StarlarkCallable<'v>,
+        #[starlark(require = named)] template: ValueAsInputArtifactLike<'v>,
+        #[starlark(require = named)] output_file_name: &str,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<ValueTyped<'v, StarlarkDeclaredArtifact<'v>>> {
+        transform_build_info_file(
+            this,
+            transform_func,
+            template,
+            output_file_name,
+            WorkspaceStatusKind::Stable,
+            eval,
+        )
     }
 
     /// Returns an `artifact` whose contents are `content` written as a JSON value.

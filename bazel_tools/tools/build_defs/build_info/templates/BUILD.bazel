@@ -4,10 +4,3 @@ filegroup(
     name = "pkg_sources",
     srcs = glob(["**"]),
 )
-
-filegroup(
-    name = "bzl_srcs",
-    srcs = glob(["*.bzl"]) + [
-        "private/py_test_alias.bzl",
-    ],
-)

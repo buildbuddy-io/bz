@@ -29,6 +29,10 @@ use serde::Serialize;
 use crate::cells::name::CellName;
 use crate::target::label::label::TargetLabel;
 
+/// Version whose embedded `@bazel_tools` sources are bundled for Bzlmod.
+///
+/// Bazel includes direct `@bazel_tools` loads in `bzlTransitiveDigest`, so this
+/// must move in lockstep with the checked-in `bazel_tools/` tree.
 pub const BZLMOD_BAZEL_COMPAT_VERSION: &str = "9.1.0";
 pub const EXTERNAL_CELLS_ROOT: &str = "buck-out/v2/external_cells";
 pub const BZLMOD_EXTERNAL_CELL_KIND: &str = "bzlmod";

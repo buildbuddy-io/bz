@@ -103,6 +103,16 @@ pub const fn get_bundled_data() -> &'static [BundledCell] {
 
 #[cfg(test)]
 mod tests {
+    fn bazel_tools_text(path: &str) -> &'static str {
+        let file = super::BAZEL_TOOLS
+            .files
+            .iter()
+            .find(|file| file.path == path)
+            .unwrap_or_else(|| panic!("missing bundled bazel_tools file `{path}`"));
+        std::str::from_utf8(file.contents)
+            .unwrap_or_else(|e| panic!("bundled bazel_tools file `{path}` is not UTF-8: {e}"))
+    }
+
     #[test]
     fn test_sanity_check() {
         let c = super::TEST_CELL;
@@ -162,7 +172,7 @@ mod tests {
                     .contains("collect_cc_coverage")
         }));
         assert!(c.files.iter().any(|file| {
-            file.path == "tools/python/BUILD.bazel"
+            file.path == "tools/python/BUILD"
                 && std::str::from_utf8(file.contents)
                     .unwrap()
                     .contains("python_bootstrap_template.txt")
@@ -179,5 +189,22 @@ mod tests {
                     .unwrap()
                     .contains("name = \"zipper\"")
         }));
+    }
+
+    #[test]
+    fn test_bundled_bazel_tools_matches_bazel_9_1_lockfile_baseline() {
+        let module = bazel_tools_text("MODULE.bazel");
+        assert!(module.contains("bazel_dep(name = \"rules_java\", version = \"9.1.0\")"));
+        assert!(!module.contains("bazel_dep(name = \"re2\""));
+
+        let http = bazel_tools_text("tools/build_defs/repo/http.bzl");
+        assert!(!http.contains("strip_components"));
+        assert!(!http.contains("\"tar.br\""));
+
+        let git = bazel_tools_text("tools/build_defs/repo/git.bzl");
+        assert!(git.contains("new_git_repository = git_repository"));
+
+        let action_names = bazel_tools_text("tools/build_defs/cc/action_names.bzl");
+        assert!(action_names.contains("# Name for the C compilation action."));
     }
 }

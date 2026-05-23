@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Temporary implementation of a rule that aliases the value of --java_launcher flag."""
+"""Temporary implementation of a rule that aliases the value of --java_launcher flag"""
 
 load("@rules_cc//cc/common:cc_common.bzl", "cc_common")
 load("@rules_cc//cc/common:cc_info.bzl", "CcInfo")

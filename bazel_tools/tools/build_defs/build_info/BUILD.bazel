@@ -1,30 +1,13 @@
-load(":bazel_cc_build_info.bzl", "bazel_cc_build_info")
-load(":bazel_java_build_info.bzl", "bazel_java_build_info")
-
 package(default_visibility = ["//visibility:public"])
-
-bazel_cc_build_info(
-    name = "cc_build_info",
-    tags = ["manual"],
-)
-
-bazel_java_build_info(
-    name = "java_build_info",
-    tags = ["manual"],
-)
 
 filegroup(
     name = "pkg_sources",
-    srcs = glob(["**"]),
+    srcs = glob(["**"]) + [
+        "//bazel_tools/tools/build_defs/build_info/templates:pkg_sources",
+    ],
 )
 
 filegroup(
     name = "bzl_srcs",
     srcs = glob(["*.bzl"]),
-    visibility = ["//tools/build_defs:__pkg__"],
-)
-
-filegroup(
-    name = "embedded_tools",
-    srcs = glob(["*"]),
 )

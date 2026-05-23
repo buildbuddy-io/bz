@@ -40,7 +40,7 @@ def define_python_version_flag(name):
             "python_version". This param is present only to make the BUILD file
             more readable.
     """
-    if native.package_name() not in ["tools/python", "bazel_tools/tools/python"]:
+    if native.package_name() != "tools/python":
         fail("define_python_version_flag() is private to " +
              "@bazel_tools//tools/python")
     if name != "python_version":

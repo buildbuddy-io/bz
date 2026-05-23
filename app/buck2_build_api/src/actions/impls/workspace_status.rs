@@ -51,6 +51,20 @@ pub enum WorkspaceStatusKind {
 }
 
 impl WorkspaceStatusKind {
+    pub fn entries(self) -> &'static [(&'static str, &'static str)] {
+        match self {
+            Self::Stable => &[
+                ("BUILD_EMBED_LABEL", ""),
+                ("BUILD_HOST", "hostname"),
+                ("BUILD_USER", "username"),
+            ],
+            Self::Volatile => &[
+                ("BUILD_TIMESTAMP", "0"),
+                ("FORMATTED_DATE", "1970 Jan 1 00 00 00 Thu"),
+            ],
+        }
+    }
+
     pub fn output_path(self) -> &'static str {
         match self {
             Self::Stable => "__bazel_workspace_status/stable-status.txt",
@@ -65,11 +79,15 @@ impl WorkspaceStatusKind {
         }
     }
 
-    fn content(self) -> &'static str {
-        match self {
-            Self::Stable => "",
-            Self::Volatile => "",
+    fn content(self) -> String {
+        let mut content = String::new();
+        for (key, value) in self.entries() {
+            content.push_str(key);
+            content.push(' ');
+            content.push_str(value);
+            content.push('\n');
         }
+        content
     }
 }
 
@@ -144,7 +162,7 @@ impl Action for WorkspaceStatusAction {
         waiting_data: WaitingData,
     ) -> Result<(ActionOutputs, ActionExecutionMetadata), ExecuteError> {
         let fs = ctx.fs();
-        let content = self.kind.content().as_bytes().to_vec();
+        let content = self.kind.content().into_bytes();
         let mut execution_start = None;
 
         let value = ctx
