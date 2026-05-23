@@ -1578,6 +1578,45 @@ pub async fn bzlmod_module_extension_bzl_transitive_digest(
     bzlmod_bzl_transitive_digest(ctx, extension_path).await
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct BzlmodModuleExtensionEvalFactorDeps {
+    pub os_dependent: bool,
+    pub arch_dependent: bool,
+}
+
+pub async fn bzlmod_module_extension_eval_factor_deps(
+    ctx: &mut DiceComputations<'_>,
+    setup: &BzlmodModuleExtensionRepoSetup,
+) -> buck2_error::Result<BzlmodModuleExtensionEvalFactorDeps> {
+    let extension_cell_path = CellPath::new(
+        CellName::unchecked_new(&setup.extension_bzl_cell)?,
+        CellRelativePathBuf::try_from(setup.extension_bzl_path.to_string())?,
+    );
+    let extension_path = ImportPath::new_same_cell(extension_cell_path)?;
+    let extension_module = ctx
+        .get_loaded_module(StarlarkModulePath::LoadFile(&extension_path))
+        .await?;
+    let extension_value = extension_module
+        .env()
+        .get_option(&setup.extension_name)
+        .map_err(|e| buck2_error::conversion::from_any_with_tag(e, buck2_error::ErrorTag::Input))?
+        .ok_or_else(|| {
+            buck2_error::Error::from(BazelRepositoryError::ModuleExtensionSymbolMissing {
+                path: extension_path.to_string(),
+                extension: setup.extension_name.to_string(),
+            })
+        })?;
+    let extension = module_extension_from_loaded_module(
+        &extension_path,
+        &setup.extension_name,
+        extension_value,
+    )?;
+    Ok(BzlmodModuleExtensionEvalFactorDeps {
+        os_dependent: extension.os_dependent,
+        arch_dependent: extension.arch_dependent,
+    })
+}
+
 fn update_repository_rule_cache_key(hasher: &mut blake3::Hasher, field: &str) {
     hasher.update(field.len().to_string().as_bytes());
     hasher.update(b"\0");

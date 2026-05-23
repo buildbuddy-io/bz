@@ -1,371 +1,424 @@
-# Hard Cutover Plan: Bazel-Aligned Analysis/Execution Overlap
+# Hard Cutover Plan: Bazel-Aligned Bzlmod Module Extensions
 
 ## Goal
 
-Replace Buck2's current command-level build orchestration with a single DICE
-graph that can overlap execution with analysis. The required user-visible
-outcome is:
-
-- For a build with one large top-level target, action execution can begin before
-  all analysis for that build has completed.
-- The new path is the only path. No fallback mode, compatibility wrapper, or
-  speculative "try both" implementation remains after cutover.
-- The implementation stays aligned with Bazel's Skymeld model where that model
-  applies: analysis and execution are requested through graph keys, not by a
-  post-analysis command loop.
-
-## Important Bazel Alignment Constraint
-
-Bazel's Skymeld is not a general "execute during transitive analysis of one
-target" mechanism. In Bazel source:
-
-- `BuildRequestOptions.java` exposes
-  `--experimental_merged_skyframe_analysis_execution`.
-- `SkymeldModule.java` decides whether that mode is active.
-- `SkyframeBuildView.java` maps top-level configured targets/aspects to
-  `BuildDriverKey`s.
-- `BuildDriverFunction.java` waits for the top-level `ActionLookupKey`, then
-  requests `TargetCompletionValue` / `TestCompletionValue`.
-- `AnalysisOperationWatcher.java` releases queued execution when enough
-  top-level entities have concluded analysis.
-
-That means strict Bazel Skymeld primarily overlaps execution for already
-analyzed top-level entities with analysis of other top-level entities. It does
-not, by itself, guarantee meaningful overlap inside one single top-level target.
-
-To satisfy the single-top-level-target requirement, Buck2 needs to adopt the
-Bazel graph-driver shape, but lower the driver granularity below Bazel's
-top-level-only `BuildDriverKey`. The aligned principle is "execution is a graph
-dependency of completion keys"; the Buck2-specific extension is "completion keys
-exist for demanded artifacts/action owners, not only top-level targets."
-
-## Current Buck2 Behavior
-
-The current build command has an effective phase boundary:
-
-- `app/buck2_server_commands/src/build.rs` wraps the whole build in
-  `ctx.with_linear_recompute(...)`.
-- `build_targets_for_spec(...)` schedules top-level targets with
-  `FuturesUnordered`, but each target calls `build_target(...)`.
-- `build_target(...)` calls `build::build_configured_label(...)`.
-- `build_configured_label_inner(...)` first awaits
-  `get_outputs_for_top_level_target(...)`.
-- Only after top-level providers/outputs are available does it spawn
-  `materialize_and_upload_artifact_group(...)`.
-- Artifact materialization eventually requests `BuildKey`, which performs action
-  execution.
-
-For one large top-level target, this means execution starts only after that
-target's analysis has produced its top-level output set, which usually implies
-the relevant transitive analysis has drained.
-
-## Target Architecture
-
-### 1. DICE Build Driver Keys
-
-Add first-class DICE keys that replace command-level build orchestration:
-
-- `BuildDriverKey`
-  - Keyed by `ConfiguredProvidersLabel`, requested provider/output set, and
-    command-level build options that affect completion semantics.
-  - Equivalent role to Bazel's `BuildDriverKey`.
-  - Created per requested top-level target/aspect.
-  - Must be created anew per command where command-specific semantics matter,
-    matching Bazel's `BuildDriverKey.valueIsShareable() == false`.
-
-- `TargetCompletionKey`
-  - Equivalent role to Bazel's `TargetCompletionValue`.
-  - Computes the requested providers/output groups for a configured target.
-  - Requests artifact completion keys for every demanded output artifact group.
-  - Produces the target build result currently assembled by
-    `build_configured_label_inner(...)`.
-
-- `ArtifactCompletionKey`
-  - Keyed by `ArtifactGroup` or resolved artifact identity.
-  - For source artifacts, validates/materializes as today.
-  - For build artifacts, requests the producing `BuildKey`.
-  - For transitive set projections and directory artifacts, delegates to the
-    existing `EnsureTransitiveSetProjectionKey`, `DirArtifactValueKey`, and
-    related keys.
-
-- `BuildKey`
-  - Remains the action execution key.
-  - Its role becomes purely graph-driven: it is requested by completion keys,
-    never by command orchestration after a separate analysis phase.
-
-### 2. Demand-Driven Intra-Target Overlap
-
-To overlap within one top-level target without executing unrelated actions, the
-graph needs artifact demand before the entire top-level analysis result has
-returned.
-
-Hard cutover rule:
-
-- Do not execute every action produced by an analyzed target.
-- Do not execute every default output of every dependency.
-- Only execute artifacts reachable from the requested top-level output groups,
-  tests, run providers, or validation requirements.
-
-Implementation approach:
-
-1. Split "analysis finished" from "demand discovered".
-   - Keep `AnalysisKey` as the owner of Starlark analysis.
-   - Add a per-command `BuildDemandContext` in DICE transaction data.
-   - When top-level provider/output demand is known, record demanded artifact
-     groups immediately instead of waiting for the command loop.
-
-2. Make artifact demand resumable.
-   - `ArtifactCompletionKey` must be able to request an artifact whose producing
-     action owner has not completed analysis yet.
-   - If action lookup cannot find the action yet, it must request the owning
-     `AnalysisKey` and resume through normal DICE dependency tracking.
-   - This is the DICE equivalent of Bazel Skyframe returning missing values and
-     restarting the requesting function.
-
-3. Publish demands during analysis where semantically known.
-   - When a top-level `DefaultInfo`, `OutputGroupInfo`, `RunInfo`, or test
-     provider is constructed for a requested target, publish those artifact
-     groups to `TargetCompletionKey`.
-   - When analysis registers an action whose inputs are already demanded by an
-     in-flight completion key, request completion for those inputs immediately.
-   - If provider construction is only visible after the rule implementation
-     returns, start with top-level completion after provider return, then move
-     provider/output publication earlier as a separate hardening step.
-
-4. Preserve demand-only semantics.
-   - Early execution must be triggered by a DICE dependency from a completion key,
-     not by an out-of-band "run all discovered actions" queue.
-   - Any action executed early must also be executed by the old demand path for
-     the same requested outputs.
-   - Add event-log assertions to prove no extra `BuildKey`s were requested.
-
-### 3. Execution Gate And Resource Isolation
-
-Mirror Bazel's separation of analysis and execution scheduling without a phase
-barrier:
-
-- Keep one DICE graph transaction for the command.
-- Add an execution go-ahead gate only for resource protection, not correctness.
-- Default go-ahead threshold should be immediate for Buck2's single-target goal.
-- If a threshold is retained, it must be an explicit DICE/build option and must
-  not recreate the old "wait until analysis is done" behavior.
-- Execution must continue to use existing resource accounting and dynamic local
-  parallelism. Analysis tasks must not starve action execution, and action
-  execution must not starve DICE analysis.
-
-## Implementation Plan
-
-### Phase 0: Baseline Instrumentation
-
-Add a small event-log based measurement harness before changing behavior:
-
-- Record timestamp of first `ActionExecutionStart`.
-- Record timestamp of last `AnalysisEnd`.
-- Record all `AnalysisStart`/`AnalysisEnd` and `ActionExecutionStart`/end pairs.
-- Add a synthetic single-top-level target test where analysis intentionally keeps
-  doing work after at least one demanded action can become known.
-- Baseline assertion should currently show:
-  `first_action_execution_start >= last_analysis_end` for the large single
-  top-level case.
-
-This validates the problem and gives a regression test for the cutover.
-
-### Phase 1: Introduce Graph Driver Keys
-
-Add a new build-driver module under `app/buck2_build_api/src/build/`:
-
-- `driver.rs`
-  - `BuildDriverKey`
-  - `BuildDriverValue`
-  - conversion from requested CLI target/provider options to driver keys
-
-- `completion.rs`
-  - `TargetCompletionKey`
-  - `ArtifactCompletionKey`
-  - helper conversion from existing `ProviderArtifacts` result structures
-
-Move logic out of:
-
-- `app/buck2_build_api/src/build.rs::build_configured_label_inner`
-- `app/buck2_server_commands/src/build.rs::build_target`
-- `app/buck2_server_commands/src/build.rs::build_targets_for_spec`
-
-The command should request `BuildDriverKey`s from DICE and collect their values.
-It should not manually sequence "configure target, get outputs, spawn builds".
-
-### Phase 2: Remove Command-Level Phase Boundary
-
-Delete the old orchestration path:
-
-- Remove the build command's dependency on `build_configured_label(...)` as the
-  execution entrypoint.
-- Remove the command-level `FuturesUnordered` build loop that owns output
-  materialization.
-- Remove the broad `ctx.with_linear_recompute(...)` wrapping of the full build
-  unless a smaller, proven DICE dependency-tracking boundary remains necessary.
-
-After this phase, the command does only:
-
-1. Parse and resolve patterns.
-2. Construct configured top-level driver keys.
-3. Request those keys from DICE.
-4. Format results.
-
-### Phase 3: Make Completion Demand Resumable
-
-Refactor artifact/action lookup so completion keys can be requested before all
-owners finish analysis:
-
-- `ArtifactCompletionKey` resolves `ArtifactGroup` to producing action keys.
-- `ActionCalculation::get_action(...)` must cleanly depend on the owning
-  `AnalysisKey` when the action is not registered yet.
-- `BuildKey` should not assume analysis has globally completed.
-- Cycles and errors should surface through DICE dependency errors, not through
-  command-level special cases.
-
-Expected effect:
-
-- If a demanded artifact's producing target has completed analysis, its action
-  can execute immediately.
-- If the producing target is still analyzing, completion waits on exactly that
-  target's analysis, not on global analysis completion.
-
-### Phase 4: Publish Demand Earlier Within Analysis
-
-This is the phase that makes single-top-level overlap meaningful.
-
-Add earlier demand publication points:
-
-- Top-level provider/output demand:
-  - Publish requested `DefaultInfo`, `OutputGroupInfo`, run, and test artifacts
-    as soon as they are semantically constructed for a requested top-level
-    target.
-
-- Action input demand:
-  - When an action is registered by analysis and that action is part of an
-    already demanded completion path, request completion of its inputs.
-  - This lets dependency actions execute while later parts of the same top-level
-    target's analysis continue.
-
-- Validation demand:
-  - Move validation into a completion key so it can run alongside output
-    completion without forcing a command-level barrier.
-
-If Starlark provider construction is not observable before the rule
-implementation returns, do not fake it. First land the driver/completion graph,
-then split analysis result publication so demanded top-level outputs can be
-published before unrelated remaining analysis work completes.
-
-### Phase 5: Hard Cutover Result Handling
-
-Port the existing result behavior onto driver values:
-
-- `ConfiguredBuildEventVariant::Prepared`
-- `ConfiguredBuildEventExecutionVariant::BuildOutput`
-- validation errors
-- skipped incompatible targets
-- missing targets
-- target rule type names
-- provider collections needed for `buck2 run`
-- streaming build report updates
-- detailed aggregated metrics and action graph sketches
-
-All events must come from driver/completion key evaluation, not from the old
-command loop.
-
-### Phase 6: Error, Cancellation, And Keep-Going Semantics
-
-Match Bazel's important Skymeld behavior:
-
-- In keep-going mode, analysis failures for one branch should not prevent
-  independent demanded outputs from executing.
-- In fail-fast mode, cancellation should stop both analysis and execution
-  promptly.
-- Analysis-concluded events must be deduplicated per driver key, similar to
-  Bazel's `BuildDriverFunction` event deduplication.
-- Execution errors should normalize back to the configured target/action owner
-  so user-facing errors match current Buck2 output.
-
-### Phase 7: UI And Metrics
-
-Update the UI to make overlap visible:
-
-- "Analyzing targets" and "Executing actions" should both show live non-zero
-  running counts during overlapped builds.
-- Add a debug summary:
-  - first action start timestamp
-  - last analysis end timestamp
-  - overlap duration
-  - number of actions that started before analysis completed
-- Keep existing comma formatting and action totals.
-
-### Phase 8: Validation Matrix
-
-Correctness builds:
+Remove Buck2's remaining module-extension startup bottlenecks by cutting over to
+Bazel's module-extension evaluation model.
+
+The target behavior is:
+
+- A fully cached new-daemon build reuses valid module-extension evaluations from
+  `MODULE.bazel.lock` or Buck2's hidden lockfile before running the extension.
+- Extension lockfile factor keys use Bazel's representation, including
+  `general` for platform-independent evaluations.
+- Per-extension DICE keys remain the only unit of invalidation and evaluation.
+- Independent demanded extension evaluations can run concurrently, but a single
+  extension implementation is not split internally.
+- No compatibility wrapper, heuristic fallback, or extension-specific shortcut is
+  left in the final path.
+
+The immediate performance target is to stop rerunning
+`@rules_rust//crate_universe:extensions.bzl%crate` during fully cached
+new-daemon `:buck2` builds when `MODULE.bazel.lock` already contains a valid
+entry.
+
+## Bazel Model
+
+Bazel's relevant shape in `/Users/siggi/Code/bazel`:
+
+- `src/main/java/com/google/devtools/build/lib/bazel/bzlmod/SingleExtensionEvalFunction.java`
+  - Loads one module extension per SkyKey.
+  - Checks workspace and hidden lockfiles before running the extension.
+  - Reuses a lockfile result when bzl transitive digest, usage digest, and
+    recorded inputs are current.
+  - Writes lockfile info for update/refresh modes after successful evaluation.
+- `src/main/java/com/google/devtools/build/lib/bazel/bzlmod/SingleExtensionUsagesFunction.java`
+  - Extracts only the usage data needed by one extension.
+  - Avoids rerunning all extensions when unrelated module graph data changes.
+- `src/main/java/com/google/devtools/build/lib/bazel/bzlmod/ModuleExtensionEvalFactors.java`
+  - Uses `general` for platform-independent extension evaluations.
+  - Uses strings like `os:mac os x,arch:aarch64` when the extension declares OS
+    or arch dependence.
+- `src/main/java/com/google/devtools/build/lib/bazel/bzlmod/RegularRunnableExtension.java`
+  - Runs one extension implementation as one Skyframe worker task.
+  - Defers repository-rule calls during Starlark evaluation and converts them to
+    `RepoSpec`s after the extension returns.
+- `src/main/java/com/google/devtools/build/lib/bazel/bzlmod/ModuleExtensionEvalStarlarkThreadContext.java`
+  - Records repository-rule calls in a deterministic map.
+  - Does not parallelize inside one extension implementation.
+
+## Current Buck2 State
+
+Buck2 already has most of the graph shape:
+
+- `app/buck2_common/src/legacy_configs/cells.rs`
+  - `BzlmodSingleExtensionUsagesKey` computes per-extension usage data.
+  - `BzlmodResolutionKey` joins usage keys before constructing the cell graph.
+  - `bzlmod_lockfile_data_from_str` parses `MODULE.bazel.lock`, but today only
+    extracts generated repo names and facts for cell graph discovery.
+- `app/buck2_external_cells/src/bzlmod.rs`
+  - `BzlmodSingleExtensionEvalKey` computes one extension evaluation.
+  - It checks Buck2's hidden lockfile before running the extension.
+  - Hidden lockfile reads currently expect the empty-string eval-factor key.
+  - Hidden lockfile writes only persist reproducible extension evaluations.
+  - `BzlmodSingleExtensionKey` validates generated repos separately from raw
+    evaluation, matching Bazel's split between eval and validation.
+
+The gap is that Buck2 does not consume Bazel-compatible workspace lockfile
+entries for extension evaluation. In the `:buck2` build, `MODULE.bazel.lock`
+contains a large `@@rules_rust+//crate_universe:extensions.bzl%crate` entry, but
+Buck2 still reruns the extension and spends roughly 25-30s splicing the Cargo
+workspace.
+
+## Cutover 1: Workspace Lockfile Reuse Before Evaluation
+
+### Target Behavior
+
+`BzlmodSingleExtensionEvalKey` must check lockfile evaluations in Bazel order:
+
+1. Workspace `MODULE.bazel.lock`
+2. Buck2 hidden lockfile
+3. Run the module extension
+
+If a lockfile entry is valid, return the lockfile evaluation and do not execute
+the extension implementation.
+
+This is a hard cutover to Bazel semantics, not a special case for
+`rules_rust`.
+
+### Implementation Steps
+
+1. Move lockfile extension-entry parsing into a shared representation in
+   `app/buck2_external_cells/src/bzlmod.rs`.
+   - Parse the Bazel schema:
+     - `moduleExtensions`
+     - extension key
+     - eval-factor key
+     - `bzlTransitiveDigest`
+     - `usagesDigest`
+     - `recordedInputs`
+     - `generatedRepoSpecs`
+     - `moduleExtensionMetadata`
+   - Reuse the same conversion path that hidden lockfile entries use to produce
+     `BazelModuleExtensionEvaluationResult`.
+
+2. Read the workspace lockfile from the project root before hidden lockfile.
+   - Use the same project-relative lookup as
+     `bzlmod_lockfile_data_from_str` in `cells.rs`.
+   - Keep IO under the blocking executor, as hidden lockfile reads do today.
+   - Do not route this through legacy config parsing; this is evaluation-cache
+     data for a DICE key, not only cell graph discovery data.
+
+3. Validate the workspace entry exactly like Bazel.
+   - Match extension key.
+   - Match eval factors.
+   - Match bzl transitive digest.
+   - Match usage digest.
+   - Validate recorded inputs through `bzlmod_recorded_inputs_are_current`.
+   - If any check fails, continue to the next Bazel-ordered source.
+
+4. If workspace lockfile and hidden lockfile miss, run the extension and then
+   write the hidden lockfile as today.
+   - The final path still has no wrapper: the DICE key owns all lookup and
+     evaluation.
+   - Workspace lockfile is read-only during normal build.
+
+5. Remove duplicate or partial lockfile parsers.
+   - `cells.rs` may keep a lightweight generated-repo-name parser for cell graph
+     bootstrapping only if it cannot depend on external-cell code.
+   - The authoritative evaluation parser should live with
+     `BzlmodSingleExtensionEvalKey`.
+
+### Tests
+
+- Unit test parsing a Bazel `MODULE.bazel.lock` extension entry with
+  `general`.
+- Unit test converting Bazel `generatedRepoSpecs` to
+  `BazelModuleExtensionEvaluationResult`.
+- Unit test that stale bzl digest misses.
+- Unit test that stale usage digest misses.
+- Unit test that stale recorded input misses.
+- Integration test with a synthetic reproducible extension:
+  - First build runs extension.
+  - Second build after `buck2 kill` reuses workspace lockfile and does not emit
+    an extension-evaluation span.
+- Regression test for `@@rules_rust+//crate_universe:extensions.bzl%crate`
+  using the existing `MODULE.bazel.lock` shape.
+
+### Validation
+
+- `buck2 kill`
+- `BUCKD_STARTUP_INIT_TIMEOUT=90 buck2 build :buck2`
+- Confirm no repeated `Splicing Cargo workspace` status when the lockfile entry
+  is current.
+- Confirm cache stats remain 100% for the fully cached new-daemon case.
+
+### Risks
+
+- Bazel workspace lockfile uses base64 digests while Buck2 hidden lockfile uses
+  hex strings. The parser must normalize both forms before comparison.
+- Bazel's `generatedRepoSpecs` uses `repoRuleId` and `attributes`; Buck2 hidden
+  lockfile uses the internal repository-rule invocation setup. Conversion must
+  be exact, not stringly typed.
+- Recorded input formats must be interpreted with Bazel-compatible semantics, or
+  stale lockfile entries could be incorrectly reused.
+
+## Cutover 2: Bazel Eval-Factor Keys
+
+### Target Behavior
+
+Buck2 lockfile lookup and writing must use Bazel eval-factor keys:
+
+- `general` for extension evaluations with no OS or arch dependency.
+- `os:<os>` when the extension is OS-dependent.
+- `arch:<arch>` when the extension is arch-dependent.
+- `os:<os>,arch:<arch>` when both apply.
+
+The empty-string factor key should not be written by Buck2 after the cutover.
+
+### Implementation Steps
+
+1. Add a first-class `BzlmodModuleExtensionEvalFactors` type.
+   - Store `os` and `arch` as strings.
+   - Implement `Display`/parse matching Bazel's
+     `ModuleExtensionEvalFactors`.
+   - Use `general` for the empty factor set.
+
+2. Determine factors from the loaded extension metadata.
+   - Bazel derives factors from `module_extension(os_dependent=...,
+     arch_dependent=...)`.
+   - Buck2's Starlark module extension object already records this data during
+     evaluation loading; expose it before lockfile lookup so the key can select
+     the correct entry.
+
+3. Thread factors through `BzlmodSingleExtensionEvalKey`.
+   - Include factors in workspace and hidden lockfile lookup.
+   - Include factors in hidden lockfile writes.
+   - Keep the DICE key stable for the same effective factors.
+
+4. Remove empty-string lockfile writes.
+   - Existing hidden lockfiles with empty-string keys may be ignored after the
+     cutover.
+   - The next successful reproducible evaluation writes the Bazel-aligned key.
+
+### Tests
+
+- Parse/display tests for:
+  - `general`
+  - `os:mac os x`
+  - `arch:aarch64`
+  - `os:mac os x,arch:aarch64`
+- Lockfile read test selecting `general`.
+- Lockfile read test selecting an OS/arch-specific entry.
+- Hidden lockfile write test proving Buck2 writes `general`, not `""`.
+
+### Validation
+
+- Build `:buck2` twice with `buck2 kill` between builds.
+- Inspect `buck-out/v2/cache/bzlmod_hidden/MODULE.bazel.lock`.
+- Confirm new entries use `general` where Bazel would.
+
+### Risks
+
+- OS string spelling must match Bazel. On macOS, Bazel uses Java's `OS` enum
+  string; Buck2 must map to the same lockfile string when the extension is
+  OS-dependent.
+- Changing hidden lockfile key spelling invalidates existing Buck2 hidden
+  entries once. That is acceptable for a hard cutover.
+
+## Cutover 3: Preserve Per-Extension Change Pruning
+
+### Target Behavior
+
+Extension evaluation remains keyed by the data for one extension, not by the
+entire module graph.
+
+Unrelated module graph changes must not invalidate all extension evaluations.
+This mirrors Bazel's `SingleExtensionUsagesFunction`.
+
+### Implementation Steps
+
+1. Keep `BzlmodSingleExtensionUsagesKey` as the only producer of
+   per-extension usage JSON.
+   - Do not make `BzlmodSingleExtensionEvalKey` depend directly on
+     `BzlmodDepGraphKey` except through usage data, bzl load data, lockfile
+     values, recorded inputs, and environment.
+
+2. Make the usage digest match Bazel's evaluation hash.
+   - Buck2 currently removes `usages` for evaluation setup.
+   - Verify this matches Bazel's `SingleExtensionUsagesValue.hashForEvaluation`
+     behavior for import-only changes.
+   - If not, change the digest input to Bazel's semantic subset.
+
+3. Split validation from raw evaluation everywhere.
+   - Raw evaluation should not rerun because an import alias changes.
+   - `BzlmodSingleExtensionKey` should validate imports and repo overrides
+     against the raw result.
+   - This matches Bazel's `SingleExtensionEvalFunction` plus
+     `SingleExtensionFunction` split.
+
+4. Add invalidation tests.
+   - Changing an unrelated module does not rerun an extension.
+   - Changing `use_repo` imports only reruns validation, not raw evaluation.
+   - Changing extension tags reruns the relevant extension only.
+   - Changing the extension `.bzl` transitive digest reruns the relevant
+     extension only.
+
+### Tests
+
+- DICE invalidation unit tests around `BzlmodSingleExtensionUsagesKey`.
+- Event-log integration test counting extension-evaluation spans before and
+  after unrelated module graph edits.
+- Import-only change test proving lockfile reuse still happens.
+
+### Validation
+
+- Compare event logs for two builds with a controlled import-only edit.
+- Confirm only validation changes, not raw extension evaluation.
+
+### Risks
+
+- Overly broad usage JSON hashing will keep the build correct but lose Bazel's
+  pruning benefit.
+- Overly narrow usage JSON hashing can reuse stale extension outputs. The digest
+  definition must be explicitly tested against tags, root/dev dependency flags,
+  repo overrides, extension identity, and module repo mappings.
+
+## Cutover 4: Demand-Driven Parallel Extension Evaluation
+
+### Target Behavior
+
+Independent module extensions should evaluate in parallel when their generated
+repos are demanded by analysis or materialization.
+
+The implementation must remain demand-driven:
+
+- Do not evaluate every extension during `BzlmodResolutionKey`.
+- Do not prefetch every generated repo.
+- Do not parallelize inside one extension implementation.
+- Do not add extension-specific eager evaluation.
+
+### Implementation Steps
+
+1. Keep cell graph discovery static and cheap.
+   - `BzlmodResolutionKey` may use workspace/hidden lockfile repo names to
+     create placeholders for generated repos.
+   - It should not run extension implementations.
+
+2. Start extension eval at the earliest demanded repo boundary.
+   - When a generated extension repo enters package listing, repo mapping, or
+     materialization, request `BzlmodSingleExtensionKey` immediately.
+   - If multiple independent generated repos are demanded, allow DICE to run
+     their extension keys concurrently.
+
+3. Remove duplicated waits.
+   - Today materialization can compute repo mapping entries and then compute the
+     same extension evaluation again through shared keys.
+   - Keep the shared key but structure callers so a demanded repo creates one
+     in-flight evaluation reused by mapping and materialization.
+
+4. Keep repository-rule materialization separate.
+   - Bazel's extension eval returns repo specs; repo fetch/materialization is
+     still demand-driven by repository definition/directory requests.
+   - Buck2 should continue to evaluate repository rules only for the generated
+     repo being materialized, except where Bazel's repo mapping requires sibling
+     specs from the same extension evaluation.
+
+5. Instrument concurrency.
+   - Emit per-extension start/end events with extension key and factor key.
+   - Add a summary count for concurrently running module-extension evaluations.
+   - This proves independent extension parallelism without changing semantics.
+
+### Tests
+
+- Synthetic project with two independent slow reproducible extensions.
+  - One target demands repos from both.
+  - Event log proves extension evaluations overlap.
+- Synthetic project with two repos from the same extension.
+  - Event log proves one extension evaluation is shared, not duplicated.
+- Synthetic project with unused extension.
+  - Event log proves it is not evaluated.
+
+### Validation
+
+- `:buck2` should no longer wait on crate-universe extension evaluation when the
+  workspace lockfile is current.
+- BuildBuddy and Bazel source builds should not evaluate unrelated extensions
+  merely because they are present in the module graph.
+
+### Risks
+
+- Registering repo mappings has global side effects in Buck2. Those effects must
+  stay tied to DICE value computation and fingerprints so concurrent callers do
+  not race or repeatedly mutate global state.
+- Starting extension eval earlier can shift error timing. Error messages must
+  still point to the same extension usage and generated repo.
+- DICE concurrency is only useful when more than one independent extension is
+  demanded. It will not reduce the runtime of a single `rules_rust` crate
+  extension if that extension must actually run.
+
+## Patch Series
+
+1. Add Bazel eval-factor type and tests.
+2. Teach workspace lockfile parser to deserialize Bazel extension entries.
+3. Convert Bazel `RepoSpec` entries into Buck2 repository-rule invocations.
+4. Read workspace lockfile before hidden lockfile in
+   `BzlmodSingleExtensionEvalKey`.
+5. Write hidden lockfile using Bazel factor keys.
+6. Add stale-digest, stale-usage, and stale-recorded-input tests.
+7. Add event-log tests proving workspace lockfile reuse skips extension
+   execution.
+8. Add DICE invalidation tests for per-extension pruning.
+9. Add demand-driven parallel extension evaluation instrumentation.
+10. Add synthetic independent-extension overlap test.
+11. Run the full validation matrix and compare fully cached new-daemon timing.
+
+## Validation Matrix
+
+Correctness:
 
 - `/Users/siggi/Code/buck2/bazel-bin/app/buck2/buck2_bin build :buck2`
-- `/Users/siggi/Code/buck2/bazel-bin/app/buck2/buck2_bin build :bazelisk` in
-  `/Users/siggi/Code/bazelisk`
-- `/Users/siggi/Code/buck2/bazel-bin/app/buck2/buck2_bin build src:bazel` in
-  `/Users/siggi/Code/bazel`
-- `/Users/siggi/Code/buck2/bazel-bin/app/buck2/buck2_bin build server` in
-  `/Users/siggi/Code/buildbuddy`
+- `/Users/siggi/Code/buck2/bazel-bin/app/buck2/buck2_bin build :bazelisk`
+  in `/Users/siggi/Code/bazelisk`
+- `/Users/siggi/Code/buck2/bazel-bin/app/buck2/buck2_bin build src:bazel`
+  in `/Users/siggi/Code/bazel`
+- `/Users/siggi/Code/buck2/bazel-bin/app/buck2/buck2_bin build server`
+  in `/Users/siggi/Code/buildbuddy`
 - `/Users/siggi/Code/buck2/bazel-bin/app/buck2/buck2_bin build enterprise/server`
   in `/Users/siggi/Code/buildbuddy`
 
-Behavioral tests:
+Performance:
 
-- Single top-level synthetic target proves:
-  `first_action_execution_start < last_analysis_end`.
-- Multi-top-level target proves no regression in the natural Skymeld case.
-- Keep-going and fail-fast tests cover analysis errors, execution errors, and
-  mixed analysis/execution failures.
-- Incompatible and skipped targets preserve current behavior.
-- Streaming build reports update while execution is still running.
+- `buck2 kill && BUCKD_STARTUP_INIT_TIMEOUT=90 buck2 build :buck2`
+- Compare against the measured current average of about `47.4s` for fully
+  cached new-daemon `:buck2`.
+- Expected result after workspace lockfile reuse: the visible
+  `Splicing Cargo workspace` wait disappears when the lockfile is current.
+- Warm daemon no-op builds should not regress.
+- `:bazelisk` warm cached builds should stay within noise of the current
+  baseline.
 
-Performance gates:
+Event-log checks:
 
-- Warm no-op `:bazelisk` remains at or below current baseline plus noise.
-- Warm no-op `:buck2` does not regress.
-- Cold `src:bazel` does not show a serious wall-time regression.
-- Action count must not increase unless an intentional provider/output demand
-  explains it.
-- Peak memory must not grow materially from retaining analysis and execution
-  state concurrently.
+- Current workspace lockfile hit emits no `BzlmodModuleExtensionStart` for the
+  reused extension.
+- Hidden lockfile hit emits no `BzlmodModuleExtensionStart`.
+- Workspace miss followed by hidden miss emits exactly one
+  `BzlmodModuleExtensionStart`.
+- Independent demanded extensions can overlap.
+- Unused extensions are not evaluated.
 
 ## Cutover Criteria
 
-The hard cutover is complete only when:
+The cutover is complete only when:
 
-- The build command no longer calls the old `build_configured_label(...)`
-  orchestration as the primary execution path.
-- All target completion and artifact execution requests flow through DICE keys.
-- Event logs prove at least one single-top-level build starts action execution
-  before all analysis ends.
-- No unconditional "execute all actions discovered during analysis" behavior
-  exists.
-- The full validation matrix passes.
-- Performance is within agreed thresholds.
-
-## Main Risks
-
-- Exact demand-only intra-target overlap may require earlier provider/output
-  publication than Buck2 analysis currently exposes.
-- Retaining analysis and execution data at the same time may increase peak
-  memory.
-- Execution can starve analysis unless executor/resource policy is explicit.
-- Early action execution changes timing of errors and events; keep-going and
-  fail-fast behavior need dedicated tests.
-- If we execute actions before proving they are reachable from requested outputs,
-  the implementation is not Bazel-aligned and can do unnecessary work.
-
-## Recommended First Patch Series
-
-1. Add overlap instrumentation and the synthetic single-target test.
-2. Introduce `BuildDriverKey` and `TargetCompletionKey` without changing
-   behavior.
-3. Switch the command to request driver keys and remove the old command-owned
-   output build loop.
-4. Make `ArtifactCompletionKey` resumable on owner `AnalysisKey`.
-5. Publish top-level output demand earlier and prove single-target overlap.
-6. Remove dead compatibility code and update docs.
+- Buck2 can consume Bazel workspace lockfile module-extension entries.
+- Buck2 writes hidden lockfile entries with Bazel eval-factor keys.
+- Empty-string hidden lockfile factor keys are no longer produced.
+- `BzlmodSingleExtensionEvalKey` is the single path for raw extension
+  evaluation and cache reuse.
+- `BzlmodSingleExtensionKey` remains the single path for validation.
+- Event logs prove lockfile reuse skips `rules_rust` crate-universe evaluation
+  for a fully cached new-daemon `:buck2` build.
+- The validation matrix passes.
+- No extension-specific workaround remains.

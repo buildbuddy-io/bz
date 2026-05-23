@@ -29,9 +29,11 @@ use buck2_common::bzlmod_archive::extract_archive as extract_bazel_archive;
 use buck2_common::bzlmod_integrity::BzlmodIntegrityKind;
 use buck2_common::bzlmod_integrity::parse_bzlmod_integrity;
 use buck2_common::bzlmod_patch::apply_unified_patch_file;
+use buck2_common::cas_digest::DigestAlgorithm;
 use buck2_common::dice::data::HasIoProvider;
 use buck2_common::file_ops::delegate::FileOpsDelegate;
 use buck2_common::file_ops::dice::ReadFileProxy;
+use buck2_common::file_ops::metadata::FileDigest;
 use buck2_common::file_ops::metadata::FileDigestConfig;
 use buck2_common::file_ops::metadata::FileType;
 use buck2_common::file_ops::metadata::RawDirEntry;
@@ -67,6 +69,7 @@ use buck2_core::cells::external::ExternalCellOrigin;
 use buck2_core::cells::external::bzlmod_canonical_repo_name_for_cell;
 use buck2_core::cells::external::bzlmod_cell_aliases_for_cell;
 use buck2_core::cells::external::bzlmod_cell_name;
+use buck2_core::cells::external::external_cell_source_path;
 use buck2_core::cells::external::register_bzlmod_cell_aliases;
 use buck2_core::cells::external::register_bzlmod_cell_canonical_repo_name_for_cell;
 use buck2_core::cells::external::register_external_cell_origin;
@@ -105,6 +108,7 @@ use buck2_http::HttpClientBuilder;
 use buck2_interpreter_for_build::bazel_repository::BazelRepositoryRuleCacheInfo;
 use buck2_interpreter_for_build::bazel_repository::BazelRepositoryRuleProgress;
 use buck2_interpreter_for_build::bazel_repository::bzlmod_module_extension_bzl_transitive_digest;
+use buck2_interpreter_for_build::bazel_repository::bzlmod_module_extension_eval_factor_deps;
 use buck2_interpreter_for_build::bazel_repository::bzlmod_repository_rule_cache_info;
 use buck2_interpreter_for_build::bazel_repository::bzlmod_repository_rule_invocation_from_setup;
 use buck2_interpreter_for_build::bazel_repository::bzlmod_repository_rule_invocation_to_setup;
@@ -1807,7 +1811,9 @@ mod tests {
     #[cfg(unix)]
     fn copy_dir_contents_rewrites_in_tree_absolute_symlink() -> buck2_error::Result<()> {
         let project_root = ProjectRootTemp::new()?;
-        let from = project_root.path().resolve(ProjectRelativePath::new("from")?);
+        let from = project_root
+            .path()
+            .resolve(ProjectRelativePath::new("from")?);
         let to = project_root.path().resolve(ProjectRelativePath::new("to")?);
         let target_rel = ForwardRelativePath::new(".tmp_git_root/shed/pkg/Cargo.toml")?;
         let target = from.join(target_rel);
@@ -1838,10 +1844,14 @@ mod tests {
     #[cfg(unix)]
     fn generated_repo_symlink_check_rejects_broken_link() -> buck2_error::Result<()> {
         let project_root = ProjectRootTemp::new()?;
-        let repo = project_root.path().resolve(ProjectRelativePath::new("repo")?);
+        let repo = project_root
+            .path()
+            .resolve(ProjectRelativePath::new("repo")?);
         fs_util::create_dir_all(&repo)?;
         let link = repo.join(ForwardRelativePath::new("Cargo.toml")?);
-        let missing = project_root.path().resolve(ProjectRelativePath::new("missing")?);
+        let missing = project_root
+            .path()
+            .resolve(ProjectRelativePath::new("missing")?);
         fs_util::symlink(&missing, &link).categorize_internal()?;
 
         assert!(!bzlmod_generated_repo_symlink_targets_exist(&repo)?);
@@ -1932,6 +1942,7 @@ mod tests {
         let contents = bzlmod_update_hidden_lockfile_json(
             None,
             extension_key,
+            BZLMOD_LOCKFILE_GENERAL_EXTENSION,
             Some(hidden_lockfile_evaluation("repo")),
         )?
         .expect("new reproducible extension should write hidden lockfile");
@@ -1940,6 +1951,7 @@ mod tests {
             bzlmod_update_hidden_lockfile_json(
                 Some(contents),
                 extension_key,
+                BZLMOD_LOCKFILE_GENERAL_EXTENSION,
                 Some(hidden_lockfile_evaluation("repo")),
             )?
             .is_none()
@@ -1951,8 +1963,13 @@ mod tests {
     #[test]
     fn hidden_lockfile_update_skips_empty_non_reproducible_extension() -> buck2_error::Result<()> {
         assert!(
-            bzlmod_update_hidden_lockfile_json(None, "//:extensions.bzl%extension", None)?
-                .is_none()
+            bzlmod_update_hidden_lockfile_json(
+                None,
+                "//:extensions.bzl%extension",
+                BZLMOD_LOCKFILE_GENERAL_EXTENSION,
+                None
+            )?
+            .is_none()
         );
 
         Ok(())
@@ -3131,6 +3148,76 @@ fn bzlmod_hidden_lockfile_path() -> ProjectRelativePathBuf {
     )
 }
 
+fn bzlmod_workspace_lockfile_path() -> ProjectRelativePathBuf {
+    ProjectRelativePathBuf::unchecked_new("MODULE.bazel.lock".to_owned())
+}
+
+const BZLMOD_LOCKFILE_GENERAL_EXTENSION: &str = "general";
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct BzlmodModuleExtensionEvalFactors {
+    os: String,
+    arch: String,
+}
+
+impl BzlmodModuleExtensionEvalFactors {
+    async fn from_setup(
+        ctx: &mut DiceComputations<'_>,
+        setup: &BzlmodModuleExtensionRepoSetup,
+    ) -> buck2_error::Result<Self> {
+        let deps = bzlmod_module_extension_eval_factor_deps(ctx, setup).await?;
+        Ok(Self {
+            os: deps
+                .os_dependent
+                .then(|| bzlmod_bazel_current_os_name().to_owned())
+                .unwrap_or_default(),
+            arch: deps
+                .arch_dependent
+                .then(bzlmod_bazel_current_arch_name)
+                .unwrap_or_default(),
+        })
+    }
+
+    fn lockfile_key(&self) -> String {
+        if self.os.is_empty() && self.arch.is_empty() {
+            return BZLMOD_LOCKFILE_GENERAL_EXTENSION.to_owned();
+        }
+        let mut parts = Vec::new();
+        if !self.os.is_empty() {
+            parts.push(format!("os:{}", self.os));
+        }
+        if !self.arch.is_empty() {
+            parts.push(format!("arch:{}", self.arch));
+        }
+        parts.join(",")
+    }
+}
+
+fn bzlmod_bazel_current_os_name() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "osx"
+    } else if cfg!(target_os = "linux") {
+        "linux"
+    } else if cfg!(target_os = "windows") {
+        "windows"
+    } else if cfg!(target_os = "freebsd") {
+        "freebsd"
+    } else if cfg!(target_os = "openbsd") {
+        "openbsd"
+    } else {
+        "unknown"
+    }
+}
+
+fn bzlmod_bazel_current_arch_name() -> String {
+    match std::env::consts::ARCH {
+        "x86_64" => "x86_64".to_owned(),
+        "aarch64" => "aarch64".to_owned(),
+        "arm" => "arm".to_owned(),
+        arch => arch.to_owned(),
+    }
+}
+
 fn bzlmod_bzl_path_to_label_path(path: &str) -> String {
     if let Some((package, target)) = path.rsplit_once('/') {
         format!("{package}:{target}")
@@ -3195,7 +3282,38 @@ struct BzlmodHiddenLockfileModuleExtensionEvaluation {
     module_extension_metadata: Option<BzlmodHiddenLockfileModuleExtensionMetadata>,
 }
 
+#[derive(Debug, Deserialize)]
+struct BzlmodWorkspaceLockfileModuleExtensionEvaluation {
+    #[serde(default, rename = "bzlTransitiveDigest")]
+    _bzl_transitive_digest: String,
+    #[serde(default, rename = "usagesDigest")]
+    _usages_digest: String,
+    #[serde(default, rename = "recordedInputs")]
+    recorded_inputs: Vec<String>,
+    #[serde(default, rename = "generatedRepoSpecs")]
+    generated_repo_specs: BTreeMap<String, BzlmodWorkspaceLockfileGeneratedRepoSpec>,
+    #[serde(default, rename = "moduleExtensionMetadata")]
+    module_extension_metadata: Option<BzlmodHiddenLockfileModuleExtensionMetadata>,
+}
+
+#[derive(Debug, Deserialize)]
+struct BzlmodWorkspaceLockfileGeneratedRepoSpec {
+    #[serde(rename = "repoRuleId")]
+    repo_rule_id: String,
+    #[serde(default)]
+    attributes: BTreeMap<String, serde_json::Value>,
+}
+
 impl BzlmodHiddenLockfileModuleExtensionEvaluation {
+    fn reproducible(&self) -> bool {
+        self.module_extension_metadata
+            .as_ref()
+            .map(|metadata| metadata.reproducible)
+            .unwrap_or(false)
+    }
+}
+
+impl BzlmodWorkspaceLockfileModuleExtensionEvaluation {
     fn reproducible(&self) -> bool {
         self.module_extension_metadata
             .as_ref()
@@ -3244,16 +3362,35 @@ fn bzlmod_hidden_lockfile_extension_evaluation_to_result(
     }))
 }
 
+fn bzlmod_workspace_lockfile_extension_evaluation_to_result(
+    evaluation: BzlmodWorkspaceLockfileModuleExtensionEvaluation,
+) -> buck2_error::Result<Arc<BazelModuleExtensionEvaluationResult>> {
+    let reproducible = evaluation.reproducible();
+    let mut repository_rule_invocations = Vec::new();
+    for (repo_name, spec) in evaluation.generated_repo_specs {
+        let setup = bzlmod_workspace_lockfile_generated_repo_spec_to_setup(&repo_name, spec)?;
+        repository_rule_invocations.push(bzlmod_repository_rule_invocation_from_setup(
+            &setup, &repo_name,
+        )?);
+    }
+    Ok(Arc::new(BazelModuleExtensionEvaluationResult {
+        repository_rule_invocations,
+        recorded_inputs: Vec::new(),
+        reproducible,
+    }))
+}
+
 fn bzlmod_hidden_lockfile_extension_evaluation_from_json(
     contents: &str,
     extension_key: &str,
+    factor_key: &str,
 ) -> buck2_error::Result<Option<BzlmodHiddenLockfileModuleExtensionEvaluation>> {
     let lockfile: serde_json::Value = serde_json::from_str(contents)
         .buck_error_context("Error parsing hidden bzlmod lockfile")?;
     let Some(evaluation) = lockfile
         .get("moduleExtensions")
         .and_then(|module_extensions| module_extensions.get(extension_key))
-        .and_then(|extension| extension.get(""))
+        .and_then(|extension| extension.get(factor_key))
     else {
         return Ok(None);
     };
@@ -3263,13 +3400,390 @@ fn bzlmod_hidden_lockfile_extension_evaluation_from_json(
     }
 }
 
+fn bzlmod_workspace_lockfile_extension_evaluation_from_json(
+    contents: &str,
+    extension_key: &str,
+    factor_key: &str,
+) -> buck2_error::Result<Option<BzlmodWorkspaceLockfileModuleExtensionEvaluation>> {
+    let lockfile: serde_json::Value = serde_json::from_str(contents)
+        .buck_error_context("Error parsing bzlmod workspace lockfile")?;
+    let Some(evaluation) = lockfile
+        .get("moduleExtensions")
+        .and_then(|module_extensions| module_extensions.get(extension_key))
+        .and_then(|extension| extension.get(factor_key))
+    else {
+        return Ok(None);
+    };
+    serde_json::from_value(evaluation.clone())
+        .map(Some)
+        .buck_error_context("Error parsing bzlmod workspace lockfile extension value")
+}
+
+fn bzlmod_cell_name_for_lockfile_repo_name(canonical_repo_name: &str) -> String {
+    if canonical_repo_name.is_empty() {
+        "root".to_owned()
+    } else {
+        bzlmod_cell_name(canonical_repo_name)
+    }
+}
+
+fn bzlmod_label_package_target_to_path(package_target: &str) -> buck2_error::Result<String> {
+    if let Some((package, target)) = package_target.split_once(':') {
+        if package.is_empty() {
+            Ok(target.to_owned())
+        } else {
+            Ok(format!("{package}/{target}"))
+        }
+    } else {
+        Ok(package_target.to_owned())
+    }
+}
+
+fn bzlmod_workspace_lockfile_repo_rule_id_parts(
+    repo_rule_id: &str,
+) -> buck2_error::Result<(String, String, String)> {
+    let (label, rule_name) = repo_rule_id.rsplit_once('%').ok_or_else(|| {
+        buck2_error::buck2_error!(
+            buck2_error::ErrorTag::Input,
+            "bzlmod lockfile repoRuleId `{}` is missing `%<rule>`",
+            repo_rule_id
+        )
+    })?;
+    let (canonical_repo_name, package_target) = if let Some(label) = label.strip_prefix("@@") {
+        label.split_once("//").ok_or_else(|| {
+            buck2_error::buck2_error!(
+                buck2_error::ErrorTag::Input,
+                "bzlmod lockfile repoRuleId `{}` is missing `//`",
+                repo_rule_id
+            )
+        })?
+    } else if let Some(label) = label.strip_prefix('@') {
+        label.split_once("//").ok_or_else(|| {
+            buck2_error::buck2_error!(
+                buck2_error::ErrorTag::Input,
+                "bzlmod lockfile repoRuleId `{}` is missing `//`",
+                repo_rule_id
+            )
+        })?
+    } else if let Some(package_target) = label.strip_prefix("//") {
+        ("", package_target)
+    } else {
+        return Err(buck2_error::buck2_error!(
+            buck2_error::ErrorTag::Input,
+            "bzlmod lockfile repoRuleId `{}` is not an absolute label",
+            repo_rule_id
+        ));
+    };
+    Ok((
+        bzlmod_cell_name_for_lockfile_repo_name(canonical_repo_name),
+        bzlmod_label_package_target_to_path(package_target)?,
+        rule_name.to_owned(),
+    ))
+}
+
+fn bzlmod_workspace_lockfile_generated_repo_spec_to_setup(
+    repo_name: &str,
+    spec: BzlmodWorkspaceLockfileGeneratedRepoSpec,
+) -> buck2_error::Result<BzlmodRepositoryRuleInvocationSetup> {
+    let (rule_bzl_cell, rule_bzl_path, rule_name) =
+        bzlmod_workspace_lockfile_repo_rule_id_parts(&spec.repo_rule_id)?;
+    let mut attrs = spec
+        .attributes
+        .iter()
+        .map(|(key, value)| {
+            buck2_error::Ok((
+                Arc::from(key.as_str()),
+                Arc::from(bzlmod_workspace_lockfile_attr_expression(value)?.as_str()),
+            ))
+        })
+        .collect::<buck2_error::Result<Vec<(Arc<str>, Arc<str>)>>>()?;
+    attrs.sort_by(|left, right| left.0.cmp(&right.0));
+    Ok(BzlmodRepositoryRuleInvocationSetup {
+        repo_name: Arc::from(repo_name),
+        rule_bzl_build_file_cell: Arc::from(rule_bzl_cell.as_str()),
+        rule_bzl_cell: Arc::from(rule_bzl_cell.as_str()),
+        rule_bzl_path: Arc::from(rule_bzl_path.as_str()),
+        rule_name: Arc::from(rule_name.as_str()),
+        attrs: Arc::new(attrs),
+    })
+}
+
+fn bzlmod_workspace_lockfile_attr_expression(
+    value: &serde_json::Value,
+) -> buck2_error::Result<String> {
+    match value {
+        serde_json::Value::Null => Ok("None".to_owned()),
+        serde_json::Value::Bool(value) => Ok(if *value { "True" } else { "False" }.to_owned()),
+        serde_json::Value::Number(value) => Ok(value.to_string()),
+        serde_json::Value::String(value) => bzlmod_workspace_lockfile_string_attr_expression(value),
+        serde_json::Value::Array(values) => {
+            let values = values
+                .iter()
+                .map(bzlmod_workspace_lockfile_attr_expression)
+                .collect::<buck2_error::Result<Vec<_>>>()?;
+            Ok(format!("[{}]", values.join(", ")))
+        }
+        serde_json::Value::Object(values) => {
+            let mut entries = values
+                .iter()
+                .map(|(key, value)| {
+                    let key = serde_json::to_string(key)
+                        .buck_error_context("Error serializing bzlmod lockfile attr key")?;
+                    let value = bzlmod_workspace_lockfile_attr_expression(value)?;
+                    buck2_error::Ok(format!("{key}: {value}"))
+                })
+                .collect::<buck2_error::Result<Vec<_>>>()?;
+            entries.sort();
+            Ok(format!("{{{}}}", entries.join(", ")))
+        }
+    }
+}
+
+fn bzlmod_workspace_lockfile_string_attr_expression(value: &str) -> buck2_error::Result<String> {
+    serde_json::to_string(value)
+        .buck_error_context("Error serializing bzlmod lockfile string repository-rule attribute")
+}
+
+#[derive(Debug)]
+enum BzlmodWorkspaceLockfileRecordedInput {
+    EnvVar {
+        name: String,
+        value: Option<String>,
+    },
+    File {
+        path: String,
+        value: String,
+    },
+    RepoMapping {
+        source_repo: String,
+        apparent_name: String,
+        canonical_name: Option<String>,
+    },
+    Unsupported,
+}
+
+fn bzlmod_bazel_lockfile_unescape(value: &str) -> Option<String> {
+    if value == "\\0" {
+        return None;
+    }
+    let mut result = String::new();
+    let mut escaped = false;
+    for c in value.chars() {
+        if escaped {
+            if c == 'n' {
+                result.push('\n');
+            } else if c == 's' {
+                result.push(' ');
+            } else {
+                result.push(c);
+            }
+            escaped = false;
+        } else if c == '\\' {
+            escaped = true;
+        } else {
+            result.push(c);
+        }
+    }
+    Some(result)
+}
+
+fn bzlmod_workspace_lockfile_recorded_input_from_str(
+    value: &str,
+) -> Option<BzlmodWorkspaceLockfileRecordedInput> {
+    let separator = value.find(' ')?;
+    if separator == 0 {
+        return None;
+    }
+    let input = bzlmod_bazel_lockfile_unescape(&value[..separator])?;
+    let value = bzlmod_bazel_lockfile_unescape(&value[separator + 1..]);
+    let (kind, id) = input.split_once(':')?;
+    match kind {
+        "ENV" => Some(BzlmodWorkspaceLockfileRecordedInput::EnvVar {
+            name: id.to_owned(),
+            value,
+        }),
+        "FILE" => Some(BzlmodWorkspaceLockfileRecordedInput::File {
+            path: id.to_owned(),
+            value: value?,
+        }),
+        "REPO_MAPPING" => {
+            let (source_repo, apparent_name) = id.split_once(',')?;
+            Some(BzlmodWorkspaceLockfileRecordedInput::RepoMapping {
+                source_repo: source_repo.to_owned(),
+                apparent_name: apparent_name.to_owned(),
+                canonical_name: value,
+            })
+        }
+        "DIRENTS" | "DIRTREE" => Some(BzlmodWorkspaceLockfileRecordedInput::Unsupported),
+        _ => None,
+    }
+}
+
+fn bzlmod_workspace_recorded_input_path(
+    project_root: &ProjectRoot,
+    path: &str,
+) -> buck2_error::Result<PathBuf> {
+    if Path::new(path).is_absolute() {
+        return Ok(PathBuf::from(path));
+    }
+    let label = path.strip_prefix("@@").or_else(|| path.strip_prefix('@'));
+    if let Some(label) = label {
+        let (canonical_repo_name, repo_path) = label.split_once("//").ok_or_else(|| {
+            buck2_error::buck2_error!(
+                buck2_error::ErrorTag::Input,
+                "bzlmod lockfile recorded input path `{}` is not a repository path",
+                path
+            )
+        })?;
+        let relative = if canonical_repo_name.is_empty() {
+            repo_path.to_owned()
+        } else if repo_path.is_empty() {
+            external_cell_source_path(BZLMOD_EXTERNAL_CELL_KIND, canonical_repo_name)
+        } else {
+            format!(
+                "{}/{}",
+                external_cell_source_path(BZLMOD_EXTERNAL_CELL_KIND, canonical_repo_name),
+                repo_path
+            )
+        };
+        return Ok(project_root
+            .resolve(ProjectRelativePath::new(&relative)?)
+            .as_path()
+            .to_owned());
+    }
+    Ok(project_root
+        .resolve(ProjectRelativePath::new(path)?)
+        .as_path()
+        .to_owned())
+}
+
+fn bzlmod_workspace_recorded_file_value(path: &Path) -> buck2_error::Result<String> {
+    let metadata = match fs::metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok("ENOENT".to_owned()),
+        Err(error) => {
+            return Err(error).with_buck_error_context(|| {
+                format!(
+                    "Error statting bzlmod workspace lockfile input `{}`",
+                    path.display()
+                )
+            });
+        }
+    };
+    if metadata.is_dir() {
+        return Ok("DIR".to_owned());
+    }
+    if metadata.is_file() {
+        let file = fs::File::open(path).with_buck_error_context(|| {
+            format!(
+                "Error opening bzlmod workspace lockfile input `{}`",
+                path.display()
+            )
+        })?;
+        let digest = FileDigest::from_reader_for_algorithm(file, DigestAlgorithm::Sha256)
+            .with_buck_error_context(|| {
+                format!(
+                    "Error digesting bzlmod workspace lockfile input `{}`",
+                    path.display()
+                )
+            })?;
+        return Ok(hex::encode(digest.raw_digest().as_bytes()));
+    }
+    Ok("OTHER".to_owned())
+}
+
+async fn bzlmod_workspace_lockfile_recorded_inputs_are_current(
+    ctx: &mut DiceComputations<'_>,
+    recorded_inputs: &[String],
+) -> buck2_error::Result<bool> {
+    let project_root = ctx.global_data().get_io_provider().project_root().dupe();
+    for input in recorded_inputs {
+        let Some(input) = bzlmod_workspace_lockfile_recorded_input_from_str(input) else {
+            return Ok(false);
+        };
+        match input {
+            BzlmodWorkspaceLockfileRecordedInput::EnvVar { name, value } => {
+                if ctx
+                    .get_bzlmod_repository_environment_variable(&name)
+                    .await?
+                    .as_ref()
+                    != value.as_ref()
+                {
+                    return Ok(false);
+                }
+            }
+            BzlmodWorkspaceLockfileRecordedInput::File { path, value } => {
+                let path = bzlmod_workspace_recorded_input_path(&project_root, &path)?;
+                let current = ctx
+                    .get_blocking_executor()
+                    .execute_io_inline(move || bzlmod_workspace_recorded_file_value(&path))
+                    .await?;
+                if current != value {
+                    return Ok(false);
+                }
+            }
+            BzlmodWorkspaceLockfileRecordedInput::RepoMapping {
+                source_repo,
+                apparent_name,
+                canonical_name,
+            } => {
+                let source_cell_name = bzlmod_cell_name_for_lockfile_repo_name(&source_repo);
+                let current = bzlmod_current_repo_mapping(&source_cell_name, &apparent_name);
+                // Buck registers some generated-repo alias maps demand-driven. A present mapping
+                // must match the lockfile, but an absent mapping here only means it has not been
+                // registered yet.
+                if current.is_some() && current != canonical_name {
+                    return Ok(false);
+                }
+            }
+            BzlmodWorkspaceLockfileRecordedInput::Unsupported => return Ok(false),
+        }
+    }
+    Ok(true)
+}
+
+async fn read_bzlmod_workspace_lockfile_extension(
+    ctx: &mut DiceComputations<'_>,
+    setup: &BzlmodModuleExtensionRepoSetup,
+    eval_factors: &BzlmodModuleExtensionEvalFactors,
+) -> buck2_error::Result<Option<Arc<BazelModuleExtensionEvaluationResult>>> {
+    let extension_key = bzlmod_lockfile_extension_key_from_setup(setup)?;
+    let factor_key = eval_factors.lockfile_key();
+    let project_root = ctx.global_data().get_io_provider().project_root().dupe();
+    let evaluation = ctx
+        .get_blocking_executor()
+        .execute_io_inline(move || {
+            let lockfile_path = project_root.resolve(&bzlmod_workspace_lockfile_path());
+            let Some(contents) = fs_util::read_to_string_if_exists(lockfile_path)? else {
+                return Ok(None);
+            };
+            bzlmod_workspace_lockfile_extension_evaluation_from_json(
+                &contents,
+                &extension_key,
+                &factor_key,
+            )
+        })
+        .await?;
+    let Some(evaluation) = evaluation else {
+        return Ok(None);
+    };
+    if !bzlmod_workspace_lockfile_recorded_inputs_are_current(ctx, &evaluation.recorded_inputs)
+        .await?
+    {
+        return Ok(None);
+    }
+    bzlmod_workspace_lockfile_extension_evaluation_to_result(evaluation).map(Some)
+}
+
 async fn read_bzlmod_hidden_lockfile_extension(
     ctx: &mut DiceComputations<'_>,
     setup: &BzlmodModuleExtensionRepoSetup,
+    eval_factors: &BzlmodModuleExtensionEvalFactors,
     bzl_transitive_digest: &str,
     usages_digest: &str,
 ) -> buck2_error::Result<Option<Arc<BazelModuleExtensionEvaluationResult>>> {
     let extension_key = bzlmod_lockfile_extension_key_from_setup(setup)?;
+    let factor_key = eval_factors.lockfile_key();
     let project_root = ctx.global_data().get_io_provider().project_root().dupe();
     let evaluation = ctx
         .get_blocking_executor()
@@ -3278,7 +3792,11 @@ async fn read_bzlmod_hidden_lockfile_extension(
             let Some(contents) = fs_util::read_to_string_if_exists(lockfile_path)? else {
                 return Ok(None);
             };
-            bzlmod_hidden_lockfile_extension_evaluation_from_json(&contents, &extension_key)
+            bzlmod_hidden_lockfile_extension_evaluation_from_json(
+                &contents,
+                &extension_key,
+                &factor_key,
+            )
         })
         .await?;
     let Some(evaluation) = evaluation else {
@@ -3299,6 +3817,7 @@ async fn read_bzlmod_hidden_lockfile_extension(
 fn bzlmod_update_hidden_lockfile_json(
     contents: Option<String>,
     extension_key: &str,
+    factor_key: &str,
     evaluation: Option<BzlmodHiddenLockfileModuleExtensionEvaluation>,
 ) -> buck2_error::Result<Option<String>> {
     let mut lockfile: serde_json::Value = match contents {
@@ -3327,7 +3846,7 @@ fn bzlmod_update_hidden_lockfile_json(
         }
         let extension = extension.as_object_mut().expect("checked object");
         extension.insert(
-            String::new(),
+            factor_key.to_owned(),
             serde_json::to_value(evaluation)
                 .buck_error_context("Error serializing hidden bzlmod extension value")?,
         );
@@ -3338,7 +3857,7 @@ fn bzlmod_update_hidden_lockfile_json(
         let module_extensions = module_extensions.as_object_mut().expect("checked object");
         let remove_extension = if let Some(extension) = module_extensions.get_mut(extension_key) {
             if let Some(extension) = extension.as_object_mut() {
-                extension.remove("");
+                extension.remove(factor_key);
                 extension.is_empty()
             } else {
                 true
@@ -3361,11 +3880,13 @@ fn bzlmod_update_hidden_lockfile_json(
 async fn write_bzlmod_hidden_lockfile_extension(
     ctx: &mut DiceComputations<'_>,
     setup: &BzlmodModuleExtensionRepoSetup,
+    eval_factors: &BzlmodModuleExtensionEvalFactors,
     evaluation: &BazelModuleExtensionEvaluationResult,
     bzl_transitive_digest: String,
     usages_digest: String,
 ) -> buck2_error::Result<()> {
     let extension_key = bzlmod_lockfile_extension_key_from_setup(setup)?;
+    let factor_key = eval_factors.lockfile_key();
     let lockfile_evaluation = bzlmod_hidden_lockfile_extension_evaluation_from_result(
         evaluation,
         bzl_transitive_digest,
@@ -3383,8 +3904,12 @@ async fn write_bzlmod_hidden_lockfile_extension(
         .execute_io_inline(move || {
             let lockfile_path = project_root.resolve(&bzlmod_hidden_lockfile_path());
             let contents = fs_util::read_to_string_if_exists(&lockfile_path)?;
-            let Some(lockfile_json) =
-                bzlmod_update_hidden_lockfile_json(contents, &extension_key, lockfile_evaluation)?
+            let Some(lockfile_json) = bzlmod_update_hidden_lockfile_json(
+                contents,
+                &extension_key,
+                &factor_key,
+                lockfile_evaluation,
+            )?
             else {
                 return Ok(());
             };
@@ -3483,12 +4008,19 @@ impl Key for BzlmodSingleExtensionEvalKey {
         ctx: &mut DiceComputations,
         cancellations: &CancellationContext,
     ) -> Self::Value {
+        let eval_factors = BzlmodModuleExtensionEvalFactors::from_setup(ctx, &self.setup).await?;
         let bzl_transitive_digest =
             bzlmod_module_extension_bzl_transitive_digest(ctx, &self.setup).await?;
         let usages_digest = self.setup.extension_usages_key.to_string();
+        if let Some(evaluation) =
+            read_bzlmod_workspace_lockfile_extension(ctx, &self.setup, &eval_factors).await?
+        {
+            return Ok(evaluation);
+        }
         if let Some(evaluation) = read_bzlmod_hidden_lockfile_extension(
             ctx,
             &self.setup,
+            &eval_factors,
             &bzl_transitive_digest,
             &usages_digest,
         )
@@ -3541,6 +4073,7 @@ impl Key for BzlmodSingleExtensionEvalKey {
         write_bzlmod_hidden_lockfile_extension(
             ctx,
             &self.setup,
+            &eval_factors,
             &evaluation,
             bzl_transitive_digest,
             usages_digest,
