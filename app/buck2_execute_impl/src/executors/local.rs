@@ -1389,36 +1389,6 @@ impl LocalExecutor {
         Ok(LocalActionCacheMetadataLookup::Hit(outputs))
     }
 
-    async fn unprepared_local_action_cache_outputs_are_valid(
-        &self,
-        outputs: &BuckIndexMap<CommandExecutionOutput, ArtifactValue>,
-        expected_fingerprint: &[u8],
-    ) -> buck2_error::Result<bool> {
-        let actual_fingerprint =
-            local_action_cache_outputs_fingerprint(&self.artifact_fs, outputs)?;
-        if actual_fingerprint.as_slice() != expected_fingerprint {
-            return Ok(false);
-        }
-
-        let output_matches = outputs
-            .iter()
-            .map(|(output, value)| {
-                Ok((
-                    output
-                        .as_ref()
-                        .resolve(&self.artifact_fs, Some(&value.content_based_path_hash()))?
-                        .into_path(),
-                    value.dupe(),
-                ))
-            })
-            .collect::<buck2_error::Result<Vec<_>>>()?;
-        Ok(self
-            .materializer
-            .declare_match(output_matches)
-            .await?
-            .is_match())
-    }
-
     fn remove_unprepared_action_metadata(
         &self,
         key: &str,
@@ -1465,23 +1435,6 @@ impl LocalExecutor {
             output_values,
         )?;
         Ok(())
-    }
-
-    fn local_action_cache_outputs_from_entry(
-        outputs_to_check: &BuckIndexSet<CommandExecutionOutput>,
-        entry: &crate::executors::local_action_cache::LocalActionCacheEntry,
-    ) -> buck2_error::Result<Option<BuckIndexMap<CommandExecutionOutput, ArtifactValue>>> {
-        if entry.output_values.len() != outputs_to_check.len() {
-            return Ok(None);
-        }
-
-        let outputs = outputs_to_check
-            .iter()
-            .cloned()
-            .zip(entry.output_values.iter().cloned())
-            .collect::<BuckIndexMap<_, _>>();
-
-        Ok(Some(outputs))
     }
 
     async fn acquire_worker_permit(
@@ -1879,33 +1832,14 @@ impl PreparedCommandOptionalExecutor for LocalExecutor {
 
         let start = TimeSpan::start_now();
         let start_time = SystemTime::now();
-        match Self::local_action_cache_outputs_from_entry(command.outputs, &entry) {
-            Ok(Some(outputs)) => {
-                let outputs_are_valid = match self
-                    .unprepared_local_action_cache_outputs_are_valid(
-                        &outputs,
-                        &entry.outputs_fingerprint,
-                    )
-                    .await
-                {
-                    Ok(outputs_are_valid) => outputs_are_valid,
-                    Err(e) => {
-                        return ControlFlow::Break(
-                            manager.error("local_action_cache_match_failed", e),
-                        );
-                    }
-                };
-                if !outputs_are_valid {
-                    tracing::debug!(
-                        "unprepared local action cache miss for `{}` because output state did not match",
-                        command.local_action_cache_key.key
-                    );
-                    return self.remove_unprepared_action_metadata(
-                        &command.local_action_cache_key.key,
-                        manager,
-                    );
-                }
-
+        match self
+            .local_action_cache_outputs_from_materializer(
+                command.outputs.iter().cloned().collect(),
+                &entry.outputs_fingerprint,
+            )
+            .await
+        {
+            Ok(LocalActionCacheMetadataLookup::Hit(outputs)) => {
                 let time_span = start.end_now();
                 let timing = CommandExecutionMetadata {
                     time_span,
@@ -1931,11 +1865,18 @@ impl PreparedCommandOptionalExecutor for LocalExecutor {
                     timing,
                 ))
             }
-            Ok(None) => {
+            Ok(LocalActionCacheMetadataLookup::MissingMetadata) => {
+                self.remove_unprepared_action_metadata(&command.local_action_cache_key.key, manager)
+            }
+            Ok(LocalActionCacheMetadataLookup::Stale) => {
+                tracing::debug!(
+                    "unprepared local action cache miss for `{}` because persisted output metadata did not match",
+                    command.local_action_cache_key.key
+                );
                 self.remove_unprepared_action_metadata(&command.local_action_cache_key.key, manager)
             }
             Err(e) => {
-                ControlFlow::Break(manager.error("local_action_cache_metadata_decode_failed", e))
+                ControlFlow::Break(manager.error("local_action_cache_metadata_lookup_failed", e))
             }
         }
     }
@@ -3878,7 +3819,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_unprepared_action_cache_outputs_require_materializer_match()
+    async fn test_unprepared_action_cache_outputs_require_materializer_metadata()
     -> buck2_error::Result<()> {
         let (executor, _, _tmpdir) = test_executor()?;
         let outputs = buck_indexmap! {
@@ -3886,16 +3827,15 @@ mod tests {
         };
         let fingerprint = local_action_cache_outputs_fingerprint(&executor.artifact_fs, &outputs)?;
 
-        assert!(
-            !executor
-                .unprepared_local_action_cache_outputs_are_valid(&outputs, b"stale")
-                .await?
-        );
-        assert!(
-            !executor
-                .unprepared_local_action_cache_outputs_are_valid(&outputs, fingerprint.as_slice())
-                .await?
-        );
+        assert!(matches!(
+            executor
+                .local_action_cache_outputs_from_materializer(
+                    outputs.keys().cloned().collect(),
+                    fingerprint.as_slice()
+                )
+                .await?,
+            LocalActionCacheMetadataLookup::MissingMetadata
+        ));
         Ok(())
     }
 
