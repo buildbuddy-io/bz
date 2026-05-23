@@ -128,6 +128,7 @@ async fn test_analysis_calculation() -> buck2_error::Result<()> {
                 OwnedStarlarkModulePath::LoadFile(bzlfile.clone()),
                 module.dupe(),
             )]),
+            ordered: vec![module.dupe()],
         },
         PackageListing::testing_new(&[], "BUCK"),
     )?;

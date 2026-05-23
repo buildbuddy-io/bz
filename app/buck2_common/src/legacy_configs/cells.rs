@@ -7017,8 +7017,11 @@ fn bzlmod_string_looks_like_label(value: &str) -> bool {
     value.starts_with('@') || value.starts_with("//") || value.starts_with(':')
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct BzlmodCollectedTagCall {
+    order: usize,
+    source_line: usize,
+    source_end_line: usize,
     call: String,
     bindings: Vec<(String, String)>,
 }
@@ -7030,19 +7033,27 @@ fn bzlmod_extension_tags(
 ) -> Vec<BzlmodExtensionTag> {
     let call_prefix = format!("{proxy_name}.");
     let comprehension_calls = collect_bzl_list_comprehension_calls(lines, &call_prefix, constants);
-    let comprehension_call_strings = comprehension_calls
+    let comprehension_call_ranges = comprehension_calls
         .iter()
-        .map(|call| call.call.clone())
+        .map(|call| (call.source_line, call.source_end_line))
         .collect::<BTreeSet<_>>();
-    let normal_calls = collect_bzl_calls(lines, &call_prefix)
+    let normal_calls = collect_bzl_calls_with_order(lines, &call_prefix)
         .into_iter()
-        .filter(|call| !comprehension_call_strings.contains(call))
-        .map(|call| BzlmodCollectedTagCall {
+        .filter(|(source_line, _)| {
+            !comprehension_call_ranges
+                .iter()
+                .any(|(start, end)| *start <= *source_line && source_line < end)
+        })
+        .map(|(source_line, call)| BzlmodCollectedTagCall {
+            order: source_line * BZL_CALL_ORDER_STRIDE,
+            source_line,
+            source_end_line: source_line + 1,
             call,
             bindings: Vec::new(),
         });
-    let mut tags = normal_calls
-        .chain(comprehension_calls)
+    let mut calls = normal_calls.chain(comprehension_calls).collect::<Vec<_>>();
+    calls.sort_by_key(|call| call.order);
+    calls
         .into_iter()
         .filter_map(|collected_call| {
             let call = collected_call.call;
@@ -7051,7 +7062,7 @@ fn bzlmod_extension_tags(
             if !is_bzl_identifier(tag_name) {
                 return None;
             }
-            let mut kwargs = bzl_call_args(&call)
+            let kwargs = bzl_call_args(&call)
                 .into_iter()
                 .filter_map(|arg| {
                     let (name, value) = bzl_top_level_assignment(&arg)?;
@@ -7063,22 +7074,13 @@ fn bzlmod_extension_tags(
                     }
                 })
                 .collect::<Vec<_>>();
-            kwargs.sort_by(|left, right| left.0.cmp(&right.0));
             Some(BzlmodExtensionTag {
                 tag_name: tag_name.to_owned(),
                 bindings: collected_call.bindings,
                 kwargs,
             })
         })
-        .collect::<Vec<_>>();
-    tags.sort_by(|left, right| {
-        (&left.tag_name, &left.bindings, &left.kwargs).cmp(&(
-            &right.tag_name,
-            &right.bindings,
-            &right.kwargs,
-        ))
-    });
-    tags
+        .collect()
 }
 
 fn collect_bzl_list_comprehension_calls(
@@ -7089,6 +7091,7 @@ fn collect_bzl_list_comprehension_calls(
     let mut calls = Vec::new();
     let mut index = 0usize;
     while index < lines.len() {
+        let block_start_line = index;
         let line = strip_bzl_comment(&lines[index]);
         if !line.trim_start().starts_with('[') {
             index += 1;
@@ -7104,26 +7107,31 @@ fn collect_bzl_list_comprehension_calls(
             block.push(line);
             index += 1;
         }
+        let block_end_line = index;
 
         let Some(binding_groups) = bzl_list_comprehension_binding_groups(&block, constants) else {
             continue;
         };
         let block_text = block.join("\n");
-        for call in collect_bzl_calls_anywhere(&block_text, function) {
-            for bindings in &binding_groups {
+        let block_calls = collect_bzl_calls_anywhere_with_order(&block_text, function);
+        let mut expanded_order = 0usize;
+        for bindings in &binding_groups {
+            for (_, call) in &block_calls {
                 calls.push(BzlmodCollectedTagCall {
+                    order: block_start_line * BZL_CALL_ORDER_STRIDE + expanded_order,
+                    source_line: block_start_line,
+                    source_end_line: block_end_line,
                     call: call.clone(),
                     bindings: bindings.clone(),
                 });
+                expanded_order += 1;
             }
         }
     }
-    calls.sort();
-    calls.dedup();
     calls
 }
 
-fn collect_bzl_calls_anywhere(value: &str, function: &str) -> Vec<String> {
+fn collect_bzl_calls_anywhere_with_order(value: &str, function: &str) -> Vec<(usize, String)> {
     let mut calls = Vec::new();
     let mut in_string = false;
     let mut quote = '\0';
@@ -7160,7 +7168,7 @@ fn collect_bzl_calls_anywhere(value: &str, function: &str) -> Vec<String> {
                 .is_none_or(|ch| !is_bzl_ident(ch))
         {
             if let Some((call, end)) = bzl_call_from_offset(value, index) {
-                calls.push(call);
+                calls.push((index, call));
                 index = end;
                 continue;
             }
@@ -8350,17 +8358,28 @@ fn bzlmod_identifier_cmp(a: &BzlmodVersionIdentifier, b: &BzlmodVersionIdentifie
     }
 }
 
+const BZL_CALL_ORDER_STRIDE: usize = 1_000_000;
+
 fn collect_bzl_calls(lines: &[String], function: &str) -> Vec<String> {
+    collect_bzl_calls_with_order(lines, function)
+        .into_iter()
+        .map(|(_, call)| call)
+        .collect()
+}
+
+fn collect_bzl_calls_with_order(lines: &[String], function: &str) -> Vec<(usize, String)> {
     let mut calls = Vec::new();
     let mut current = String::new();
     let mut depth = 0i32;
+    let mut start_line = 0usize;
 
-    for line in lines {
+    for (line_index, line) in lines.iter().enumerate() {
         if current.is_empty() {
             let rest = line.trim_start();
             if !rest.starts_with(function) {
                 continue;
             };
+            start_line = line_index;
             let line = strip_bzl_comment(line);
             let rest = line.trim_start();
             depth = paren_delta(rest);
@@ -8373,7 +8392,7 @@ fn collect_bzl_calls(lines: &[String], function: &str) -> Vec<String> {
         }
 
         if depth <= 0 {
-            calls.push(std::mem::take(&mut current));
+            calls.push((start_line, std::mem::take(&mut current)));
             depth = 0;
         }
     }
@@ -9997,6 +10016,54 @@ mod tests {
         assert_eq!(
             usages[0].tags[1].bindings,
             vec![("python_version".to_owned(), "\"3.12\"".to_owned())]
+        );
+    }
+
+    #[test]
+    fn test_bzlmod_extension_tags_preserve_bazel_evaluation_order() {
+        let lines = indoc!(
+            r#"
+            ext = use_extension("//:extensions.bzl", "ext")
+
+            ext.zeta(second = "2", first = "1")
+
+            [
+                ext.alpha(version = version)
+                for version in ["3.11", "3.12"]
+            ]
+
+            ext.beta(name = "last")
+            "#
+        )
+        .lines()
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+
+        let constants = super::bzlmod_module_constants_from_lines(&lines);
+        let usages = super::bzlmod_extension_usages_from_lines(&lines, &constants, false);
+        assert_eq!(usages.len(), 1);
+        assert_eq!(
+            usages[0]
+                .tags
+                .iter()
+                .map(|tag| tag.tag_name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["zeta", "alpha", "alpha", "beta"]
+        );
+        assert_eq!(
+            usages[0].tags[0].kwargs,
+            vec![
+                ("second".to_owned(), "\"2\"".to_owned()),
+                ("first".to_owned(), "\"1\"".to_owned()),
+            ]
+        );
+        assert_eq!(
+            usages[0].tags[1].bindings,
+            vec![("version".to_owned(), "\"3.11\"".to_owned())]
+        );
+        assert_eq!(
+            usages[0].tags[2].bindings,
+            vec![("version".to_owned(), "\"3.12\"".to_owned())]
         );
     }
 

@@ -38,6 +38,7 @@ enum FileLoaderError {
 #[derive(Default, Clone, Allocative, Debug)]
 pub struct LoadedModules {
     pub map: OrderedMap<OwnedStarlarkModulePath, LoadedModule>,
+    pub ordered: Vec<LoadedModule>,
 }
 
 impl LoadedModules {
@@ -48,6 +49,10 @@ impl LoadedModules {
             | StarlarkModulePath::TomlFile(p) => p,
             _ => panic!("imports should only be bzl, json, or toml files"),
         })
+    }
+
+    pub fn ordered_modules(&self) -> impl Iterator<Item = &LoadedModule> {
+        self.ordered.iter()
     }
 }
 
@@ -67,7 +72,10 @@ impl ModuleDeps {
         for dep in &*self.0 {
             map.insert(dep.path().to_owned(), dep.dupe());
         }
-        LoadedModules { map }
+        LoadedModules {
+            map,
+            ordered: self.0.clone(),
+        }
     }
 }
 
@@ -242,7 +250,8 @@ mod tests {
                 LoadedModules::default(),
                 env(import_path.borrow()),
             );
-            loaded_modules.map.insert(import_path, module);
+            loaded_modules.map.insert(import_path, module.dupe());
+            loaded_modules.ordered.push(module);
         };
 
         // Insert the same things that the TestLoadResolver supports.

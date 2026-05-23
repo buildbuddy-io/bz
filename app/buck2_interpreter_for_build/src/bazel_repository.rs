@@ -1603,7 +1603,7 @@ fn collect_loaded_module_bazel_digest_postorder(
     if !seen.insert(key) {
         return;
     }
-    for loaded in module.loaded_modules().map.values() {
+    for loaded in module.loaded_modules().ordered_modules() {
         if loaded_module_bazel_digest_path(loaded).is_some() {
             collect_loaded_module_bazel_digest_postorder(loaded, seen, modules);
         }
@@ -1650,7 +1650,7 @@ async fn bzlmod_bazel_bzl_transitive_digest(
 
         let mut transitive = Sha256::new();
         transitive.update(compile_digest.as_slice());
-        for loaded in module.loaded_modules().map.values() {
+        for loaded in module.loaded_modules().ordered_modules() {
             if loaded_module_bazel_digest_path(loaded).is_none() {
                 continue;
             }
