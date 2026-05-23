@@ -1073,6 +1073,50 @@ impl InterpreterForDir {
         })
     }
 
+    pub(crate) fn eval_bzlmod_module_extension_usages_digest(
+        self: &Arc<Self>,
+        extension_path: &ImportPath,
+        extension_usages_json: &str,
+        extension_unique_name: &str,
+        fallback_extension_bzl_file: &str,
+        fallback_extension_name: &str,
+        buckconfigs: &mut dyn BuckConfigsViewForStarlark,
+        eval_provider: StarlarkEvaluatorProvider,
+        cancellation: &CancellationContext,
+    ) -> buck2_error::Result<String> {
+        BuckStarlarkModule::with_profiling(|env| {
+            let extra_context = PerFileTypeContext::Bzl(BzlEvalCtx::new(extension_path.clone()));
+            let extra = BuildContext::new(
+                &self.cell_info,
+                buckconfigs,
+                self.global_state.configuror.host_info(),
+                extra_context,
+                self.ignore_attrs_for_profiling,
+            );
+
+            let print = EventDispatcherPrintHandler(get_dispatcher());
+            let globals = self.global_state.globals();
+            let (finished_eval, digest) =
+                eval_provider.with_evaluator(&env, cancellation.into(), |eval, _| {
+                    eval.set_print_handler(&print);
+                    eval.set_soft_error_handler(&Buck2StarlarkSoftErrorHandler);
+                    eval.extra = Some(&extra);
+                    Ok(
+                        crate::bazel_repository::bzlmod_module_extension_bazel_usages_digest_in_eval(
+                        extension_usages_json,
+                        extension_unique_name,
+                        fallback_extension_bzl_file,
+                        fallback_extension_name,
+                        globals,
+                        eval,
+                    )?,
+                    )
+                })?;
+            let (token, _) = finished_eval.finish()?;
+            Ok((token, digest))
+        })
+    }
+
     pub(crate) fn eval_bzlmod_repository_rule(
         self: &Arc<Self>,
         rule_path: &ImportPath,

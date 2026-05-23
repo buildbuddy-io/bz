@@ -107,7 +107,8 @@ use buck2_http::HttpClient;
 use buck2_http::HttpClientBuilder;
 use buck2_interpreter_for_build::bazel_repository::BazelRepositoryRuleCacheInfo;
 use buck2_interpreter_for_build::bazel_repository::BazelRepositoryRuleProgress;
-use buck2_interpreter_for_build::bazel_repository::bzlmod_module_extension_bzl_transitive_digest;
+use buck2_interpreter_for_build::bazel_repository::bzlmod_module_extension_bazel_bzl_transitive_digest;
+use buck2_interpreter_for_build::bazel_repository::bzlmod_module_extension_bazel_usages_digest;
 use buck2_interpreter_for_build::bazel_repository::bzlmod_module_extension_eval_factor_deps;
 use buck2_interpreter_for_build::bazel_repository::bzlmod_repository_rule_cache_info;
 use buck2_interpreter_for_build::bazel_repository::bzlmod_repository_rule_invocation_from_setup;
@@ -1404,7 +1405,7 @@ fn write_bazel_features_version_repo(
     .categorize_internal()?;
     fs_util::write(
         dest.join(ForwardRelativePath::new("version.bzl")?),
-        format!("version = {:?}\n", setup.bazel_version.as_ref()),
+        format!("version = '{}'", setup.bazel_version.as_ref()),
     )
     .categorize_internal()?;
     Ok(())
@@ -1516,10 +1517,10 @@ fn write_bazel_features_globals_repo(
             "None"
         };
         globals_bzl.push_str(&format!(
-            "    {global} = getattr(getattr(native, 'legacy_globals', None), {global:?}, {value}),\n"
+            "    {global} = getattr(getattr(native, 'legacy_globals', None), '{global}', {value}),\n"
         ));
     }
-    globals_bzl.push_str(")\n");
+    globals_bzl.push(')');
     fs_util::write(
         dest.join(ForwardRelativePath::new("globals.bzl")?),
         globals_bzl,
@@ -1536,8 +1537,8 @@ struct BazelFeatureGlobalVersions {
 fn parse_bazel_features_globals_dict(
     text: &str,
     path: &ProjectRelativePath,
-) -> buck2_error::Result<BTreeMap<String, BazelFeatureGlobalVersions>> {
-    let mut values = BTreeMap::new();
+) -> buck2_error::Result<Vec<(String, BazelFeatureGlobalVersions)>> {
+    let mut values = Vec::new();
     let mut in_dict = false;
 
     for line in text.lines() {
@@ -1561,13 +1562,13 @@ fn parse_bazel_features_globals_dict(
         let Some((min_version, max_version)) = parse_bazel_features_version_pair(value) else {
             continue;
         };
-        values.insert(
+        values.push((
             key,
             BazelFeatureGlobalVersions {
                 min_version,
                 max_version,
             },
-        );
+        ));
     }
 
     Err(BzlmodError::MissingBazelFeaturesGlobalsDict {
@@ -2722,7 +2723,7 @@ fn bzlmod_generated_repository_rule_materialization_stamp_content(
 
 fn bzlmod_generated_repo_contents_cache_key(setup: &BzlmodGeneratedCellSetup) -> String {
     let mut hasher = blake3::Hasher::new();
-    update_bzlmod_repo_contents_cache_key(&mut hasher, "buck2-bzlmod-generated-materialization-v3");
+    update_bzlmod_repo_contents_cache_key(&mut hasher, "buck2-bzlmod-generated-materialization-v4");
     update_bzlmod_repo_contents_cache_key(&mut hasher, std::env::consts::OS);
     update_bzlmod_repo_contents_cache_key(&mut hasher, std::env::consts::ARCH);
     update_bzlmod_repo_contents_cache_key(&mut hasher, &setup.canonical_repo_name);
@@ -3285,9 +3286,9 @@ struct BzlmodHiddenLockfileModuleExtensionEvaluation {
 #[derive(Debug, Deserialize)]
 struct BzlmodWorkspaceLockfileModuleExtensionEvaluation {
     #[serde(default, rename = "bzlTransitiveDigest")]
-    _bzl_transitive_digest: String,
+    bzl_transitive_digest: String,
     #[serde(default, rename = "usagesDigest")]
-    _usages_digest: String,
+    usages_digest: String,
     #[serde(default, rename = "recordedInputs")]
     recorded_inputs: Vec<String>,
     #[serde(default, rename = "generatedRepoSpecs")]
@@ -3742,16 +3743,15 @@ async fn bzlmod_workspace_lockfile_recorded_inputs_are_current(
     Ok(true)
 }
 
-async fn read_bzlmod_workspace_lockfile_extension(
+async fn read_bzlmod_workspace_lockfile_extension_candidate(
     ctx: &mut DiceComputations<'_>,
     setup: &BzlmodModuleExtensionRepoSetup,
     eval_factors: &BzlmodModuleExtensionEvalFactors,
-) -> buck2_error::Result<Option<Arc<BazelModuleExtensionEvaluationResult>>> {
+) -> buck2_error::Result<Option<BzlmodWorkspaceLockfileModuleExtensionEvaluation>> {
     let extension_key = bzlmod_lockfile_extension_key_from_setup(setup)?;
     let factor_key = eval_factors.lockfile_key();
     let project_root = ctx.global_data().get_io_provider().project_root().dupe();
-    let evaluation = ctx
-        .get_blocking_executor()
+    ctx.get_blocking_executor()
         .execute_io_inline(move || {
             let lockfile_path = project_root.resolve(&bzlmod_workspace_lockfile_path());
             let Some(contents) = fs_util::read_to_string_if_exists(lockfile_path)? else {
@@ -3763,10 +3763,21 @@ async fn read_bzlmod_workspace_lockfile_extension(
                 &factor_key,
             )
         })
-        .await?;
-    let Some(evaluation) = evaluation else {
+        .await
+}
+
+async fn validate_bzlmod_workspace_lockfile_extension(
+    ctx: &mut DiceComputations<'_>,
+    evaluation: BzlmodWorkspaceLockfileModuleExtensionEvaluation,
+    bzl_transitive_digest: &str,
+    usages_digest: &str,
+) -> buck2_error::Result<Option<Arc<BazelModuleExtensionEvaluationResult>>> {
+    if evaluation.bzl_transitive_digest != bzl_transitive_digest {
         return Ok(None);
-    };
+    }
+    if evaluation.usages_digest != usages_digest {
+        return Ok(None);
+    }
     if !bzlmod_workspace_lockfile_recorded_inputs_are_current(ctx, &evaluation.recorded_inputs)
         .await?
     {
@@ -4010,12 +4021,23 @@ impl Key for BzlmodSingleExtensionEvalKey {
     ) -> Self::Value {
         let eval_factors = BzlmodModuleExtensionEvalFactors::from_setup(ctx, &self.setup).await?;
         let bzl_transitive_digest =
-            bzlmod_module_extension_bzl_transitive_digest(ctx, &self.setup).await?;
-        let usages_digest = self.setup.extension_usages_key.to_string();
+            bzlmod_module_extension_bazel_bzl_transitive_digest(ctx, &self.setup).await?;
+        let usages_digest =
+            bzlmod_module_extension_bazel_usages_digest(ctx, &self.setup, cancellations).await?;
         if let Some(evaluation) =
-            read_bzlmod_workspace_lockfile_extension(ctx, &self.setup, &eval_factors).await?
+            read_bzlmod_workspace_lockfile_extension_candidate(ctx, &self.setup, &eval_factors)
+                .await?
         {
-            return Ok(evaluation);
+            if let Some(evaluation) = validate_bzlmod_workspace_lockfile_extension(
+                ctx,
+                evaluation,
+                &bzl_transitive_digest,
+                &usages_digest,
+            )
+            .await?
+            {
+                return Ok(evaluation);
+            }
         }
         if let Some(evaluation) = read_bzlmod_hidden_lockfile_extension(
             ctx,

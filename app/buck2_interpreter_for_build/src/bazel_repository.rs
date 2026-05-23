@@ -443,6 +443,28 @@ fn repository_rule_label_attr_expression(
     ))
 }
 
+fn bazel_canonical_starlark_label_string(
+    label: &StarlarkProvidersLabel,
+) -> starlark::Result<String> {
+    let target = label.label().target();
+    let cell_name = target.pkg().cell_name();
+    let cell_name = cell_name.as_str();
+    let repo_name = if cell_name == "root" {
+        String::new()
+    } else if cell_name == "bazel_tools" {
+        "bazel_tools".to_owned()
+    } else {
+        bzlmod_canonical_repo_name_for_cell(cell_name).unwrap_or_else(|| cell_name.to_owned())
+    };
+    let package = target.pkg().cell_relative_path().as_str();
+    let name = target.name().as_str();
+    if repo_name.is_empty() {
+        Ok(format!("@@//{package}:{name}"))
+    } else {
+        Ok(format!("@@{repo_name}//{package}:{name}"))
+    }
+}
+
 fn repository_rule_source_uses_unresolved_dynamic_label(source: &str) -> bool {
     let bytes = source.as_bytes();
     let mut offset = 0usize;
@@ -964,6 +986,8 @@ fn validate_module_extension_return<'v>(
 struct BzlmodModuleExtensionEvaluationConfig {
     root_module_has_non_dev_dependency: bool,
     modules: Vec<BzlmodModuleExtensionModuleConfig>,
+    #[serde(default)]
+    repo_overrides: Vec<(String, String)>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -972,6 +996,10 @@ struct BzlmodModuleExtensionModuleConfig {
     version: String,
     canonical_repo_name: String,
     is_root: bool,
+    #[serde(default)]
+    extension_bzl_file: String,
+    #[serde(default)]
+    extension_name: String,
     cell_aliases: Vec<(String, String)>,
     constants: Vec<(String, String)>,
     tags: Vec<BzlmodModuleExtensionTagConfig>,
@@ -1566,6 +1594,91 @@ async fn bzlmod_bzl_transitive_digest(
     Ok(blake3::Hasher::finalize(&hasher).to_hex().to_string())
 }
 
+fn collect_loaded_module_bazel_digest_postorder(
+    module: &LoadedModule,
+    seen: &mut BTreeSet<String>,
+    modules: &mut Vec<LoadedModule>,
+) {
+    let key = module.path().to_string();
+    if !seen.insert(key) {
+        return;
+    }
+    for loaded in module.loaded_modules().map.values() {
+        if loaded_module_bazel_digest_path(loaded).is_some() {
+            collect_loaded_module_bazel_digest_postorder(loaded, seen, modules);
+        }
+    }
+    if loaded_module_bazel_digest_path(module).is_some() {
+        modules.push(module.dupe());
+    }
+}
+
+fn loaded_module_bazel_digest_path(module: &LoadedModule) -> Option<ImportPath> {
+    match module.path() {
+        StarlarkModulePath::LoadFile(path)
+            if repository_rule_should_scan_loaded_module_cell(path.path().cell().as_str()) =>
+        {
+            Some(path.clone())
+        }
+        _ => None,
+    }
+}
+
+async fn bzlmod_bazel_bzl_transitive_digest(
+    ctx: &mut DiceComputations<'_>,
+    bzl_path: ImportPath,
+) -> buck2_error::Result<String> {
+    let bzl_module = ctx
+        .get_loaded_module(StarlarkModulePath::LoadFile(&bzl_path))
+        .await?;
+    let mut modules = Vec::new();
+    collect_loaded_module_bazel_digest_postorder(&bzl_module, &mut BTreeSet::new(), &mut modules);
+
+    let mut digests = HashMap::<String, Vec<u8>>::new();
+    for module in modules {
+        let path = loaded_module_bazel_digest_path(&module).ok_or_else(|| {
+            buck2_error::buck2_error!(
+                buck2_error::ErrorTag::Input,
+                "loaded module `{}` cannot be included in a Bazel bzl transitive digest",
+                module.path()
+            )
+        })?;
+        let source = DiceFileComputations::read_file(ctx, path.path().as_ref())
+            .await
+            .with_package_context_information(path.path().path().to_string())?;
+        let compile_digest = Sha256::digest(source.as_bytes());
+
+        let mut transitive = Sha256::new();
+        transitive.update(compile_digest.as_slice());
+        for loaded in module.loaded_modules().map.values() {
+            if loaded_module_bazel_digest_path(loaded).is_none() {
+                continue;
+            }
+            let key = loaded.path().to_string();
+            let digest = digests.get(&key).ok_or_else(|| {
+                buck2_error::buck2_error!(
+                    buck2_error::ErrorTag::Tier0,
+                    "missing Bazel bzl transitive digest for loaded module `{}`",
+                    key
+                )
+            })?;
+            transitive.update(digest);
+        }
+        let digest = transitive.finalize().to_vec();
+        digests.insert(module.path().to_string(), digest);
+    }
+    let root_digest = digests
+        .get(&StarlarkModulePath::LoadFile(&bzl_path).to_string())
+        .ok_or_else(|| {
+            buck2_error::buck2_error!(
+                buck2_error::ErrorTag::Tier0,
+                "missing Bazel bzl transitive digest for root module `{}`",
+                bzl_path
+            )
+        })?;
+    Ok(BASE64_STANDARD.encode(root_digest))
+}
+
 pub async fn bzlmod_module_extension_bzl_transitive_digest(
     ctx: &mut DiceComputations<'_>,
     setup: &BzlmodModuleExtensionRepoSetup,
@@ -1576,6 +1689,366 @@ pub async fn bzlmod_module_extension_bzl_transitive_digest(
     );
     let extension_path = ImportPath::new_same_cell(extension_cell_path)?;
     bzlmod_bzl_transitive_digest(ctx, extension_path).await
+}
+
+pub async fn bzlmod_module_extension_bazel_bzl_transitive_digest(
+    ctx: &mut DiceComputations<'_>,
+    setup: &BzlmodModuleExtensionRepoSetup,
+) -> buck2_error::Result<String> {
+    let extension_cell_path = CellPath::new(
+        CellName::unchecked_new(&setup.extension_bzl_cell)?,
+        CellRelativePathBuf::try_from(setup.extension_bzl_path.to_string())?,
+    );
+    let extension_path = ImportPath::new_same_cell(extension_cell_path)?;
+    bzlmod_bazel_bzl_transitive_digest(ctx, extension_path).await
+}
+
+pub async fn bzlmod_module_extension_bazel_usages_digest(
+    ctx: &mut DiceComputations<'_>,
+    setup: &BzlmodModuleExtensionRepoSetup,
+    cancellation: &CancellationContext,
+) -> buck2_error::Result<String> {
+    let extension_cell_path = CellPath::new(
+        CellName::unchecked_new(&setup.extension_bzl_cell)?,
+        CellRelativePathBuf::try_from(setup.extension_bzl_path.to_string())?,
+    );
+    let extension_path = ImportPath::new_same_cell(extension_cell_path)?;
+    let mut interpreter = ctx
+        .get_interpreter_calculator(OwnedStarlarkPath::LoadFile(extension_path.clone()))
+        .await?;
+    interpreter
+        .eval_bzlmod_module_extension_usages_digest(
+            &extension_path,
+            &setup.extension_usages_json,
+            &setup.extension_unique_name,
+            &setup.extension_bzl_file,
+            &setup.extension_name,
+            cancellation,
+        )
+        .await
+}
+
+pub(crate) fn bzlmod_module_extension_bazel_usages_digest_in_eval<'v>(
+    extension_usages_json: &str,
+    extension_unique_name: &str,
+    fallback_extension_bzl_file: &str,
+    fallback_extension_name: &str,
+    globals: &Globals,
+    eval: &mut Evaluator<'v, '_, '_>,
+) -> starlark::Result<String> {
+    let config: BzlmodModuleExtensionEvaluationConfig = serde_json::from_str(extension_usages_json)
+        .map_err(|e| {
+            buck2_error::Error::from(BazelRepositoryError::InvalidModuleExtensionUsageData)
+                .context(format!("JSON parse error: {e}"))
+        })?;
+    let mut expression_index = 0usize;
+    let mut json = String::new();
+    json.push('{');
+    json.push_str("\"extensionUsages\":");
+    bzlmod_bazel_usages_extension_usages_json(
+        &config.modules,
+        fallback_extension_bzl_file,
+        fallback_extension_name,
+        globals,
+        eval,
+        &mut expression_index,
+        &mut json,
+    )?;
+    json.push_str(",\"extensionUniqueName\":");
+    push_json_string(&mut json, extension_unique_name)?;
+    json.push_str(",\"abridgedModules\":");
+    bzlmod_bazel_usages_abridged_modules_json(&config.modules, &mut json)?;
+    json.push_str(",\"repoMappings\":{}");
+    json.push_str(",\"repoOverrides\":");
+    bzlmod_bazel_usages_repo_overrides_json(&config.repo_overrides, &mut json)?;
+    json.push('}');
+
+    let mut hasher = Sha256::new();
+    for code_unit in json.encode_utf16() {
+        hasher.update(code_unit.to_le_bytes());
+    }
+    Ok(BASE64_STANDARD.encode(hasher.finalize()))
+}
+
+fn bzlmod_bazel_usages_extension_usages_json<'v>(
+    modules: &[BzlmodModuleExtensionModuleConfig],
+    fallback_extension_bzl_file: &str,
+    fallback_extension_name: &str,
+    globals: &Globals,
+    eval: &mut Evaluator<'v, '_, '_>,
+    expression_index: &mut usize,
+    out: &mut String,
+) -> starlark::Result<()> {
+    out.push('{');
+    for (index, module) in modules.iter().enumerate() {
+        if index != 0 {
+            out.push(',');
+        }
+        push_json_string(out, &bzlmod_bazel_module_key(module))?;
+        out.push(':');
+        bzlmod_bazel_usages_module_usage_json(
+            module,
+            fallback_extension_bzl_file,
+            fallback_extension_name,
+            globals,
+            eval,
+            expression_index,
+            out,
+        )?;
+    }
+    out.push('}');
+    Ok(())
+}
+
+fn bzlmod_bazel_usages_module_usage_json<'v>(
+    module: &BzlmodModuleExtensionModuleConfig,
+    fallback_extension_bzl_file: &str,
+    fallback_extension_name: &str,
+    globals: &Globals,
+    eval: &mut Evaluator<'v, '_, '_>,
+    expression_index: &mut usize,
+    out: &mut String,
+) -> starlark::Result<()> {
+    let extension_bzl_file = if module.extension_bzl_file.is_empty() {
+        fallback_extension_bzl_file
+    } else {
+        &module.extension_bzl_file
+    };
+    let extension_name = if module.extension_name.is_empty() {
+        fallback_extension_name
+    } else {
+        &module.extension_name
+    };
+    out.push('{');
+    out.push_str("\"extensionBzlFile\":");
+    push_json_string(out, extension_bzl_file)?;
+    out.push_str(",\"extensionName\":");
+    push_json_string(out, extension_name)?;
+    out.push_str(",\"proxies\":[]");
+    out.push_str(",\"tags\":");
+    bzlmod_bazel_usages_tags_json(module, globals, eval, expression_index, out)?;
+    out.push_str(",\"repoOverrides\":{}");
+    out.push('}');
+    Ok(())
+}
+
+fn bzlmod_bazel_usages_tags_json<'v>(
+    module: &BzlmodModuleExtensionModuleConfig,
+    globals: &Globals,
+    eval: &mut Evaluator<'v, '_, '_>,
+    expression_index: &mut usize,
+    out: &mut String,
+) -> starlark::Result<()> {
+    out.push('[');
+    for (index, tag) in module.tags.iter().enumerate() {
+        if index != 0 {
+            out.push(',');
+        }
+        out.push('{');
+        out.push_str("\"tagName\":");
+        push_json_string(out, &tag.tag_name)?;
+        out.push_str(",\"attributeValues\":");
+        bzlmod_bazel_usages_attribute_values_json(
+            module,
+            tag,
+            globals,
+            eval,
+            expression_index,
+            out,
+        )?;
+        out.push_str(",\"devDependency\":");
+        out.push_str(if tag.dev_dependency { "true" } else { "false" });
+        out.push_str(",\"location\":{\"file\":\"<builtin>\",\"line\":0,\"column\":0}");
+        out.push('}');
+    }
+    out.push(']');
+    Ok(())
+}
+
+fn bzlmod_bazel_usages_attribute_values_json<'v>(
+    module: &BzlmodModuleExtensionModuleConfig,
+    tag: &BzlmodModuleExtensionTagConfig,
+    globals: &Globals,
+    eval: &mut Evaluator<'v, '_, '_>,
+    expression_index: &mut usize,
+    out: &mut String,
+) -> starlark::Result<()> {
+    let mut expression_bindings = module.constants.clone();
+    expression_bindings.extend(tag.bindings.iter().cloned());
+    out.push('{');
+    for (index, (attr_name, expression)) in tag.kwargs.iter().enumerate() {
+        if index != 0 {
+            out.push(',');
+        }
+        push_json_string(out, attr_name)?;
+        out.push(':');
+        let value_name = format!("buck_bzlmod_usage_digest_tag_value_{expression_index}");
+        *expression_index += 1;
+        let raw_value = eval_bzlmod_tag_expression(
+            expression,
+            &expression_bindings,
+            &value_name,
+            globals,
+            eval,
+        )?;
+        bzlmod_bazel_usages_attribute_value_json(raw_value, out)?;
+    }
+    out.push('}');
+    Ok(())
+}
+
+fn bzlmod_bazel_usages_attribute_value_json(
+    value: Value<'_>,
+    out: &mut String,
+) -> starlark::Result<()> {
+    if value.is_none() {
+        out.push_str("null");
+        return Ok(());
+    }
+    if let Some(value) = value.unpack_bool() {
+        out.push_str(if value { "true" } else { "false" });
+        return Ok(());
+    }
+    if let Some(value) = value.unpack_i32() {
+        out.push_str(&value.to_string());
+        return Ok(());
+    }
+    if let Some(label) = StarlarkProvidersLabel::from_value(value) {
+        let label = bazel_canonical_starlark_label_string(&label)?;
+        push_json_string(out, &label)?;
+        return Ok(());
+    }
+    if let Some(value) = value.unpack_str() {
+        push_json_string(out, &bzlmod_bazel_usages_attribute_string(value))?;
+        return Ok(());
+    }
+    if let Some(dict) = DictRef::from_value(value) {
+        out.push('{');
+        for (index, (key, value)) in dict.iter().enumerate() {
+            if index != 0 {
+                out.push(',');
+            }
+            let key = bzlmod_bazel_usages_attribute_key_string(key)?;
+            push_json_string(out, &key)?;
+            out.push(':');
+            bzlmod_bazel_usages_attribute_value_json(value, out)?;
+        }
+        out.push('}');
+        return Ok(());
+    }
+    if let Some(list) = ListRef::from_value(value) {
+        out.push('[');
+        for (index, value) in list.iter().enumerate() {
+            if index != 0 {
+                out.push(',');
+            }
+            bzlmod_bazel_usages_attribute_value_json(value, out)?;
+        }
+        out.push(']');
+        return Ok(());
+    }
+    if let Some(tuple) = TupleRef::from_value(value) {
+        out.push('[');
+        for (index, value) in tuple.iter().enumerate() {
+            if index != 0 {
+                out.push(',');
+            }
+            bzlmod_bazel_usages_attribute_value_json(value, out)?;
+        }
+        out.push(']');
+        return Ok(());
+    }
+    Err(buck2_error::buck2_error!(
+        buck2_error::ErrorTag::Input,
+        "unsupported bzlmod module extension tag value `{}` of type `{}` for Bazel usagesDigest",
+        value.to_repr(),
+        value.get_type()
+    )
+    .into())
+}
+
+fn bzlmod_bazel_usages_attribute_key_string(value: Value<'_>) -> starlark::Result<String> {
+    if let Some(label) = StarlarkProvidersLabel::from_value(value) {
+        return bazel_canonical_starlark_label_string(&label);
+    }
+    if let Some(value) = value.unpack_str() {
+        return Ok(bzlmod_bazel_usages_attribute_string(value));
+    }
+    Err(buck2_error::buck2_error!(
+        buck2_error::ErrorTag::Input,
+        "unsupported bzlmod module extension tag dict key `{}` of type `{}` for Bazel usagesDigest",
+        value.to_repr(),
+        value.get_type()
+    )
+    .into())
+}
+
+fn bzlmod_bazel_usages_attribute_string(value: &str) -> String {
+    if value.starts_with("@@") || (value.starts_with('\'') && value.ends_with('\'')) {
+        format!("'{value}'")
+    } else {
+        value.to_owned()
+    }
+}
+
+fn bzlmod_bazel_usages_abridged_modules_json(
+    modules: &[BzlmodModuleExtensionModuleConfig],
+    out: &mut String,
+) -> starlark::Result<()> {
+    out.push('[');
+    for (index, module) in modules.iter().enumerate() {
+        if index != 0 {
+            out.push(',');
+        }
+        out.push('{');
+        out.push_str("\"name\":");
+        push_json_string(out, &module.name)?;
+        out.push_str(",\"version\":");
+        push_json_string(out, &module.version)?;
+        out.push_str(",\"key\":");
+        push_json_string(out, &bzlmod_bazel_module_key(module))?;
+        out.push('}');
+    }
+    out.push(']');
+    Ok(())
+}
+
+fn bzlmod_bazel_usages_repo_overrides_json(
+    repo_overrides: &[(String, String)],
+    out: &mut String,
+) -> starlark::Result<()> {
+    out.push('{');
+    for (index, (repo_name, canonical_repo_name)) in repo_overrides.iter().enumerate() {
+        if index != 0 {
+            out.push(',');
+        }
+        push_json_string(out, repo_name)?;
+        out.push(':');
+        push_json_string(out, canonical_repo_name)?;
+    }
+    out.push('}');
+    Ok(())
+}
+
+fn bzlmod_bazel_module_key(module: &BzlmodModuleExtensionModuleConfig) -> String {
+    if module.is_root {
+        "<root>".to_owned()
+    } else if module.version.is_empty() {
+        format!("{}@_", module.name)
+    } else {
+        format!("{}@{}", module.name, module.version)
+    }
+}
+
+fn push_json_string(out: &mut String, value: &str) -> starlark::Result<()> {
+    let encoded = serde_json::to_string(value).map_err(|e| {
+        buck2_error::buck2_error!(
+            buck2_error::ErrorTag::Tier0,
+            "failed to serialize Bazel lockfile string: {e}"
+        )
+    })?;
+    out.push_str(&encoded);
+    Ok(())
 }
 
 #[derive(Debug, Clone, Copy)]

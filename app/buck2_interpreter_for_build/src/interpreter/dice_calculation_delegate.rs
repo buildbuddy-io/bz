@@ -501,6 +501,37 @@ impl<'c, 'd: 'c> DiceCalculationDelegate<'c, 'd> {
         )
     }
 
+    pub async fn eval_bzlmod_module_extension_usages_digest(
+        &mut self,
+        extension_path: &ImportPath,
+        extension_usages_json: &str,
+        extension_unique_name: &str,
+        fallback_extension_bzl_file: &str,
+        fallback_extension_name: &str,
+        cancellation: &CancellationContext,
+    ) -> buck2_error::Result<String> {
+        let buckconfig = self.get_legacy_buck_config_for_starlark().await?;
+        let root_buckconfig = self.ctx.get_legacy_root_config_on_dice().await?;
+
+        let configs = &self.configs;
+        let ctx = &mut *self.ctx;
+        let eval_kind = StarlarkEvalKind::Unknown(
+            format!("bzlmod_module_extension_usages_digest/{extension_path}").into(),
+        );
+        let provider = StarlarkEvaluatorProvider::new(ctx, eval_kind).await?;
+        let mut buckconfigs = ConfigsOnDiceViewForStarlark::new(ctx, buckconfig, root_buckconfig);
+        configs.eval_bzlmod_module_extension_usages_digest(
+            extension_path,
+            extension_usages_json,
+            extension_unique_name,
+            fallback_extension_bzl_file,
+            fallback_extension_name,
+            &mut buckconfigs,
+            provider,
+            cancellation,
+        )
+    }
+
     pub(crate) async fn eval_bzlmod_repository_rule(
         &mut self,
         rule_path: &ImportPath,
