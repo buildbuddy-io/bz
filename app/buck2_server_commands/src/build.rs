@@ -31,6 +31,7 @@ use buck2_build_api::build::build_report::write_build_report;
 use buck2_build_api::build::detailed_aggregated_metrics::dice::HasDetailedAggregatedMetrics;
 use buck2_build_api::build::detailed_aggregated_metrics::types::ActionGraphSketchResult;
 use buck2_build_api::build::detailed_aggregated_metrics::types::DetailedAggregatedMetrics;
+use buck2_build_api::build::eager::HasEagerBuildExecution;
 use buck2_build_api::build::graph_properties::GraphPropertiesOptions;
 use buck2_build_api::build::overlap::HasBuildOverlapTracker;
 use buck2_build_api::materialize::MaterializationAndUploadContext;
@@ -635,6 +636,7 @@ async fn build_targets(
         AsyncBuildTargetResultBuilder::new(streaming_build_result_tx, build_start);
     ctx.per_transaction_data()
         .set_build_event_sink(consumer.clone())?;
+    ctx.per_transaction_data().enable_eager_build_execution()?;
     let fut = match target_resolution_config {
         TargetResolutionConfig::Default(global_cfg_options) => {
             let spec = spec.convert_pattern().buck_error_context(
@@ -667,7 +669,9 @@ async fn build_targets(
         .right_future(),
     };
 
-    builder.wait_for(fail_fast, fut).await
+    let result = builder.wait_for(fail_fast, fut).await;
+    ctx.per_transaction_data().cancel_eager_build_execution();
+    result
 }
 
 async fn request_build_driver(

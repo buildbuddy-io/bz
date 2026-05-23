@@ -21,6 +21,7 @@ use dice_error::DiceResult;
 use dice_error::result::CancellableResult;
 use dice_error::result::CancellationReason;
 use dice_futures::cancellation::CancellationContext;
+use dice_futures::cancellation::CancellationHandle;
 use dice_futures::owning_future::OwningFuture;
 use dice_futures::spawn::spawn_dropcancel;
 use dupe::Dupe;
@@ -340,6 +341,41 @@ impl ModernComputeCtx<'_> {
 
             res
         })
+    }
+
+    pub fn spawn_detached<Compute>(&mut self, closure: Compute) -> CancellationHandle
+    where
+        Compute: (for<'x> FnOnce(
+                &'x mut DiceComputations<'_>,
+                &'x CancellationContext,
+            ) -> BoxFuture<'x, ()>)
+            + Send
+            + 'static,
+    {
+        let ctx_data = self.ctx_data();
+        let mut inner_ctx: DiceComputations<'static> =
+            DiceComputations(DiceComputationsImpl(ModernComputeCtx::new(
+                ctx_data.parent_key,
+                ctx_data.cycles.clone(),
+                ctx_data.async_evaluator.dupe(),
+            )));
+
+        let user_data = ctx_data.per_transaction_data();
+        let spawner = user_data.spawner.dupe();
+        let ctx_data = user_data.dupe();
+
+        let task = spawn_dropcancel(
+            |cancellation| {
+                async move {
+                    closure(&mut inner_ctx, cancellation).await;
+                }
+                .boxed()
+            },
+            &*spawner,
+            ctx_data,
+        );
+        let (_join, cancellation) = task.detach();
+        cancellation
     }
 
     pub(crate) fn opaque_into_value<K: Key>(&mut self, opaque: OpaqueValue<K>) -> K::Value {

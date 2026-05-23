@@ -29,6 +29,7 @@ use crate::api::user_data::UserCycleDetectorGuard;
 use crate::impls::ctx::LinearRecomputeModern;
 use crate::impls::ctx::ModernComputeCtx;
 use crate::versions::VersionNumber;
+use dice_futures::cancellation::CancellationHandle;
 
 /// This is a wrapper around ModernComputeCtx.
 ///
@@ -152,6 +153,18 @@ impl DiceComputationsImpl<'_> {
             + 'static,
     {
         self.0.spawned(closure)
+    }
+
+    pub fn spawn_detached<Compute>(&mut self, closure: Compute) -> CancellationHandle
+    where
+        Compute: (for<'x> FnOnce(
+                &'x mut DiceComputations<'_>,
+                &'x CancellationContext,
+            ) -> BoxFuture<'x, ()>)
+            + Send
+            + 'static,
+    {
+        self.0.spawn_detached(closure)
     }
 
     /// Data that is static per the entire lifetime of Dice. These data are initialized at the

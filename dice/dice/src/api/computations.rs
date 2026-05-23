@@ -15,6 +15,7 @@ use allocative::Allocative;
 use async_trait::async_trait;
 use dice_error::DiceResult;
 use dice_futures::cancellation::CancellationContext;
+use dice_futures::cancellation::CancellationHandle;
 use dice_futures::owning_future::OwningFuture;
 use dupe::Dupe;
 use futures::FutureExt;
@@ -381,6 +382,23 @@ impl DiceComputations<'_> {
             + 'static,
     {
         self.0.spawned(closure)
+    }
+
+    /// Spawn a detached computation on a new tokio task.
+    ///
+    /// Unlike [`DiceComputations::spawned`], dependencies accessed by this task are not merged
+    /// into the parent computation. This is intended for speculative work where the correctness
+    /// dependency will be recorded by the eventual non-speculative request.
+    pub fn spawn_detached<Compute>(&mut self, closure: Compute) -> CancellationHandle
+    where
+        Compute: (for<'x> FnOnce(
+                &'x mut DiceComputations<'_>,
+                &'x CancellationContext,
+            ) -> BoxFuture<'x, ()>)
+            + Send
+            + 'static,
+    {
+        self.0.spawn_detached(closure)
     }
 }
 

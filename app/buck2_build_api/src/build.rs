@@ -51,6 +51,7 @@ pub mod build_report;
 mod completion;
 pub mod detailed_aggregated_metrics;
 mod driver;
+pub mod eager;
 pub mod graph_properties;
 pub mod outputs;
 pub mod overlap;

@@ -19,6 +19,7 @@ use buck2_build_api::analysis::calculation::RULE_ANALYSIS_CALCULATION;
 use buck2_build_api::analysis::calculation::RuleAnalysisCalculation;
 use buck2_build_api::analysis::calculation::RuleAnalysisCalculationImpl;
 use buck2_build_api::build::detailed_aggregated_metrics::dice::HasDetailedAggregatedMetrics;
+use buck2_build_api::build::eager::schedule_eager_inputs_from_analysis;
 use buck2_build_api::build::overlap::HasBuildOverlapTracker;
 use buck2_build_api::deferred::calculation::DeferredHolder;
 use buck2_build_api::keep_going::KeepGoing;
@@ -116,6 +117,7 @@ impl Key for AnalysisKey {
         let res = res?;
         if let MaybeCompatible::Compatible(v) = &res {
             ctx.analysis_complete(&deferred_key, &DeferredHolder::Analysis(v.dupe()))?;
+            schedule_eager_inputs_from_analysis(ctx, v)?;
         }
         Ok(res)
     }
