@@ -2473,13 +2473,19 @@ struct ExternalCellRootAlias {
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 struct ExternalCellRoot {
     source_root: ProjectRelativePathBuf,
+    external_cells_root: String,
     kind: String,
     repo: String,
 }
 
 fn external_cell_root(path: &ProjectRelativePath) -> Option<ExternalCellRoot> {
     let path = path.as_str();
-    let rest = path.strip_prefix("buck-out/v2/external_cells/")?;
+    let rest = path.strip_prefix("buck-out/")?;
+    let (isolation_dir, rest) = rest.split_once('/')?;
+    if isolation_dir.is_empty() {
+        return None;
+    }
+    let rest = rest.strip_prefix("external_cells/")?;
     let (kind, rest) = rest.split_once('/')?;
     if kind.is_empty() {
         return None;
@@ -2489,10 +2495,12 @@ fn external_cell_root(path: &ProjectRelativePath) -> Option<ExternalCellRoot> {
         return None;
     }
 
+    let external_cells_root = format!("buck-out/{isolation_dir}/external_cells");
     Some(ExternalCellRoot {
         source_root: ProjectRelativePathBuf::unchecked_new(format!(
-            "buck-out/v2/external_cells/{kind}/{repo}"
+            "{external_cells_root}/{kind}/{repo}"
         )),
+        external_cells_root,
         kind: kind.to_owned(),
         repo: repo.to_owned(),
     })
@@ -2532,8 +2540,8 @@ fn external_cell_root_alias(
     }
 
     let source_alias_root = format!(
-        "{execroot}/buck-out/v2/external_cells/{}/{}",
-        external_root.kind, external_root.repo
+        "{execroot}/{}/{}/{}",
+        external_root.external_cells_root, external_root.kind, external_root.repo
     );
     if path_is_at_or_under(alias, &source_alias_root) {
         return Some((
@@ -3719,6 +3727,46 @@ mod tests {
             BuckOutPathResolver::new(ProjectRelativePathBuf::unchecked_new("buck_out/v2".into())),
             project_fs,
         )
+    }
+
+    #[test]
+    fn test_external_cell_root_uses_isolation_dir() -> buck2_error::Result<()> {
+        let root = external_cell_root(ProjectRelativePath::new(
+            "buck-out/debug/external_cells/bundled/bazel_tools/src/main/cpp/util/port.cc",
+        )?)
+        .expect("external cell root");
+
+        assert_eq!(
+            root.source_root.as_str(),
+            "buck-out/debug/external_cells/bundled/bazel_tools"
+        );
+        assert_eq!(root.external_cells_root, "buck-out/debug/external_cells");
+        assert_eq!(root.kind, "bundled");
+        assert_eq!(root.repo, "bazel_tools");
+        Ok(())
+    }
+
+    #[test]
+    fn test_external_cell_root_alias_uses_isolation_dir() -> buck2_error::Result<()> {
+        let (source_root, alias_root) = external_cell_root_alias(
+            ProjectRelativePath::new(
+                "buck-out/debug/external_cells/bundled/bazel_tools/src/main/cpp/util/port.cc",
+            )?,
+            ProjectRelativePath::new(
+                "buck-out/debug/__bazel_execroot/abcdef0123456789/external/bazel_tools/src/main/cpp/util/port.cc",
+            )?,
+        )
+        .expect("external cell alias");
+
+        assert_eq!(
+            source_root.as_str(),
+            "buck-out/debug/external_cells/bundled/bazel_tools"
+        );
+        assert_eq!(
+            alias_root.as_str(),
+            "buck-out/debug/__bazel_execroot/abcdef0123456789/external/bazel_tools"
+        );
+        Ok(())
     }
 
     #[test]

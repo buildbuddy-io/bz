@@ -434,10 +434,15 @@ impl FileOpsDelegate for BundledFileOpsDelegate {
 
     async fn read_path_metadata_if_exists_for_no_watchfs(
         &self,
-        _ctx: &mut DiceComputations<'_>,
+        ctx: &mut DiceComputations<'_>,
         path: &'async_trait CellRelativePath,
     ) -> buck2_error::Result<Option<RawPathMetadata>> {
-        self.read_path_metadata_if_exists(path)
+        let metadata = self.read_path_metadata_if_exists(path)?;
+        if matches!(metadata, Some(RawPathMetadata::File(_))) {
+            self.declare_file_source_artifact_if_exists(ctx, path)
+                .await?;
+        }
+        Ok(metadata)
     }
 
     async fn read_path_metadata_for_no_watchfs_if_exists_without_dice(
