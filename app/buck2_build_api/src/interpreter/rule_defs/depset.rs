@@ -330,6 +330,14 @@ impl<'v, V: ValueLike<'v>> BazelDepsetGen<'v, V> {
             return Ok(values.iter().map(|value| value.value.to_value()).collect());
         }
 
+        if self.transitive.is_empty() {
+            return Ok(self.direct.iter().map(|value| value.to_value()).collect());
+        }
+
+        if self.direct.is_empty() && self.transitive.len() == 1 {
+            return depset_from_value(self.transitive[0].to_value())?.to_list_cached();
+        }
+
         let mut values = Vec::new();
         let mut seen_values = SmallSet::new();
         let mut seen_depsets = SmallSet::new();
@@ -397,10 +405,7 @@ impl<'v, V: ValueLike<'v>> BazelDepsetGen<'v, V> {
     }
 
     fn is_empty(&self) -> bool {
-        self.direct.is_empty()
-            && self.transitive.iter().all(|transitive| {
-                depset_from_value(transitive.to_value()).map_or(false, BazelDepsetGen::is_empty)
-            })
+        self.direct.is_empty() && self.transitive.is_empty()
     }
 
     fn count_unique_values_up_to(
@@ -753,9 +758,13 @@ fn bazel_depset_from_direct_and_transitive_values<'v>(
 ) -> starlark::Result<BazelDepset<'v>> {
     let mut depset = bazel_depset_from_direct(direct)?;
     let mut element_type = depset.element_type.clone();
+    let mut non_empty_transitive = Vec::with_capacity(transitive.len());
 
-    for value in &transitive {
-        let transitive_depset = depset_from_value(*value)?;
+    for value in transitive {
+        let transitive_depset = depset_from_value(value)?;
+        if transitive_depset.is_empty() {
+            continue;
+        }
         let transitive_order = transitive_depset.order();
         if !order.is_compatible(transitive_order) {
             return Err(buck2_error::Error::from(BazelDepsetError::OrderMismatch {
@@ -777,13 +786,32 @@ fn bazel_depset_from_direct_and_transitive_values<'v>(
             (None, Some(actual)) => element_type = Some(actual.to_owned()),
             _ => {}
         }
+        non_empty_transitive.push(value);
     }
 
-    depset.transitive = transitive.into_boxed_slice();
+    depset.transitive = non_empty_transitive.into_boxed_slice();
     depset.order = order;
     depset.element_type = element_type;
 
     Ok(depset)
+}
+
+fn bazel_depset_from_direct_and_transitive_value<'v>(
+    heap: Heap<'v>,
+    direct: Vec<Value<'v>>,
+    transitive: Vec<Value<'v>>,
+    order: BazelDepsetOrder,
+) -> starlark::Result<Value<'v>> {
+    let depset = bazel_depset_from_direct_and_transitive_values(direct, transitive, order)?;
+
+    if depset.direct.is_empty()
+        && depset.transitive.len() == 1
+        && depset_from_value(depset.transitive[0].to_value())?.order() == order
+    {
+        return Ok(depset.transitive[0].to_value());
+    }
+
+    Ok(heap.alloc(depset))
 }
 
 pub(crate) fn bazel_depset_from_values<'v>(
@@ -798,11 +826,12 @@ pub(crate) fn bazel_depset_from_direct_and_transitive<'v>(
     direct: Vec<Value<'v>>,
     transitive: Vec<Value<'v>>,
 ) -> starlark::Result<Value<'v>> {
-    Ok(heap.alloc(bazel_depset_from_direct_and_transitive_values(
+    bazel_depset_from_direct_and_transitive_value(
+        heap,
         direct,
         transitive,
         BazelDepsetOrder::Default,
-    )?))
+    )
 }
 
 pub(crate) fn bazel_depset_from_transitive<'v>(
@@ -859,10 +888,11 @@ pub fn register_bazel_depset(builder: &mut GlobalsBuilder) {
         #[starlark(require = named, default = NoneOr::None)] transitive: NoneOr<
             UnpackListOrTuple<Value<'v>>,
         >,
-    ) -> starlark::Result<BazelDepset<'v>> {
+        heap: Heap<'v>,
+    ) -> starlark::Result<Value<'v>> {
         let order = BazelDepsetOrder::parse(order)?;
         let direct = direct.into_option().unwrap_or_default().items;
         let transitive = transitive.into_option().unwrap_or_default().items;
-        bazel_depset_from_direct_and_transitive_values(direct, transitive, order)
+        bazel_depset_from_direct_and_transitive_value(heap, direct, transitive, order)
     }
 }
