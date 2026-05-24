@@ -186,6 +186,10 @@ impl InvocationPaths {
         FileName::unchecked_new("bzlmod_cell_graph_module_extensions")
     }
 
+    fn bzlmod_hidden_dir_name(&self) -> &FileName {
+        FileName::unchecked_new("bzlmod_hidden")
+    }
+
     fn bzlmod_repo_contents_dir_name(&self) -> &FileName {
         FileName::unchecked_new("bzlmod_repo_contents")
     }
@@ -197,6 +201,7 @@ impl InvocationPaths {
             self.local_action_cache_dir_name(),
             self.bzlmod_bcr_discovery_dir_name(),
             self.bzlmod_cell_graph_module_extensions_dir_name(),
+            self.bzlmod_hidden_dir_name(),
             self.bzlmod_repo_contents_dir_name(),
         ]
     }

@@ -3153,6 +3153,107 @@ fn bzlmod_workspace_lockfile_path() -> ProjectRelativePathBuf {
     ProjectRelativePathBuf::unchecked_new("MODULE.bazel.lock".to_owned())
 }
 
+#[derive(
+    Clone,
+    Dupe,
+    derive_more::Display,
+    Debug,
+    Eq,
+    Hash,
+    PartialEq,
+    allocative::Allocative,
+    Pagable
+)]
+#[display("BZLMOD_WORKSPACE_LOCKFILE_JSON")]
+#[pagable_typetag(dice::DiceKeyDyn)]
+struct BzlmodWorkspaceLockfileJsonKey;
+
+#[async_trait::async_trait]
+impl Key for BzlmodWorkspaceLockfileJsonKey {
+    type Value = buck2_error::Result<Arc<serde_json::Value>>;
+
+    async fn compute(
+        &self,
+        ctx: &mut DiceComputations,
+        _cancellations: &CancellationContext,
+    ) -> Self::Value {
+        let project_root = ctx.global_data().get_io_provider().project_root().dupe();
+        ctx.get_blocking_executor()
+            .execute_io_inline(move || {
+                let lockfile_path = project_root.resolve(&bzlmod_workspace_lockfile_path());
+                let Some(contents) = fs_util::read_to_string_if_exists(lockfile_path)? else {
+                    return Ok(Arc::new(serde_json::json!({})));
+                };
+                serde_json::from_str(&contents)
+                    .map(Arc::new)
+                    .buck_error_context("Error parsing bzlmod workspace lockfile")
+            })
+            .await
+    }
+
+    fn equality(x: &Self::Value, y: &Self::Value) -> bool {
+        match (x, y) {
+            (Ok(x), Ok(y)) => x == y,
+            _ => false,
+        }
+    }
+
+    fn value_serialize() -> impl ValueSerialize<Value = Self::Value> {
+        NoValueSerialize::<Self::Value>::new()
+    }
+}
+
+#[derive(
+    Clone,
+    Dupe,
+    derive_more::Display,
+    Debug,
+    Eq,
+    Hash,
+    PartialEq,
+    allocative::Allocative,
+    Pagable
+)]
+#[display("BZLMOD_HIDDEN_LOCKFILE_JSON")]
+#[pagable_typetag(dice::DiceKeyDyn)]
+struct BzlmodHiddenLockfileJsonKey;
+
+#[async_trait::async_trait]
+impl Key for BzlmodHiddenLockfileJsonKey {
+    type Value = buck2_error::Result<Arc<serde_json::Value>>;
+
+    async fn compute(
+        &self,
+        ctx: &mut DiceComputations,
+        _cancellations: &CancellationContext,
+    ) -> Self::Value {
+        let project_root = ctx.global_data().get_io_provider().project_root().dupe();
+        ctx.get_blocking_executor()
+            .execute_io_inline(move || {
+                let lockfile_path = project_root.resolve(&bzlmod_hidden_lockfile_path());
+                let Some(contents) = fs_util::read_to_string_if_exists(&lockfile_path)? else {
+                    return Ok(Arc::new(serde_json::json!({})));
+                };
+                match serde_json::from_str(&contents) {
+                    Ok(lockfile) => Ok(Arc::new(lockfile)),
+                    Err(_) => Ok(Arc::new(serde_json::json!({}))),
+                }
+            })
+            .await
+    }
+
+    fn equality(x: &Self::Value, y: &Self::Value) -> bool {
+        match (x, y) {
+            (Ok(x), Ok(y)) => x == y,
+            _ => false,
+        }
+    }
+
+    fn value_serialize() -> impl ValueSerialize<Value = Self::Value> {
+        NoValueSerialize::<Self::Value>::new()
+    }
+}
+
 const BZLMOD_LOCKFILE_GENERAL_EXTENSION: &str = "general";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -3381,13 +3482,11 @@ fn bzlmod_workspace_lockfile_extension_evaluation_to_result(
     }))
 }
 
-fn bzlmod_hidden_lockfile_extension_evaluation_from_json(
-    contents: &str,
+fn bzlmod_hidden_lockfile_extension_evaluation_from_lockfile(
+    lockfile: &serde_json::Value,
     extension_key: &str,
     factor_key: &str,
 ) -> buck2_error::Result<Option<BzlmodHiddenLockfileModuleExtensionEvaluation>> {
-    let lockfile: serde_json::Value = serde_json::from_str(contents)
-        .buck_error_context("Error parsing hidden bzlmod lockfile")?;
     let Some(evaluation) = lockfile
         .get("moduleExtensions")
         .and_then(|module_extensions| module_extensions.get(extension_key))
@@ -3401,13 +3500,11 @@ fn bzlmod_hidden_lockfile_extension_evaluation_from_json(
     }
 }
 
-fn bzlmod_workspace_lockfile_extension_evaluation_from_json(
-    contents: &str,
+fn bzlmod_workspace_lockfile_extension_evaluation_from_lockfile(
+    lockfile: &serde_json::Value,
     extension_key: &str,
     factor_key: &str,
 ) -> buck2_error::Result<Option<BzlmodWorkspaceLockfileModuleExtensionEvaluation>> {
-    let lockfile: serde_json::Value = serde_json::from_str(contents)
-        .buck_error_context("Error parsing bzlmod workspace lockfile")?;
     let Some(evaluation) = lockfile
         .get("moduleExtensions")
         .and_then(|module_extensions| module_extensions.get(extension_key))
@@ -3750,20 +3847,12 @@ async fn read_bzlmod_workspace_lockfile_extension_candidate(
 ) -> buck2_error::Result<Option<BzlmodWorkspaceLockfileModuleExtensionEvaluation>> {
     let extension_key = bzlmod_lockfile_extension_key_from_setup(setup)?;
     let factor_key = eval_factors.lockfile_key();
-    let project_root = ctx.global_data().get_io_provider().project_root().dupe();
-    ctx.get_blocking_executor()
-        .execute_io_inline(move || {
-            let lockfile_path = project_root.resolve(&bzlmod_workspace_lockfile_path());
-            let Some(contents) = fs_util::read_to_string_if_exists(lockfile_path)? else {
-                return Ok(None);
-            };
-            bzlmod_workspace_lockfile_extension_evaluation_from_json(
-                &contents,
-                &extension_key,
-                &factor_key,
-            )
-        })
-        .await
+    let lockfile = ctx.compute(&BzlmodWorkspaceLockfileJsonKey).await??;
+    bzlmod_workspace_lockfile_extension_evaluation_from_lockfile(
+        lockfile.as_ref(),
+        &extension_key,
+        &factor_key,
+    )
 }
 
 async fn validate_bzlmod_workspace_lockfile_extension(
@@ -3795,21 +3884,12 @@ async fn read_bzlmod_hidden_lockfile_extension(
 ) -> buck2_error::Result<Option<Arc<BazelModuleExtensionEvaluationResult>>> {
     let extension_key = bzlmod_lockfile_extension_key_from_setup(setup)?;
     let factor_key = eval_factors.lockfile_key();
-    let project_root = ctx.global_data().get_io_provider().project_root().dupe();
-    let evaluation = ctx
-        .get_blocking_executor()
-        .execute_io_inline(move || {
-            let lockfile_path = project_root.resolve(&bzlmod_hidden_lockfile_path());
-            let Some(contents) = fs_util::read_to_string_if_exists(lockfile_path)? else {
-                return Ok(None);
-            };
-            bzlmod_hidden_lockfile_extension_evaluation_from_json(
-                &contents,
-                &extension_key,
-                &factor_key,
-            )
-        })
-        .await?;
+    let lockfile = ctx.compute(&BzlmodHiddenLockfileJsonKey).await??;
+    let evaluation = bzlmod_hidden_lockfile_extension_evaluation_from_lockfile(
+        lockfile.as_ref(),
+        &extension_key,
+        &factor_key,
+    )?;
     let Some(evaluation) = evaluation else {
         return Ok(None);
     };
