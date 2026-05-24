@@ -261,21 +261,44 @@ impl From<Uploads> for UploadContext {
 }
 
 #[derive(Clone, Dupe, Copy, Debug, Eq, PartialEq, Hash, Allocative, Pagable)]
-pub struct MaterializationAndUploadContext(MaterializationContext, UploadContext);
+enum OutputCompletionContext {
+    Complete,
+    Skip,
+}
+
+#[derive(Clone, Dupe, Copy, Debug, Eq, PartialEq, Hash, Allocative, Pagable)]
+pub struct MaterializationAndUploadContext(
+    MaterializationContext,
+    UploadContext,
+    OutputCompletionContext,
+);
 impl MaterializationAndUploadContext {
     pub fn skip() -> Self {
-        Self(MaterializationContext::Skip, UploadContext::Skip)
+        Self::complete(MaterializationContext::Skip, UploadContext::Skip)
     }
     pub fn materialize() -> Self {
-        Self(
+        Self::complete(
             MaterializationContext::Materialize { force: true },
             UploadContext::Skip,
         )
     }
+    pub fn no_execution() -> Self {
+        Self(
+            MaterializationContext::Skip,
+            UploadContext::Skip,
+            OutputCompletionContext::Skip,
+        )
+    }
+    pub fn complete_outputs(self) -> bool {
+        matches!(self.2, OutputCompletionContext::Complete)
+    }
+    fn complete(materialization: MaterializationContext, upload: UploadContext) -> Self {
+        Self(materialization, upload, OutputCompletionContext::Complete)
+    }
 }
 impl From<(Materializations, Uploads)> for MaterializationAndUploadContext {
     fn from(value: (Materializations, Uploads)) -> Self {
-        Self(value.0.into(), value.1.into())
+        Self::complete(value.0.into(), value.1.into())
     }
 }
 

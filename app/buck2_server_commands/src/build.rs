@@ -40,6 +40,7 @@ use buck2_cli_proto::build_request::BuildProviders;
 use buck2_cli_proto::build_request::Materializations;
 use buck2_cli_proto::build_request::Uploads;
 use buck2_cli_proto::build_request::build_providers::Action as BuildProviderAction;
+use buck2_cli_proto::common_build_options::ExecutionStrategy;
 use buck2_common::dice::cells::HasCellResolver;
 use buck2_common::legacy_configs::dice::HasLegacyConfigs;
 use buck2_common::legacy_configs::key::BuckconfigKeyRef;
@@ -232,6 +233,13 @@ async fn build(
     let final_artifact_uploads = Uploads::try_from(request.final_artifact_uploads)
         .with_buck_error_context(|| "Invalid final_artifact_uploads")
         .unwrap();
+    let execution_strategy = ExecutionStrategy::try_from(build_opts.execution_strategy)
+        .expect("execution strategy should be valid");
+    let materialization_and_upload = if execution_strategy == ExecutionStrategy::NoExecution {
+        MaterializationAndUploadContext::no_execution()
+    } else {
+        (final_artifact_materializations, final_artifact_uploads).into()
+    };
 
     let want_configured_graph_size = ctx
         .parse_legacy_config_property(
@@ -315,7 +323,7 @@ async fn build(
         resolved_pattern,
         target_resolution_config,
         build_providers,
-        (final_artifact_materializations, final_artifact_uploads).into(),
+        materialization_and_upload,
         build_opts.fail_fast,
         MissingTargetBehavior::from_skip(build_opts.skip_missing_targets),
         build_opts.skip_incompatible_targets,
@@ -636,7 +644,10 @@ async fn build_targets(
         AsyncBuildTargetResultBuilder::new(streaming_build_result_tx, build_start);
     ctx.per_transaction_data()
         .set_build_event_sink(consumer.clone())?;
-    ctx.per_transaction_data().enable_eager_build_execution()?;
+    let complete_outputs = materialization_and_upload.complete_outputs();
+    if complete_outputs {
+        ctx.per_transaction_data().enable_eager_build_execution()?;
+    }
     let fut = match target_resolution_config {
         TargetResolutionConfig::Default(global_cfg_options) => {
             let spec = spec.convert_pattern().buck_error_context(
@@ -670,7 +681,9 @@ async fn build_targets(
     };
 
     let result = builder.wait_for(fail_fast, fut).await;
-    ctx.per_transaction_data().cancel_eager_build_execution();
+    if complete_outputs {
+        ctx.per_transaction_data().cancel_eager_build_execution();
+    }
     result
 }
 

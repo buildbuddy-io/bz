@@ -245,6 +245,10 @@ async fn compute_target_completion(
         },
     )?;
 
+    if !key.materialization_and_upload.complete_outputs() {
+        return Ok(MaybeCompatible::Compatible(Arc::new(TargetCompletionValue)));
+    }
+
     publish_build_signal_edges(ctx, &key.providers_label, outputs.as_ref()).await?;
 
     let output_items: Vec<_> = outputs
