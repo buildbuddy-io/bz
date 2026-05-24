@@ -156,6 +156,32 @@ impl CommandExecutor {
                     local_action_cache_key,
                     outputs,
                     digest_config,
+                    outputs_declared_by_action: false,
+                },
+                manager,
+                cancellations,
+            )
+            .await
+    }
+
+    pub async fn unprepared_action_cache_declared_by_action(
+        &self,
+        manager: CommandExecutionManager,
+        target: &dyn crate::execute::target::CommandExecutionTarget,
+        local_action_cache_key: &LocalActionCacheKey,
+        outputs: &BuckIndexSet<CommandExecutionOutput>,
+        digest_config: DigestConfig,
+        cancellations: &CancellationContext,
+    ) -> ControlFlow<CommandExecutionResult, CommandExecutionManager> {
+        self.0
+            .action_cache_checker
+            .maybe_execute_unprepared(
+                &UnpreparedCommand {
+                    target,
+                    local_action_cache_key,
+                    outputs,
+                    digest_config,
+                    outputs_declared_by_action: true,
                 },
                 manager,
                 cancellations,

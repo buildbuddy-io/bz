@@ -527,6 +527,26 @@ impl ActionExecutionCtx for BuckActionExecutionContext<'_> {
             .await
     }
 
+    async fn unprepared_action_cache_declared_by_action(
+        &mut self,
+        manager: CommandExecutionManager,
+        local_action_cache_key: &LocalActionCacheKey,
+        outputs: &BuckIndexSet<CommandExecutionOutput>,
+    ) -> ControlFlow<CommandExecutionResult, CommandExecutionManager> {
+        let action = self.target();
+        self.executor
+            .command_executor
+            .unprepared_action_cache_declared_by_action(
+                manager,
+                &action as _,
+                local_action_cache_key,
+                outputs,
+                self.digest_config(),
+                self.cancellations,
+            )
+            .await
+    }
+
     fn insert_unprepared_action_cache_metadata(
         &mut self,
         local_action_cache_key: &LocalActionCacheKey,

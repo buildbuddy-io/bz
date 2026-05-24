@@ -312,6 +312,16 @@ pub trait ActionExecutionCtx: Send + Sync {
         ControlFlow::Continue(manager)
     }
 
+    async fn unprepared_action_cache_declared_by_action(
+        &mut self,
+        manager: CommandExecutionManager,
+        local_action_cache_key: &LocalActionCacheKey,
+        outputs: &BuckIndexSet<CommandExecutionOutput>,
+    ) -> ControlFlow<CommandExecutionResult, CommandExecutionManager> {
+        self.unprepared_action_cache(manager, local_action_cache_key, outputs)
+            .await
+    }
+
     fn insert_unprepared_action_cache_metadata(
         &mut self,
         _local_action_cache_key: &LocalActionCacheKey,

@@ -162,6 +162,29 @@ enum LocalActionCacheMetadataLookup {
     Stale,
 }
 
+fn local_action_cache_outputs_from_stored_values(
+    artifact_fs: &ArtifactFs,
+    outputs: &BuckIndexSet<CommandExecutionOutput>,
+    output_values: &[ArtifactValue],
+    expected_fingerprint: &[u8],
+) -> buck2_error::Result<Option<BuckIndexMap<CommandExecutionOutput, ArtifactValue>>> {
+    if outputs.len() != output_values.len() {
+        return Ok(None);
+    }
+
+    let outputs = outputs
+        .iter()
+        .cloned()
+        .zip(output_values.iter().cloned())
+        .collect();
+    let actual_fingerprint = local_action_cache_outputs_fingerprint(artifact_fs, &outputs)?;
+    if actual_fingerprint.as_slice() != expected_fingerprint {
+        return Ok(None);
+    }
+
+    Ok(Some(outputs))
+}
+
 #[derive(Clone)]
 enum BazelSharedActionResult {
     Success,
@@ -1832,6 +1855,53 @@ impl PreparedCommandOptionalExecutor for LocalExecutor {
 
         let start = TimeSpan::start_now();
         let start_time = SystemTime::now();
+
+        if command.outputs_declared_by_action {
+            let outputs = match local_action_cache_outputs_from_stored_values(
+                &self.artifact_fs,
+                command.outputs,
+                entry.output_values.as_ref(),
+                &entry.outputs_fingerprint,
+            ) {
+                Ok(Some(outputs)) => outputs,
+                Ok(None) => {
+                    return self.remove_unprepared_action_metadata(
+                        &command.local_action_cache_key.key,
+                        manager,
+                    );
+                }
+                Err(e) => {
+                    return ControlFlow::Break(
+                        manager.error("local_action_cache_metadata_lookup_failed", e),
+                    );
+                }
+            };
+            let time_span = start.end_now();
+            let timing = CommandExecutionMetadata {
+                time_span,
+                execution_time: Duration::ZERO,
+                start_time,
+                execution_stats: None,
+                input_materialization_duration: Duration::ZERO,
+                hashing_duration: Duration::ZERO,
+                hashed_artifacts_count: 0,
+                queue_duration: None,
+                suspend_duration: None,
+                suspend_count: None,
+            };
+            let digest = ActionDigest::from_content(
+                &command.local_action_cache_key.fingerprint,
+                command.digest_config.cas_digest_config(),
+            );
+
+            return ControlFlow::Break(manager.success_without_claim(
+                CommandExecutionKind::LocalActionCache { digest },
+                outputs,
+                CommandStdStreams::Empty,
+                timing,
+            ));
+        }
+
         match self
             .local_action_cache_outputs_from_materializer(
                 command.outputs.iter().cloned().collect(),

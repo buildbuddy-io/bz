@@ -58,6 +58,7 @@ pub struct UnpreparedCommand<'a, 'b> {
     pub local_action_cache_key: &'a LocalActionCacheKey,
     pub outputs: &'a BuckIndexSet<CommandExecutionOutput>,
     pub digest_config: DigestConfig,
+    pub outputs_declared_by_action: bool,
 }
 
 #[async_trait]

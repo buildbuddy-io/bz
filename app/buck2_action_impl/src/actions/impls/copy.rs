@@ -358,6 +358,37 @@ impl SymlinkAction {
             .expect("a single artifact by construction")
     }
 
+    async fn declare_symlink_value(
+        &self,
+        ctx: &mut dyn ActionExecutionCtx,
+        value: ArtifactValue,
+    ) -> Result<(), ExecuteError> {
+        let artifact_fs = ctx.fs();
+        let tmp_dest = artifact_fs.resolve_build(
+            self.output().get_path(),
+            Some(&ContentBasedPathHash::for_output_artifact()),
+        )?;
+
+        let dest = if self.output().get_path().is_content_based_path() {
+            artifact_fs.resolve_build(
+                self.output().get_path(),
+                Some(&value.content_based_path_hash()),
+            )?
+        } else {
+            tmp_dest
+        };
+
+        let configuration_path = ctx
+            .materializer()
+            .maybe_eager_configuration_path(ctx.fs(), self.output().get_path())?;
+
+        ctx.materializer()
+            .declare_copy(dest, value, Vec::new(), configuration_path)
+            .await?;
+
+        Ok(())
+    }
+
     fn local_action_cache_output(&self) -> CommandExecutionOutput {
         CommandExecutionOutput::BuildArtifact {
             path: self.output().get_path().dupe(),
@@ -461,7 +492,7 @@ impl Action for CopyAction {
 
         let manager = ctx.command_execution_manager(waiting_data.clone());
         match ctx
-            .unprepared_action_cache(
+            .unprepared_action_cache_declared_by_action(
                 manager,
                 &local_action_cache_key,
                 &local_action_cache_outputs,
@@ -590,7 +621,7 @@ impl Action for SymlinkAction {
             self.local_action_cache_key(ctx, &local_action_cache_output)?;
         let manager = ctx.command_execution_manager(waiting_data.clone());
         match ctx
-            .unprepared_action_cache(
+            .unprepared_action_cache_declared_by_action(
                 manager,
                 &local_action_cache_key,
                 &local_action_cache_outputs,
@@ -598,45 +629,32 @@ impl Action for SymlinkAction {
             .await
         {
             ControlFlow::Break(result) => {
-                return ctx.unpack_command_execution_result(
+                let (outputs, metadata) = ctx.unpack_command_execution_result(
                     ExecutorPreference::LocalRequired,
                     result,
                     false,
                     false,
                     None,
                     buck2_data::IncrementalKind::NonIncremental,
-                );
+                )?;
+                let value = outputs
+                    .get(self.output().get_path())
+                    .ok_or_else(|| {
+                        internal_error!("Symlink action cache hit did not produce output")
+                    })?
+                    .dupe();
+                self.declare_symlink_value(ctx, value).await?;
+                return Ok((outputs, metadata));
             }
             ControlFlow::Continue(_) => {}
         }
-
-        let artifact_fs = ctx.fs();
-        let tmp_dest = artifact_fs.resolve_build(
-            self.output().get_path(),
-            Some(&ContentBasedPathHash::for_output_artifact()),
-        )?;
 
         let value = ArtifactValue::new(
             ActionDirectoryEntry::Leaf(new_symlink(&self.target_path)?),
             None,
         );
 
-        let dest = if self.output().get_path().is_content_based_path() {
-            artifact_fs.resolve_build(
-                self.output().get_path(),
-                Some(&value.content_based_path_hash()),
-            )?
-        } else {
-            tmp_dest
-        };
-
-        let configuration_path = ctx
-            .materializer()
-            .maybe_eager_configuration_path(ctx.fs(), self.output().get_path())?;
-
-        ctx.materializer()
-            .declare_copy(dest.clone(), value.dupe(), Vec::new(), configuration_path)
-            .await?;
+        self.declare_symlink_value(ctx, value.dupe()).await?;
 
         ctx.insert_unprepared_action_cache_metadata(
             &local_action_cache_key,
