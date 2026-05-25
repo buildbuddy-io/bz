@@ -34,7 +34,7 @@ use crate::sqlite::tables::materializer_state_table::MaterializerStateSqliteTabl
 /// materializer state sqlite db schema! If you forget to bump this version,
 /// then you can fix forward by bumping the `buck2.sqlite_materializer_state_version`
 /// buckconfig in the project root's .buckconfig.
-pub const MATERIALIZER_DB_SCHEMA_VERSION: u64 = 8;
+pub const MATERIALIZER_DB_SCHEMA_VERSION: u64 = 9;
 
 #[derive(Debug)]
 pub struct MaterializerStateEntry {
