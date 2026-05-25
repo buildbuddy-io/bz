@@ -90,6 +90,18 @@ fn check_cargo() {
     }
 }
 
+fn check_unoptimized() {
+    if cfg!(debug_assertions) {
+        eprintln!("=====================================================================");
+        eprintln!("WARNING: You are running an unoptimized Buck2 binary.");
+        eprintln!("         Build and benchmark timings may be significantly slower.");
+        eprintln!("         For performance-sensitive runs, rebuild with:");
+        eprintln!("             bazel build -c opt //app/buck2:buck2_bin");
+        eprintln!("=====================================================================");
+        eprintln!();
+    }
+}
+
 fn print_retry() -> buck2_error::Result<()> {
     buck2_client_ctx::eprintln!("============================================================")?;
     buck2_client_ctx::eprintln!("|| Buck2 has detected that it needs to restart to proceed ||")?;
@@ -170,6 +182,7 @@ fn main() -> ! {
     fn init_shared_context() -> buck2_error::Result<SharedProcessContext> {
         panic::initialize()?;
         check_cargo();
+        check_unoptimized();
 
         // Log the start timestamp
         tracing::debug!("Client initialized logging");
