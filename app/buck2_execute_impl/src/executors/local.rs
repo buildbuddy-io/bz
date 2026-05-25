@@ -406,31 +406,147 @@ fn bazel_shared_action_output_set_key(request: &CommandExecutionRequest) -> Opti
 
 fn bazel_shared_action_equivalence_key(
     request: &CommandExecutionRequest,
+    artifact_fs: &ArtifactFs,
     fallback: Vec<u8>,
 ) -> Vec<u8> {
+    match bazel_shared_action_ownerless_equivalence_key(request, artifact_fs) {
+        Some(key) => key.into_bytes(),
+        None => fallback,
+    }
+}
+
+fn bazel_shared_action_ownerless_equivalence_key(
+    request: &CommandExecutionRequest,
+    artifact_fs: &ArtifactFs,
+) -> Option<String> {
+    let mut key_parts = Vec::new();
+    key_parts.push("buck2-bazel-shared-action-key-v1".to_owned());
+
+    key_parts.push("exe".to_owned());
+    key_parts.extend(request.exe().iter().cloned());
+    key_parts.push("args".to_owned());
+    key_parts.extend(request.args().iter().cloned());
+    key_parts.push("env".to_owned());
+    for (key, value) in request.env() {
+        key_parts.push(format!("{key}={value}"));
+    }
+    key_parts.push(format!("working_directory={}", request.working_directory()));
+    key_parts.push(format!(
+        "executor_preference={:?}",
+        request.executor_preference()
+    ));
+
+    let mut inputs = Vec::new();
+    for input in request.inputs() {
+        inputs.push(bazel_shared_action_input_key(input, artifact_fs)?);
+    }
+    inputs.sort();
+    key_parts.push("inputs".to_owned());
+    key_parts.extend(inputs);
+
     let mut outputs = Vec::new();
     for output in request.outputs() {
-        match output {
-            CommandExecutionOutputRef::BuildArtifact {
-                path, output_type, ..
-            } => {
-                let Some(bazel_owner) = path.bazel_owner() else {
-                    return fallback;
-                };
-                outputs.push(format!(
-                    "{}\0{:?}\0{:?}\0{:?}\0{}",
-                    bazel_owner,
-                    path.bazel_output_root(),
-                    path.bazel_output_path_kind(),
-                    output_type,
-                    path.path(),
-                ));
-            }
-            CommandExecutionOutputRef::TestPath { .. } => return fallback,
-        }
+        outputs.push(bazel_shared_action_ownerless_output_key(output)?);
     }
     outputs.sort();
-    outputs.join("\n").into_bytes()
+    key_parts.push("outputs".to_owned());
+    key_parts.extend(outputs);
+
+    Some(key_parts.join("\n"))
+}
+
+fn bazel_shared_action_ownerless_output_key(
+    output: CommandExecutionOutputRef<'_>,
+) -> Option<String> {
+    match output {
+        CommandExecutionOutputRef::BuildArtifact {
+            path, output_type, ..
+        } => {
+            path.bazel_owner()?;
+            Some(format!(
+                "{:?}\0{:?}\0{:?}\0{}",
+                path.bazel_output_root(),
+                path.bazel_output_path_kind(),
+                output_type,
+                path.path(),
+            ))
+        }
+        CommandExecutionOutputRef::TestPath { .. } => None,
+    }
+}
+
+fn bazel_shared_action_input_key(
+    input: &CommandExecutionInput,
+    artifact_fs: &ArtifactFs,
+) -> Option<String> {
+    match input {
+        CommandExecutionInput::Artifact(group) => {
+            if let Some(fingerprint) = group.action_cache_fingerprint() {
+                return Some(format!(
+                    "artifact_group_fingerprint:{}",
+                    bazel_shared_action_hex(fingerprint)
+                ));
+            }
+
+            let mut entries = Vec::new();
+            for (artifact, value) in group.iter() {
+                let content_hash = artifact
+                    .has_content_based_path()
+                    .then(|| value.content_based_path_hash());
+                let path = artifact
+                    .resolve_path(artifact_fs, content_hash.as_ref())
+                    .ok()?;
+                entries.push(format!("artifact:{}:{:?}", path.as_str(), value.entry()));
+            }
+            entries.sort();
+            Some(format!("artifact_group:{}", entries.join("\0")))
+        }
+        CommandExecutionInput::ArtifactPathAlias {
+            source_path,
+            source_requires_materialization,
+            path,
+            value,
+        } => Some(format!(
+            "artifact_path_alias:{}:{}:{}:{:?}",
+            source_path.as_str(),
+            source_requires_materialization,
+            path.as_str(),
+            value.entry(),
+        )),
+        CommandExecutionInput::EmptyFile(path) => Some(format!("empty_file:{}", path.as_str())),
+        CommandExecutionInput::ActionMetadata(metadata) => Some(format!(
+            "action_metadata:{}:{:?}:{}",
+            metadata.path.path().as_str(),
+            metadata.digest,
+            metadata.content_hash.as_str(),
+        )),
+        CommandExecutionInput::ScratchPath(_) => None,
+        CommandExecutionInput::IncrementalRemoteOutput(path, entry) => Some(format!(
+            "incremental_remote_output:{}:{entry:?}",
+            path.as_str()
+        )),
+    }
+}
+
+#[cfg(test)]
+fn bazel_shared_action_output_keys<'a>(
+    outputs: impl IntoIterator<Item = CommandExecutionOutputRef<'a>>,
+) -> Option<Vec<String>> {
+    let mut keys = Vec::new();
+    for output in outputs {
+        keys.push(bazel_shared_action_ownerless_output_key(output)?);
+    }
+    keys.sort();
+    Some(keys)
+}
+
+fn bazel_shared_action_hex(bytes: &[u8]) -> String {
+    let mut hex = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        use std::fmt::Write;
+        write!(&mut hex, "{byte:02x}").expect("writing to String cannot fail");
+    }
+    hex
 }
 
 #[derive(Clone, Dupe, Allocative)]
@@ -1940,6 +2056,7 @@ impl PreparedCommandExecutor for LocalExecutor {
                 output_set_key.clone(),
                 bazel_shared_action_equivalence_key(
                     command.request,
+                    &self.artifact_fs,
                     fallback_bazel_shared_action_equivalence_key,
                 ),
             ) {
@@ -1961,16 +2078,16 @@ impl PreparedCommandExecutor for LocalExecutor {
                                         .error("bazel_shared_action_transform_failed", e);
                                 }
                             };
-                            let outputs_fingerprint =
-                                match local_action_cache_outputs_fingerprint(&self.artifact_fs, &outputs) {
-                                    Ok(fingerprint) => fingerprint,
-                                    Err(e) => {
-                                        return manager.error(
-                                            "local_action_cache_fingerprint_failed",
-                                            e,
-                                        );
-                                    }
-                                };
+                            let outputs_fingerprint = match local_action_cache_outputs_fingerprint(
+                                &self.artifact_fs,
+                                &outputs,
+                            ) {
+                                Ok(fingerprint) => fingerprint,
+                                Err(e) => {
+                                    return manager
+                                        .error("local_action_cache_fingerprint_failed", e);
+                                }
+                            };
                             if let Err(e) = self.insert_local_action_cache_metadata(
                                 command.request,
                                 &outputs_fingerprint,
@@ -2152,8 +2269,10 @@ impl PreparedCommandOptionalExecutor for LocalExecutor {
         ) {
             Ok(Some(outputs)) => outputs,
             Ok(None) => {
-                return self
-                    .remove_unprepared_action_metadata(&command.local_action_cache_key.key, manager);
+                return self.remove_unprepared_action_metadata(
+                    &command.local_action_cache_key.key,
+                    manager,
+                );
             }
             Err(e) => {
                 return ControlFlow::Break(
@@ -2883,7 +3002,7 @@ async fn promote_bazel_worker_sandbox_outputs(
                             output_path,
                             request.working_directory()
                         )
-                })?;
+                    })?;
                 let sandbox_output_path = sandbox.project_path.join(relative);
                 promote_produced_output_path(artifact_fs, &sandbox_output_path, declared.path())?;
             }
@@ -4195,12 +4314,18 @@ mod tests {
     use buck2_core::cells::name::CellName;
     use buck2_core::configuration::data::ConfigurationData;
     use buck2_core::deferred::base_deferred_key::BaseDeferredKey;
+    use buck2_core::deferred::key::DeferredHolderKey;
+    use buck2_core::fs::buck_out_path::BazelOutputPathKind;
+    use buck2_core::fs::buck_out_path::BazelOutputRoot;
     use buck2_core::fs::buck_out_path::BuckOutPathKind;
     use buck2_core::fs::buck_out_path::BuckOutPathResolver;
+    use buck2_core::fs::buck_out_path::BuildArtifactPath;
     use buck2_core::fs::project::ProjectRoot;
     use buck2_core::fs::project::ProjectRootTemp;
+    use buck2_core::target::configured_target_label::ConfiguredTargetLabel;
     use buck2_core::target::label::label::TargetLabel;
     use buck2_execute::execute::blocking::testing::DummyBlockingExecutor;
+    use buck2_execute::execute::request::CommandExecutionPaths;
     use buck2_execute::execute::request::OutputType;
     use buck2_execute::materialize::nodisk::NoDiskMaterializer;
     use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
@@ -4382,6 +4507,78 @@ mod tests {
             output_type: OutputType::File,
             produced_path: None,
         }
+    }
+
+    fn configured_target(label: &str) -> ConfiguredTargetLabel {
+        TargetLabel::testing_parse(label).configure(ConfigurationData::testing_new())
+    }
+
+    fn bazel_shared_test_output(owner: &str, bazel_owner: &str) -> CommandExecutionOutput {
+        CommandExecutionOutput::BuildArtifact {
+            path: BuildArtifactPath::with_dynamic_actions_action_key_and_bazel_owner_output_root_and_path_kind(
+                DeferredHolderKey::Base(BaseDeferredKey::TargetLabel(configured_target(owner))),
+                ForwardRelativePathBuf::unchecked_new("app/app.tsx".to_owned()),
+                BuckOutPathKind::Configuration,
+                Some(configured_target(bazel_owner)),
+                BazelOutputRoot::Bin,
+                BazelOutputPathKind::OutputDirRelative,
+            ),
+            output_type: OutputType::File,
+            produced_path: None,
+        }
+    }
+
+    fn bazel_shared_test_request(
+        artifact_fs: &ArtifactFs,
+        output: CommandExecutionOutput,
+        arg: &str,
+    ) -> buck2_error::Result<CommandExecutionRequest> {
+        let paths = CommandExecutionPaths::new(
+            Vec::new(),
+            buck_indexset![output],
+            artifact_fs,
+            DigestConfig::testing_default(),
+            None,
+        )?;
+        Ok(CommandExecutionRequest::new(
+            vec!["tool".to_owned()],
+            vec![arg.to_owned()],
+            paths,
+            Default::default(),
+        ))
+    }
+
+    #[test]
+    fn test_bazel_shared_action_equivalence_key_ignores_bazel_owner() {
+        let output_a = bazel_shared_test_output("cell//app:app", "cell//app:app");
+        let output_b = bazel_shared_test_output("cell//app:app_bundle", "cell//app:app_bundle");
+
+        assert_eq!(
+            bazel_shared_action_output_keys([output_a.as_ref()]),
+            bazel_shared_action_output_keys([output_b.as_ref()]),
+        );
+    }
+
+    #[test]
+    fn test_bazel_shared_action_equivalence_key_uses_command_shape() -> buck2_error::Result<()> {
+        let (executor, _, _tmpdir) = test_executor()?;
+        let output_a = bazel_shared_test_output("cell//app:app", "cell//app:app");
+        let output_b = bazel_shared_test_output("cell//app:app_bundle", "cell//app:app_bundle");
+        let request_a = bazel_shared_test_request(&executor.artifact_fs, output_a.clone(), "same")?;
+        let request_b = bazel_shared_test_request(&executor.artifact_fs, output_b.clone(), "same")?;
+
+        assert_eq!(
+            bazel_shared_action_ownerless_equivalence_key(&request_a, &executor.artifact_fs),
+            bazel_shared_action_ownerless_equivalence_key(&request_b, &executor.artifact_fs),
+        );
+
+        let request_b = bazel_shared_test_request(&executor.artifact_fs, output_b, "different")?;
+        assert_ne!(
+            bazel_shared_action_ownerless_equivalence_key(&request_a, &executor.artifact_fs),
+            bazel_shared_action_ownerless_equivalence_key(&request_b, &executor.artifact_fs),
+        );
+
+        Ok(())
     }
 
     #[tokio::test]
