@@ -554,6 +554,18 @@ impl ConcurrencyHandler {
                         // If we have a different state, attempt to transition to cleanup. This will
                         // succeed only if the current state is not in use.
                         if !is_same_state {
+                            // No command can be observing the old active state, and DICE had no
+                            // background work before this update. Use the new transaction directly
+                            // instead of cleaning up and rerunning the whole updater.
+                            if data.has_no_active_commands() && dice_was_idle {
+                                event_dispatcher.instant_event(DiceEqualityCheck {
+                                    is_equal: false,
+                                });
+                                data.dice_status =
+                                    DiceStatus::active(transaction.equality_token());
+                                break (transaction, false);
+                            }
+
                             // If the active commands are preemptible, preempt them.
                             self.cancel_preemptible_commands(&mut data, is_same_state);
 
