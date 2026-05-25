@@ -356,17 +356,7 @@ fn bazel_shared_action_output_key(output: &CommandExecutionOutputRef<'_>) -> Str
             path: _,
             produced_path: Some(produced_path),
             ..
-        } => {
-            if let Some(prefix) = bazel_execroot_prefix(produced_path)
-                && let Some(rest) = produced_path
-                    .as_str()
-                    .strip_prefix(&prefix)
-                    .and_then(|rest| rest.strip_prefix('/'))
-            {
-                return rest.to_owned();
-            }
-            produced_path.as_str().to_owned()
-        }
+        } => bazel_shared_action_path_key(produced_path),
         CommandExecutionOutputRef::BuildArtifact {
             path,
             produced_path: None,
@@ -374,6 +364,22 @@ fn bazel_shared_action_output_key(output: &CommandExecutionOutputRef<'_>) -> Str
         } => path.path().as_str().to_owned(),
         CommandExecutionOutputRef::TestPath { path, .. } => format!("{path:?}"),
     }
+}
+
+fn bazel_shared_action_path_key(path: &ProjectRelativePath) -> String {
+    if let Some(prefix) = bazel_execroot_prefix(path) {
+        if path.as_str() == prefix {
+            return ".".to_owned();
+        }
+        if let Some(rest) = path
+            .as_str()
+            .strip_prefix(&prefix)
+            .and_then(|rest| rest.strip_prefix('/'))
+        {
+            return rest.to_owned();
+        }
+    }
+    path.as_str().to_owned()
 }
 
 fn bazel_shared_action_outputs(
@@ -430,7 +436,10 @@ fn bazel_shared_action_ownerless_equivalence_key(
     for (key, value) in request.env() {
         key_parts.push(format!("{key}={value}"));
     }
-    key_parts.push(format!("working_directory={}", request.working_directory()));
+    key_parts.push(format!(
+        "working_directory={}",
+        bazel_shared_action_path_key(request.working_directory())
+    ));
     key_parts.push(format!(
         "executor_preference={:?}",
         request.executor_preference()
@@ -481,13 +490,6 @@ fn bazel_shared_action_input_key(
 ) -> Option<String> {
     match input {
         CommandExecutionInput::Artifact(group) => {
-            if let Some(fingerprint) = group.action_cache_fingerprint() {
-                return Some(format!(
-                    "artifact_group_fingerprint:{}",
-                    bazel_shared_action_hex(fingerprint)
-                ));
-            }
-
             let mut entries = Vec::new();
             for (artifact, value) in group.iter() {
                 let content_hash = artifact
@@ -496,7 +498,10 @@ fn bazel_shared_action_input_key(
                 let path = artifact
                     .resolve_path(artifact_fs, content_hash.as_ref())
                     .ok()?;
-                entries.push(format!("artifact:{}:{:?}", path.as_str(), value.entry()));
+                entries.push(format!(
+                    "artifact:{}",
+                    bazel_shared_action_path_key(path.as_ref())
+                ));
             }
             entries.sort();
             Some(format!("artifact_group:{}", entries.join("\0")))
@@ -505,15 +510,17 @@ fn bazel_shared_action_input_key(
             source_path,
             source_requires_materialization,
             path,
-            value,
+            value: _,
         } => Some(format!(
-            "artifact_path_alias:{}:{}:{}:{:?}",
+            "artifact_path_alias:{}:{}:{}",
             source_path.as_str(),
             source_requires_materialization,
-            path.as_str(),
-            value.entry(),
+            bazel_shared_action_path_key(path.as_ref()),
         )),
-        CommandExecutionInput::EmptyFile(path) => Some(format!("empty_file:{}", path.as_str())),
+        CommandExecutionInput::EmptyFile(path) => Some(format!(
+            "empty_file:{}",
+            bazel_shared_action_path_key(path.as_ref())
+        )),
         CommandExecutionInput::ActionMetadata(metadata) => Some(format!(
             "action_metadata:{}:{:?}:{}",
             metadata.path.path().as_str(),
@@ -523,7 +530,7 @@ fn bazel_shared_action_input_key(
         CommandExecutionInput::ScratchPath(_) => None,
         CommandExecutionInput::IncrementalRemoteOutput(path, entry) => Some(format!(
             "incremental_remote_output:{}:{entry:?}",
-            path.as_str()
+            bazel_shared_action_path_key(path.as_ref())
         )),
     }
 }
@@ -538,15 +545,6 @@ fn bazel_shared_action_output_keys<'a>(
     }
     keys.sort();
     Some(keys)
-}
-
-fn bazel_shared_action_hex(bytes: &[u8]) -> String {
-    let mut hex = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        use std::fmt::Write;
-        write!(&mut hex, "{byte:02x}").expect("writing to String cannot fail");
-    }
-    hex
 }
 
 #[derive(Clone, Dupe, Allocative)]
@@ -3110,7 +3108,12 @@ fn buck_artifact_store_path(path: &ProjectRelativePath) -> bool {
 fn bazel_execroot_prefix(path: &ProjectRelativePath) -> Option<String> {
     let path = path.as_str();
     let (prefix, rest) = path.split_once("__bazel_execroot/")?;
-    let (first_component, _) = rest.split_once('/')?;
+    let Some((first_component, _)) = rest.split_once('/') else {
+        if rest.len() == 16 && rest.as_bytes().iter().all(u8::is_ascii_hexdigit) {
+            return Some(format!("{prefix}__bazel_execroot/{rest}"));
+        }
+        return Some(format!("{prefix}__bazel_execroot"));
+    };
     if first_component.len() == 16 && first_component.as_bytes().iter().all(u8::is_ascii_hexdigit) {
         return Some(format!("{prefix}__bazel_execroot/{first_component}"));
     }
@@ -4548,6 +4551,30 @@ mod tests {
         ))
     }
 
+    fn bazel_shared_test_request_with_input(
+        artifact_fs: &ArtifactFs,
+        output: CommandExecutionOutput,
+        input: CommandExecutionInput,
+        working_directory: &str,
+    ) -> buck2_error::Result<CommandExecutionRequest> {
+        let paths = CommandExecutionPaths::new(
+            vec![input],
+            buck_indexset![output],
+            artifact_fs,
+            DigestConfig::testing_default(),
+            None,
+        )?;
+        Ok(CommandExecutionRequest::new(
+            vec!["external/tool/tool".to_owned()],
+            vec!["--flag".to_owned()],
+            paths,
+            Default::default(),
+        )
+        .with_working_directory(ProjectRelativePathBuf::unchecked_new(
+            working_directory.to_owned(),
+        )))
+    }
+
     #[test]
     fn test_bazel_shared_action_equivalence_key_ignores_bazel_owner() {
         let output_a = bazel_shared_test_output("cell//app:app", "cell//app:app");
@@ -4574,6 +4601,56 @@ mod tests {
 
         let request_b = bazel_shared_test_request(&executor.artifact_fs, output_b, "different")?;
         assert_ne!(
+            bazel_shared_action_ownerless_equivalence_key(&request_a, &executor.artifact_fs),
+            bazel_shared_action_ownerless_equivalence_key(&request_b, &executor.artifact_fs),
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_bazel_shared_action_equivalence_key_ignores_buck_execroot_instance()
+    -> buck2_error::Result<()> {
+        let (executor, _, _tmpdir) = test_executor()?;
+        let output_a = bazel_shared_test_output("cell//app:app", "cell//app:app");
+        let output_b = bazel_shared_test_output("cell//app:app_bundle", "cell//app:app_bundle");
+        let value = ArtifactValue::file(DigestConfig::testing_default().empty_file());
+        let input_a = CommandExecutionInput::ArtifactPathAlias {
+            source_path: ProjectRelativePathBuf::unchecked_new(
+                "buck-out/v2/external_cells/bzlmod/protobuf+/upb/message.h".to_owned(),
+            ),
+            source_requires_materialization: true,
+            path: ProjectRelativePathBuf::unchecked_new(
+                "buck-out/v2/__bazel_execroot/aaaaaaaaaaaaaaaa/external/protobuf+/upb/message.h"
+                    .to_owned(),
+            ),
+            value: value.dupe(),
+        };
+        let input_b = CommandExecutionInput::ArtifactPathAlias {
+            source_path: ProjectRelativePathBuf::unchecked_new(
+                "buck-out/v2/external_cells/bzlmod/protobuf+/upb/message.h".to_owned(),
+            ),
+            source_requires_materialization: true,
+            path: ProjectRelativePathBuf::unchecked_new(
+                "buck-out/v2/__bazel_execroot/bbbbbbbbbbbbbbbb/external/protobuf+/upb/message.h"
+                    .to_owned(),
+            ),
+            value,
+        };
+        let request_a = bazel_shared_test_request_with_input(
+            &executor.artifact_fs,
+            output_a,
+            input_a,
+            "buck-out/v2/__bazel_execroot/aaaaaaaaaaaaaaaa",
+        )?;
+        let request_b = bazel_shared_test_request_with_input(
+            &executor.artifact_fs,
+            output_b,
+            input_b,
+            "buck-out/v2/__bazel_execroot/bbbbbbbbbbbbbbbb",
+        )?;
+
+        assert_eq!(
             bazel_shared_action_ownerless_equivalence_key(&request_a, &executor.artifact_fs),
             bazel_shared_action_ownerless_equivalence_key(&request_b, &executor.artifact_fs),
         );
