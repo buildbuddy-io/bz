@@ -142,6 +142,7 @@ static BZLMOD_DOWNLOAD_HTTP_CLIENT: LazyLock<tokio::sync::OnceCell<HttpClient>> 
     LazyLock::new(tokio::sync::OnceCell::new);
 static BZLMOD_GENERATED_CACHE_ENTRY_COUNTER: AtomicU64 = AtomicU64::new(0);
 static BZLMOD_CACHE_ALIAS_COUNTER: AtomicU64 = AtomicU64::new(0);
+static BZLMOD_GENERATED_MATERIALIZATION_VALUE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 const BZLMOD_DOWNLOAD_MAX_PARALLEL_DOWNLOADS: usize = 8;
 const BZLMOD_DOWNLOAD_MAX_REDIRECTS: usize = 40;
@@ -2692,6 +2693,13 @@ fn bzlmod_generated_recorded_inputs_path(
     bzlmod_generated_sibling_path(setup, dest, "recorded_inputs.json")
 }
 
+fn bzlmod_generated_materialization_value_path(
+    setup: &BzlmodGeneratedCellSetup,
+    dest: &ProjectRelativePath,
+) -> ProjectRelativePathBuf {
+    bzlmod_generated_sibling_path(setup, dest, "materialization_value")
+}
+
 fn bzlmod_generated_repo_requires_recorded_inputs(setup: &BzlmodGeneratedCellSetup) -> bool {
     matches!(
         setup.generator,
@@ -2825,14 +2833,25 @@ async fn bzlmod_generated_materialization_is_current_with_stamp_content(
     stamp_content: String,
 ) -> buck2_error::Result<bool> {
     let io = ctx.global_data().get_io_provider().dupe();
-    let repo_path = path.to_owned();
-    let stamp_path = bzlmod_generated_materialization_stamp_path(setup, path);
-    if !matches!(
-        (&*io).read_path_metadata_if_exists(repo_path).await?,
-        Some(RawPathMetadata::Directory)
-    ) {
+    let project_root = ctx.global_data().get_io_provider().project_root().dupe();
+    let repo_path = project_root.resolve(path);
+    let repo_exists = run_bzlmod_cache_io(move || match fs_util::metadata(&repo_path) {
+        Ok(metadata) => Ok(metadata.is_dir()),
+        Err(error)
+            if matches!(
+                error.io_error_kind(),
+                Some(ErrorKind::NotFound | ErrorKind::NotADirectory)
+            ) =>
+        {
+            Ok(false)
+        }
+        Err(error) => Err(error.categorize_internal()),
+    })
+    .await?;
+    if !repo_exists {
         return Ok(false);
     }
+    let stamp_path = bzlmod_generated_materialization_stamp_path(setup, path);
     let stamp_matches = matches!(
         (&*io).read_file_if_exists(stamp_path).await?,
         Some(content) if content == stamp_content
@@ -2855,7 +2874,6 @@ async fn bzlmod_generated_materialization_is_current_with_stamp_content(
             return Ok(false);
         }
     }
-    let project_root = ctx.global_data().get_io_provider().project_root().dupe();
     let path = project_root.resolve(path);
     run_bzlmod_cache_io(move || bzlmod_generated_repo_symlink_targets_exist(&path)).await
 }
@@ -2912,6 +2930,76 @@ async fn write_bzlmod_generated_materialization_stamp_content(
             fs_util::write(stamp_path, stamp_content).categorize_internal()
         })
         .await
+}
+
+fn new_bzlmod_generated_materialization_value_stamp_content() -> String {
+    let counter = BZLMOD_GENERATED_MATERIALIZATION_VALUE_COUNTER
+        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    format!("{}.{}.{}\n", std::process::id(), nanos, counter)
+}
+
+async fn write_new_bzlmod_generated_materialization_value_stamp(
+    ctx: &mut DiceComputations<'_>,
+    path: &ProjectRelativePath,
+    setup: &BzlmodGeneratedCellSetup,
+) -> buck2_error::Result<()> {
+    let project_root = ctx.global_data().get_io_provider().project_root().dupe();
+    let value_path =
+        project_root.resolve(&bzlmod_generated_materialization_value_path(setup, path));
+    let value_content = new_bzlmod_generated_materialization_value_stamp_content();
+    ctx.get_blocking_executor()
+        .execute_io_inline(move || {
+            if let Some(parent) = value_path.parent() {
+                fs_util::create_dir_all(parent)?;
+            }
+            fs_util::write(value_path, value_content).categorize_internal()
+        })
+        .await
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, allocative::Allocative, Pagable)]
+struct BzlmodGeneratedCellMaterializationValue {
+    fingerprint: [u8; 32],
+}
+
+async fn bzlmod_generated_materialization_value(
+    ctx: &mut DiceComputations<'_>,
+    path: &ProjectRelativePath,
+    setup: &BzlmodGeneratedCellSetup,
+    stamp_content: &str,
+) -> buck2_error::Result<Arc<BzlmodGeneratedCellMaterializationValue>> {
+    let io = ctx.global_data().get_io_provider().dupe();
+    let value_stamp_path = bzlmod_generated_materialization_value_path(setup, path);
+    let value_stamp_content = (&*io)
+        .read_file_if_exists(value_stamp_path)
+        .await?
+        .unwrap_or_default();
+    let recorded_inputs_json = if bzlmod_generated_repo_requires_recorded_inputs(setup) {
+        let recorded_inputs_path = bzlmod_generated_recorded_inputs_path(setup, path);
+        (&*io)
+            .read_file_if_exists(recorded_inputs_path)
+            .await?
+            .unwrap_or_default()
+    } else {
+        String::new()
+    };
+
+    let mut hasher = blake3::Hasher::new();
+    update_bzlmod_repo_contents_cache_key(
+        &mut hasher,
+        "buck2-bzlmod-generated-materialization-value-v1",
+    );
+    update_bzlmod_repo_contents_cache_key(&mut hasher, path.as_str());
+    update_bzlmod_repo_contents_cache_key(&mut hasher, stamp_content);
+    update_bzlmod_repo_contents_cache_key(&mut hasher, &value_stamp_content);
+    update_bzlmod_repo_contents_cache_key(&mut hasher, &recorded_inputs_json);
+    Ok(Arc::new(BzlmodGeneratedCellMaterializationValue {
+        fingerprint: *hasher.finalize().as_bytes(),
+    }))
 }
 
 fn bzlmod_module_extension_evaluation_cache_key(setup: &BzlmodModuleExtensionRepoSetup) -> String {
@@ -4874,7 +4962,7 @@ async fn materialize_generated(
     path: &ProjectRelativePath,
     setup: &BzlmodGeneratedCellSetup,
     cancellations: &CancellationContext,
-) -> buck2_error::Result<()> {
+) -> buck2_error::Result<Arc<BzlmodGeneratedCellMaterializationValue>> {
     let lock = bzlmod_materialization_lock(path);
     let _guard = lock.lock().await;
     if let Some(cache_info) = bzlmod_generated_repo_contents_cache_info(ctx, path, setup).await? {
@@ -4888,18 +4976,20 @@ async fn materialize_generated(
         .await;
     }
 
+    let stamp_content = bzlmod_generated_materialization_stamp_content(setup);
     if bzlmod_generated_materialization_is_current(ctx, path, setup).await? {
-        return Ok(());
+        return bzlmod_generated_materialization_value(ctx, path, setup, &stamp_content).await;
     }
 
     cancellations
         .critical_section(|| async move {
             let stamp_path = bzlmod_generated_materialization_stamp_path(setup, path);
+            let value_path = bzlmod_generated_materialization_value_path(setup, path);
             ctx.get_blocking_executor()
                 .execute_io(
                     Box::new(
                         buck2_execute::execute::clean_output_paths::CleanOutputPaths {
-                            paths: vec![stamp_path],
+                            paths: vec![stamp_path, value_path],
                         },
                     ),
                     cancellations,
@@ -4907,7 +4997,8 @@ async fn materialize_generated(
                 .await?;
             materialize_generated_contents(ctx, path, setup, cancellations).await?;
             write_bzlmod_generated_materialization_stamp(ctx, path, setup).await?;
-            Ok(())
+            write_new_bzlmod_generated_materialization_value_stamp(ctx, path, setup).await?;
+            bzlmod_generated_materialization_value(ctx, path, setup, &stamp_content).await
         })
         .await
 }
@@ -4984,7 +5075,7 @@ async fn materialize_generated_with_repo_contents_cache(
     setup: &BzlmodGeneratedCellSetup,
     cache_info: &BazelRepositoryRuleCacheInfo,
     cancellations: &CancellationContext,
-) -> buck2_error::Result<()> {
+) -> buck2_error::Result<Arc<BzlmodGeneratedCellMaterializationValue>> {
     let cache_dir = bzlmod_generated_repo_contents_cache_entry_dir(cache_info);
     let cache_lock = bzlmod_materialization_lock(&cache_dir);
     let _cache_guard = cache_lock.lock().await;
@@ -5003,7 +5094,7 @@ async fn materialize_generated_with_repo_contents_cache(
             let _ = promote_current_bzlmod_generated_repo_to_cache(ctx, cache_info, path, setup)
                 .await?;
         }
-        return Ok(());
+        return bzlmod_generated_materialization_value(ctx, path, setup, &stamp_content).await;
     }
 
     if !cache_info.local
@@ -5012,17 +5103,19 @@ async fn materialize_generated_with_repo_contents_cache(
         )
         .await?
     {
-        return Ok(());
+        write_new_bzlmod_generated_materialization_value_stamp(ctx, path, setup).await?;
+        return bzlmod_generated_materialization_value(ctx, path, setup, &stamp_content).await;
     }
 
     cancellations
         .critical_section(|| async move {
             let stamp_path = bzlmod_generated_materialization_stamp_path(setup, path);
+            let value_path = bzlmod_generated_materialization_value_path(setup, path);
             ctx.get_blocking_executor()
                 .execute_io(
                     Box::new(
                         buck2_execute::execute::clean_output_paths::CleanOutputPaths {
-                            paths: vec![stamp_path],
+                            paths: vec![stamp_path, value_path],
                         },
                     ),
                     cancellations,
@@ -5031,22 +5124,22 @@ async fn materialize_generated_with_repo_contents_cache(
 
             let result = materialize_generated_contents(ctx, path, setup, cancellations).await?;
             if result.cacheable && !cache_info.local {
-                if promote_current_bzlmod_generated_repo_to_cache(ctx, cache_info, path, setup)
+                if !promote_current_bzlmod_generated_repo_to_cache(ctx, cache_info, path, setup)
                     .await?
                 {
-                    Ok(())
-                } else {
-                    Err(BzlmodError::MissingExtractedDirectory(path.to_string()).into())
+                    return Err(BzlmodError::MissingExtractedDirectory(path.to_string()).into());
                 }
             } else {
                 write_bzlmod_generated_materialization_stamp_content(
                     ctx,
                     path,
                     setup,
-                    stamp_content,
+                    stamp_content.clone(),
                 )
-                .await
+                .await?;
             }
+            write_new_bzlmod_generated_materialization_value_stamp(ctx, path, setup).await?;
+            bzlmod_generated_materialization_value(ctx, path, setup, &stamp_content).await
         })
         .await
 }
@@ -5549,7 +5642,7 @@ struct BzlmodGeneratedCellMaterializationKey {
 
 #[async_trait::async_trait]
 impl Key for BzlmodGeneratedCellMaterializationKey {
-    type Value = buck2_error::Result<()>;
+    type Value = buck2_error::Result<Arc<BzlmodGeneratedCellMaterializationValue>>;
 
     async fn compute(
         &self,
@@ -5559,8 +5652,11 @@ impl Key for BzlmodGeneratedCellMaterializationKey {
         materialize_generated(ctx, &self.path, &self.setup, cancellations).await
     }
 
-    fn equality(_x: &Self::Value, _y: &Self::Value) -> bool {
-        false
+    fn equality(x: &Self::Value, y: &Self::Value) -> bool {
+        match (x, y) {
+            (Ok(x), Ok(y)) => x.fingerprint == y.fingerprint,
+            _ => false,
+        }
     }
 
     fn validity(x: &Self::Value) -> bool {
@@ -5568,7 +5664,7 @@ impl Key for BzlmodGeneratedCellMaterializationKey {
     }
 
     fn value_serialize() -> impl ValueSerialize<Value = Self::Value> {
-        OkPagableValueSerialize::<Self::Value>::new()
+        NoValueSerialize::<Self::Value>::new()
     }
 }
 
@@ -5578,7 +5674,8 @@ async fn ensure_generated_materialized(
     setup: BzlmodGeneratedCellSetup,
 ) -> buck2_error::Result<()> {
     ctx.compute(&BzlmodGeneratedCellMaterializationKey { path, setup })
-        .await?
+        .await??;
+    Ok(())
 }
 
 #[derive(allocative::Allocative, Pagable)]
