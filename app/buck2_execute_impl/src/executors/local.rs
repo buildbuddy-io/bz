@@ -181,6 +181,15 @@ fn local_action_cache_outputs_from_stored_values(
     if actual_fingerprint.as_slice() != expected_fingerprint {
         return Ok(None);
     }
+    for (output, value) in &outputs {
+        let path = output
+            .as_ref()
+            .resolve(artifact_fs, Some(&value.content_based_path_hash()))?
+            .into_path();
+        if !fs_util::try_exists(artifact_fs.fs().resolve(&path))? {
+            return Ok(None);
+        }
+    }
 
     Ok(Some(outputs))
 }
@@ -1040,7 +1049,11 @@ impl LocalExecutor {
                         };
                     if let Err(e) = self
                         .local_action_cache
-                        .insert(action_digest, outputs_fingerprint.clone())
+                        .insert(
+                            action_digest,
+                            outputs_fingerprint.clone(),
+                            outputs.values().cloned().collect::<Vec<_>>().into(),
+                        )
                     {
                         return manager.error("local_action_cache_insert_failed", e);
                     }
@@ -1958,10 +1971,11 @@ impl PreparedCommandOptionalExecutor for LocalExecutor {
         _cancellations: &CancellationContext,
     ) -> ControlFlow<CommandExecutionResult, CommandExecutionManager> {
         let action_digest = command.prepared_action.digest();
-        let expected_fingerprint = match self.local_action_cache.get(&action_digest) {
-            Some(fingerprint) => fingerprint,
+        let cache_entry = match self.local_action_cache.get(&action_digest) {
+            Some(entry) => entry,
             None => return ControlFlow::Continue(manager),
         };
+        let expected_fingerprint = cache_entry.outputs_fingerprint.clone();
 
         let start = TimeSpan::start_now();
         let start_time = SystemTime::now();
@@ -2022,6 +2036,58 @@ impl PreparedCommandOptionalExecutor for LocalExecutor {
                 }
                 return ControlFlow::Continue(manager);
             }
+            Err(e) => {
+                return ControlFlow::Break(
+                    manager.error("local_action_cache_metadata_lookup_failed", e),
+                );
+            }
+        }
+
+        let outputs_to_check: BuckIndexSet<_> = command
+            .request
+            .outputs()
+            .map(|output| output.cloned())
+            .collect();
+        match local_action_cache_outputs_from_stored_values(
+            &self.artifact_fs,
+            &outputs_to_check,
+            cache_entry.output_values.as_ref(),
+            expected_fingerprint.as_ref(),
+        ) {
+            Ok(Some(outputs)) => {
+                if let Err(e) = self.insert_local_action_cache_metadata(
+                    command.request,
+                    expected_fingerprint.as_ref(),
+                    &outputs,
+                ) {
+                    return ControlFlow::Break(
+                        manager.error("local_action_cache_insert_metadata_failed", e),
+                    );
+                }
+                let time_span = start.end_now();
+                let timing = CommandExecutionMetadata {
+                    time_span,
+                    execution_time: Duration::ZERO,
+                    start_time,
+                    execution_stats: None,
+                    input_materialization_duration: Duration::ZERO,
+                    hashing_duration: Duration::ZERO,
+                    hashed_artifacts_count: 0,
+                    queue_duration: None,
+                    suspend_duration: None,
+                    suspend_count: None,
+                };
+
+                return ControlFlow::Break(manager.success_without_claim(
+                    CommandExecutionKind::LocalActionCache {
+                        digest: action_digest,
+                    },
+                    outputs,
+                    CommandStdStreams::Empty,
+                    timing,
+                ));
+            }
+            Ok(None) => {}
             Err(e) => {
                 return ControlFlow::Break(
                     manager.error("local_action_cache_metadata_lookup_failed", e),

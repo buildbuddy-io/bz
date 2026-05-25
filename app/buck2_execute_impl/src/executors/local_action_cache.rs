@@ -38,7 +38,7 @@ use dupe::Dupe;
 use parking_lot::Mutex;
 use rusqlite::Connection;
 
-const STATE_TABLE_NAME: &str = "local_action_cache_v2";
+const STATE_TABLE_NAME: &str = "local_action_cache_v4";
 const ACTION_METADATA_TABLE_NAME: &str = "local_action_cache_v5";
 const OUTPUT_VALUES_VERSION: u8 = 1;
 
@@ -59,10 +59,16 @@ enum LocalActionCacheState {
 }
 
 struct LoadedLocalActionCache {
-    entries: BuckDashMap<String, Arc<[u8]>>,
+    entries: BuckDashMap<String, LocalActionCacheStoredOutputEntry>,
     action_metadata_entries: BuckDashMap<String, LocalActionCacheStoredEntry>,
     connection: Arc<Mutex<Connection>>,
     digest_config: DigestConfig,
+}
+
+#[derive(Clone)]
+pub struct LocalActionCacheOutputEntry {
+    pub outputs_fingerprint: Arc<[u8]>,
+    pub output_values: Arc<[ArtifactValue]>,
 }
 
 #[derive(Clone)]
@@ -72,6 +78,12 @@ pub struct LocalActionCacheEntry {
     pub action_fingerprint: Arc<[u8]>,
     pub outputs_fingerprint: Arc<[u8]>,
     pub output_values: Arc<[ArtifactValue]>,
+}
+
+#[derive(Clone)]
+struct LocalActionCacheStoredOutputEntry {
+    outputs_fingerprint: Arc<[u8]>,
+    output_values: Arc<LocalActionCacheStoredOutputValues>,
 }
 
 #[derive(Clone)]
@@ -114,6 +126,15 @@ impl LocalActionCacheStoredOutputValues {
             deserialize_output_values(&self.serialized, digest_config)?.into();
         let _ignored = self.decoded.set(decoded.clone());
         Ok(self.decoded.get().cloned().unwrap_or(decoded))
+    }
+}
+
+impl LocalActionCacheStoredOutputEntry {
+    fn get(&self, digest_config: DigestConfig) -> buck2_error::Result<LocalActionCacheOutputEntry> {
+        Ok(LocalActionCacheOutputEntry {
+            outputs_fingerprint: self.outputs_fingerprint.clone(),
+            output_values: self.output_values.get(digest_config)?,
+        })
     }
 }
 
@@ -307,7 +328,7 @@ impl LocalActionCache {
         }
     }
 
-    pub fn get(&self, action_digest: &ActionDigest) -> Option<Arc<[u8]>> {
+    pub fn get(&self, action_digest: &ActionDigest) -> Option<LocalActionCacheOutputEntry> {
         self.loaded()?.get(action_digest)
     }
 
@@ -319,11 +340,12 @@ impl LocalActionCache {
         &self,
         action_digest: &ActionDigest,
         outputs_fingerprint: Vec<u8>,
+        output_values: Arc<[ArtifactValue]>,
     ) -> buck2_error::Result<()> {
         let Some(cache) = self.loaded() else {
             return Ok(());
         };
-        cache.insert(action_digest, outputs_fingerprint)
+        cache.insert(action_digest, outputs_fingerprint, output_values)
     }
 
     pub fn remove(&self, action_digest: &ActionDigest) -> buck2_error::Result<()> {
@@ -431,22 +453,43 @@ impl LoadedLocalActionCache {
         })
     }
 
-    fn get(&self, action_digest: &ActionDigest) -> Option<Arc<[u8]>> {
-        self.entries
-            .get(action_digest.to_string().as_str())
-            .map(|entry| entry.dupe())
+    fn get(&self, action_digest: &ActionDigest) -> Option<LocalActionCacheOutputEntry> {
+        let key = action_digest.to_string();
+        self.entries.get(key.as_str()).and_then(|entry| {
+            match entry.value().get(self.digest_config) {
+                Ok(entry) => Some(entry),
+                Err(e) => {
+                    tracing::warn!(
+                        "Ignoring corrupted local action cache entry `{}`: {}",
+                        key,
+                        e
+                    );
+                    None
+                }
+            }
+        })
     }
 
     fn insert(
         &self,
         action_digest: &ActionDigest,
         outputs_fingerprint: Vec<u8>,
+        output_values: Arc<[ArtifactValue]>,
     ) -> buck2_error::Result<()> {
+        let serialized_output_values = serialize_output_values(output_values.as_ref())?;
         let key = action_digest.to_string();
-        self.entries
-            .insert(key.clone(), Arc::from(outputs_fingerprint.as_slice()));
+        self.entries.insert(
+            key.clone(),
+            LocalActionCacheStoredOutputEntry {
+                outputs_fingerprint: Arc::from(outputs_fingerprint.as_slice()),
+                output_values: Arc::new(LocalActionCacheStoredOutputValues::decoded(
+                    serialized_output_values.clone(),
+                    output_values,
+                )),
+            },
+        );
         LocalActionCacheSqliteTable::new(self.connection.dupe())
-            .insert_or_replace(key, outputs_fingerprint)
+            .insert_or_replace(key, outputs_fingerprint, serialized_output_values)
     }
 
     fn get_action_metadata(&self, key: &str) -> Option<LocalActionCacheEntry> {
@@ -538,7 +581,8 @@ impl LocalActionCacheSqliteTable {
         let sql = format!(
             "CREATE TABLE IF NOT EXISTS {STATE_TABLE_NAME} (
                 action_digest       TEXT PRIMARY KEY NOT NULL,
-                outputs_fingerprint BLOB NOT NULL
+                outputs_fingerprint BLOB NOT NULL,
+                output_values       BLOB NOT NULL
             )",
         );
         self.connection
@@ -566,17 +610,31 @@ impl LocalActionCacheSqliteTable {
 
     fn read_all_action_digest_entries(
         &self,
-    ) -> buck2_error::Result<BuckDashMap<String, Arc<[u8]>>> {
-        let sql = format!("SELECT action_digest, outputs_fingerprint FROM {STATE_TABLE_NAME}");
+    ) -> buck2_error::Result<BuckDashMap<String, LocalActionCacheStoredOutputEntry>> {
+        let sql = format!(
+            "SELECT action_digest, outputs_fingerprint, output_values FROM {STATE_TABLE_NAME}"
+        );
         let entries = BuckDashMap::default();
         let connection = self.connection.lock();
         let mut stmt = connection.prepare(&sql)?;
         let rows = stmt.query_map([], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?))
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, Vec<u8>>(1)?,
+                row.get::<_, Vec<u8>>(2)?,
+            ))
         })?;
         for row in rows {
-            let (action_digest, outputs_fingerprint) = row?;
-            entries.insert(action_digest, Arc::from(outputs_fingerprint.as_slice()));
+            let (action_digest, outputs_fingerprint, output_values) = row?;
+            entries.insert(
+                action_digest,
+                LocalActionCacheStoredOutputEntry {
+                    outputs_fingerprint: Arc::from(outputs_fingerprint.as_slice()),
+                    output_values: Arc::new(LocalActionCacheStoredOutputValues::serialized(
+                        output_values,
+                    )),
+                },
+            );
         }
         Ok(entries)
     }
@@ -629,14 +687,18 @@ impl LocalActionCacheSqliteTable {
         &self,
         action_digest: String,
         outputs_fingerprint: Vec<u8>,
+        output_values: Vec<u8>,
     ) -> buck2_error::Result<()> {
         let sql = format!(
             "INSERT OR REPLACE INTO {STATE_TABLE_NAME} \
-                (action_digest, outputs_fingerprint) VALUES (?1, ?2)"
+                (action_digest, outputs_fingerprint, output_values) VALUES (?1, ?2, ?3)"
         );
         self.connection
             .lock()
-            .execute(&sql, rusqlite::params![action_digest, outputs_fingerprint])
+            .execute(
+                &sql,
+                rusqlite::params![action_digest, outputs_fingerprint, output_values],
+            )
             .with_buck_error_context(|| {
                 format!("inserting into sqlite table {STATE_TABLE_NAME}")
             })?;
