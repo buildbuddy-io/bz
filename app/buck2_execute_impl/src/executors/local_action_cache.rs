@@ -443,11 +443,9 @@ impl LoadedLocalActionCache {
         let connection = SqliteTables::<LocalActionCacheSqliteTable>::create_connection(&db_path)?;
         let table = LocalActionCacheSqliteTable::new(connection.dupe());
         table.create_table()?;
-        let entries = table.read_all_action_digest_entries()?;
-        let action_metadata_entries = table.read_all_action_metadata_entries()?;
         Ok(Self {
-            entries,
-            action_metadata_entries,
+            entries: BuckDashMap::default(),
+            action_metadata_entries: BuckDashMap::default(),
             connection,
             digest_config,
         })
@@ -455,8 +453,8 @@ impl LoadedLocalActionCache {
 
     fn get(&self, action_digest: &ActionDigest) -> Option<LocalActionCacheOutputEntry> {
         let key = action_digest.to_string();
-        self.entries.get(key.as_str()).and_then(|entry| {
-            match entry.value().get(self.digest_config) {
+        if let Some(entry) = self.entries.get(key.as_str()) {
+            return match entry.value().get(self.digest_config) {
                 Ok(entry) => Some(entry),
                 Err(e) => {
                     tracing::warn!(
@@ -466,8 +464,31 @@ impl LoadedLocalActionCache {
                     );
                     None
                 }
+            };
+        }
+
+        let stored = match LocalActionCacheSqliteTable::new(self.connection.dupe())
+            .read_action_digest_entry(&key)
+        {
+            Ok(Some(entry)) => entry,
+            Ok(None) => return None,
+            Err(e) => {
+                tracing::warn!("Error reading local action cache entry `{}`: {}", key, e);
+                return None;
             }
-        })
+        };
+        self.entries.insert(key.clone(), stored.clone());
+        match stored.get(self.digest_config) {
+            Ok(entry) => Some(entry),
+            Err(e) => {
+                tracing::warn!(
+                    "Ignoring corrupted local action cache entry `{}`: {}",
+                    key,
+                    e
+                );
+                None
+            }
+        }
     }
 
     fn insert(
@@ -493,8 +514,8 @@ impl LoadedLocalActionCache {
     }
 
     fn get_action_metadata(&self, key: &str) -> Option<LocalActionCacheEntry> {
-        self.action_metadata_entries.get(key).and_then(|entry| {
-            match entry.value().get(self.digest_config) {
+        if let Some(entry) = self.action_metadata_entries.get(key) {
+            return match entry.value().get(self.digest_config) {
                 Ok(entry) => Some(entry),
                 Err(e) => {
                     tracing::warn!(
@@ -504,8 +525,36 @@ impl LoadedLocalActionCache {
                     );
                     None
                 }
+            };
+        }
+
+        let stored = match LocalActionCacheSqliteTable::new(self.connection.dupe())
+            .read_action_metadata_entry(key)
+        {
+            Ok(Some(entry)) => entry,
+            Ok(None) => return None,
+            Err(e) => {
+                tracing::warn!(
+                    "Error reading local action cache metadata entry `{}`: {}",
+                    key,
+                    e
+                );
+                return None;
             }
-        })
+        };
+        self.action_metadata_entries
+            .insert(key.to_owned(), stored.clone());
+        match stored.get(self.digest_config) {
+            Ok(entry) => Some(entry),
+            Err(e) => {
+                tracing::warn!(
+                    "Ignoring corrupted local action cache metadata entry `{}`: {}",
+                    key,
+                    e
+                );
+                None
+            }
+        }
     }
 
     fn insert_action_metadata(
@@ -608,79 +657,60 @@ impl LocalActionCacheSqliteTable {
         Ok(())
     }
 
-    fn read_all_action_digest_entries(
+    fn read_action_digest_entry(
         &self,
-    ) -> buck2_error::Result<BuckDashMap<String, LocalActionCacheStoredOutputEntry>> {
+        action_digest: &str,
+    ) -> buck2_error::Result<Option<LocalActionCacheStoredOutputEntry>> {
         let sql = format!(
-            "SELECT action_digest, outputs_fingerprint, output_values FROM {STATE_TABLE_NAME}"
+            "SELECT outputs_fingerprint, output_values FROM {STATE_TABLE_NAME} WHERE action_digest = ?1"
         );
-        let entries = BuckDashMap::default();
         let connection = self.connection.lock();
         let mut stmt = connection.prepare(&sql)?;
-        let rows = stmt.query_map([], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, Vec<u8>>(1)?,
-                row.get::<_, Vec<u8>>(2)?,
-            ))
+        let mut rows = stmt.query_map([action_digest], |row| {
+            let outputs_fingerprint = row.get::<_, Vec<u8>>(0)?;
+            let output_values = row.get::<_, Vec<u8>>(1)?;
+            Ok(LocalActionCacheStoredOutputEntry {
+                outputs_fingerprint: Arc::from(outputs_fingerprint.as_slice()),
+                output_values: Arc::new(LocalActionCacheStoredOutputValues::serialized(
+                    output_values,
+                )),
+            })
         })?;
-        for row in rows {
-            let (action_digest, outputs_fingerprint, output_values) = row?;
-            entries.insert(
-                action_digest,
-                LocalActionCacheStoredOutputEntry {
-                    outputs_fingerprint: Arc::from(outputs_fingerprint.as_slice()),
-                    output_values: Arc::new(LocalActionCacheStoredOutputValues::serialized(
-                        output_values,
-                    )),
-                },
-            );
+        match rows.next() {
+            Some(row) => Ok(Some(row?)),
+            None => Ok(None),
         }
-        Ok(entries)
     }
 
-    fn read_all_action_metadata_entries(
+    fn read_action_metadata_entry(
         &self,
-    ) -> buck2_error::Result<BuckDashMap<String, LocalActionCacheStoredEntry>> {
+        key: &str,
+    ) -> buck2_error::Result<Option<LocalActionCacheStoredEntry>> {
         let sql = format!(
-            "SELECT cache_key, action_key_digest, input_metadata_digest, action_fingerprint, outputs_fingerprint, output_values FROM {ACTION_METADATA_TABLE_NAME}"
+            "SELECT action_key_digest, input_metadata_digest, action_fingerprint, outputs_fingerprint, output_values FROM {ACTION_METADATA_TABLE_NAME} WHERE cache_key = ?1"
         );
-        let entries = BuckDashMap::default();
         let connection = self.connection.lock();
         let mut stmt = connection.prepare(&sql)?;
-        let rows = stmt.query_map([], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, Vec<u8>>(1)?,
-                row.get::<_, Vec<u8>>(2)?,
-                row.get::<_, Vec<u8>>(3)?,
-                row.get::<_, Vec<u8>>(4)?,
-                row.get::<_, Vec<u8>>(5)?,
-            ))
+        let mut rows = stmt.query_map([key], |row| {
+            let action_key_digest = row.get::<_, Vec<u8>>(0)?;
+            let input_metadata_digest = row.get::<_, Vec<u8>>(1)?;
+            let action_fingerprint = row.get::<_, Vec<u8>>(2)?;
+            let outputs_fingerprint = row.get::<_, Vec<u8>>(3)?;
+            let output_values = row.get::<_, Vec<u8>>(4)?;
+            Ok(LocalActionCacheStoredEntry {
+                action_key_digest: Arc::from(action_key_digest.as_slice()),
+                input_metadata_digest: Arc::from(input_metadata_digest.as_slice()),
+                action_fingerprint: Arc::from(action_fingerprint.as_slice()),
+                outputs_fingerprint: Arc::from(outputs_fingerprint.as_slice()),
+                output_values: Arc::new(LocalActionCacheStoredOutputValues::serialized(
+                    output_values,
+                )),
+            })
         })?;
-        for row in rows {
-            let (
-                key,
-                action_key_digest,
-                input_metadata_digest,
-                action_fingerprint,
-                outputs_fingerprint,
-                output_values,
-            ) = row?;
-            entries.insert(
-                key,
-                LocalActionCacheStoredEntry {
-                    action_key_digest: Arc::from(action_key_digest.as_slice()),
-                    input_metadata_digest: Arc::from(input_metadata_digest.as_slice()),
-                    action_fingerprint: Arc::from(action_fingerprint.as_slice()),
-                    outputs_fingerprint: Arc::from(outputs_fingerprint.as_slice()),
-                    output_values: Arc::new(LocalActionCacheStoredOutputValues::serialized(
-                        output_values,
-                    )),
-                },
-            );
+        match rows.next() {
+            Some(row) => Ok(Some(row?)),
+            None => Ok(None),
         }
-        Ok(entries)
     }
 
     fn insert_or_replace(
