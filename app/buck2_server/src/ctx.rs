@@ -63,6 +63,7 @@ use buck2_common::legacy_configs::cells::BuckConfigBasedCells;
 use buck2_common::legacy_configs::cells::SetBzlmodClientEnvironment;
 use buck2_common::legacy_configs::cells::SetBzlmodRegistryInvalidation;
 use buck2_common::legacy_configs::cells::SetBzlmodRepositoryEnvironment;
+use buck2_common::legacy_configs::cells::SetBzlmodRepositoryEnvironmentData;
 use buck2_common::legacy_configs::configs::LegacyBuckConfig;
 use buck2_common::legacy_configs::dice::HasInjectedLegacyConfigs;
 use buck2_common::legacy_configs::file_ops::ConfigPath;
@@ -1237,6 +1238,18 @@ impl DiceCommandUpdater<'_, '_> {
         );
         data.set_keep_going(self.keep_going);
         data.set_critical_path_backend(critical_path_backend);
+        data.set_bzlmod_repository_environment_data(
+            self.cmd_ctx
+                .repo_environment
+                .iter()
+                .filter_map(|entry| {
+                    entry
+                        .value
+                        .as_ref()
+                        .map(|value| (entry.name.clone(), value.clone()))
+                })
+                .collect(),
+        );
         data.init_local_resource_registry();
         data.init_bxl_streaming_tracker();
         initialize_read_dir_cache(&mut data);

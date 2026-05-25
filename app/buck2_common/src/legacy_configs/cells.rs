@@ -83,6 +83,7 @@ use dice::DiceTransactionUpdater;
 use dice::InjectedKey;
 use dice::Key;
 use dice::NoValueSerialize;
+use dice::UserComputationData;
 use dice::ValueSerialize;
 use dice_futures::cancellation::CancellationContext;
 use dupe::Dupe;
@@ -1988,9 +1989,11 @@ struct BzlmodRepositoryEnvironmentVariableValue {
     value: Option<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Allocative, Pagable)]
-pub struct BzlmodRepositoryEnvironmentValue {
-    pub vars: BTreeMap<String, String>,
+// Bazel exposes the full repo environment through repository_ctx.os.environ, but
+// that access does not establish a Skyframe dependency. Track only explicitly
+// requested repo-env variables as DICE keys.
+struct BzlmodRepositoryEnvironmentData {
+    vars: Arc<BTreeMap<String, String>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Allocative, Pagable)]
@@ -2526,26 +2529,6 @@ impl SetBzlmodClientEnvironment for DiceTransactionUpdater {
     }
 }
 
-#[derive(Clone, Dupe, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable)]
-#[display("REPOSITORY_ENVIRONMENT")]
-#[pagable_typetag(dice::DiceKeyDyn)]
-struct BzlmodRepositoryEnvironmentKey;
-
-impl InjectedKey for BzlmodRepositoryEnvironmentKey {
-    type Value = buck2_error::Result<Arc<BzlmodRepositoryEnvironmentValue>>;
-
-    fn equality(x: &Self::Value, y: &Self::Value) -> bool {
-        match (x, y) {
-            (Ok(x), Ok(y)) => x == y,
-            _ => false,
-        }
-    }
-
-    fn value_serialize() -> impl ValueSerialize<Value = Self::Value> {
-        NoValueSerialize::<Self::Value>::new()
-    }
-}
-
 pub trait SetBzlmodRepositoryEnvironment {
     fn set_bzlmod_repository_environment(
         &mut self,
@@ -2553,15 +2536,44 @@ pub trait SetBzlmodRepositoryEnvironment {
     ) -> buck2_error::Result<()>;
 }
 
+pub trait SetBzlmodRepositoryEnvironmentData {
+    fn set_bzlmod_repository_environment_data(&mut self, vars: BTreeMap<String, String>);
+}
+
 impl SetBzlmodRepositoryEnvironment for DiceTransactionUpdater {
     fn set_bzlmod_repository_environment(
         &mut self,
         vars: BTreeMap<String, String>,
     ) -> buck2_error::Result<()> {
-        Ok(self.changed_to([(
-            BzlmodRepositoryEnvironmentKey,
-            Ok(Arc::new(BzlmodRepositoryEnvironmentValue { vars })),
-        )])?)
+        let changed_vars = self
+            .existing_key_values_of_type_for_introspection::<
+                BzlmodRepositoryEnvironmentVariableKey,
+            >()
+            .into_iter()
+            .filter_map(move |(key, old)| {
+                let fresh = Ok(Arc::new(BzlmodRepositoryEnvironmentVariableValue {
+                    value: vars.get(&key.name).cloned(),
+                }));
+                if old
+                    .as_ref()
+                    .is_some_and(|old| {
+                        BzlmodRepositoryEnvironmentVariableKey::equality(old, &fresh)
+                    })
+                {
+                    None
+                } else {
+                    Some((key, fresh))
+                }
+            });
+        Ok(self.changed_to(changed_vars)?)
+    }
+}
+
+impl SetBzlmodRepositoryEnvironmentData for UserComputationData {
+    fn set_bzlmod_repository_environment_data(&mut self, vars: BTreeMap<String, String>) {
+        self.data.set(BzlmodRepositoryEnvironmentData {
+            vars: Arc::new(vars),
+        });
     }
 }
 
@@ -2577,8 +2589,12 @@ impl GetBzlmodRepositoryEnvironment for DiceComputations<'_> {
     async fn get_bzlmod_repository_environment(
         &mut self,
     ) -> buck2_error::Result<Arc<BTreeMap<String, String>>> {
-        let env = self.compute(&BzlmodRepositoryEnvironmentKey).await??;
-        Ok(Arc::new(env.vars.clone()))
+        Ok(self
+            .per_transaction_data()
+            .data
+            .get::<BzlmodRepositoryEnvironmentData>()
+            .map(|data| data.vars.dupe())
+            .unwrap_or_else(|_| Arc::new(BTreeMap::new())))
     }
 }
 
@@ -2598,9 +2614,14 @@ impl Key for BzlmodRepositoryEnvironmentVariableKey {
         ctx: &mut DiceComputations,
         _cancellations: &CancellationContext,
     ) -> Self::Value {
-        let env = ctx.compute(&BzlmodRepositoryEnvironmentKey).await??;
+        let env = ctx
+            .per_transaction_data()
+            .data
+            .get::<BzlmodRepositoryEnvironmentData>()
+            .map(|data| data.vars.dupe())
+            .unwrap_or_else(|_| Arc::new(BTreeMap::new()));
         Ok(Arc::new(BzlmodRepositoryEnvironmentVariableValue {
-            value: env.vars.get(&self.name).cloned(),
+            value: env.get(&self.name).cloned(),
         }))
     }
 
