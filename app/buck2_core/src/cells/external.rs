@@ -50,6 +50,23 @@ pub fn external_cell_source_path(kind: &str, canonical_repo_name: &str) -> Strin
     format!("{EXTERNAL_CELLS_ROOT}/{kind}/{canonical_repo_name}")
 }
 
+pub fn is_bzlmod_generated_internal_sibling(canonical_repo_name: &str) -> bool {
+    const INTERNAL_SUFFIXES: &[&str] = &[
+        ".extract-tmp",
+        ".materialization_stamp",
+        ".materialization_tmp",
+        ".materialization_value",
+        ".recorded_inputs.json",
+        ".repository_ctx",
+        ".repository_ctx_tmp",
+        ".source.archive",
+    ];
+
+    INTERNAL_SUFFIXES
+        .iter()
+        .any(|suffix| canonical_repo_name.ends_with(suffix))
+}
+
 pub fn bzlmod_cell_name(canonical_repo_name: &str) -> String {
     canonical_repo_name.to_owned()
 }
@@ -215,6 +232,13 @@ static EXTERNAL_CELL_ORIGINS: Lazy<RwLock<StdBuckHashMap<String, ExternalCellOri
     Lazy::new(|| RwLock::new(StdBuckHashMap::default()));
 
 pub fn register_external_cell_origin(cell_name: CellName, origin: ExternalCellOrigin) {
+    if matches!(
+        &origin,
+        ExternalCellOrigin::BzlmodGenerated(setup)
+            if is_bzlmod_generated_internal_sibling(&setup.canonical_repo_name)
+    ) {
+        return;
+    }
     EXTERNAL_CELL_ORIGINS
         .write()
         .expect("external cell origin map poisoned")

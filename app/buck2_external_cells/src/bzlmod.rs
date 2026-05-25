@@ -2576,6 +2576,22 @@ fn bzlmod_generated_sibling_path_for_canonical(
     ProjectRelativePathBuf::unchecked_new(format!("{}/{}.{}", parent, canonical_repo_name, suffix))
 }
 
+fn bzlmod_generated_scratch_path_for_canonical(
+    canonical_repo_name: &str,
+    suffix: &str,
+) -> ProjectRelativePathBuf {
+    ProjectRelativePathBuf::unchecked_new(format!(
+        "buck-out/v2/cache/bzlmod_generated_scratch/{canonical_repo_name}/{suffix}",
+    ))
+}
+
+fn bzlmod_generated_scratch_path(
+    setup: &BzlmodGeneratedCellSetup,
+    suffix: &str,
+) -> ProjectRelativePathBuf {
+    bzlmod_generated_scratch_path_for_canonical(&setup.canonical_repo_name, suffix)
+}
+
 fn bzlmod_external_cell_root_stamp_path(dest: &ProjectRelativePath) -> ProjectRelativePathBuf {
     ProjectRelativePathBuf::unchecked_new(format!("{}.materialization_stamp", dest.as_str()))
 }
@@ -4465,16 +4481,10 @@ async fn evaluate_and_materialize_bzlmod_repository_rule(
     invocation: &BazelRepositoryRuleInvocation,
     cancellations: &CancellationContext,
 ) -> buck2_error::Result<BzlmodRepositoryRuleMaterializationResult> {
-    let working_dir = bzlmod_generated_sibling_path_for_canonical(
-        canonical_repo_name,
-        path,
-        "repository_ctx_tmp",
-    );
-    let materialized_dir = bzlmod_generated_sibling_path_for_canonical(
-        canonical_repo_name,
-        path,
-        "materialization_tmp",
-    );
+    let working_dir =
+        bzlmod_generated_scratch_path_for_canonical(canonical_repo_name, "repository_ctx");
+    let materialized_dir =
+        bzlmod_generated_scratch_path_for_canonical(canonical_repo_name, "materialization");
     ctx.get_blocking_executor()
         .execute_io(
             Box::new(
@@ -4485,10 +4495,24 @@ async fn evaluate_and_materialize_bzlmod_repository_rule(
             cancellations,
         )
         .await?;
+    let project_root = ctx.global_data().get_io_provider().project_root().dupe();
+    let working_dir_abs = project_root
+        .resolve(&working_dir)
+        .as_path()
+        .to_string_lossy()
+        .into_owned();
+    let working_dir_to_create = working_dir.clone();
+    let working_dir_abs_for_eval = working_dir_abs.clone();
+    ctx.get_blocking_executor()
+        .execute_io_inline(move || {
+            fs_util::create_dir_all(project_root.resolve(&working_dir_to_create))?;
+            Ok(())
+        })
+        .await?;
     let result = evaluate_bzlmod_repository_rule_with_recorded_inputs(
         ctx,
         invocation,
-        working_dir.as_str(),
+        &working_dir_abs_for_eval,
         Some(BazelRepositoryRuleProgress {
             repo: canonical_repo_name.to_owned(),
             path: path.to_string(),
@@ -5556,8 +5580,8 @@ async fn materialize_generated_contents(
             })
         }
         BzlmodGeneratedCellGenerator::HttpArchive(http_archive) => {
-            let archive = bzlmod_generated_sibling_path(setup, path, "source.archive");
-            let temp = bzlmod_generated_sibling_path(setup, path, "extract-tmp");
+            let archive = bzlmod_generated_scratch_path(setup, "source.archive");
+            let temp = bzlmod_generated_scratch_path(setup, "extract-tmp");
             ctx.get_blocking_executor()
                 .execute_io(
                     Box::new(

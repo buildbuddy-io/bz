@@ -118,6 +118,7 @@ use crate::cells::external::bzlmod_cell_name;
 use crate::cells::external::external_cell_origin_for_cell;
 use crate::cells::external::external_cell_source_path;
 use crate::cells::external::is_bzlmod_cell_name;
+use crate::cells::external::is_bzlmod_generated_internal_sibling;
 use crate::cells::name::CellName;
 use crate::cells::nested::NestedCells;
 use crate::cells::paths::CellRelativePathBuf;
@@ -255,7 +256,9 @@ fn dynamic_external_cell_instance(cell: CellName) -> Option<&'static CellInstanc
     let mut instances = DYNAMIC_EXTERNAL_CELL_INSTANCES
         .lock()
         .expect("dynamic external cell instance map poisoned");
-    if let Some(instance) = instances.get(&cell) {
+    if let Some(instance) = instances.get(&cell)
+        && instance.external() == Some(&origin)
+    {
         return Some(*instance);
     }
     let path = CellRootPathBuf::new(ProjectRelativePathBuf::unchecked_new(
@@ -277,7 +280,10 @@ fn dynamic_external_cell_path(path: &ProjectRelativePath) -> Option<CellPath> {
             continue;
         };
         let (canonical_repo_name, repo_path) = suffix.split_once('/').unwrap_or((suffix, ""));
-        if canonical_repo_name.is_empty() || canonical_repo_name.ends_with(".repository_ctx") {
+        if canonical_repo_name.is_empty()
+            || (kind == BZLMOD_GENERATED_EXTERNAL_CELL_KIND
+                && is_bzlmod_generated_internal_sibling(canonical_repo_name))
+        {
             return None;
         }
         let cell = CellName::unchecked_new(&bzlmod_cell_name(canonical_repo_name)).ok()?;

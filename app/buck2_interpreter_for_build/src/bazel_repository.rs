@@ -647,6 +647,25 @@ mod tests {
     }
 
     #[test]
+    fn test_repository_ctx_command_path_resolves_external_cells_from_cache_scratch_dir() {
+        let working_dir =
+            "/repo/buck-out/v2/cache/bzlmod_generated_scratch/gazelle++deps+tools/repository_ctx";
+        let rewritten = repository_ctx_command_path(
+            "GOROOT=/repo/buck-out/buildbuddy-source-file-1/external_cells/bzlmod_generated/rules_go++go_sdk+main___download_0",
+            working_dir,
+        );
+
+        assert_eq!(
+            rewritten,
+            "GOROOT=/repo/buck-out/v2/external_cells/bzlmod_generated/rules_go++go_sdk+main___download_0"
+        );
+        assert_eq!(
+            repository_ctx_workspace_root(working_dir),
+            "/repo".to_owned()
+        );
+    }
+
+    #[test]
     fn test_repository_ctx_patch_strip_rejects_negative() {
         assert_eq!(repository_ctx_patch_strip(0, "patch.diff").unwrap(), 0);
         assert_eq!(repository_ctx_patch_strip(2, "patch.diff").unwrap(), 2);
@@ -2799,6 +2818,11 @@ impl BazelRepositoryAttrValues {
 }
 
 fn repository_ctx_workspace_root(working_dir: &str) -> String {
+    if let Some((workspace_root, _)) = working_dir.split_once("/buck-out/")
+        && !workspace_root.is_empty()
+    {
+        return workspace_root.to_owned();
+    }
     let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let mut components = Path::new(working_dir).components();
     if let (Some(std::path::Component::Normal(first)), Some(std::path::Component::Normal(second))) =
@@ -3712,8 +3736,17 @@ fn repository_external_cell_suffix(path: &str) -> Option<&str> {
 }
 
 fn repository_external_cell_path_relative_to(suffix: &str, working_dir: &str) -> Option<PathBuf> {
-    let (buck_out_root, _) = working_dir.split_once("/external_cells/")?;
-    let candidate = format!("{buck_out_root}/external_cells/{suffix}");
+    let candidate = if let Some((buck_out_root, _)) = working_dir.split_once("/external_cells/") {
+        format!("{buck_out_root}/external_cells/{suffix}")
+    } else if let Some((workspace_root, _)) = working_dir.split_once("/buck-out/v2/") {
+        if workspace_root.is_empty() {
+            format!("buck-out/v2/external_cells/{suffix}")
+        } else {
+            format!("{workspace_root}/buck-out/v2/external_cells/{suffix}")
+        }
+    } else {
+        return None;
+    };
     Some(repository_path_for_write(&candidate).unwrap_or_else(|_| PathBuf::from(candidate)))
 }
 
