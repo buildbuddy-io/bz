@@ -55,6 +55,7 @@ use buck2_execute_impl::executors::hybrid::FallbackTracker;
 use buck2_execute_impl::executors::hybrid::HybridExecutor;
 use buck2_execute_impl::executors::local::ForkserverAccess;
 use buck2_execute_impl::executors::local::LocalExecutor;
+use buck2_execute_impl::executors::local::LocalExecutorSharedState;
 use buck2_execute_impl::executors::local_action_cache::ChainedCommandOptionalExecutor;
 use buck2_execute_impl::executors::local_action_cache::LocalActionCache;
 use buck2_execute_impl::executors::re::ReExecutor;
@@ -98,6 +99,7 @@ pub struct CommandExecutorFactory {
     memory_tracker: Option<MemoryTrackerHandle>,
     incremental_db_state: Arc<IncrementalDbState>,
     local_action_cache: Arc<LocalActionCache>,
+    local_executor_shared_state: LocalExecutorSharedState,
     deduplicate_get_digests_ttl_calls: bool,
     output_trees_download_config: OutputTreesDownloadConfig,
     daemon_id: DaemonId,
@@ -154,6 +156,7 @@ impl CommandExecutorFactory {
             memory_tracker,
             incremental_db_state,
             local_action_cache,
+            local_executor_shared_state: LocalExecutorSharedState::default(),
             deduplicate_get_digests_ttl_calls,
             output_trees_download_config,
             daemon_id,
@@ -204,6 +207,7 @@ impl HasCommandExecutor for CommandExecutorFactory {
                 self.materializer.dupe(),
                 self.incremental_db_state.dupe(),
                 self.local_action_cache.dupe(),
+                self.local_executor_shared_state.clone(),
                 self.blocking_executor.dupe(),
                 self.host_sharing_broker.dupe(),
                 self.project_root.root().to_owned(),

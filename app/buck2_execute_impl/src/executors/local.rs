@@ -8,9 +8,9 @@
  * above-listed licenses.
  */
 
+use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::ffi::OsString;
-use std::collections::HashMap;
 use std::io::Read;
 use std::ops::ControlFlow;
 use std::path::Path;
@@ -194,10 +194,35 @@ fn local_action_cache_outputs_from_stored_values(
     Ok(Some(outputs))
 }
 
+fn local_action_cache_outputs_from_action_metadata_values(
+    outputs: &BuckIndexSet<CommandExecutionOutput>,
+    output_values: &[ArtifactValue],
+) -> buck2_error::Result<Option<BuckIndexMap<CommandExecutionOutput, ArtifactValue>>> {
+    if outputs.len() != output_values.len() {
+        return Ok(None);
+    }
+
+    let outputs = outputs
+        .iter()
+        .cloned()
+        .zip(output_values.iter().cloned())
+        .collect();
+
+    Ok(Some(outputs))
+}
+
 #[derive(Clone)]
 enum BazelSharedActionResult {
-    Success,
+    Success {
+        outputs: Arc<BuckIndexMap<String, BazelSharedActionOutput>>,
+    },
     Failure,
+}
+
+#[derive(Clone)]
+struct BazelSharedActionOutput {
+    output: CommandExecutionOutput,
+    value: ArtifactValue,
 }
 
 struct BazelSharedActionCompletion {
@@ -229,19 +254,24 @@ impl BazelSharedActionCompletion {
 }
 
 struct BazelSharedActionEntry {
-    action_digest: String,
+    equivalence_key: Vec<u8>,
     completion: Arc<BazelSharedActionCompletion>,
 }
 
 #[derive(Default)]
 struct BazelSharedActionTrackerState {
     build_id: Option<String>,
-    actions: HashMap<ProjectRelativePathBuf, BazelSharedActionEntry>,
+    actions: HashMap<String, BazelSharedActionEntry>,
 }
 
 #[derive(Default)]
 struct BazelSharedActionTracker {
     state: Mutex<BazelSharedActionTrackerState>,
+}
+
+#[derive(Clone, Default)]
+pub struct LocalExecutorSharedState {
+    bazel_shared_actions: Arc<BazelSharedActionTracker>,
 }
 
 enum BazelSharedActionLease {
@@ -254,12 +284,15 @@ struct BazelSharedActionLeader {
 }
 
 impl BazelSharedActionLeader {
-    fn complete(self, success: bool) {
-        self.completion.complete(if success {
-            BazelSharedActionResult::Success
+    fn complete(self, result: &CommandExecutionResult) {
+        let result = if result.was_success() {
+            BazelSharedActionResult::Success {
+                outputs: Arc::new(bazel_shared_action_outputs(&result.outputs)),
+            }
         } else {
             BazelSharedActionResult::Failure
-        });
+        };
+        self.completion.complete(result);
     }
 }
 
@@ -277,36 +310,37 @@ impl BazelSharedActionTracker {
     fn lease(
         &self,
         build_id: String,
-        primary_output: ProjectRelativePathBuf,
-        action_digest: &ActionDigest,
+        output_set_key: String,
+        equivalence_key: Vec<u8>,
     ) -> buck2_error::Result<BazelSharedActionLease> {
-        let action_digest = action_digest.to_string();
         let mut state = self.state.lock().expect("poisoned mutex");
         if state.build_id.as_ref() != Some(&build_id) {
             state.build_id = Some(build_id);
             state.actions.clear();
         }
 
-        if let Some(entry) = state.actions.get(&primary_output) {
-            if entry.action_digest != action_digest {
+        if let Some(entry) = state.actions.get(&output_set_key) {
+            if entry.equivalence_key != equivalence_key {
                 return Err(buck2_error!(
                     buck2_error::ErrorTag::Input,
-                    "Conflicting Bazel shared actions for primary output `{}`: existing action digest `{}`, new action digest `{}`",
-                    primary_output,
-                    entry.action_digest,
-                    action_digest
+                    "Conflicting Bazel shared actions for output set `{}`: existing equivalence key `{}`, new equivalence key `{}`",
+                    output_set_key,
+                    String::from_utf8_lossy(&entry.equivalence_key),
+                    String::from_utf8_lossy(&equivalence_key)
                 ));
             }
-            return Ok(BazelSharedActionLease::Follower(BazelSharedActionFollower {
-                completion: entry.completion.dupe(),
-            }));
+            return Ok(BazelSharedActionLease::Follower(
+                BazelSharedActionFollower {
+                    completion: entry.completion.dupe(),
+                },
+            ));
         }
 
         let completion = Arc::new(BazelSharedActionCompletion::new());
         state.actions.insert(
-            primary_output,
+            output_set_key,
             BazelSharedActionEntry {
-                action_digest,
+                equivalence_key,
                 completion: completion.dupe(),
             },
         );
@@ -314,6 +348,89 @@ impl BazelSharedActionTracker {
             completion,
         }))
     }
+}
+
+fn bazel_shared_action_output_key(output: &CommandExecutionOutputRef<'_>) -> String {
+    match output {
+        CommandExecutionOutputRef::BuildArtifact {
+            path: _,
+            produced_path: Some(produced_path),
+            ..
+        } => {
+            if let Some(prefix) = bazel_execroot_prefix(produced_path)
+                && let Some(rest) = produced_path
+                    .as_str()
+                    .strip_prefix(&prefix)
+                    .and_then(|rest| rest.strip_prefix('/'))
+            {
+                return rest.to_owned();
+            }
+            produced_path.as_str().to_owned()
+        }
+        CommandExecutionOutputRef::BuildArtifact {
+            path,
+            produced_path: None,
+            ..
+        } => path.path().as_str().to_owned(),
+        CommandExecutionOutputRef::TestPath { path, .. } => format!("{path:?}"),
+    }
+}
+
+fn bazel_shared_action_outputs(
+    outputs: &BuckIndexMap<CommandExecutionOutput, ArtifactValue>,
+) -> BuckIndexMap<String, BazelSharedActionOutput> {
+    outputs
+        .iter()
+        .map(|(output, value)| {
+            let output_ref = output.as_ref();
+            (
+                bazel_shared_action_output_key(&output_ref),
+                BazelSharedActionOutput {
+                    output: output.clone(),
+                    value: value.dupe(),
+                },
+            )
+        })
+        .collect()
+}
+
+fn bazel_shared_action_output_set_key(request: &CommandExecutionRequest) -> Option<String> {
+    request.bazel_shared_action_primary_output()?;
+    let mut outputs = request
+        .outputs()
+        .map(|output| bazel_shared_action_output_key(&output))
+        .collect::<Vec<_>>();
+    outputs.sort();
+    Some(outputs.join("\0"))
+}
+
+fn bazel_shared_action_equivalence_key(
+    request: &CommandExecutionRequest,
+    fallback: Vec<u8>,
+) -> Vec<u8> {
+    let mut outputs = Vec::new();
+    for output in request.outputs() {
+        match output {
+            CommandExecutionOutputRef::BuildArtifact {
+                path, output_type, ..
+            } => {
+                let Some(bazel_owner) = path.bazel_owner() else {
+                    return fallback;
+                };
+                outputs.push(format!(
+                    "{}\0{:?}\0{:?}\0{:?}\0{}",
+                    bazel_owner,
+                    path.bazel_output_root(),
+                    path.bazel_output_path_kind(),
+                    output_type,
+                    path.path(),
+                ));
+            }
+            CommandExecutionOutputRef::TestPath { .. } => return fallback,
+        }
+    }
+    outputs.sort();
+    outputs.join("\n").into_bytes()
 }
 
 #[derive(Clone, Dupe, Allocative)]
@@ -329,7 +446,7 @@ pub struct LocalExecutor {
     materializer: Arc<dyn Materializer>,
     incremental_db_state: Arc<IncrementalDbState>,
     local_action_cache: Arc<LocalActionCache>,
-    bazel_shared_actions: Arc<BazelSharedActionTracker>,
+    shared_state: LocalExecutorSharedState,
     blocking_executor: Arc<dyn BlockingExecutor>,
     pub(crate) host_sharing_broker: Arc<HostSharingBroker>,
     root: AbsNormPathBuf,
@@ -347,6 +464,7 @@ impl LocalExecutor {
         materializer: Arc<dyn Materializer>,
         incremental_db_state: Arc<IncrementalDbState>,
         local_action_cache: Arc<LocalActionCache>,
+        shared_state: LocalExecutorSharedState,
         blocking_executor: Arc<dyn BlockingExecutor>,
         host_sharing_broker: Arc<HostSharingBroker>,
         root: AbsNormPathBuf,
@@ -361,7 +479,7 @@ impl LocalExecutor {
             materializer,
             incremental_db_state,
             local_action_cache,
-            bazel_shared_actions: Arc::new(BazelSharedActionTracker::default()),
+            shared_state,
             blocking_executor,
             host_sharing_broker,
             root,
@@ -506,6 +624,16 @@ impl LocalExecutor {
                     prep_scratch_path(scratch_path, &self.artifact_fs),
                 )
                 .buck_error_context("Error creating output directories")?;
+
+                self.materializer
+                    .ensure_materialized(
+                        materialized_inputs
+                            .copied_artifact_path_aliases
+                            .iter()
+                            .cloned()
+                            .collect(),
+                    )
+                    .await?;
 
                 materialize_input_path_aliases(&self.artifact_fs, materialized_inputs)?;
 
@@ -1047,14 +1175,11 @@ impl LocalExecutor {
                                 return manager.error("local_action_cache_fingerprint_failed", e);
                             }
                         };
-                    if let Err(e) = self
-                        .local_action_cache
-                        .insert(
-                            action_digest,
-                            outputs_fingerprint.clone(),
-                            outputs.values().cloned().collect::<Vec<_>>().into(),
-                        )
-                    {
+                    if let Err(e) = self.local_action_cache.insert(
+                        action_digest,
+                        outputs_fingerprint.clone(),
+                        outputs.values().cloned().collect::<Vec<_>>().into(),
+                    ) {
                         return manager.error("local_action_cache_insert_failed", e);
                     }
                     if let Err(e) = self.insert_local_action_cache_metadata(
@@ -1367,9 +1492,9 @@ impl LocalExecutor {
             output_keys.push(output);
         }
 
-        let values = self
+        let (values, materializer_accepts) = self
             .materializer
-            .get_declared_artifact_values(output_paths)
+            .get_declared_artifact_values_and_match(output_paths)
             .await?;
         if values.iter().any(Option::is_none) {
             return Ok(LocalActionCacheMetadataLookup::MissingMetadata);
@@ -1389,36 +1514,7 @@ impl LocalExecutor {
             return Ok(LocalActionCacheMetadataLookup::Stale);
         }
 
-        // For ordinary outputs the value above came from the same materializer path that
-        // `declare_match` would check, so another materializer round trip is redundant. Bazel's
-        // action cache similarly injects cached output metadata on hits instead of revalidating the
-        // same metadata through a second path. Content-based outputs still need the extra match
-        // because their configuration path and content-addressed path are distinct declarations.
-        if !outputs
-            .keys()
-            .any(CommandExecutionOutput::has_content_based_path)
-        {
-            return Ok(LocalActionCacheMetadataLookup::Hit(outputs));
-        }
-
-        let output_matches = outputs
-            .iter()
-            .map(|(output, value)| {
-                Ok((
-                    output
-                        .as_ref()
-                        .resolve(&self.artifact_fs, Some(&value.content_based_path_hash()))?
-                        .into_path(),
-                    value.dupe(),
-                ))
-            })
-            .collect::<buck2_error::Result<Vec<_>>>()?;
-        if !self
-            .materializer
-            .declare_match(output_matches)
-            .await?
-            .is_match()
-        {
+        if !materializer_accepts.is_match() {
             return Ok(LocalActionCacheMetadataLookup::Stale);
         }
 
@@ -1471,6 +1567,141 @@ impl LocalExecutor {
             output_values,
         )?;
         Ok(())
+    }
+
+    async fn declare_local_action_cache_outputs(
+        &self,
+        outputs: &BuckIndexMap<CommandExecutionOutput, ArtifactValue>,
+        digest_config: DigestConfig,
+    ) -> buck2_error::Result<()> {
+        let mut to_declare = Vec::new();
+        let mut configuration_path_to_content_based_path_symlinks = Vec::new();
+
+        for (output, value) in outputs {
+            match output {
+                CommandExecutionOutput::BuildArtifact { .. } => {
+                    if output.has_content_based_path() {
+                        let hashed_path = output
+                            .as_ref()
+                            .resolve(&self.artifact_fs, Some(&value.content_based_path_hash()))?
+                            .into_path();
+                        let configuration_hash_path = output
+                            .as_ref()
+                            .resolve_configuration_hash_path(&self.artifact_fs)?
+                            .into_path();
+
+                        let mut builder =
+                            ArtifactValueBuilder::new(self.artifact_fs.fs(), digest_config);
+                        builder.add_symlinked(
+                            value,
+                            hashed_path.clone(),
+                            &configuration_hash_path,
+                        )?;
+                        let symlink_value = builder.build(&configuration_hash_path)?;
+
+                        to_declare.push(DeclareArtifactPayload {
+                            path: hashed_path,
+                            artifact: value.dupe(),
+                            configuration_path: None,
+                        });
+                        configuration_path_to_content_based_path_symlinks
+                            .push((configuration_hash_path, symlink_value));
+                    } else {
+                        let path = output
+                            .as_ref()
+                            .resolve(&self.artifact_fs, Some(&value.content_based_path_hash()))?
+                            .into_path();
+                        to_declare.push(DeclareArtifactPayload {
+                            path,
+                            artifact: value.dupe(),
+                            configuration_path: None,
+                        });
+                    }
+                }
+                CommandExecutionOutput::TestPath { .. } => {}
+            }
+        }
+
+        self.materializer.declare_existing(to_declare).await?;
+        buck2_util::future::try_join_all(
+            configuration_path_to_content_based_path_symlinks
+                .into_iter()
+                .map(|(path, value)| self.materializer.declare_copy(path, value, vec![], None)),
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn transform_bazel_shared_action_outputs(
+        &self,
+        shared_outputs: &BuckIndexMap<String, BazelSharedActionOutput>,
+        request: &CommandExecutionRequest,
+    ) -> buck2_error::Result<BuckIndexMap<CommandExecutionOutput, ArtifactValue>> {
+        let mut outputs = BuckIndexMap::with_capacity(shared_outputs.len());
+        let mut copied_outputs = Vec::new();
+        let mut copied_output_paths = Vec::new();
+
+        for output in request.outputs() {
+            let key = bazel_shared_action_output_key(&output);
+            let Some(shared_output) = shared_outputs.get(&key) else {
+                return Err(buck2_error!(
+                    buck2_error::ErrorTag::Input,
+                    "Bazel shared action did not produce expected output `{}`",
+                    key
+                ));
+            };
+
+            let output = output.cloned();
+            let value = shared_output.value.dupe();
+            let leader_path = shared_output
+                .output
+                .as_ref()
+                .resolve(&self.artifact_fs, Some(&value.content_based_path_hash()))?
+                .into_path();
+            let follower_path = output
+                .as_ref()
+                .resolve(&self.artifact_fs, Some(&value.content_based_path_hash()))?
+                .into_path();
+
+            if leader_path != follower_path {
+                copied_output_paths.push(follower_path.clone());
+                copied_outputs.push((
+                    follower_path.clone(),
+                    value.dupe(),
+                    vec![CopiedArtifact {
+                        src: leader_path,
+                        dest: follower_path,
+                        dest_entry: value.entry().dupe().map_dir(|d| d.as_immutable()),
+                        executable_bit_override: None,
+                    }],
+                    None,
+                ));
+            }
+
+            outputs.insert(output, value);
+        }
+
+        if outputs.len() != shared_outputs.len() {
+            return Err(buck2_error!(
+                buck2_error::ErrorTag::Input,
+                "Bazel shared action output count mismatch: leader produced {}, follower expected {}",
+                shared_outputs.len(),
+                outputs.len()
+            ));
+        }
+
+        buck2_util::future::try_join_all(copied_outputs.into_iter().map(
+            |(path, value, copied_artifacts, cfg_path)| {
+                self.materializer
+                    .declare_copy(path, value, copied_artifacts, cfg_path)
+            },
+        ))
+        .await?;
+        self.materializer
+            .ensure_materialized(copied_output_paths)
+            .await?;
+
+        Ok(outputs)
     }
 
     async fn acquire_worker_permit(
@@ -1675,10 +1906,8 @@ impl LocalExecutor {
         Ok(())
     }
 
-    fn current_build_id() -> String {
-        get_dispatcher_opt()
-            .map(|dispatcher| dispatcher.trace_id().to_string())
-            .unwrap_or_else(|| "unknown".to_owned())
+    fn current_build_id(manager: &CommandExecutionManager) -> String {
+        manager.inner.events.trace_id().to_string()
     }
 }
 
@@ -1692,58 +1921,106 @@ impl PreparedCommandExecutor for LocalExecutor {
     ) -> CommandExecutionResult {
         let action_digest = command.prepared_action.digest();
         let manager = match self.maybe_execute(command, manager, cancellations).await {
-            ControlFlow::Break(result) => return result,
+            ControlFlow::Break(result) => {
+                return result;
+            }
             ControlFlow::Continue(manager) => manager,
         };
 
-        let shared_action_leader =
-            if let Some(primary_output) = command.request.bazel_shared_action_primary_output() {
-                match self.bazel_shared_actions.lease(
-                    Self::current_build_id(),
-                    primary_output.to_buf(),
-                    &action_digest,
-                ) {
-                    Ok(BazelSharedActionLease::Leader(leader)) => Some(leader),
-                    Ok(BazelSharedActionLease::Follower(follower)) => {
-                        let mut manager = manager;
-                        manager.start_waiting_category(WaitingCategory::LocalQueued);
-                        match follower.wait().await {
-                            BazelSharedActionResult::Success => {
-                                match self.maybe_execute(command, manager, cancellations).await {
-                                    ControlFlow::Break(result) => return result,
-                                    ControlFlow::Continue(manager) => {
+        let fallback_bazel_shared_action_equivalence_key = command
+            .request
+            .local_action_cache_key()
+            .map(|key| key.action_key_digest.to_vec())
+            .unwrap_or_else(|| action_digest.to_string().into_bytes());
+        let shared_action_leader = if let Some(output_set_key) =
+            bazel_shared_action_output_set_key(command.request)
+        {
+            match self.shared_state.bazel_shared_actions.lease(
+                Self::current_build_id(&manager),
+                output_set_key.clone(),
+                bazel_shared_action_equivalence_key(
+                    command.request,
+                    fallback_bazel_shared_action_equivalence_key,
+                ),
+            ) {
+                Ok(BazelSharedActionLease::Leader(leader)) => Some(leader),
+                Ok(BazelSharedActionLease::Follower(follower)) => {
+                    let mut manager = manager;
+                    let start = TimeSpan::start_now();
+                    let start_time = SystemTime::now();
+                    manager.start_waiting_category(WaitingCategory::LocalQueued);
+                    match follower.wait().await {
+                        BazelSharedActionResult::Success { outputs } => {
+                            let outputs = match self
+                                .transform_bazel_shared_action_outputs(&outputs, command.request)
+                                .await
+                            {
+                                Ok(outputs) => outputs,
+                                Err(e) => {
+                                    return manager
+                                        .error("bazel_shared_action_transform_failed", e);
+                                }
+                            };
+                            let outputs_fingerprint =
+                                match local_action_cache_outputs_fingerprint(&self.artifact_fs, &outputs) {
+                                    Ok(fingerprint) => fingerprint,
+                                    Err(e) => {
                                         return manager.error(
-                                            "bazel_shared_action_cache_miss",
-                                            buck2_error!(
-                                                buck2_error::ErrorTag::Tier0,
-                                                "Bazel shared action `{}` completed successfully for primary output `{}`, but its result was not available from the local action cache",
-                                                action_digest,
-                                                primary_output
-                                            ),
+                                            "local_action_cache_fingerprint_failed",
+                                            e,
                                         );
                                     }
-                                }
+                                };
+                            if let Err(e) = self.insert_local_action_cache_metadata(
+                                command.request,
+                                &outputs_fingerprint,
+                                &outputs,
+                            ) {
+                                return manager
+                                    .error("local_action_cache_insert_metadata_failed", e);
                             }
-                            BazelSharedActionResult::Failure => {
-                                return manager.error(
-                                    "bazel_shared_action_failed",
-                                    buck2_error!(
-                                        buck2_error::ErrorTag::Input,
-                                        "Bazel shared action `{}` failed for primary output `{}`",
-                                        action_digest,
-                                        primary_output
-                                    ),
-                                );
-                            }
+                            let time_span = start.end_now();
+                            let timing = CommandExecutionMetadata {
+                                time_span,
+                                execution_time: Duration::ZERO,
+                                start_time,
+                                execution_stats: None,
+                                input_materialization_duration: Duration::ZERO,
+                                hashing_duration: Duration::ZERO,
+                                hashed_artifacts_count: 0,
+                                queue_duration: Some(time_span.duration()),
+                                suspend_duration: None,
+                                suspend_count: None,
+                            };
+                            return manager.success_without_claim(
+                                CommandExecutionKind::LocalActionCache {
+                                    digest: action_digest,
+                                },
+                                outputs,
+                                CommandStdStreams::Empty,
+                                timing,
+                            );
+                        }
+                        BazelSharedActionResult::Failure => {
+                            return manager.error(
+                                "bazel_shared_action_failed",
+                                buck2_error!(
+                                    buck2_error::ErrorTag::Input,
+                                    "Bazel shared action `{}` failed for output set `{}`",
+                                    action_digest,
+                                    output_set_key
+                                ),
+                            );
                         }
                     }
-                    Err(e) => {
-                        return manager.error("bazel_shared_action_conflict", e);
-                    }
                 }
-            } else {
-                None
-            };
+                Err(e) => {
+                    return manager.error("bazel_shared_action_conflict", e);
+                }
+            }
+        } else {
+            None
+        };
 
         let mut manager = manager.with_execution_kind(CommandExecutionKind::Local {
             digest: action_digest.dupe(),
@@ -1810,7 +2087,7 @@ impl PreparedCommandExecutor for LocalExecutor {
             })
             .await;
         if let Some(shared_action_leader) = shared_action_leader {
-            shared_action_leader.complete(result.was_success());
+            shared_action_leader.complete(&result);
         }
         result
     }
@@ -1869,26 +2146,33 @@ impl PreparedCommandOptionalExecutor for LocalExecutor {
         let start = TimeSpan::start_now();
         let start_time = SystemTime::now();
 
-        if command.outputs_declared_by_action {
-            let outputs = match local_action_cache_outputs_from_stored_values(
-                &self.artifact_fs,
-                command.outputs,
-                entry.output_values.as_ref(),
-                &entry.outputs_fingerprint,
-            ) {
-                Ok(Some(outputs)) => outputs,
-                Ok(None) => {
-                    return self.remove_unprepared_action_metadata(
-                        &command.local_action_cache_key.key,
-                        manager,
-                    );
-                }
-                Err(e) => {
-                    return ControlFlow::Break(
-                        manager.error("local_action_cache_metadata_lookup_failed", e),
-                    );
-                }
-            };
+        let outputs = match local_action_cache_outputs_from_action_metadata_values(
+            command.outputs,
+            entry.output_values.as_ref(),
+        ) {
+            Ok(Some(outputs)) => outputs,
+            Ok(None) => {
+                return self
+                    .remove_unprepared_action_metadata(&command.local_action_cache_key.key, manager);
+            }
+            Err(e) => {
+                return ControlFlow::Break(
+                    manager.error("local_action_cache_metadata_lookup_failed", e),
+                );
+            }
+        };
+
+        if !command.outputs_declared_by_action
+            && let Err(e) = self
+                .declare_local_action_cache_outputs(&outputs, command.digest_config)
+                .await
+        {
+            return ControlFlow::Break(
+                manager.error("local_action_cache_declare_outputs_failed", e),
+            );
+        }
+
+        {
             let time_span = start.end_now();
             let timing = CommandExecutionMetadata {
                 time_span,
@@ -1914,54 +2198,6 @@ impl PreparedCommandOptionalExecutor for LocalExecutor {
                 timing,
             ));
         }
-
-        match self
-            .local_action_cache_outputs_from_materializer(
-                command.outputs.iter().cloned().collect(),
-                &entry.outputs_fingerprint,
-            )
-            .await
-        {
-            Ok(LocalActionCacheMetadataLookup::Hit(outputs)) => {
-                let time_span = start.end_now();
-                let timing = CommandExecutionMetadata {
-                    time_span,
-                    execution_time: Duration::ZERO,
-                    start_time,
-                    execution_stats: None,
-                    input_materialization_duration: Duration::ZERO,
-                    hashing_duration: Duration::ZERO,
-                    hashed_artifacts_count: 0,
-                    queue_duration: None,
-                    suspend_duration: None,
-                    suspend_count: None,
-                };
-                let digest = ActionDigest::from_content(
-                    &command.local_action_cache_key.fingerprint,
-                    command.digest_config.cas_digest_config(),
-                );
-
-                ControlFlow::Break(manager.success_without_claim(
-                    CommandExecutionKind::LocalActionCache { digest },
-                    outputs,
-                    CommandStdStreams::Empty,
-                    timing,
-                ))
-            }
-            Ok(LocalActionCacheMetadataLookup::MissingMetadata) => {
-                self.remove_unprepared_action_metadata(&command.local_action_cache_key.key, manager)
-            }
-            Ok(LocalActionCacheMetadataLookup::Stale) => {
-                tracing::debug!(
-                    "unprepared local action cache miss for `{}` because persisted output metadata did not match",
-                    command.local_action_cache_key.key
-                );
-                self.remove_unprepared_action_metadata(&command.local_action_cache_key.key, manager)
-            }
-            Err(e) => {
-                ControlFlow::Break(manager.error("local_action_cache_metadata_lookup_failed", e))
-            }
-        }
     }
 
     async fn maybe_execute(
@@ -1970,6 +2206,135 @@ impl PreparedCommandOptionalExecutor for LocalExecutor {
         manager: CommandExecutionManager,
         _cancellations: &CancellationContext,
     ) -> ControlFlow<CommandExecutionResult, CommandExecutionManager> {
+        if let Some(local_action_cache_key) = command.request.local_action_cache_key() {
+            let entry = self
+                .local_action_cache
+                .get_action_metadata(&local_action_cache_key.key);
+            if let Some(entry) = entry {
+                if entry.action_key_digest.as_ref()
+                    != local_action_cache_key.action_key_digest.as_slice()
+                    || entry.input_metadata_digest.as_ref()
+                        != local_action_cache_key.input_metadata_digest.as_slice()
+                    || entry.action_fingerprint.as_ref()
+                        != local_action_cache_key.fingerprint.as_slice()
+                {
+                    if let Err(e) = self
+                        .local_action_cache
+                        .remove_action_metadata(&local_action_cache_key.key)
+                    {
+                        return ControlFlow::Break(
+                            manager.error("local_action_cache_remove_metadata_failed", e),
+                        );
+                    }
+                } else {
+                    let start = TimeSpan::start_now();
+                    let start_time = SystemTime::now();
+                    let outputs_to_check: BuckIndexSet<_> = command
+                        .request
+                        .outputs()
+                        .map(|output| output.cloned())
+                        .collect();
+
+                    match self
+                        .local_action_cache_outputs_from_materializer(
+                            outputs_to_check.iter().cloned().collect(),
+                            &entry.outputs_fingerprint,
+                        )
+                        .await
+                    {
+                        Ok(LocalActionCacheMetadataLookup::Hit(outputs)) => {
+                            let time_span = start.end_now();
+                            let timing = CommandExecutionMetadata {
+                                time_span,
+                                execution_time: Duration::ZERO,
+                                start_time,
+                                execution_stats: None,
+                                input_materialization_duration: Duration::ZERO,
+                                hashing_duration: Duration::ZERO,
+                                hashed_artifacts_count: 0,
+                                queue_duration: None,
+                                suspend_duration: None,
+                                suspend_count: None,
+                            };
+                            let digest = ActionDigest::from_content(
+                                &local_action_cache_key.fingerprint,
+                                command.digest_config.cas_digest_config(),
+                            );
+
+                            return ControlFlow::Break(manager.success_without_claim(
+                                CommandExecutionKind::LocalActionCache { digest },
+                                outputs,
+                                CommandStdStreams::Empty,
+                                timing,
+                            ));
+                        }
+                        Ok(LocalActionCacheMetadataLookup::MissingMetadata)
+                        | Ok(LocalActionCacheMetadataLookup::Stale) => {}
+                        Err(e) => {
+                            return ControlFlow::Break(
+                                manager.error("local_action_cache_metadata_lookup_failed", e),
+                            );
+                        }
+                    }
+
+                    match local_action_cache_outputs_from_action_metadata_values(
+                        &outputs_to_check,
+                        entry.output_values.as_ref(),
+                    ) {
+                        Ok(Some(outputs)) => {
+                            if let Err(e) = self
+                                .declare_local_action_cache_outputs(&outputs, command.digest_config)
+                                .await
+                            {
+                                return ControlFlow::Break(
+                                    manager.error("local_action_cache_declare_outputs_failed", e),
+                                );
+                            }
+                            let time_span = start.end_now();
+                            let timing = CommandExecutionMetadata {
+                                time_span,
+                                execution_time: Duration::ZERO,
+                                start_time,
+                                execution_stats: None,
+                                input_materialization_duration: Duration::ZERO,
+                                hashing_duration: Duration::ZERO,
+                                hashed_artifacts_count: 0,
+                                queue_duration: None,
+                                suspend_duration: None,
+                                suspend_count: None,
+                            };
+                            let digest = ActionDigest::from_content(
+                                &local_action_cache_key.fingerprint,
+                                command.digest_config.cas_digest_config(),
+                            );
+
+                            return ControlFlow::Break(manager.success_without_claim(
+                                CommandExecutionKind::LocalActionCache { digest },
+                                outputs,
+                                CommandStdStreams::Empty,
+                                timing,
+                            ));
+                        }
+                        Ok(None) => {
+                            if let Err(e) = self
+                                .local_action_cache
+                                .remove_action_metadata(&local_action_cache_key.key)
+                            {
+                                return ControlFlow::Break(
+                                    manager.error("local_action_cache_remove_metadata_failed", e),
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            return ControlFlow::Break(
+                                manager.error("local_action_cache_metadata_lookup_failed", e),
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
         let action_digest = command.prepared_action.digest();
         let cache_entry = match self.local_action_cache.get(&action_digest) {
             Some(entry) => entry,
@@ -2055,6 +2420,14 @@ impl PreparedCommandOptionalExecutor for LocalExecutor {
             expected_fingerprint.as_ref(),
         ) {
             Ok(Some(outputs)) => {
+                if let Err(e) = self
+                    .declare_local_action_cache_outputs(&outputs, command.digest_config)
+                    .await
+                {
+                    return ControlFlow::Break(
+                        manager.error("local_action_cache_declare_outputs_failed", e),
+                    );
+                }
                 if let Err(e) = self.insert_local_action_cache_metadata(
                     command.request,
                     expected_fingerprint.as_ref(),
@@ -2125,6 +2498,23 @@ impl PreparedCommandOptionalExecutor for LocalExecutor {
                 return ControlFlow::Continue(manager);
             }
         };
+        let expected_output_count = command
+            .request
+            .outputs()
+            .filter(|output| matches!(output, CommandExecutionOutputRef::BuildArtifact { .. }))
+            .count();
+        if outputs.len() != expected_output_count {
+            tracing::debug!(
+                "local action cache miss for `{}` because only {} of {} outputs were present",
+                action_digest,
+                outputs.len(),
+                expected_output_count
+            );
+            if let Err(e) = self.local_action_cache.remove(&action_digest) {
+                return ControlFlow::Break(manager.error("local_action_cache_remove_failed", e));
+            }
+            return ControlFlow::Continue(manager);
+        }
 
         let actual_fingerprint =
             match local_action_cache_outputs_fingerprint(&self.artifact_fs, &outputs) {
@@ -2480,6 +2870,10 @@ async fn promote_bazel_worker_sandbox_outputs(
                     artifact_fs,
                     Some(&ContentBasedPathHash::for_output_artifact()),
                 )?;
+                let declared = output.resolve(
+                    artifact_fs,
+                    Some(&ContentBasedPathHash::for_output_artifact()),
+                )?;
                 let output_path = produced.path();
                 let relative = output_path
                     .strip_prefix_opt(request.working_directory())
@@ -2489,9 +2883,9 @@ async fn promote_bazel_worker_sandbox_outputs(
                             output_path,
                             request.working_directory()
                         )
-                    })?;
+                })?;
                 let sandbox_output_path = sandbox.project_path.join(relative);
-                promote_produced_output_path(artifact_fs, &sandbox_output_path, output_path)?;
+                promote_produced_output_path(artifact_fs, &sandbox_output_path, declared.path())?;
             }
             CleanOutputPaths::clean(
                 std::iter::once(sandbox.project_path.as_ref()),
@@ -2532,6 +2926,7 @@ pub struct MaterializedInputPaths {
     pub scratch: ScratchPath,
     pub paths: Vec<ProjectRelativePathBuf>,
     pub artifact_path_aliases: Vec<(ProjectRelativePathBuf, ProjectRelativePathBuf)>,
+    copied_artifact_path_aliases: Vec<ProjectRelativePathBuf>,
     shared_artifact_path_aliases: Vec<SharedArtifactPathAlias>,
     external_cell_root_aliases: Vec<ExternalCellRootAlias>,
 }
@@ -2581,6 +2976,16 @@ fn external_cell_root(path: &ProjectRelativePath) -> Option<ExternalCellRoot> {
         kind: kind.to_owned(),
         repo: repo.to_owned(),
     })
+}
+
+fn buck_artifact_store_path(path: &ProjectRelativePath) -> bool {
+    let Some(rest) = path.as_str().strip_prefix("buck-out/") else {
+        return false;
+    };
+    let Some((_isolation_dir, rest)) = rest.split_once('/') else {
+        return false;
+    };
+    rest.starts_with("art/")
 }
 
 fn bazel_execroot_prefix(path: &ProjectRelativePath) -> Option<String> {
@@ -3317,20 +3722,29 @@ pub async fn materialize_inputs(
 
     paths.extend(external_cell_roots_to_materialize);
 
-    // Bazel exposes tree artifacts directly in the output tree. Some rules_js package store
-    // outputs contain sibling-relative symlinks and tools may realpath through package symlinks,
-    // so directory aliases need to be materialized as directories instead of alias symlinks into
-    // Buck's private artifact store.
+    // Bazel exposes generated inputs directly in the execroot. Let the materializer create
+    // aliases for generated artifacts so copy-source dependencies are honored before the alias is
+    // used. Some rules_js package store outputs contain sibling-relative symlinks and tools may
+    // realpath through package symlinks, so directory aliases also need to be materialized as
+    // directories instead of alias symlinks into Buck's private artifact store.
     let mut copied_artifact_path_aliases = BuckIndexSet::new();
+    let mut copied_artifact_path_aliases_to_materialize = Vec::new();
     let mut artifact_path_alias_copies = Vec::new();
     for (source_path, path, value) in &shared_artifact_path_aliases {
         let is_external_root_alias =
             external_cell_root_alias(source_path.as_ref(), path.as_ref()).is_some();
-        if !value.is_dir() || is_external_root_alias {
+        let source_is_generated = buck_artifact_store_path(source_path.as_ref());
+        let source_is_generated_file = source_is_generated
+            && matches!(
+                value.entry(),
+                ActionDirectoryEntry::Leaf(ActionDirectoryMember::File(_))
+            );
+        if (!value.is_dir() && !source_is_generated_file) || is_external_root_alias {
             continue;
         }
 
         if copied_artifact_path_aliases.insert(path.clone()) {
+            copied_artifact_path_aliases_to_materialize.push(path.clone());
             artifact_path_alias_copies.push((
                 path.clone(),
                 value.dupe(),
@@ -3342,7 +3756,6 @@ pub async fn materialize_inputs(
                 }],
                 None,
             ));
-            paths.push(path.clone());
         }
     }
 
@@ -3352,13 +3765,11 @@ pub async fn materialize_inputs(
             .map(|(path, value)| materializer.declare_copy(path, value, vec![], None)),
     )
     .await?;
-    buck2_util::future::try_join_all(
-        artifact_path_alias_copies
-            .into_iter()
-            .map(|(path, value, copied_artifacts, cfg_path)| {
-                materializer.declare_copy(path, value, copied_artifacts, cfg_path)
-            }),
-    )
+    buck2_util::future::try_join_all(artifact_path_alias_copies.into_iter().map(
+        |(path, value, copied_artifacts, cfg_path)| {
+            materializer.declare_copy(path, value, copied_artifacts, cfg_path)
+        },
+    ))
     .await?;
     let mut stream = materializer.materialize_many(paths.clone()).await?;
     while let Some(res) = stream.next().await {
@@ -3409,10 +3820,14 @@ pub async fn materialize_inputs(
         }
     }
 
+    let mut materialized_paths = paths;
+    materialized_paths.extend(copied_artifact_path_aliases_to_materialize.iter().cloned());
+
     Ok(MaterializedInputPaths {
         scratch,
-        paths,
+        paths: materialized_paths,
         artifact_path_aliases: sandbox_artifact_path_aliases,
+        copied_artifact_path_aliases: copied_artifact_path_aliases_to_materialize,
         shared_artifact_path_aliases: shared_artifact_path_aliases_to_materialize,
         external_cell_root_aliases: external_cell_root_aliases_to_materialize,
     })
@@ -3847,6 +4262,20 @@ mod tests {
     }
 
     #[test]
+    fn test_buck_artifact_store_path_uses_isolation_dir() -> buck2_error::Result<()> {
+        assert!(buck_artifact_store_path(ProjectRelativePath::new(
+            "buck-out/debug/art/protobuf+/cfg/external/protobuf+/file.pb.h"
+        )?));
+        assert!(!buck_artifact_store_path(ProjectRelativePath::new(
+            "buck-out/debug/external_cells/bundled/bazel_tools/tools/test/test-setup.sh"
+        )?));
+        assert!(!buck_artifact_store_path(ProjectRelativePath::new(
+            "buck-out/debug/__bazel_execroot/abcdef0123456789/buck-out/bin/cfg/file"
+        )?));
+        Ok(())
+    }
+
+    #[test]
     fn test_artifact_path_alias_replaces_stale_symlink() -> buck2_error::Result<()> {
         let temp = ProjectRootTemp::new()?;
         temp.write_file("source", "new");
@@ -3922,6 +4351,7 @@ mod tests {
             Arc::new(NoDiskMaterializer),
             Arc::new(IncrementalDbState::db_disabled()),
             Arc::new(LocalActionCache::testing_new_in_memory()?),
+            LocalExecutorSharedState::default(),
             Arc::new(DummyBlockingExecutor {
                 fs: project_fs.dupe(),
             }),

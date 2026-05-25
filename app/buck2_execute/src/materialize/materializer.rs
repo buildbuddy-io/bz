@@ -224,6 +224,26 @@ pub trait Materializer: Allocative + Send + Sync + 'static {
         Ok(vec![None; paths.len()])
     }
 
+    /// Return the artifact values currently tracked by the materializer and whether those values
+    /// still match the current materializer state. This is equivalent to
+    /// `get_declared_artifact_values` followed by `declare_match`, but lets stateful
+    /// materializers answer both questions in one command-thread pass.
+    async fn get_declared_artifact_values_and_match(
+        &self,
+        paths: Vec<ProjectRelativePathBuf>,
+    ) -> buck2_error::Result<(Vec<Option<ArtifactValue>>, DeclareMatchOutcome)> {
+        let values = self.get_declared_artifact_values(paths.clone()).await?;
+        let mut artifacts = Vec::with_capacity(values.len());
+        for (path, value) in std::iter::zip(paths, values.iter()) {
+            let Some(value) = value else {
+                return Ok((values, DeclareMatchOutcome::NotMatch));
+            };
+            artifacts.push((path, value.dupe()));
+        }
+        let outcome = self.declare_match(artifacts).await?;
+        Ok((values, outcome))
+    }
+
     /// Ask the materializer if there is a "tracked" artifact at the given path.
     ///
     /// While this method provides no information about what that artifact actually is, it can be

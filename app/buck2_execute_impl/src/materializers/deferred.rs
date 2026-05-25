@@ -509,6 +509,19 @@ impl<T: IoHandler + Allocative> Materializer for DeferredMaterializerAccessor<T>
         Ok(recv.await?)
     }
 
+    async fn get_declared_artifact_values_and_match(
+        &self,
+        paths: Vec<ProjectRelativePathBuf>,
+    ) -> buck2_error::Result<(Vec<Option<ArtifactValue>>, DeclareMatchOutcome)> {
+        let (sender, recv) = oneshot::channel();
+        self.command_sender
+            .send(MaterializerCommand::GetDeclaredArtifactValuesAndMatch(
+                paths, sender,
+            ))?;
+        let (values, is_match) = recv.await?;
+        Ok((values, is_match.into()))
+    }
+
     async fn has_artifact_at(&self, path: ProjectRelativePathBuf) -> buck2_error::Result<bool> {
         let (sender, recv) = oneshot::channel();
 

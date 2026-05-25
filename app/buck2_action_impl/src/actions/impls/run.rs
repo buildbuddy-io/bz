@@ -3301,12 +3301,9 @@ impl RunAction {
         let mut aliases = BuckIndexSet::new();
         for artifact_group_values in artifact_inputs {
             for (artifact, value) in artifact_group_values.iter() {
-                let source_path = Self::bazel_artifact_alias_source_path(
-                    artifact,
-                    value,
-                    artifact_fs,
-                )
-                    .buck_error_context("Invalid Bazel execroot source path")?;
+                let source_path =
+                    Self::bazel_artifact_alias_source_path(artifact, value, artifact_fs)
+                        .buck_error_context("Invalid Bazel execroot source path")?;
                 let source_requires_materialization =
                     artifact.requires_materialization(artifact_fs);
 
@@ -3456,12 +3453,9 @@ impl RunAction {
             let alias =
                 Self::bazel_runfiles_alias_path(bazel_execroot, executable_path, entry.path)?;
             if aliases.insert(alias.clone()) {
-                let source_path = Self::bazel_artifact_alias_source_path(
-                    &artifact,
-                    value,
-                    artifact_fs,
-                )
-                    .buck_error_context("Invalid Bazel runfiles source path")?;
+                let source_path =
+                    Self::bazel_artifact_alias_source_path(&artifact, value, artifact_fs)
+                        .buck_error_context("Invalid Bazel runfiles source path")?;
                 let source_requires_materialization =
                     artifact.requires_materialization(artifact_fs);
                 if source_path == alias {
@@ -3780,27 +3774,42 @@ impl RunAction {
 
         let host_sharing_tokens: BuckIndexSet<String> =
             shared_content_based_paths.into_iter().collect();
+        let bazel_shared_execroot = if bazel_paths {
+            Some(Self::bazel_execroot(fs))
+        } else {
+            None
+        };
         let mut bazel_shared_action_primary_output = None;
         let outputs = self
             .outputs
             .iter()
             .map(|b| {
-                let produced_path = if let Some(bazel_execroot) = bazel_execroot.as_deref() {
-                    let bazel_path =
-                        if let Some(path) = visitor.bazel_output_exec_paths.get(b.get_path()) {
-                            path.clone()
-                        } else {
-                            let artifact = Artifact::from(b.dupe());
-                            bazel_normalize_buck_owned_exec_paths(&bazel_artifact_path(
-                                artifact.get_path(),
-                            ))
-                        };
-                    Some(Self::bazel_execroot_path(bazel_execroot, bazel_path)?)
-                } else {
-                    None
-                };
+                let (produced_path, shared_output_path) =
+                    if let Some(bazel_execroot) = bazel_execroot.as_deref() {
+                        let bazel_path =
+                            if let Some(path) = visitor.bazel_output_exec_paths.get(b.get_path()) {
+                                path.clone()
+                            } else {
+                                let artifact = Artifact::from(b.dupe());
+                                bazel_normalize_buck_owned_exec_paths(&bazel_artifact_path(
+                                    artifact.get_path(),
+                                ))
+                            };
+                        (
+                            Some(Self::bazel_execroot_path(
+                                bazel_execroot,
+                                bazel_path.clone(),
+                            )?),
+                            bazel_shared_execroot
+                                .as_deref()
+                                .map(|execroot| Self::bazel_execroot_path(execroot, bazel_path))
+                                .transpose()?,
+                        )
+                    } else {
+                        (None, None)
+                    };
                 if bazel_shared_action_primary_output.is_none() {
-                    bazel_shared_action_primary_output = produced_path.clone();
+                    bazel_shared_action_primary_output = shared_output_path;
                 }
                 Ok(CommandExecutionOutput::BuildArtifact {
                     path: b.get_path().dupe(),
@@ -4001,14 +4010,9 @@ impl RunAction {
         worker: Option<LocalActionCacheWorkerRef<'_>>,
         remote_worker: Option<LocalActionCacheRemoteWorkerRef<'_>>,
     ) -> buck2_error::Result<Option<LocalActionCacheKey>> {
-        let Some(first_output) = outputs.iter().next() else {
+        let Some(_) = outputs.iter().next() else {
             return Ok(None);
         };
-        let key = first_output
-            .as_ref()
-            .resolve(ctx.fs(), Some(&ContentBasedPathHash::for_output_artifact()))?
-            .into_path()
-            .to_string();
 
         let cas_digest_config = ctx.digest_config().cas_digest_config();
         let mut action_key = CasDigestData::digester(cas_digest_config);
@@ -4109,6 +4113,7 @@ impl RunAction {
             &action_key_digest,
             &input_metadata_digest,
         );
+        let key = format!("action-key:{}", hex::encode(&action_key_digest));
 
         Ok(Some(LocalActionCacheKey {
             key,

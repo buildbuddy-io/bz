@@ -111,16 +111,23 @@ struct WorkerCacheKey {
     id: WorkerId,
     protocol: WorkerProtocol,
     root: String,
+    instance: u64,
+    multiplex: bool,
+    sandboxed: bool,
     exe: Vec<String>,
     env: Vec<(String, String)>,
 }
 
 impl WorkerCacheKey {
-    fn new(worker_spec: &WorkerSpec, root: &AbsNormPath) -> Self {
+    fn new(worker_spec: &WorkerSpec, root: &AbsNormPath, instance: u64) -> Self {
         Self {
             id: worker_spec.id,
             protocol: worker_spec.protocol,
             root: root.to_string(),
+            instance,
+            multiplex: worker_spec.protocol == WorkerProtocol::Bazel
+                && worker_spec.concurrency.unwrap_or(1) > 1,
+            sandboxed: worker_spec.bazel_worker_sandboxing,
             exe: worker_spec.exe.clone(),
             env: worker_spec
                 .env
@@ -454,6 +461,7 @@ async fn spawn_bazel_worker(
         WorkerClient::Bazel(BazelWorkerClient {
             ids: Default::default(),
             stdin: Arc::new(tokio::sync::Mutex::new(stdin)),
+            singleplex_lock: Arc::new(tokio::sync::Mutex::new(())),
             waiters,
             stdout_closed_observer,
             multiplex,
@@ -624,16 +632,38 @@ type WorkerFuture = Shared<BoxFuture<'static, Result<Arc<WorkerHandle>, Arc<Work
 pub struct WorkerPool {
     workers: Arc<parking_lot::Mutex<StdBuckHashMap<WorkerCacheKey, WorkerFuture>>>,
     brokers: Arc<parking_lot::Mutex<StdBuckHashMap<WorkerCacheKey, Arc<HostSharingBroker>>>>,
+    next_instances: Arc<parking_lot::Mutex<StdBuckHashMap<WorkerCacheKey, Arc<AtomicU64>>>>,
     graceful_shutdown_timeout_s: Option<u32>,
 }
 
 impl WorkerPool {
+    const DEFAULT_MAX_SINGLEPLEX_BAZEL_WORKERS: usize = 4;
+
     pub fn new(graceful_shutdown_timeout_s: Option<u32>) -> WorkerPool {
         tracing::info!("Creating new WorkerPool");
         WorkerPool {
             workers: Arc::new(parking_lot::Mutex::new(StdBuckHashMap::default())),
             brokers: Arc::new(parking_lot::Mutex::new(StdBuckHashMap::default())),
+            next_instances: Arc::new(parking_lot::Mutex::new(StdBuckHashMap::default())),
             graceful_shutdown_timeout_s,
+        }
+    }
+
+    fn worker_key(worker_spec: &WorkerSpec, root: &AbsNormPath, instance: u64) -> WorkerCacheKey {
+        WorkerCacheKey::new(worker_spec, root, instance)
+    }
+
+    fn base_worker_key(worker_spec: &WorkerSpec, root: &AbsNormPath) -> WorkerCacheKey {
+        Self::worker_key(worker_spec, root, 0)
+    }
+
+    fn max_instances(worker_spec: &WorkerSpec) -> usize {
+        if worker_spec.protocol == WorkerProtocol::Bazel
+            && worker_spec.concurrency.unwrap_or(1) == 1
+        {
+            Self::DEFAULT_MAX_SINGLEPLEX_BAZEL_WORKERS
+        } else {
+            1
         }
     }
 
@@ -643,8 +673,13 @@ impl WorkerPool {
         root: &AbsNormPath,
     ) -> Option<Arc<HostSharingBroker>> {
         let mut brokers = self.brokers.lock();
-        let worker_key = WorkerCacheKey::new(worker_spec, root);
+        let worker_key = Self::base_worker_key(worker_spec, root);
         worker_spec.concurrency.map(|concurrency| {
+            let concurrency = if Self::max_instances(worker_spec) > 1 {
+                Self::max_instances(worker_spec)
+            } else {
+                concurrency
+            };
             brokers
                 .entry(worker_key)
                 .or_insert_with(|| {
@@ -666,7 +701,20 @@ impl WorkerPool {
         dispatcher: EventDispatcher,
     ) -> (bool, WorkerFuture) {
         let mut workers = self.workers.lock();
-        let worker_key = WorkerCacheKey::new(worker_spec, root);
+        let base_worker_key = Self::base_worker_key(worker_spec, root);
+        let max_instances = Self::max_instances(worker_spec);
+        let instance = if max_instances > 1 {
+            let next_instance = self
+                .next_instances
+                .lock()
+                .entry(base_worker_key)
+                .or_insert_with(|| Arc::new(AtomicU64::new(0)))
+                .clone();
+            next_instance.fetch_add(1, Ordering::Relaxed) % max_instances as u64
+        } else {
+            0
+        };
+        let worker_key = Self::worker_key(worker_spec, root, instance);
         if let Some(worker_fut) = workers.get(&worker_key) {
             (false, worker_fut.clone())
         } else {
@@ -728,6 +776,7 @@ enum WorkerClient {
 struct BazelWorkerClient {
     ids: Arc<AtomicU64>,
     stdin: Arc<tokio::sync::Mutex<ChildStdin>>,
+    singleplex_lock: Arc<tokio::sync::Mutex<()>>,
     waiters: Arc<BuckDashMap<i32, tokio::sync::oneshot::Sender<BazelWorkResponse>>>,
     stdout_closed_observer: Arc<dyn LivelinessObserver>,
     multiplex: bool,
@@ -873,6 +922,11 @@ impl BazelWorkerClient {
             env: _,
             timeout_s,
         } = request;
+        let _singleplex_guard = if self.multiplex {
+            None
+        } else {
+            Some(self.singleplex_lock.lock().await)
+        };
         let request_id = if self.multiplex {
             self.ids.fetch_add(1, Ordering::Acquire) as i32 + 1
         } else {

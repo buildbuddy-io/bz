@@ -167,6 +167,11 @@ pub(super) enum MaterializerCommand<T: 'static> {
         oneshot::Sender<Vec<Option<ArtifactValue>>>,
     ),
 
+    GetDeclaredArtifactValuesAndMatch(
+        Vec<ProjectRelativePathBuf>,
+        oneshot::Sender<(Vec<Option<ArtifactValue>>, bool)>,
+    ),
+
     /// Declares that a set of artifacts already exist
     DeclareExisting(Vec<DeclareArtifactPayload>, Option<SpanId>, Option<TraceId>),
 
@@ -248,6 +253,9 @@ impl<T> std::fmt::Debug for MaterializerCommand<T> {
             }
             MaterializerCommand::GetDeclaredArtifactValues(paths, _) => {
                 write!(f, "GetDeclaredArtifactValues({paths:?}, _)",)
+            }
+            MaterializerCommand::GetDeclaredArtifactValuesAndMatch(paths, _) => {
+                write!(f, "GetDeclaredArtifactValuesAndMatch({paths:?}, _)",)
             }
             MaterializerCommand::DeclareExisting(paths, current_span, trace_id) => {
                 write!(
@@ -671,6 +679,27 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
                     })
                     .collect();
                 result_sender.send(result).ok();
+            }
+            MaterializerCommand::GetDeclaredArtifactValuesAndMatch(paths, result_sender) => {
+                let mut all_matches = true;
+                let result = paths
+                    .into_iter()
+                    .map(|path| {
+                        let Some(value) = self
+                            .declared_artifact_values
+                            .get(&path)
+                            .map(|value| value.value().dupe())
+                        else {
+                            all_matches = false;
+                            return None;
+                        };
+                        if !self.match_artifact(path, value.dupe()) {
+                            all_matches = false;
+                        }
+                        Some(value)
+                    })
+                    .collect();
+                result_sender.send((result, all_matches)).ok();
             }
             MaterializerCommand::DeclareExisting(artifacts, ..) => {
                 for DeclareArtifactPayload {
