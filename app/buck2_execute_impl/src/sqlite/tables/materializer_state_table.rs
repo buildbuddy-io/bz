@@ -67,8 +67,6 @@ enum MaterializerStateTableError {
     ExpectedLastAccessTimeForArtifact,
     #[error("Internal error: code should not be reachable for sqlite entry of directory type")]
     CodePathNotSupportedForDirEntry,
-    #[error("Internal error: missing an sqlite entry representing directory artifact `{0}`")]
-    DirectoryArtifactEntryMissing(ProjectRelativePathBuf),
 }
 
 /// Sqlite representation of sha1. Can be converted directly into BLOB type
@@ -346,7 +344,11 @@ fn convert_sqlite_entries_to_materializer_state(
             fingerprint.shared(&*INTERNER)
         };
         let Some(last_access_time) = timestamp else {
-            return Err(MaterializerStateTableError::DirectoryArtifactEntryMissing(path).into());
+            // Stale directory-member rows can be left behind if an older daemon failed
+            // between deleting the directory artifact row and deleting its children.
+            // Treat them like Bazel treats stale output metadata: ignore only the
+            // unusable entry instead of discarding the whole persisted output state.
+            continue;
         };
         results.push(MaterializerStateEntry {
             path,

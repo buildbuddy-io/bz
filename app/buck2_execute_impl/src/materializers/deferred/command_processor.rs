@@ -969,6 +969,28 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
 
     fn declare_existing(&mut self, path: &ProjectRelativePath, value: ArtifactValue) {
         let metadata = value.entry().dupe();
+        let mut path_iter = path.iter();
+        if let Some(data) = self.tree.prefix_get_mut(&mut path_iter)
+            && path_iter.next().is_none()
+            && let ArtifactMaterializationStage::Materialized {
+                metadata: existing_metadata,
+                last_access_time,
+                ..
+            } = &data.stage
+            && artifact_metadata_matches_entry(existing_metadata, value.entry())
+            && materialized_path_exists(self.io.as_ref(), path)
+        {
+            data.stage = ArtifactMaterializationStage::Materialized {
+                metadata,
+                last_access_time: *last_access_time,
+                active: true,
+            };
+            self.declared_artifact_values
+                .insert(path.to_owned(), value.dupe());
+            self.stats.declares_reused.fetch_add(1, Ordering::Relaxed);
+            return;
+        }
+
         self.declared_artifact_values
             .insert(path.to_owned(), value.dupe());
         on_materialization(
