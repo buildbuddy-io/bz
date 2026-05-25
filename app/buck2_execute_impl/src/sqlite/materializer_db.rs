@@ -63,10 +63,6 @@ pub struct MaterializerStateSqliteDb {
 
 pub struct MaterializerStateSqliteDbDeferredLoad {
     db: MaterializerStateSqliteDb,
-    materializer_state_dir: AbsNormPathBuf,
-    versions: StdBuckHashMap<String, String>,
-    current_instance_metadata: StdBuckHashMap<String, String>,
-    digest_config: DigestConfig,
     load_error: Option<buck2_error::Error>,
 }
 
@@ -91,15 +87,12 @@ impl SqliteDb for MaterializerStateSqliteDb {
 }
 
 impl MaterializerStateSqliteDb {
-    /// Given path to the sqlite DB, attempts to read `MaterializerState` from the DB. If we encounter
-    /// any failure along the way, such as if the DB path does not exist, the sqlite read fails,
-    /// or the DB has a different set of versions than the versions this buck2 expects, we
-    /// throw away the existing DB and initialize a new DB. Returns (1) the connected sqlite DB and
-    /// (2) the `MaterializerState` if loading was successful or the load error.
-    /// The `Result<MaterializerState>` captures any failure encountered when attempting to load
-    /// from the existing DB. These failures are expected if db doesn't exist or versions don't match.
-    /// The outer `Result` captures any failure encountered when trying to delete the existing DB and
-    /// create a new one.
+    /// Given path to the sqlite DB, opens the materializer state DB or creates a new one if the
+    /// existing DB is missing or version-incompatible.
+    ///
+    /// Startup intentionally does not hydrate persisted materializer rows. This matches Bazel's
+    /// shape more closely: cached action validation should be driven by action/cache metadata and
+    /// per-output checks, not by eagerly loading the full materializer tree into memory.
     pub async fn initialize(
         materializer_state_dir: AbsNormPathBuf,
         versions: StdBuckHashMap<String, String>,
@@ -128,7 +121,7 @@ impl MaterializerStateSqliteDb {
         materializer_state_dir: AbsNormPathBuf,
         versions: StdBuckHashMap<String, String>,
         current_instance_metadata: StdBuckHashMap<String, String>,
-        digest_config: DigestConfig,
+        _digest_config: DigestConfig,
         reject_identity: Option<&SqliteIdentity>,
     ) -> buck2_error::Result<MaterializerStateSqliteDbDeferredLoad> {
         let reject_identity = reject_identity.cloned();
@@ -141,10 +134,6 @@ impl MaterializerStateSqliteDb {
         ) {
             Ok(db) => Ok(MaterializerStateSqliteDbDeferredLoad {
                 db,
-                materializer_state_dir,
-                versions,
-                current_instance_metadata,
-                digest_config,
                 load_error: None,
             }),
             Err(e) => {
@@ -155,10 +144,6 @@ impl MaterializerStateSqliteDb {
                 )?;
                 Ok(MaterializerStateSqliteDbDeferredLoad {
                     db,
-                    materializer_state_dir,
-                    versions,
-                    current_instance_metadata,
-                    digest_config,
                     load_error: Some(e),
                 })
             }
@@ -225,34 +210,13 @@ impl MaterializerStateSqliteDbDeferredLoad {
         MaterializerStateSqliteDb,
         buck2_error::Result<MaterializerState>,
     )> {
-        let Self {
-            db,
-            materializer_state_dir,
-            versions,
-            current_instance_metadata,
-            digest_config,
-            load_error,
-        } = self;
+        let Self { db, load_error } = self;
 
-        if let Some(e) = load_error {
-            return Ok((db, Err(e)));
+        if load_error.is_some() {
+            return Ok((db, Ok(Vec::new())));
         }
 
-        match db
-            .tables
-            .domain_table
-            .read_materializer_state(digest_config)
-        {
-            Ok(state) => Ok((db, Ok(state))),
-            Err(e) => {
-                let db = MaterializerStateSqliteDb::create_sqlite_db(
-                    materializer_state_dir,
-                    versions,
-                    current_instance_metadata,
-                )?;
-                Ok((db, Err(e)))
-            }
-        }
+        Ok((db, Ok(Vec::new())))
     }
 }
 
