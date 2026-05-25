@@ -1,3 +1,4 @@
+use std::io::IsTerminal;
 use std::time::Duration;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
@@ -27,6 +28,26 @@ const BAZEL_BUILD_EVENT_TYPE_URL: &str = "type.googleapis.com/build_event_stream
 const PUBLISH_BUILD_TOOL_EVENT_STREAM_PATH: &str =
     "/google.devtools.build.v1.PublishBuildEvent/PublishBuildToolEventStream";
 const DEFAULT_PROGRESS_CHUNK_SIZE: usize = 1024 * 1024;
+
+pub(crate) fn bes_invocation_url(results_url: &str, invocation_id: &str) -> String {
+    let separator = if results_url.ends_with('/') { "" } else { "/" };
+    format!("{results_url}{separator}{invocation_id}")
+}
+
+pub(crate) fn print_bes_results_url(
+    results_url: &str,
+    invocation_id: &str,
+) -> buck2_error::Result<()> {
+    let url = bes_invocation_url(results_url, invocation_id);
+    if std::io::stderr().is_terminal() {
+        crate::eprintln!(
+            "\x1b[1;32mINFO:\x1b[0m Streaming build results to: \x1b[4;36m{}\x1b[0m",
+            url
+        )
+    } else {
+        crate::eprintln!("INFO: Streaming build results to: {}", url)
+    }
+}
 
 #[derive(Debug, buck2_error::Error)]
 #[buck2(tag = Tier0)]
@@ -598,13 +619,7 @@ impl EventSubscriber for BuildEventProtocolSubscriber {
             };
 
         if let Some(results_url) = &self.config.results_url {
-            let separator = if results_url.ends_with('/') { "" } else { "/" };
-            crate::eprintln!(
-                "BuildBuddy invocation: {}{}{}",
-                results_url,
-                separator,
-                self.config.invocation_id
-            )?;
+            print_bes_results_url(results_url, &self.config.invocation_id)?;
         } else {
             tracing::info!(
                 "Uploaded {} BEP events to {} (last ack: {:?})",

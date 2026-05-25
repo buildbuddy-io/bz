@@ -38,6 +38,7 @@ use crate::exit_result::ExitResult;
 use crate::path_arg::PathArg;
 use crate::signal_handler::with_simple_sigint_handler;
 use crate::subscribers::bep::get_bep_subscriber;
+use crate::subscribers::bep::print_bes_results_url;
 use crate::subscribers::build_graph_stats::BuildGraphStats;
 use crate::subscribers::build_id_writer::BuildIdWriter;
 use crate::subscribers::event_log::EventLog;
@@ -106,6 +107,13 @@ fn update_events_ctx<T: StreamingCommand>(
     );
     subscribers.push(console_subscriber);
     events_ctx.used_superconsole = used_superconsole;
+
+    if event_log_opts.bes_backend.is_some()
+        && let Some(results_url) = &event_log_opts.bes_results_url
+    {
+        let invocation_id = ctx.trace_id.to_string();
+        print_bes_results_url(results_url, &invocation_id)?;
+    }
 
     if let Some(paths) = paths {
         let re_log_subscriber = ReLog::new(paths.isolation.clone());
