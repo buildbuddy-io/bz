@@ -60,6 +60,7 @@ use crate::directory::ActionFingerprintedDirectoryRef;
 use crate::directory::ActionImmutableDirectory;
 use crate::directory::ReDirectorySerializer;
 use crate::execute::blobs::ActionBlobs;
+use crate::execute::request::CommandExecutionPaths;
 use crate::materialize::materializer::ArtifactNotMaterializedReason;
 use crate::materialize::materializer::CasDownloadInfo;
 use crate::materialize::materializer::Materializer;
@@ -226,6 +227,7 @@ impl Uploader {
         materializer: &Arc<dyn Materializer>,
         dir_path: &ProjectRelativePath,
         input_dir: &ActionImmutableDirectory,
+        input_paths: Option<&CommandExecutionPaths>,
         blobs: &ActionBlobs,
         use_case: RemoteExecutorUseCase,
         identity: Option<&ReActionIdentity<'_>>,
@@ -254,6 +256,18 @@ impl Uploader {
         let mut paths_to_materialize = Vec::new();
 
         if !missing_digests.is_empty() {
+            let artifact_path_alias_upload_paths = input_paths.map(|input_paths| {
+                let mut exact_paths = StdBuckHashMap::default();
+                let mut directory_paths = Vec::new();
+                for (path, source_path, is_dir) in input_paths.artifact_path_alias_upload_paths() {
+                    if is_dir {
+                        directory_paths.push((path, source_path));
+                    } else {
+                        exact_paths.insert(path.as_forward_relative_path(), source_path);
+                    }
+                }
+                (exact_paths, directory_paths)
+            });
             let mut upload_file_paths = Vec::new();
             let mut upload_file_digests = Vec::new();
 
@@ -275,7 +289,25 @@ impl Uploader {
                             upload_blobs.push(directory_to_blob(d));
                         }
                         DirectoryEntry::Leaf(ActionDirectoryMember::File(..)) => {
-                            upload_file_paths.push(dir_path.join(path.get()));
+                            let input_path = path.get();
+                            let input_path = &*input_path;
+                            let upload_file_path = artifact_path_alias_upload_paths
+                                .as_ref()
+                                .and_then(|(exact_paths, directory_paths)| {
+                                    if let Some(source_path) = exact_paths.get(input_path) {
+                                        return Some(source_path.to_buf());
+                                    }
+                                    for (path, source_path) in directory_paths {
+                                        if let Some(suffix) = input_path
+                                            .strip_prefix_opt(path.as_forward_relative_path())
+                                        {
+                                            return Some(source_path.join(suffix));
+                                        }
+                                    }
+                                    None
+                                })
+                                .unwrap_or_else(|| dir_path.join(input_path));
+                            upload_file_paths.push(upload_file_path);
                             upload_file_digests.push(digest.to_re());
                         }
                         DirectoryEntry::Leaf(..) => unreachable!(), // TODO: Better representation of this.

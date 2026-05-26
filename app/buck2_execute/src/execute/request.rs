@@ -336,6 +336,20 @@ impl CommandExecutionPaths {
         &self.input_directory
     }
 
+    pub fn artifact_path_alias_upload_paths(
+        &self,
+    ) -> impl Iterator<Item = (&ProjectRelativePath, &ProjectRelativePath, bool)> {
+        self.inputs.iter().filter_map(|input| match input {
+            CommandExecutionInput::ArtifactPathAlias {
+                source_path,
+                path,
+                value,
+                ..
+            } => Some((path.as_ref(), source_path.as_ref(), value.is_dir())),
+            _ => None,
+        })
+    }
+
     pub fn output_paths(&self) -> &[(ProjectRelativePathBuf, OutputType)] {
         &self.output_paths
     }

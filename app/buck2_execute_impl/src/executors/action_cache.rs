@@ -126,6 +126,7 @@ async fn query_action_cache_and_download_result(
                 action_blobs,
                 ProjectRelativePath::empty(),
                 request.paths().input_directory(),
+                Some(request.paths()),
                 Some(&identity),
                 digest_config,
                 deduplicate_get_digests_ttl_calls,

@@ -51,6 +51,7 @@ use crate::directory::ActionImmutableDirectory;
 use crate::execute::action_digest::ActionDigest;
 use crate::execute::blobs::ActionBlobs;
 use crate::execute::manager::CommandExecutionManager;
+use crate::execute::request::CommandExecutionPaths;
 use crate::knobs::ExecutorGlobalKnobs;
 use crate::materialize::materializer::Materializer;
 use crate::materialize::utils::dynamic_priority_handle::DynamicPriorityHandle;
@@ -384,6 +385,7 @@ impl ManagedRemoteExecutionClient {
         blobs: &ActionBlobs,
         dir_path: &ProjectRelativePath,
         input_dir: &ActionImmutableDirectory,
+        input_paths: Option<&CommandExecutionPaths>,
         identity: Option<&ReActionIdentity<'_>>,
         digest_config: DigestConfig,
         deduplicate_get_digests_ttl_calls: bool,
@@ -397,6 +399,7 @@ impl ManagedRemoteExecutionClient {
                 blobs,
                 dir_path,
                 input_dir,
+                input_paths,
                 self.use_case,
                 identity,
                 digest_config,

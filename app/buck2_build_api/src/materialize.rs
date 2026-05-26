@@ -217,6 +217,7 @@ async fn ensure_uploaded(
             ProjectRelativePath::empty(),
             &dir,
             None,
+            None,
             digest_config,
             ctx.per_transaction_data()
                 .get_run_action_knobs()

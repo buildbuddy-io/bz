@@ -94,6 +94,7 @@ use crate::execute::action_digest::ActionDigest;
 use crate::execute::blobs::ActionBlobs;
 use crate::execute::executor_stage_async;
 use crate::execute::manager::CommandExecutionManager;
+use crate::execute::request::CommandExecutionPaths;
 use crate::knobs::ExecutorGlobalKnobs;
 use crate::materialize::materializer::Materializer;
 use crate::materialize::utils::dynamic_priority_handle::AcquirePermitResult;
@@ -274,6 +275,7 @@ impl RemoteExecutionClient {
         blobs: &ActionBlobs,
         dir_path: &ProjectRelativePath,
         input_dir: &ActionImmutableDirectory,
+        input_paths: Option<&CommandExecutionPaths>,
         use_case: RemoteExecutorUseCase,
         identity: Option<&ReActionIdentity<'_>>,
         digest_config: DigestConfig,
@@ -290,6 +292,7 @@ impl RemoteExecutionClient {
                 materializer,
                 dir_path,
                 input_dir,
+                input_paths,
                 blobs,
                 use_case,
                 identity,

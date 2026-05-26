@@ -395,6 +395,7 @@ impl CacheUploader {
                                 &action_blobs,
                                 materialized_output_path.as_ref(),
                                 &d.dupe().as_immutable(),
+                                None,
                                 identity,
                                 digest_config,
                                 self.deduplicate_get_digests_ttl_calls,
