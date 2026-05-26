@@ -5,9 +5,6 @@ gh_facebook_buck2_shims_meta = shim
 [cell_aliases]
 root = gh_facebook_buck2
 
-[alias]
-buck2 = //:buck2
-
 [oss]
 internal_cell = fbcode
 stripped_root_dirs = buck2

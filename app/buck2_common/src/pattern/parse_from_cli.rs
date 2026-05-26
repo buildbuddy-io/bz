@@ -11,19 +11,38 @@
 use buck2_core::cells::CellAliasResolver;
 use buck2_core::cells::CellResolver;
 use buck2_core::cells::cell_path::CellPath;
+use buck2_core::cells::cell_path::CellPathRef;
 use buck2_core::fs::project_rel_path::ProjectRelativePath;
+use buck2_core::package::PackageLabel;
+use buck2_core::pattern::pattern::Modifiers;
 use buck2_core::pattern::pattern::ParsedPattern;
 use buck2_core::pattern::pattern::ParsedPatternWithModifiers;
+use buck2_core::pattern::pattern::PatternDataOrAmbiguous;
+use buck2_core::pattern::pattern::PatternParts;
+use buck2_core::pattern::pattern::lex_target_pattern;
 use buck2_core::pattern::pattern_type::PatternType;
 use buck2_core::pattern::unparsed::UnparsedPatterns;
+use buck2_core::target::name::TargetName;
+use buck2_core::target_aliases::TargetAliasResolver;
+use buck2_error::BuckErrorContext;
+use buck2_fs::paths::RelativePath;
 use dice::DiceComputations;
-use gazebo::prelude::*;
 
 use crate::dice::cells::HasCellResolver;
+use crate::file_ops::trait_::DiceFileOps;
+use crate::file_ops::trait_::FileOps;
+use crate::find_buildfile::find_buildfile;
 use crate::pattern::resolve::ResolveTargetPatterns;
 use crate::pattern::resolve::ResolvedPattern;
 use crate::target_aliases::BuckConfigTargetAliasResolver;
 use crate::target_aliases::HasTargetAliasResolver;
+
+#[derive(buck2_error::Error, Debug)]
+#[buck2(input)]
+enum PathAsTargetError {
+    #[error("couldn't determine target from filename '{0}'")]
+    CannotDetermineTargetFromFilename(String),
+}
 
 struct PatternParser {
     cell_resolver: CellResolver,
@@ -53,23 +72,39 @@ impl PatternParser {
         })
     }
 
-    fn parse_pattern<T: PatternType>(
+    async fn parse_pattern<T: PatternType>(
         &self,
+        file_ops: &dyn FileOps,
         pattern: &str,
     ) -> buck2_error::Result<ParsedPattern<T>> {
-        ParsedPattern::parse_relaxed(
-            &self.target_alias_resolver,
-            self.cwd.as_ref(),
-            pattern,
-            &self.cell_resolver,
-            &self.cell_alias_resolver,
-        )
+        let pattern_with_modifiers = self.parse_pattern_with_modifiers(file_ops, pattern).await?;
+        let ParsedPatternWithModifiers {
+            parsed_pattern,
+            modifiers,
+        } = pattern_with_modifiers;
+
+        match modifiers.as_slice() {
+            None => Ok(parsed_pattern),
+            Some(_) => Err(buck2_error::buck2_error!(
+                buck2_error::ErrorTag::Input,
+                "The ?modifier syntax is unsupported for this command"
+            )),
+        }
     }
 
-    fn parse_pattern_with_modifiers<T: PatternType>(
+    async fn parse_pattern_with_modifiers<T: PatternType>(
         &self,
+        file_ops: &dyn FileOps,
         pattern: &str,
     ) -> buck2_error::Result<ParsedPatternWithModifiers<T>> {
+        if let Some(pattern) = self
+            .parse_path_as_target_pattern(file_ops, pattern)
+            .await
+            .with_buck_error_context(|| format!("Parsing target pattern `{pattern}`"))?
+        {
+            return Ok(pattern);
+        }
+
         ParsedPatternWithModifiers::parse_relaxed(
             &self.target_alias_resolver,
             self.cwd.as_ref(),
@@ -78,6 +113,97 @@ impl PatternParser {
             &self.cell_alias_resolver,
         )
     }
+
+    async fn parse_path_as_target_pattern<T: PatternType>(
+        &self,
+        file_ops: &dyn FileOps,
+        pattern: &str,
+    ) -> buck2_error::Result<Option<ParsedPatternWithModifiers<T>>> {
+        let lex = lex_target_pattern(pattern, true)?;
+        let PatternParts {
+            cell_alias,
+            pattern,
+        } = lex;
+
+        if cell_alias.is_some() {
+            return Ok(None);
+        }
+
+        let PatternDataOrAmbiguous::Ambiguous {
+            pattern: path,
+            strip_package_trailing_slash,
+            extra,
+            modifiers,
+        } = pattern
+        else {
+            return Ok(None);
+        };
+
+        if self.target_alias_resolver.get(path)?.is_some() {
+            return Ok(None);
+        }
+
+        let path = if strip_package_trailing_slash {
+            path.strip_suffix('/').unwrap_or(path)
+        } else {
+            path
+        };
+        let path = self.cwd.join_normalized(RelativePath::new(path))?;
+
+        resolve_path_as_target(file_ops, path, extra, modifiers)
+            .await
+            .map(Some)
+    }
+}
+
+async fn resolve_path_as_target<T: PatternType>(
+    file_ops: &dyn FileOps,
+    path: CellPath,
+    extra: T,
+    modifiers: Modifiers,
+) -> buck2_error::Result<ParsedPatternWithModifiers<T>> {
+    let (package, target_name) = if is_package(file_ops, path.as_ref()).await? {
+        let target_name = path.path().file_name().ok_or_else(|| {
+            PathAsTargetError::CannotDetermineTargetFromFilename(path.to_string())
+        })?;
+        (
+            PackageLabel::from_cell_path(path.as_ref())?,
+            TargetName::new_bazel(target_name.as_str())?,
+        )
+    } else {
+        let mut package_path = path.parent();
+        let mut package_and_target = None;
+
+        while let Some(package_path_value) = package_path {
+            if is_package(file_ops, package_path_value).await? {
+                let target_name = path.strip_prefix(package_path_value)?;
+                package_and_target = Some((
+                    PackageLabel::from_cell_path(package_path_value)?,
+                    TargetName::new_bazel(target_name.as_str())?,
+                ));
+                break;
+            }
+            package_path = package_path_value.parent();
+        }
+
+        package_and_target
+            .ok_or_else(|| PathAsTargetError::CannotDetermineTargetFromFilename(path.to_string()))?
+    };
+
+    Ok(ParsedPatternWithModifiers {
+        parsed_pattern: ParsedPattern::Target(package, target_name, extra),
+        modifiers,
+    })
+}
+
+async fn is_package(file_ops: &dyn FileOps, path: CellPathRef<'_>) -> buck2_error::Result<bool> {
+    let listing = match file_ops.read_dir(path).await {
+        Ok(listing) => listing.included,
+        Err(_) => return Ok(false),
+    };
+
+    let buildfiles = file_ops.buildfiles(path.cell()).await?;
+    Ok(find_buildfile(&buildfiles, &listing).is_some())
 }
 
 /// Parse target patterns out of command line arguments.
@@ -92,7 +218,15 @@ pub async fn parse_patterns_from_cli_args<T: PatternType>(
 ) -> buck2_error::Result<Vec<ParsedPattern<T>>> {
     let parser = PatternParser::new(ctx, cwd).await?;
 
-    target_patterns.try_map(|value| parser.parse_pattern(value))
+    ctx.with_linear_recompute(|ctx| async move {
+        let file_ops = DiceFileOps(&ctx);
+        let mut parsed = Vec::with_capacity(target_patterns.len());
+        for value in target_patterns {
+            parsed.push(parser.parse_pattern(&file_ops, value).await?);
+        }
+        buck2_error::Ok(parsed)
+    })
+    .await
 }
 
 pub async fn parse_patterns_with_modifiers_from_cli_args<T: PatternType>(
@@ -102,7 +236,19 @@ pub async fn parse_patterns_with_modifiers_from_cli_args<T: PatternType>(
 ) -> buck2_error::Result<Vec<ParsedPatternWithModifiers<T>>> {
     let parser = PatternParser::new(ctx, cwd).await?;
 
-    target_patterns.try_map(|value| parser.parse_pattern_with_modifiers(value))
+    ctx.with_linear_recompute(|ctx| async move {
+        let file_ops = DiceFileOps(&ctx);
+        let mut parsed = Vec::with_capacity(target_patterns.len());
+        for value in target_patterns {
+            parsed.push(
+                parser
+                    .parse_pattern_with_modifiers(&file_ops, value)
+                    .await?,
+            );
+        }
+        buck2_error::Ok(parsed)
+    })
+    .await
 }
 
 pub async fn parse_patterns_from_cli_args_typed<T: PatternType>(
