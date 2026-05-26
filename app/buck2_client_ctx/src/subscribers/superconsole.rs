@@ -628,6 +628,7 @@ impl StatefulSuperConsole {
         if let Some(stream) = stream {
             builder.write_to(stream);
         }
+        builder.write_aux_to(Box::new(crate::stdio::StdoutWriter::new()));
         Self::new(
             command_name,
             trace_id,

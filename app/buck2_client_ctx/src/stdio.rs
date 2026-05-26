@@ -18,15 +18,58 @@ use std::io;
 use std::io::LineWriter;
 use std::io::Stdout;
 use std::io::Write;
+use std::sync::Mutex;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 
 use buck2_error::internal_error;
+use crossterm::tty::IsTty as CrosstermIsTty;
 use superconsole::Line;
+use tokio::sync::mpsc;
 
 use crate::exit_result::ClientIoError;
 
 static HAS_WRITTEN_TO_STDOUT: AtomicBool = AtomicBool::new(false);
+static OUTPUT_TAP: Mutex<Option<mpsc::UnboundedSender<OutputEvent>>> = Mutex::new(None);
+
+#[derive(Clone, Copy, Debug)]
+pub enum OutputStream {
+    Stdout,
+    Stderr,
+}
+
+#[derive(Clone, Debug)]
+pub struct OutputEvent {
+    pub stream: OutputStream,
+    pub bytes: Vec<u8>,
+}
+
+pub struct OutputTapGuard {
+    previous: Option<mpsc::UnboundedSender<OutputEvent>>,
+}
+
+impl Drop for OutputTapGuard {
+    fn drop(&mut self) {
+        *OUTPUT_TAP.lock().unwrap() = self.previous.take();
+    }
+}
+
+pub fn install_output_tap(sender: mpsc::UnboundedSender<OutputEvent>) -> OutputTapGuard {
+    let mut tap = OUTPUT_TAP.lock().unwrap();
+    OutputTapGuard {
+        previous: tap.replace(sender),
+    }
+}
+
+fn tap_output(stream: OutputStream, bytes: &[u8]) {
+    let sender = OUTPUT_TAP.lock().unwrap().clone();
+    if let Some(sender) = sender {
+        let _ignored = sender.send(OutputEvent {
+            stream,
+            bytes: bytes.to_vec(),
+        });
+    }
+}
 
 pub fn has_written_to_stdout() -> bool {
     HAS_WRITTEN_TO_STDOUT.load(Ordering::Relaxed)
@@ -89,24 +132,32 @@ macro_rules! eprintln {
 }
 
 pub fn _print(fmt: Arguments) -> buck2_error::Result<()> {
+    let message = fmt.to_string();
     stdout()?
         .lock()
-        .write_fmt(fmt)
-        .map_err(|e| ClientIoError::from(e).into())
+        .write_all(message.as_bytes())
+        .map_err(|e| buck2_error::Error::from(ClientIoError::from(e)))?;
+    tap_output(OutputStream::Stdout, message.as_bytes());
+    Ok(())
 }
 
 pub fn _eprint(fmt: Arguments) -> buck2_error::Result<()> {
+    let message = fmt.to_string();
     io::stderr()
         .lock()
-        .write_fmt(fmt)
-        .map_err(|e| ClientIoError::from(e).into())
+        .write_all(message.as_bytes())
+        .map_err(|e| buck2_error::Error::from(ClientIoError::from(e)))?;
+    tap_output(OutputStream::Stderr, message.as_bytes());
+    Ok(())
 }
 
 pub fn print_bytes(bytes: &[u8]) -> buck2_error::Result<()> {
     stdout()?
         .lock()
         .write_all(bytes)
-        .map_err(|e| ClientIoError::from(e).into())
+        .map_err(|e| buck2_error::Error::from(ClientIoError::from(e)))?;
+    tap_output(OutputStream::Stdout, bytes);
+    Ok(())
 }
 
 pub fn eprint_line(line: &Line) -> buck2_error::Result<()> {
@@ -128,6 +179,74 @@ fn stdout_to_file(stdout: &Stdout) -> buck2_error::Result<File> {
     {
         use std::os::windows::io::AsHandle;
         Ok(File::from(stdout.as_handle().try_clone_to_owned()?))
+    }
+}
+
+#[derive(Debug)]
+pub struct StdoutWriter;
+
+impl StdoutWriter {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl Write for StdoutWriter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        if STDOUT_LOCKED.load(Ordering::Relaxed) {
+            return Err(io::Error::other("stdout is already locked"));
+        }
+        HAS_WRITTEN_TO_STDOUT.store(true, Ordering::Relaxed);
+        let written = io::stdout().lock().write(buf)?;
+        tap_output(OutputStream::Stdout, &buf[..written]);
+        Ok(written)
+    }
+
+    fn write_all(&mut self, buf: &[u8]) -> io::Result<()> {
+        if STDOUT_LOCKED.load(Ordering::Relaxed) {
+            return Err(io::Error::other("stdout is already locked"));
+        }
+        HAS_WRITTEN_TO_STDOUT.store(true, Ordering::Relaxed);
+        io::stdout().lock().write_all(buf)?;
+        tap_output(OutputStream::Stdout, buf);
+        Ok(())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        io::stdout().lock().flush()
+    }
+}
+
+impl CrosstermIsTty for StdoutWriter {
+    fn is_tty(&self) -> bool {
+        CrosstermIsTty::is_tty(&io::stdout())
+    }
+}
+
+#[derive(Debug)]
+pub struct StderrWriter;
+
+impl StderrWriter {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl Write for StderrWriter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        let written = io::stderr().lock().write(buf)?;
+        tap_output(OutputStream::Stderr, &buf[..written]);
+        Ok(written)
+    }
+
+    fn write_all(&mut self, buf: &[u8]) -> io::Result<()> {
+        io::stderr().lock().write_all(buf)?;
+        tap_output(OutputStream::Stderr, buf);
+        Ok(())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        io::stderr().lock().flush()
     }
 }
 

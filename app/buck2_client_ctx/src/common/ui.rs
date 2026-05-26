@@ -21,6 +21,8 @@ use termwiz::istty::IsTty;
 use tokio::sync::mpsc::Receiver;
 
 use crate::final_console::FinalConsole;
+use crate::stdio::StderrWriter;
+use crate::stdio::StdoutWriter;
 use crate::subscribers::errorconsole::ErrorConsole;
 use crate::subscribers::simpleconsole::SimpleConsole;
 use crate::subscribers::subscriber::EventSubscriber;
@@ -109,33 +111,38 @@ pub fn get_console_with_root(
             verbosity,
             expect_spans,
             timekeeper,
-            None,
+            Some(Box::new(StderrWriter::new())),
             config,
             health_check_display_reports_receiver,
         )
         .map(|c| (Box::new(c) as Box<dyn EventSubscriber>, true)),
-        ConsoleType::Auto => match StatefulSuperConsole::console_builder().build() {
-            Ok(Some(sc)) => StatefulSuperConsole::new(
-                command_name,
-                trace_id.dupe(),
-                sc,
-                verbosity,
-                expect_spans,
-                timekeeper,
-                config,
-                health_check_display_reports_receiver,
-            )
-            .map(|c| (Box::new(c) as Box<dyn EventSubscriber>, true)),
-            _ => Ok((
-                Box::new(SimpleConsole::<NoopEventObserverExtra>::autodetect(
+        ConsoleType::Auto => {
+            let mut builder = StatefulSuperConsole::console_builder();
+            builder.write_to(Box::new(StderrWriter::new()));
+            builder.write_aux_to(Box::new(StdoutWriter::new()));
+            match builder.build() {
+                Ok(Some(sc)) => StatefulSuperConsole::new(
+                    command_name,
                     trace_id.dupe(),
+                    sc,
                     verbosity,
                     expect_spans,
+                    timekeeper,
+                    config,
                     health_check_display_reports_receiver,
+                )
+                .map(|c| (Box::new(c) as Box<dyn EventSubscriber>, true)),
+                _ => Ok((
+                    Box::new(SimpleConsole::<NoopEventObserverExtra>::autodetect(
+                        trace_id.dupe(),
+                        verbosity,
+                        expect_spans,
+                        health_check_display_reports_receiver,
+                    )),
+                    false,
                 )),
-                false,
-            )),
-        },
+            }
+        }
         ConsoleType::None => Ok((Box::new(ErrorConsole), false)),
     };
 

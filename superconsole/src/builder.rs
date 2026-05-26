@@ -55,6 +55,15 @@ impl Builder {
         self
     }
 
+    /// Write auxiliary output to a different I/O.
+    pub fn write_aux_to(
+        &mut self,
+        aux_stream: Box<dyn IsTtyWrite + Send + 'static + Sync>,
+    ) -> &mut Self {
+        self.aux_stream = aux_stream;
+        self
+    }
+
     /// Build a new SuperConsole if stderr is a TTY.
     pub fn build(self) -> Result<Option<SuperConsole>, OutputError> {
         if !SuperConsole::compatible() {
