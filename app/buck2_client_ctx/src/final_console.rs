@@ -36,16 +36,20 @@ impl FinalConsole {
 
     fn stderr_colored(&self, message: &str, color: Color) -> buck2_error::Result<()> {
         if self.is_tty {
-            let sc = StyledContent::new(
-                ContentStyle {
-                    foreground_color: Some(color),
-                    background_color: None,
-                    underline_color: None,
-                    attributes: Default::default(),
-                },
-                message,
-            );
-            crate::eprint!("{}", sc)?;
+            if let Some(code) = standard_ansi_foreground(color) {
+                crate::eprint!("\x1b[{code}m{message}\x1b[0m")?;
+            } else {
+                let sc = StyledContent::new(
+                    ContentStyle {
+                        foreground_color: Some(color),
+                        background_color: None,
+                        underline_color: None,
+                        attributes: Default::default(),
+                    },
+                    message,
+                );
+                crate::eprint!("{}", sc)?;
+            }
         } else {
             crate::eprint!("{}", message)?;
         }
@@ -85,6 +89,21 @@ impl FinalConsole {
     /// Detection is based on environment variables set by known terminals.
     pub fn supports_hyperlinks(&self) -> bool {
         self.is_tty && terminal_supports_hyperlinks()
+    }
+}
+
+fn standard_ansi_foreground(color: Color) -> Option<&'static str> {
+    match color {
+        Color::Black => Some("30"),
+        Color::DarkRed | Color::Red => Some("31"),
+        Color::DarkGreen | Color::Green => Some("32"),
+        Color::DarkYellow | Color::Yellow => Some("33"),
+        Color::DarkBlue | Color::Blue => Some("34"),
+        Color::DarkMagenta | Color::Magenta => Some("35"),
+        Color::DarkCyan | Color::Cyan => Some("36"),
+        Color::Grey | Color::White => Some("37"),
+        Color::DarkGrey => Some("90"),
+        _ => None,
     }
 }
 
@@ -165,4 +184,16 @@ fn terminal_supports_hyperlinks() -> bool {
     }
 
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn final_console_uses_standard_ansi_colors() {
+        assert_eq!(standard_ansi_foreground(Color::Green), Some("32"));
+        assert_eq!(standard_ansi_foreground(Color::Yellow), Some("33"));
+        assert_eq!(standard_ansi_foreground(Color::DarkRed), Some("31"));
+    }
 }
