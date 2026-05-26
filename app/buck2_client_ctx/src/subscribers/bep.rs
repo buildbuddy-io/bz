@@ -111,7 +111,10 @@ impl BuildEventProtocolConfig {
         paths: Option<&buck2_common::invocation_paths::InvocationPaths>,
     ) -> buck2_error::Result<Option<Self>> {
         let event_log_opts = cmd.event_log_opts();
-        let Some(backend) = event_log_opts.bes_backend.as_ref().map(ToOwned::to_owned) else {
+        let Some(backend) = event_log_opts
+            .bes_backend_with_buildbuddy_default(ctx.buildbuddy_bes())
+            .map(ToOwned::to_owned)
+        else {
             return Ok(None);
         };
         let sanitized_argv = cmd.sanitize_argv(ctx.argv.clone());
@@ -137,7 +140,9 @@ impl BuildEventProtocolConfig {
             project_id,
             keywords,
             timeout,
-            results_url: event_log_opts.bes_results_url.clone(),
+            results_url: event_log_opts
+                .bes_results_url_with_buildbuddy_default(ctx.buildbuddy_bes())
+                .map(ToOwned::to_owned),
             invocation_id: ctx.trace_id.to_string(),
             build_id: ctx.trace_id.to_string(),
             command_name: T::COMMAND_NAME.to_owned(),

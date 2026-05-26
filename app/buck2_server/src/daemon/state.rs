@@ -462,9 +462,12 @@ impl DaemonState {
                     .buck_error_context("Error initializing DigestConfig")?;
 
             // TODO(rafaelc): merge configs from all cells once they are consistent
-            let static_metadata = Arc::new(RemoteExecutionStaticMetadata::from_legacy_config(
-                root_config,
-            )?);
+            let mut static_metadata =
+                RemoteExecutionStaticMetadata::from_legacy_config(root_config)?;
+            static_metadata.apply_remote_execution_startup_config(
+                &init_ctx.daemon_startup_config.remote_execution,
+            )?;
+            let static_metadata = Arc::new(static_metadata);
 
             let mut ignore_specs: StdBuckHashMap<CellName, IgnoreSet> = StdBuckHashMap::default();
             let empty_external_bzlmod_ignore = IgnoreSet::from_ignore_spec("", false)?;

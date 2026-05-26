@@ -108,8 +108,11 @@ fn update_events_ctx<T: StreamingCommand>(
     subscribers.push(console_subscriber);
     events_ctx.used_superconsole = used_superconsole;
 
-    if event_log_opts.bes_backend.is_some()
-        && let Some(results_url) = &event_log_opts.bes_results_url
+    if event_log_opts
+        .bes_backend_with_buildbuddy_default(ctx.buildbuddy_bes())
+        .is_some()
+        && let Some(results_url) =
+            event_log_opts.bes_results_url_with_buildbuddy_default(ctx.buildbuddy_bes())
     {
         let invocation_id = ctx.trace_id.to_string();
         print_bes_results_url(results_url, &invocation_id)?;

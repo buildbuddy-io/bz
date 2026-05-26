@@ -24,6 +24,32 @@ use crate::legacy_configs::key::BuckconfigKeyRef;
 
 pub const DEFAULT_RETAINED_EVENT_LOGS: usize = 12;
 
+#[derive(
+    Allocative,
+    Clone,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq
+)]
+pub struct RemoteExecutionStartupConfig {
+    pub remote_cache: Option<String>,
+    pub remote_executor: Option<String>,
+}
+
+impl RemoteExecutionStartupConfig {
+    pub fn apply_overrides(&mut self, overrides: &Self) {
+        if overrides.remote_cache.is_some() {
+            self.remote_cache.clone_from(&overrides.remote_cache);
+        }
+        if overrides.remote_executor.is_some() {
+            self.remote_executor.clone_from(&overrides.remote_executor);
+        }
+    }
+}
+
 /// Helper enum to categorize the kind of timeout we get from the startup config.
 #[derive(Clone, Debug)]
 pub enum Timeout {
@@ -528,6 +554,8 @@ pub struct DaemonStartupConfig {
     pub retained_event_logs: usize,
     pub macos_qos_class: Option<String>,
     pub daemon_idle_timeout_s: Option<u64>,
+    #[serde(default)]
+    pub remote_execution: RemoteExecutionStartupConfig,
 }
 
 impl DaemonStartupConfig {
@@ -645,6 +673,7 @@ impl DaemonStartupConfig {
                 section: "buck2",
                 property: "daemon_idle_timeout_s",
             })?,
+            remote_execution: RemoteExecutionStartupConfig::default(),
         })
     }
 
@@ -677,6 +706,7 @@ impl DaemonStartupConfig {
             retained_event_logs: DEFAULT_RETAINED_EVENT_LOGS,
             macos_qos_class: None,
             daemon_idle_timeout_s: None,
+            remote_execution: RemoteExecutionStartupConfig::default(),
         }
     }
 }

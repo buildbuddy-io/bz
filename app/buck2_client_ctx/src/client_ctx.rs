@@ -20,6 +20,7 @@ use buck2_cli_proto::client_context::PreemptibleWhen as GrpcPreemptibleWhen;
 use buck2_common::argv::Argv;
 use buck2_common::init::DaemonStartupConfig;
 use buck2_common::init::LogDownloadMethod;
+use buck2_common::init::RemoteExecutionStartupConfig;
 use buck2_common::invocation_paths::InvocationPaths;
 use buck2_common::invocation_paths_result::InvocationPathsResult;
 use buck2_common::legacy_configs::cells::BZLMOD_ALLOWED_YANKED_VERSIONS_ENV;
@@ -73,6 +74,8 @@ pub struct ClientCommandContext<'a> {
     pub(crate) isolation: FileNameBuf,
     pub(crate) agent_context: Vec<AgentContextEntry>,
     pub(crate) watchfs_override: Option<bool>,
+    pub(crate) remote_execution_startup_config: RemoteExecutionStartupConfig,
+    pub(crate) buildbuddy_bes: bool,
 }
 
 impl<'a> ClientCommandContext<'a> {
@@ -94,6 +97,8 @@ impl<'a> ClientCommandContext<'a> {
         isolation: FileNameBuf,
         agent_context: Vec<AgentContextEntry>,
         watchfs_override: Option<bool>,
+        remote_execution_startup_config: RemoteExecutionStartupConfig,
+        buildbuddy_bes: bool,
     ) -> Self {
         ClientCommandContext {
             init,
@@ -113,6 +118,8 @@ impl<'a> ClientCommandContext<'a> {
             isolation,
             agent_context,
             watchfs_override,
+            remote_execution_startup_config,
+            buildbuddy_bes,
         }
     }
 
@@ -322,11 +329,18 @@ impl<'a> ClientCommandContext<'a> {
         Ok(self.daemon_startup_config()?.log_download_method)
     }
 
+    pub fn buildbuddy_bes(&self) -> bool {
+        self.buildbuddy_bes
+    }
+
     pub fn daemon_startup_config(&self) -> buck2_error::Result<DaemonStartupConfig> {
         let mut daemon_startup_config = self.immediate_config.daemon_startup_config()?.clone();
         if let Some(watchfs) = self.watchfs_override {
             daemon_startup_config.watchfs = watchfs;
         }
+        daemon_startup_config
+            .remote_execution
+            .apply_overrides(&self.remote_execution_startup_config);
         Ok(daemon_startup_config)
     }
 }

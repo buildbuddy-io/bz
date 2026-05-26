@@ -611,6 +611,52 @@ mod tests {
     }
 
     #[test]
+    fn bep_sets_buildbuddy_bes_defaults() -> buck2_error::Result<()> {
+        let opts = parse(&["--bep"])?;
+        let event_log_opts = &opts.common_opts.event_log_opts;
+
+        assert_eq!(event_log_opts.bes_backend(), Some("remote.buildbuddy.dev"));
+        assert_eq!(
+            event_log_opts.bes_results_url(),
+            Some("https://app.buildbuddy.dev/invocation/")
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn bes_sets_buildbuddy_bes_defaults() -> buck2_error::Result<()> {
+        let opts = parse(&["--bes"])?;
+        let event_log_opts = &opts.common_opts.event_log_opts;
+
+        assert_eq!(event_log_opts.bes_backend(), Some("remote.buildbuddy.dev"));
+        assert_eq!(
+            event_log_opts.bes_results_url(),
+            Some("https://app.buildbuddy.dev/invocation/")
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn bep_allows_explicit_bes_overrides() -> buck2_error::Result<()> {
+        let opts = parse(&[
+            "--bep",
+            "--bes_backend=grpc://example.com",
+            "--bes_results_url=https://example.com/invocation/",
+        ])?;
+        let event_log_opts = &opts.common_opts.event_log_opts;
+
+        assert_eq!(event_log_opts.bes_backend(), Some("grpc://example.com"));
+        assert_eq!(
+            event_log_opts.bes_results_url(),
+            Some("https://example.com/invocation/")
+        );
+
+        Ok(())
+    }
+
+    #[test]
     fn rating_sample_covers_high_nibble_zero() {
         // High nibble 0 spans bytes 0x00..=0x0f — exactly 1/16 of the input
         // space, the intended sampling rate.

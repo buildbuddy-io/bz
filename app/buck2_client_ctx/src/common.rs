@@ -49,6 +49,8 @@ use crate::path_arg::PathArg;
 
 pub const EVENT_LOG: &str = "event-log";
 pub const NO_EVENT_LOG: &str = "no-event-log";
+const BUILDBUDDY_BES_BACKEND: &str = "remote.buildbuddy.dev";
+const BUILDBUDDY_BES_RESULTS_URL: &str = "https://app.buildbuddy.dev/invocation/";
 
 #[derive(Debug, buck2_error::Error)]
 #[error("indices len is not equal to collection len for flag `{flag_name}`")]
@@ -161,6 +163,11 @@ pub struct CommonEventLogOptions {
     #[clap(long, value_name = "PATH")]
     pub(crate) command_report_path: Option<PathArg>,
 
+    /// Upload Build Event Protocol events to BuildBuddy.
+    #[serde(default)]
+    #[clap(long = "bep", alias = "bes", hide = true)]
+    pub(crate) bep: bool,
+
     /// Bazel-compatible Build Event Service endpoint, e.g. `grpc://localhost:1985`
     /// or `grpcs://remote.buildbuddy.io`.
     #[serde(default)]
@@ -224,6 +231,26 @@ pub struct CommonEventLogOptions {
 }
 
 impl CommonEventLogOptions {
+    pub fn bes_backend(&self) -> Option<&str> {
+        self.bes_backend_with_buildbuddy_default(false)
+    }
+
+    pub fn bes_backend_with_buildbuddy_default(&self, buildbuddy: bool) -> Option<&str> {
+        self.bes_backend
+            .as_deref()
+            .or_else(|| (self.bep || buildbuddy).then_some(BUILDBUDDY_BES_BACKEND))
+    }
+
+    pub fn bes_results_url(&self) -> Option<&str> {
+        self.bes_results_url_with_buildbuddy_default(false)
+    }
+
+    pub fn bes_results_url_with_buildbuddy_default(&self, buildbuddy: bool) -> Option<&str> {
+        self.bes_results_url
+            .as_deref()
+            .or_else(|| (self.bep || buildbuddy).then_some(BUILDBUDDY_BES_RESULTS_URL))
+    }
+
     pub(crate) fn bes_timeout_duration(&self) -> buck2_error::Result<Option<std::time::Duration>> {
         self.bes_timeout
             .as_deref()
@@ -247,6 +274,7 @@ impl CommonEventLogOptions {
             write_build_id: None,
             command_report_path: None,
             unstable_write_invocation_record: None,
+            bep: false,
             bes_backend: None,
             bes_header: Vec::new(),
             bes_instance_name: None,
@@ -264,6 +292,7 @@ impl CommonEventLogOptions {
             write_build_id: None,
             command_report_path: None,
             unstable_write_invocation_record: None,
+            bep: false,
             bes_backend: None,
             bes_header: Vec::new(),
             bes_instance_name: None,
@@ -724,6 +753,47 @@ mod tests {
         assert_eq!(
             opts.bes_timeout_duration().unwrap(),
             Some(std::time::Duration::from_secs(5))
+        );
+    }
+
+    #[test]
+    fn test_bep_sets_buildbuddy_bes_defaults() {
+        let opts = CommonEventLogOptions {
+            bep: true,
+            ..Default::default()
+        };
+
+        assert_eq!(opts.bes_backend(), Some(BUILDBUDDY_BES_BACKEND));
+        assert_eq!(opts.bes_results_url(), Some(BUILDBUDDY_BES_RESULTS_URL));
+    }
+
+    #[test]
+    fn test_bep_allows_explicit_bes_overrides() {
+        let opts = CommonEventLogOptions {
+            bep: true,
+            bes_backend: Some("grpc://example.com".to_owned()),
+            bes_results_url: Some("https://example.com/invocation/".to_owned()),
+            ..Default::default()
+        };
+
+        assert_eq!(opts.bes_backend(), Some("grpc://example.com"));
+        assert_eq!(
+            opts.bes_results_url(),
+            Some("https://example.com/invocation/")
+        );
+    }
+
+    #[test]
+    fn test_buildbuddy_default_sets_bes_defaults() {
+        let opts = CommonEventLogOptions::default();
+
+        assert_eq!(
+            opts.bes_backend_with_buildbuddy_default(true),
+            Some(BUILDBUDDY_BES_BACKEND)
+        );
+        assert_eq!(
+            opts.bes_results_url_with_buildbuddy_default(true),
+            Some(BUILDBUDDY_BES_RESULTS_URL)
         );
     }
 

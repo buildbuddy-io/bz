@@ -13,6 +13,7 @@
 use std::str::FromStr;
 
 use allocative::Allocative;
+use buck2_common::init::RemoteExecutionStartupConfig;
 use buck2_common::legacy_configs::configs::LegacyBuckConfig;
 use buck2_common::legacy_configs::key::BuckconfigKeyRef;
 use buck2_core::rollout_percentage::RolloutPercentage;
@@ -23,8 +24,146 @@ static BUCK2_RE_CLIENT_CFG_SECTION: &str = "buck2_re_client";
 /// fbcode_build or not(fbcode_build)
 pub trait RemoteExecutionStaticMetadataImpl: Sized {
     fn from_legacy_config(legacy_config: &LegacyBuckConfig) -> buck2_error::Result<Self>;
+    fn apply_remote_execution_startup_config(
+        &mut self,
+        config: &RemoteExecutionStartupConfig,
+    ) -> buck2_error::Result<()>;
     fn cas_semaphore_size(&self) -> usize;
     fn exec_semaphore_size(&self) -> usize;
+}
+
+#[derive(Clone, Debug)]
+struct ParsedBazelRemoteEndpoint {
+    address: String,
+    tls: Option<bool>,
+}
+
+struct ResolvedBazelRemoteExecutionStartupConfig {
+    cas_address: Option<Option<String>>,
+    action_cache_address: Option<Option<String>>,
+    engine_address: Option<Option<String>>,
+    tls: Option<bool>,
+}
+
+fn parse_bazel_remote_endpoint(
+    value: &str,
+) -> buck2_error::Result<Option<ParsedBazelRemoteEndpoint>> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Ok(None);
+    }
+
+    let (address, tls) = if let Some(rest) = value.strip_prefix("grpc://") {
+        (rest, Some(false))
+    } else if let Some(rest) = value.strip_prefix("grpcs://") {
+        (rest, Some(true))
+    } else if let Some(rest) = value.strip_prefix("http://") {
+        (rest, Some(false))
+    } else if let Some(rest) = value.strip_prefix("https://") {
+        (rest, Some(true))
+    } else if value.starts_with("unix:") {
+        return Err(buck2_error::buck2_error!(
+            buck2_error::ErrorTag::Input,
+            "Buck2 does not currently support Bazel remote endpoint `{}`: unix socket endpoints are unsupported",
+            value
+        ));
+    } else {
+        // Bazel defaults scheme-less remote endpoints to grpcs.
+        (value, Some(true))
+    };
+
+    if address.is_empty() {
+        return Err(buck2_error::buck2_error!(
+            buck2_error::ErrorTag::Input,
+            "Invalid empty Bazel remote endpoint `{}`",
+            value
+        ));
+    }
+
+    Ok(Some(ParsedBazelRemoteEndpoint {
+        address: address.to_owned(),
+        tls,
+    }))
+}
+
+fn resolve_bazel_remote_execution_startup_config(
+    config: &RemoteExecutionStartupConfig,
+    cache_address_configured: bool,
+) -> buck2_error::Result<ResolvedBazelRemoteExecutionStartupConfig> {
+    let remote_executor = config
+        .remote_executor
+        .as_deref()
+        .map(parse_bazel_remote_endpoint)
+        .transpose()?
+        .flatten();
+    let remote_cache = config
+        .remote_cache
+        .as_deref()
+        .map(parse_bazel_remote_endpoint)
+        .transpose()?
+        .flatten();
+
+    let mut tls = None;
+    for endpoint in [&remote_cache, &remote_executor].into_iter().flatten() {
+        if let Some(endpoint_tls) = endpoint.tls {
+            match tls {
+                Some(existing) if existing != endpoint_tls => {
+                    return Err(buck2_error::buck2_error!(
+                        buck2_error::ErrorTag::Input,
+                        "Buck2 remote execution currently requires --remote_cache and --remote_executor to use the same TLS mode"
+                    ));
+                }
+                Some(_) => {}
+                None => tls = Some(endpoint_tls),
+            }
+        }
+    }
+
+    let engine_address = if let Some(remote_executor) = &remote_executor {
+        Some(Some(remote_executor.address.clone()))
+    } else if config.remote_executor.is_some() {
+        Some(None)
+    } else {
+        None
+    };
+
+    let (cas_address, action_cache_address) = match &remote_cache {
+        Some(remote_cache) => (
+            Some(Some(remote_cache.address.clone())),
+            Some(Some(remote_cache.address.clone())),
+        ),
+        None if config.remote_cache.is_some() => {
+            if let Some(remote_executor) = &remote_executor {
+                (
+                    Some(Some(remote_executor.address.clone())),
+                    Some(Some(remote_executor.address.clone())),
+                )
+            } else {
+                (Some(None), Some(None))
+            }
+        }
+        None => {
+            if let Some(remote_executor) = &remote_executor {
+                if cache_address_configured {
+                    (None, None)
+                } else {
+                    (
+                        Some(Some(remote_executor.address.clone())),
+                        Some(Some(remote_executor.address.clone())),
+                    )
+                }
+            } else {
+                (None, None)
+            }
+        }
+    };
+
+    Ok(ResolvedBazelRemoteExecutionStartupConfig {
+        cas_address,
+        action_cache_address,
+        engine_address,
+        tls,
+    })
 }
 
 #[derive(Clone, Debug, Allocative)]
@@ -380,6 +519,28 @@ mod fbcode {
             })
         }
 
+        fn apply_remote_execution_startup_config(
+            &mut self,
+            config: &RemoteExecutionStartupConfig,
+        ) -> buck2_error::Result<()> {
+            let resolved = resolve_bazel_remote_execution_startup_config(
+                config,
+                self.cas_address.is_some() || self.action_cache_address.is_some(),
+            )?;
+
+            if let Some(engine_address) = resolved.engine_address {
+                self.engine_address = engine_address;
+            }
+            if let Some(cas_address) = resolved.cas_address {
+                self.cas_address = cas_address;
+            }
+            if let Some(action_cache_address) = resolved.action_cache_address {
+                self.action_cache_address = action_cache_address;
+            }
+
+            Ok(())
+        }
+
         fn cas_semaphore_size(&self) -> usize {
             self.cas_connection_count as usize * 30
         }
@@ -403,6 +564,13 @@ mod not_fbcode {
             Ok(Self(Buck2OssReConfiguration::from_legacy_config(
                 legacy_config,
             )?))
+        }
+
+        fn apply_remote_execution_startup_config(
+            &mut self,
+            config: &RemoteExecutionStartupConfig,
+        ) -> buck2_error::Result<()> {
+            self.0.apply_remote_execution_startup_config(config)
         }
 
         fn cas_semaphore_size(&self) -> usize {
@@ -496,6 +664,32 @@ impl FromStr for HttpHeader {
 }
 
 impl Buck2OssReConfiguration {
+    pub fn apply_remote_execution_startup_config(
+        &mut self,
+        config: &RemoteExecutionStartupConfig,
+    ) -> buck2_error::Result<()> {
+        let resolved = resolve_bazel_remote_execution_startup_config(
+            config,
+            self.cas_address.is_some() || self.action_cache_address.is_some(),
+        )?;
+
+        if let Some(engine_address) = resolved.engine_address {
+            self.engine_address = engine_address;
+        }
+        if let Some(cas_address) = resolved.cas_address {
+            self.cas_address = cas_address;
+        }
+        if let Some(action_cache_address) = resolved.action_cache_address {
+            self.action_cache_address = action_cache_address;
+        }
+
+        if let Some(tls) = resolved.tls {
+            self.tls = tls;
+        }
+
+        Ok(())
+    }
+
     pub fn from_legacy_config(legacy_config: &LegacyBuckConfig) -> buck2_error::Result<Self> {
         // this is used for all three services by default, if given; if one of
         // them has an explicit address given as well though, use that instead
@@ -590,6 +784,73 @@ impl Buck2OssReConfiguration {
                 property: "execution_concurrency_limit",
             })?,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn remote_executor_defaults_cache_when_cache_is_unset() -> buck2_error::Result<()> {
+        let mut config = Buck2OssReConfiguration::default();
+        config.apply_remote_execution_startup_config(&RemoteExecutionStartupConfig {
+            remote_executor: Some("grpc://executor.example.com".to_owned()),
+            ..Default::default()
+        })?;
+
+        assert_eq!(
+            config.engine_address.as_deref(),
+            Some("executor.example.com")
+        );
+        assert_eq!(config.cas_address.as_deref(), Some("executor.example.com"));
+        assert_eq!(
+            config.action_cache_address.as_deref(),
+            Some("executor.example.com")
+        );
+        assert!(!config.tls);
+
+        Ok(())
+    }
+
+    #[test]
+    fn remote_cache_overrides_executor_cache_fallback() -> buck2_error::Result<()> {
+        let mut config = Buck2OssReConfiguration::default();
+        config.apply_remote_execution_startup_config(&RemoteExecutionStartupConfig {
+            remote_cache: Some("cache.example.com".to_owned()),
+            remote_executor: Some("executor.example.com".to_owned()),
+        })?;
+
+        assert_eq!(
+            config.engine_address.as_deref(),
+            Some("executor.example.com")
+        );
+        assert_eq!(config.cas_address.as_deref(), Some("cache.example.com"));
+        assert_eq!(
+            config.action_cache_address.as_deref(),
+            Some("cache.example.com")
+        );
+        assert!(config.tls);
+
+        Ok(())
+    }
+
+    #[test]
+    fn empty_remote_cache_disables_cache_without_executor() -> buck2_error::Result<()> {
+        let mut config = Buck2OssReConfiguration {
+            cas_address: Some("configured-cache.example.com".to_owned()),
+            action_cache_address: Some("configured-cache.example.com".to_owned()),
+            ..Default::default()
+        };
+        config.apply_remote_execution_startup_config(&RemoteExecutionStartupConfig {
+            remote_cache: Some(String::new()),
+            ..Default::default()
+        })?;
+
+        assert_eq!(config.cas_address, None);
+        assert_eq!(config.action_cache_address, None);
+
+        Ok(())
     }
 }
 
