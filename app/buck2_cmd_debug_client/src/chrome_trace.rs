@@ -855,14 +855,49 @@ impl ChromeTraceWriter {
         self.rate_of_change_counters
             .counters
             .flush_all_to(&mut self.trace_events)?;
+        self.normalize_timestamps();
 
-        serde_json::to_writer(
-            file,
-            &json!({
-                "traceEvents": self.trace_events
-            }),
-        )?;
+        let mut file = file;
+        file.write_all(b"{\"traceEvents\":[\n")?;
+        let last = self.trace_events.len().saturating_sub(1);
+        for (idx, event) in self.trace_events.into_iter().enumerate() {
+            file.write_all(b"  ")?;
+            serde_json::to_writer(&mut file, &event)?;
+            if idx == last {
+                file.write_all(b"\n")?;
+            } else {
+                file.write_all(b",\n")?;
+            }
+        }
+        file.write_all(b"  ]\n}")?;
         Ok(())
+    }
+
+    fn normalize_timestamps(&mut self) {
+        // Bazel writes Chrome trace timestamps as microseconds relative to the
+        // profiler start. Buck events are timestamped as absolute wall time, so
+        // normalize here before writing the profile.
+        let Some(profile_start) = self
+            .trace_events
+            .iter()
+            .filter_map(|event| event.get("ts").and_then(serde_json::Value::as_u64))
+            .min()
+        else {
+            return;
+        };
+
+        for event in &mut self.trace_events {
+            let Some(obj) = event.as_object_mut() else {
+                continue;
+            };
+            let Some(ts) = obj.get_mut("ts") else {
+                continue;
+            };
+            let Some(timestamp) = ts.as_u64() else {
+                continue;
+            };
+            *ts = json!(timestamp.saturating_sub(profile_start));
+        }
     }
 
     fn open_span(
