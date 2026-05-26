@@ -114,6 +114,7 @@ use buck2_execute::execute::result::CommandExecutionResult;
 use buck2_execute::execute::result::CommandExecutionStatus;
 use buck2_execute::execute::target::CommandExecutionTarget;
 use buck2_execute::materialize::materializer::HasMaterializer;
+use buck2_execute::re::action_identity::ReActionIdentity;
 use buck2_execute_impl::executors::local::EnvironmentBuilder;
 use buck2_execute_impl::executors::local::apply_local_execution_environment;
 use buck2_execute_impl::executors::local::create_output_dirs;
@@ -1100,6 +1101,7 @@ impl BuckTestOrchestrator<'_> {
                     })
                     .await;
                 if !cached && *cacheable {
+                    let identity = ReActionIdentity::new(&test_target as _, None, request.paths());
                     let info = CacheUploadInfo {
                         target: &test_target as _,
                         digest_config,
@@ -1113,6 +1115,7 @@ impl BuckTestOrchestrator<'_> {
                             None,
                             None,
                             &prepared_action.action_and_blobs,
+                            Some(&identity),
                         )
                         .await
                     {

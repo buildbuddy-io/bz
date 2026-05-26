@@ -33,6 +33,7 @@ use buck2_execute::execute::cache_uploader::IntoRemoteDepFile;
 use buck2_execute::execute::cache_uploader::UploadCache;
 use buck2_execute::execute::result::CommandExecutionResult;
 use buck2_execute::materialize::materializer::Materializer;
+use buck2_execute::re::action_identity::ReActionIdentity;
 use buck2_execute::re::client::ActionCacheWriteType;
 use buck2_execute::re::error::RemoteExecutionError;
 use buck2_execute::re::manager::ManagedRemoteExecutionClient;
@@ -108,6 +109,7 @@ impl CacheUploader {
         action_digest_and_blobs: &ActionDigestAndBlobs,
         error_on_cache_upload: bool,
         has_depfile_entry: bool,
+        identity: Option<&ReActionIdentity<'_>>,
     ) -> buck2_error::Result<CacheUploadOutcome> {
         let digest = action_digest_and_blobs.action;
         let digest_str = digest.to_string();
@@ -173,6 +175,7 @@ impl CacheUploader {
                         .write_action_result(
                             digest,
                             result,
+                            identity,
                             &self.platform.to_re_platform(),
                             ActionCacheWriteType::LocalCacheUpload,
                         )
@@ -215,6 +218,7 @@ impl CacheUploader {
         dep_file_bundle: &mut dyn IntoRemoteDepFile,
         remote_dep_file_action: &ActionDigestAndBlobs,
         error_on_cache_upload: bool,
+        identity: Option<&ReActionIdentity<'_>>,
     ) -> buck2_error::Result<CacheUploadOutcome> {
         let remote_dep_file_key = remote_dep_file_action.action.to_string();
         span_async(
@@ -268,6 +272,7 @@ impl CacheUploader {
                         .write_action_result(
                             digest,
                             action_result,
+                            identity,
                             &self.platform.to_re_platform(),
                             ActionCacheWriteType::RemoteDepFile,
                         )
@@ -324,8 +329,8 @@ impl CacheUploader {
         let mut output_files: Vec<TFile> = Vec::new();
         let mut output_directories: Vec<TDirectory2> = Vec::new();
 
-        for output_result in result.resolve_outputs(&self.artifact_fs) {
-            let (output, value) = output_result?;
+        for output_result in result.resolve_outputs_for_remote_action_result(&self.artifact_fs) {
+            let (action_output, materialized_output, value) = output_result?;
             match value.entry().as_ref() {
                 DirectoryEntry::Leaf(ActionDirectoryMember::File(f)) => {
                     output_files.push(TFile {
@@ -338,16 +343,17 @@ impl CacheUploader {
                             },
                             ..Default::default()
                         },
-                        name: output.path().to_string(),
+                        name: action_output.path().to_string(),
                         executable: f.is_executable,
                         ..Default::default()
                     });
 
+                    let materialized_output_path = materialized_output.path().to_owned();
                     let fut = async move {
                         let name = self
                             .artifact_fs
                             .fs()
-                            .resolve(output.path())
+                            .resolve(&materialized_output_path)
                             .as_maybe_relativized_str()?
                             .to_owned();
 
@@ -373,20 +379,21 @@ impl CacheUploader {
                     let tree_digest = action_blobs.add_protobuf_message(&tree, digest_config);
 
                     output_directories.push(TDirectory2 {
-                        path: output.path().to_string(),
+                        path: action_output.path().to_string(),
                         tree_digest: tree_digest.to_re(),
                         root_directory_digest: d.fingerprint().to_re(),
                         ..Default::default()
                     });
 
                     let identity = None; // TODO(#503): implement this
+                    let materialized_output_path = materialized_output.into_path();
                     let fut = async move {
                         self.re_client
                             .upload(
                                 self.artifact_fs.fs(),
                                 &self.materializer,
                                 &action_blobs,
-                                output.path(),
+                                materialized_output_path.as_ref(),
                                 &d.dupe().as_immutable(),
                                 identity,
                                 digest_config,
@@ -572,6 +579,7 @@ impl UploadCache for CacheUploader {
         re_result: Option<TActionResult2>,
         dep_file_bundle: Option<&mut dyn IntoRemoteDepFile>,
         action_digest_and_blobs: &ActionDigestAndBlobs,
+        identity: Option<&ReActionIdentity<'_>>,
     ) -> buck2_error::Result<CacheUploadResults> {
         let error_on_cache_upload = error_on_cache_upload().buck_error_context("cache_upload")?;
 
@@ -588,6 +596,7 @@ impl UploadCache for CacheUploader {
                     action_digest_and_blobs,
                     error_on_cache_upload,
                     dep_file_bundle.is_some(),
+                    identity,
                 )
                 .await?;
 
@@ -629,6 +638,7 @@ impl UploadCache for CacheUploader {
                     dep_file_bundle,
                     &remote_dep_file_action,
                     error_on_cache_upload,
+                    identity,
                 )
                 .await?
                 .uploaded(),

@@ -298,6 +298,13 @@ impl Compressor {
 
 pub struct REClientBuilder;
 
+fn reapi_service_address(opts: &Buck2OssReConfiguration) -> Option<String> {
+    opts.engine_address
+        .clone()
+        .or_else(|| opts.action_cache_address.clone())
+        .or_else(|| opts.cas_address.clone())
+}
+
 impl REClientBuilder {
     pub async fn build_and_connect(opts: &Buck2OssReConfiguration) -> anyhow::Result<REClient> {
         // We just always create this just in case, so that we implicitly validate it if set.
@@ -345,12 +352,13 @@ impl REClientBuilder {
             )
         };
 
+        let reapi_service_address = reapi_service_address(opts);
         let (cas, execution, action_cache, bytestream, capabilities) = futures::future::join5(
             create_channel(opts.cas_address.clone()),
-            create_channel(opts.engine_address.clone()),
+            create_channel(reapi_service_address.clone()),
             create_channel(opts.action_cache_address.clone()),
             create_channel(opts.cas_address.clone()),
-            create_channel(opts.engine_address.clone()),
+            create_channel(reapi_service_address),
         )
         .await;
 
@@ -1750,23 +1758,9 @@ fn with_re_metadata<T>(
             .insert_bin("re-metadata-bin", MetadataValue::from_bytes(&encoded));
     } else {
         let mut encoded = Vec::new();
-        RequestMetadata {
-            tool_details: Some(ToolDetails {
-                tool_name: "buck2".to_owned(),
-                // TODO(#503): Pull the BuckVersion::get_unique_id() from BuckDaemon
-                tool_version: "0.1.0".to_owned(),
-            }),
-            action_id: "".to_owned(),
-            tool_invocation_id: metadata
-                .buck_info
-                .map_or(String::new(), |buck_info| buck_info.build_id),
-            correlated_invocations_id: "".to_owned(),
-            action_mnemonic: "".to_owned(),
-            target_id: "".to_owned(),
-            configuration_id: "".to_owned(),
-        }
-        .encode(&mut encoded)
-        .expect("Encoding into a Vec cannot not fail");
+        request_metadata(metadata)
+            .encode(&mut encoded)
+            .expect("Encoding into a Vec cannot not fail");
 
         msg.metadata_mut().insert_bin(
             "build.bazel.remote.execution.v2.requestmetadata-bin",
@@ -1774,6 +1768,29 @@ fn with_re_metadata<T>(
         );
     };
     msg
+}
+
+fn request_metadata(metadata: RemoteExecutionMetadata) -> RequestMetadata {
+    let buck_info = metadata.buck_info.unwrap_or_default();
+    let tool_version = if buck_info.version.is_empty() {
+        // TODO(#503): Thread BuckVersion::get_unique_id() through all callers.
+        "0.1.0".to_owned()
+    } else {
+        buck_info.version
+    };
+
+    RequestMetadata {
+        tool_details: Some(ToolDetails {
+            tool_name: "buck2".to_owned(),
+            tool_version,
+        }),
+        action_id: metadata.action_id,
+        tool_invocation_id: buck_info.build_id,
+        correlated_invocations_id: metadata.correlated_invocations_id,
+        action_mnemonic: metadata.action_mnemonic,
+        target_id: metadata.target_id,
+        configuration_id: metadata.configuration_id,
+    }
 }
 
 /// Replace occurrences of $FOO in a string with the value of the env var $FOO.
@@ -1814,6 +1831,63 @@ mod tests {
     use re_grpc_proto::build::bazel::remote::execution::v2::batch_update_blobs_response;
 
     use super::*;
+
+    #[test]
+    fn test_reapi_service_address_falls_back_to_cache() {
+        let opts = Buck2OssReConfiguration {
+            cas_address: Some("cas.example.com".to_owned()),
+            action_cache_address: Some("cache.example.com".to_owned()),
+            engine_address: None,
+            ..Default::default()
+        };
+
+        assert_eq!(
+            reapi_service_address(&opts).as_deref(),
+            Some("cache.example.com")
+        );
+    }
+
+    #[test]
+    fn test_reapi_service_address_prefers_executor() {
+        let opts = Buck2OssReConfiguration {
+            cas_address: Some("cas.example.com".to_owned()),
+            action_cache_address: Some("cache.example.com".to_owned()),
+            engine_address: Some("executor.example.com".to_owned()),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            reapi_service_address(&opts).as_deref(),
+            Some("executor.example.com")
+        );
+    }
+
+    #[test]
+    fn test_request_metadata_includes_invocation_and_action_fields() {
+        let metadata = request_metadata(RemoteExecutionMetadata {
+            buck_info: Some(BuckInfo {
+                build_id: "invocation-id".to_owned(),
+                version: "buck-revision".to_owned(),
+                ..Default::default()
+            }),
+            action_id: "action-digest".to_owned(),
+            correlated_invocations_id: "command-id".to_owned(),
+            action_mnemonic: "CppCompile".to_owned(),
+            target_id: "//pkg:target".to_owned(),
+            configuration_id: "cfg".to_owned(),
+            ..Default::default()
+        });
+
+        assert_eq!(metadata.tool_invocation_id, "invocation-id");
+        assert_eq!(metadata.correlated_invocations_id, "command-id");
+        assert_eq!(metadata.action_id, "action-digest");
+        assert_eq!(metadata.action_mnemonic, "CppCompile");
+        assert_eq!(metadata.target_id, "//pkg:target");
+        assert_eq!(metadata.configuration_id, "cfg");
+        let tool_details = metadata.tool_details.unwrap();
+        assert_eq!(tool_details.tool_name, "buck2");
+        assert_eq!(tool_details.tool_version, "buck-revision");
+    }
 
     #[tokio::test]
     async fn test_download_named() -> anyhow::Result<()> {

@@ -27,10 +27,14 @@ impl RemoteExecutionMetadataExt for RemoteExecutorUseCase {
             // See the FIXME added in D54396421
             None => String::new(),
         };
+        let buck_version = buck2_build_info::revision()
+            .map(|revision| revision.to_owned())
+            .unwrap_or_default();
         RemoteExecutionMetadata {
             use_case_id: self.as_str().to_owned(),
             buck_info: Some(BuckInfo {
-                build_id: trace_id,
+                build_id: trace_id.clone(),
+                version: buck_version,
                 ..Default::default()
             }),
             action_history_info: identity.map(|identity| ActionHistoryInfo {
@@ -38,6 +42,19 @@ impl RemoteExecutionMetadataExt for RemoteExecutorUseCase {
                 disable_retry_on_oom: false,
                 ..Default::default()
             }),
+            action_id: identity
+                .map(|identity| identity.action_id.clone())
+                .unwrap_or_default(),
+            correlated_invocations_id: trace_id,
+            action_mnemonic: identity
+                .map(|identity| identity.action_mnemonic.clone())
+                .unwrap_or_default(),
+            target_id: identity
+                .map(|identity| identity.target_id.clone())
+                .unwrap_or_default(),
+            configuration_id: identity
+                .map(|identity| identity.configuration_id.clone())
+                .unwrap_or_default(),
             disable_cancel_on_disconnect: true,
             ..Default::default()
         }

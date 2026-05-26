@@ -256,13 +256,14 @@ impl RemoteExecutionClient {
         action_digest: ActionDigest,
         use_case: RemoteExecutorUseCase,
         platform: &RE::Platform,
+        identity: Option<&ReActionIdentity<'_>>,
     ) -> buck2_error::Result<Option<ActionResultResponse>> {
         self.data
             .action_cache
             .op(self
                 .data
                 .client
-                .action_cache(action_digest, use_case, platform))
+                .action_cache(action_digest, use_case, platform, identity))
             .await
     }
 
@@ -461,6 +462,7 @@ impl RemoteExecutionClient {
         digest: ActionDigest,
         result: TActionResult2,
         use_case: RemoteExecutorUseCase,
+        identity: Option<&ReActionIdentity<'_>>,
         platform: &RE::Platform,
         write_type: ActionCacheWriteType,
     ) -> buck2_error::Result<WriteActionResultResponse> {
@@ -469,7 +471,7 @@ impl RemoteExecutionClient {
             .op(self
                 .data
                 .client
-                .write_action_result(digest, result, use_case, platform, write_type))
+                .write_action_result(digest, result, use_case, identity, platform, write_type))
             .await
     }
 
@@ -1060,6 +1062,7 @@ impl RemoteExecutionClientImpl {
         action_digest: ActionDigest,
         use_case: RemoteExecutorUseCase,
         platform: &RE::Platform,
+        identity: Option<&ReActionIdentity<'_>>,
     ) -> buck2_error::Result<Option<ActionResultResponse>> {
         if let Some(m) = &*INDUCED_CACHE_MISSES {
             if m.get(&action_digest.to_string())
@@ -1075,7 +1078,10 @@ impl RemoteExecutionClientImpl {
             self.client()
                 .get_action_cache_client()
                 .get_action_result(
-                    use_case.metadata(None),
+                    RemoteExecutionMetadata {
+                        action_id: action_digest.raw_digest().to_string(),
+                        ..use_case.metadata(identity)
+                    },
                     ActionResultRequest {
                         digest: action_digest.to_re(),
                         platform: Some(re_platform(platform)),
@@ -1510,6 +1516,7 @@ impl RemoteExecutionClientImpl {
 
         let metadata = RemoteExecutionMetadata {
             platform: Some(re_platform(platform)),
+            action_id: action_digest.raw_digest().to_string(),
             do_not_cache: skip_cache_write,
             buck_info: Some(BuckInfo {
                 version: buck2_build_info::revision()
@@ -1972,6 +1979,7 @@ impl RemoteExecutionClientImpl {
         digest: ActionDigest,
         result: TActionResult2,
         use_case: RemoteExecutorUseCase,
+        identity: Option<&ReActionIdentity<'_>>,
         platform: &RE::Platform,
         write_type: ActionCacheWriteType,
     ) -> buck2_error::Result<WriteActionResultResponse> {
@@ -1993,11 +2001,12 @@ impl RemoteExecutionClientImpl {
                 .write_action_result(
                     RemoteExecutionMetadata {
                         platform: Some(re_platform(platform)),
+                        action_id: digest.raw_digest().to_string(),
                         client_context: Some(TClientContextMetadata {
                             attributes,
                             ..Default::default()
                         }),
-                        ..use_case.metadata(None)
+                        ..use_case.metadata(identity)
                     },
                     WriteActionResultRequest {
                         action_digest: digest.to_re(),

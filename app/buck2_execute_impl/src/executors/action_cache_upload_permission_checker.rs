@@ -68,6 +68,7 @@ impl ActionCacheUploadPermissionChecker {
             .write_action_result(
                 action.action,
                 action_result.clone(),
+                None,
                 &platform.to_re_platform(),
                 ActionCacheWriteType::PermissionCheck,
             )

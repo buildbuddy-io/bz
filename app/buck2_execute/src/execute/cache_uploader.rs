@@ -20,6 +20,7 @@ use crate::execute::dep_file_digest::DepFileDigest;
 use crate::execute::result::CommandExecutionResult;
 use crate::execute::target::CommandExecutionTarget;
 use crate::materialize::materializer::Materializer;
+use crate::re::action_identity::ReActionIdentity;
 
 pub struct CacheUploadInfo<'a> {
     pub target: &'a dyn CommandExecutionTarget,
@@ -74,6 +75,7 @@ pub trait UploadCache: Send + Sync {
         re_result: Option<TActionResult2>,
         dep_file_bundle: Option<&mut dyn IntoRemoteDepFile>,
         action_digest_and_blobs: &ActionDigestAndBlobs,
+        identity: Option<&ReActionIdentity<'_>>,
     ) -> buck2_error::Result<CacheUploadResults>;
 }
 
@@ -89,6 +91,7 @@ impl UploadCache for NoOpCacheUploader {
         _re_result: Option<TActionResult2>,
         _dep_file_bundle: Option<&mut dyn IntoRemoteDepFile>,
         _action_digest_and_blobs: &ActionDigestAndBlobs,
+        _identity: Option<&ReActionIdentity<'_>>,
     ) -> buck2_error::Result<CacheUploadResults> {
         Ok(CacheUploadResults {
             did_cache_upload: false,

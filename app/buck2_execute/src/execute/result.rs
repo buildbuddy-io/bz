@@ -307,25 +307,29 @@ impl CommandExecutionResult {
         )
     }
 
-    /// For content-based outputs, resolve the outputs to the "constant" (non-content-based) paths
-    /// that are used during execution.
-    pub fn resolve_outputs<'a>(
+    /// Resolve outputs both as RE action output paths and as Buck materialized artifact paths.
+    ///
+    /// Bazel writes ActionResult output names using the same exec paths that were listed on the
+    /// Command. Buck may then promote those produced paths to canonical artifact paths before cache
+    /// upload, so cache upload needs both path forms.
+    pub fn resolve_outputs_for_remote_action_result<'a>(
         &'a self,
         fs: &'a ArtifactFs,
     ) -> impl Iterator<
-        Item = buck2_error::Result<(ResolvedCommandExecutionOutput, &'a ArtifactValue)>,
+        Item = buck2_error::Result<(
+            ResolvedCommandExecutionOutput,
+            ResolvedCommandExecutionOutput,
+            &'a ArtifactValue,
+        )>,
     > + 'a {
         self.outputs.iter().map(|(output, value)| {
+            let output_hash = output
+                .has_content_based_path()
+                .then(ContentBasedPathHash::for_output_artifact);
+            let output_hash = output_hash.as_ref();
             Ok((
-                output.as_ref().resolve(
-                    fs,
-                    if output.has_content_based_path() {
-                        Some(ContentBasedPathHash::OutputArtifact)
-                    } else {
-                        None
-                    }
-                    .as_ref(),
-                )?,
+                output.as_ref().resolve_for_execution(fs, output_hash)?,
+                output.as_ref().resolve(fs, output_hash)?,
                 value,
             ))
         })

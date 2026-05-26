@@ -9,6 +9,7 @@
  */
 
 use std::convert::Infallible;
+use std::collections::HashSet;
 use std::ops::ControlFlow;
 use std::ops::FromResidual;
 use std::path::Path;
@@ -72,6 +73,29 @@ use crate::executors::local::materialize_input_path_aliases;
 use crate::executors::local::materialize_inputs;
 use crate::re::paranoid_download::ParanoidDownloader;
 use crate::storage_resource_exhausted::is_storage_resource_exhausted;
+
+pub fn missing_mandatory_output(
+    paths: &CommandExecutionPaths,
+    output_spec: &dyn RemoteActionResult,
+) -> Option<String> {
+    let mut actual_outputs = HashSet::new();
+    for output in output_spec.output_files() {
+        actual_outputs.insert(output.name.as_str());
+    }
+    for output in output_spec.output_directories() {
+        actual_outputs.insert(output.path.as_str());
+    }
+    for output in output_spec.output_symlinks() {
+        actual_outputs.insert(output.name.as_str());
+    }
+
+    paths
+        .output_paths()
+        .iter()
+        .map(|(path, _)| path.as_str())
+        .find(|path| !actual_outputs.contains(*path))
+        .map(str::to_owned)
+}
 
 pub async fn download_action_results<'a>(
     request: &CommandExecutionRequest,

@@ -63,6 +63,7 @@ use tracing::info;
 use crate::incremental_actions_helper::save_content_based_incremental_state;
 use crate::re::download::DownloadResult;
 use crate::re::download::download_action_results;
+use crate::re::download::missing_mandatory_output;
 use crate::re::paranoid_download::ParanoidDownloader;
 use crate::sqlite::incremental_state_db::IncrementalDbState;
 use crate::storage_resource_exhausted::is_storage_resource_exhausted;
@@ -171,6 +172,7 @@ impl ReExecutor {
         re_gang_workers: &[buck2_core::execution_types::executor_config::ReGangWorker],
         meta_internal_extra_params: &MetaInternalExtraParams,
         worker_tool_action_digest: Option<ActionDigest>,
+        force_skip_cache_read: bool,
     ) -> ControlFlow<CommandExecutionResult, (CommandExecutionManager, ExecuteResponseWithQueueStats)>
     {
         info!(
@@ -188,7 +190,7 @@ impl ReExecutor {
             re_gang_workers,
             identity,
             &mut manager,
-            self.skip_cache_read,
+            self.skip_cache_read || force_skip_cache_read,
             self.skip_cache_write,
             self.re_max_queue_time,
             self.re_resource_units,
@@ -439,7 +441,7 @@ impl PreparedCommandExecutor for ReExecutor {
             .cloned()
             .collect();
 
-        let (manager, response) = self
+        let (mut manager, mut response) = self
             .re_execute(
                 manager,
                 &identity,
@@ -453,8 +455,48 @@ impl PreparedCommandExecutor for ReExecutor {
                 &re_gang_workers,
                 command.request.meta_internal_extra_params(),
                 worker_tool_action_digest,
+                false,
             )
             .await?;
+
+        #[cfg(not(fbcode_build))]
+        if response.execute_response.cached_result {
+            let missing_output = missing_mandatory_output(request.paths(), &response);
+            if response.execute_response.action_result.exit_code != 0 || missing_output.is_some() {
+                if let Some(missing_output) = missing_output {
+                    tracing::debug!(
+                        "Remote execution returned cached result for `{}` without mandatory output `{}`; retrying with cache lookup disabled",
+                        action_and_blobs.action,
+                        missing_output,
+                    );
+                } else {
+                    tracing::debug!(
+                        "Remote execution returned cached result for `{}` with non-zero exit code {}; retrying with cache lookup disabled",
+                        action_and_blobs.action,
+                        response.execute_response.action_result.exit_code,
+                    );
+                }
+                let retry = self
+                    .re_execute(
+                        manager,
+                        &identity,
+                        request,
+                        &action_and_blobs.action,
+                        *digest_config,
+                        platform,
+                        self.dependencies
+                            .iter()
+                            .chain(remote_execution_dependencies.iter()),
+                        &re_gang_workers,
+                        command.request.meta_internal_extra_params(),
+                        worker_tool_action_digest,
+                        true,
+                    )
+                    .await?;
+                manager = retry.0;
+                response = retry.1;
+            }
+        }
 
         let exit_code = response.execute_response.action_result.exit_code;
         let additional_message = if response.execute_response.status.message.is_empty() {

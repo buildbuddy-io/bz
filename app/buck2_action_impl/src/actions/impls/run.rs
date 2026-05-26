@@ -638,6 +638,7 @@ enum ExecuteResult {
         result: CommandExecutionResult,
         dep_file_bundle: Option<DepFileBundle>,
         executor_preference: ExecutorPreference,
+        request: CommandExecutionRequest,
         action_and_blobs: ActionDigestAndBlobs,
         input_files_bytes: u64,
     },
@@ -4380,12 +4381,14 @@ impl RunAction {
             }
         };
 
+        let input_files_bytes = req.paths().input_files_bytes();
         Ok(ExecuteResult::ExecutedOrReHit {
             result,
             dep_file_bundle,
             executor_preference: req.executor_preference,
+            request: req,
             action_and_blobs,
-            input_files_bytes: req.paths().input_files_bytes(),
+            input_files_bytes,
         })
     }
 
@@ -4884,6 +4887,7 @@ impl Action for RunAction {
             mut result,
             mut dep_file_bundle,
             executor_preference,
+            request,
             action_and_blobs,
             input_files_bytes,
         ) = match self.execute_inner(ctx, waiting_data).await? {
@@ -4907,12 +4911,14 @@ impl Action for RunAction {
                 result,
                 dep_file_bundle,
                 executor_preference,
+                request,
                 action_and_blobs,
                 input_files_bytes,
             } => (
                 result,
                 dep_file_bundle,
                 executor_preference,
+                request,
                 action_and_blobs,
                 input_files_bytes,
             ),
@@ -4932,6 +4938,7 @@ impl Action for RunAction {
             let upload_result = ctx
                 .cache_upload(
                     &action_and_blobs,
+                    &request,
                     &result,
                     re_result,
                     // match needed for coercion, https://github.com/rust-lang/rust/issues/108999

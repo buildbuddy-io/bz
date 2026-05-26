@@ -56,6 +56,7 @@ use crate::execute::request::OutputType;
 use crate::execute::request::RemoteWorkerSpec;
 use crate::execute::result::CommandExecutionMetadata;
 use crate::execute::result::CommandExecutionResult;
+use crate::re::action_identity::ReActionIdentity;
 use buck2_hash::BuckIndexMap;
 use buck2_hash::BuckIndexSet;
 
@@ -218,6 +219,7 @@ impl CommandExecutor {
         re_result: Option<TActionResult2>,
         dep_file_bundle: Option<&mut dyn IntoRemoteDepFile>,
         action_digest_and_blobs: &ActionDigestAndBlobs,
+        identity: Option<&ReActionIdentity<'_>>,
     ) -> buck2_error::Result<CacheUploadResults> {
         self.0
             .cache_uploader
@@ -227,6 +229,7 @@ impl CommandExecutor {
                 re_result,
                 dep_file_bundle,
                 action_digest_and_blobs,
+                identity,
             )
             .await
     }

@@ -63,6 +63,7 @@ use buck2_execute::materialize::materializer::Materializer;
 use buck2_execute::output_size::OutputCountAndBytes;
 use buck2_execute::output_size::OutputSize;
 use buck2_execute::path::artifact_path::ArtifactPath;
+use buck2_execute::re::action_identity::ReActionIdentity;
 use buck2_execute::re::manager::UnconfiguredRemoteExecutionClient;
 use buck2_execute::re::output_trees_download_config::OutputTreesDownloadConfig;
 use buck2_file_watcher::mergebase::GetMergebase;
@@ -676,11 +677,13 @@ impl ActionExecutionCtx for BuckActionExecutionContext<'_> {
     async fn cache_upload(
         &mut self,
         action_digest_and_blobs: &ActionDigestAndBlobs,
+        request: &CommandExecutionRequest,
         execution_result: &CommandExecutionResult,
         re_result: Option<TActionResult2>,
         dep_file_bundle: Option<&mut dyn IntoRemoteDepFile>,
     ) -> buck2_error::Result<CacheUploadResults> {
         let action = self.target();
+        let identity = ReActionIdentity::new(&action as _, None, request.paths());
         Ok(self
             .executor
             .command_executor
@@ -695,6 +698,7 @@ impl ActionExecutionCtx for BuckActionExecutionContext<'_> {
                 re_result,
                 dep_file_bundle,
                 action_digest_and_blobs,
+                Some(&identity),
             )
             .await?)
     }

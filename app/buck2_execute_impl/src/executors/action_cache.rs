@@ -41,6 +41,7 @@ use prost::Message;
 use crate::incremental_actions_helper::save_content_based_incremental_state;
 use crate::re::download::DownloadResult;
 use crate::re::download::download_action_results;
+use crate::re::download::missing_mandatory_output;
 use crate::re::paranoid_download::ParanoidDownloader;
 use crate::sqlite::incremental_state_db::IncrementalDbState;
 
@@ -98,17 +99,25 @@ async fn query_action_cache_and_download_result(
         CacheType::RemoteDepFileCache(key) => key.dupe().coerce::<ActionDigestKind>(),
         CacheType::ActionCache => action_digest.dupe(),
     };
+    let identity = ReActionIdentity::new(
+        command.target,
+        re_action_key.as_deref(),
+        command.request.paths(),
+    );
 
     let action_cache_response = executor_stage_async(
         buck2_data::CacheQuery {
             action_digest: digest.to_string(),
             cache_type: cache_type.to_proto().into(),
         },
-        re_client.action_cache(digest.dupe(), &command.prepared_action.platform),
+        re_client.action_cache(
+            digest.dupe(),
+            &command.prepared_action.platform,
+            Some(&identity),
+        ),
     )
     .await;
 
-    let identity = None; // TODO(#503): implement this
     if upload_all_actions {
         if let Err(e) = re_client
             .upload(
@@ -117,7 +126,7 @@ async fn query_action_cache_and_download_result(
                 action_blobs,
                 ProjectRelativePath::empty(),
                 request.paths().input_directory(),
-                identity,
+                Some(&identity),
                 digest_config,
                 deduplicate_get_digests_ttl_calls,
             )
@@ -135,12 +144,30 @@ async fn query_action_cache_and_download_result(
         Ok(None) => return ControlFlow::Continue(manager),
     };
 
-    let action_exit_code = response.action_result.exit_code;
+    let response = ActionCacheResult(response, cache_type.to_proto());
+    let action_exit_code = response.0.action_result.exit_code;
+    if action_exit_code != 0 {
+        tracing::debug!(
+            "Cached action result for `{}` had non-zero exit code {}; treating it as a cache miss",
+            digest,
+            action_exit_code,
+        );
+        return ControlFlow::Continue(manager);
+    }
+    if let Some(missing_output) = missing_mandatory_output(request.paths(), &response) {
+        tracing::debug!(
+            "Cached action result for `{}` did not contain mandatory output `{}`; treating it as a cache miss",
+            digest,
+            missing_output,
+        );
+        return ControlFlow::Continue(manager);
+    }
 
     let dep_file_metadata: Option<RemoteDepFile> = match &cache_type {
         CacheType::ActionCache => None,
         CacheType::RemoteDepFileCache(_) => {
             let metadata = response
+                .0
                 .action_result
                 .execution_metadata
                 .auxiliary_metadata
@@ -161,13 +188,6 @@ async fn query_action_cache_and_download_result(
         }
     };
 
-    let identity = ReActionIdentity::new(
-        command.target,
-        re_action_key.as_deref(),
-        command.request.paths(),
-    );
-
-    let response = ActionCacheResult(response, cache_type.to_proto());
     let res = download_action_results(
         request,
         TimeSpan::start_now(),
