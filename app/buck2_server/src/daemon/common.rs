@@ -812,6 +812,7 @@ mod tests {
             BazelRemoteEndpointOverrides::from_startup_config(&RemoteExecutionStartupConfig {
                 remote_cache: Some(String::new()),
                 remote_executor: Some("remote.buildbuddy.dev".to_owned()),
+                ..Default::default()
             });
 
         let executor = executor_with_bazel_remote_endpoint_overrides(

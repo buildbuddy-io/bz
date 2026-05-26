@@ -150,7 +150,9 @@ fn update_events_ctx<T: StreamingCommand>(
         recorder.update_for_command(
             ctx,
             cmd.event_log_opts(),
-            cmd.sanitize_argv(ctx.argv.clone()).argv,
+            cmd.sanitize_argv(ctx.argv.clone())
+                .redacted_arg_values(&["--api-key"])
+                .argv,
             Some(cmd.build_config_opts()),
             representative_config_flags,
             log_size_counter_bytes,
@@ -322,7 +324,9 @@ fn get_event_log_subscriber<T: StreamingCommand>(
     paths: &InvocationPaths,
 ) -> Box<dyn EventSubscriber> {
     let event_log_opts = cmd.event_log_opts();
-    let sanitized_argv = cmd.sanitize_argv(ctx.argv.clone());
+    let sanitized_argv = cmd
+        .sanitize_argv(ctx.argv.clone())
+        .redacted_arg_values(&["--api-key"]);
     let user_event_log = cmd.user_event_log();
 
     let logdir = paths.log_dir();

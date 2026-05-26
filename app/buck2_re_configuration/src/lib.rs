@@ -13,6 +13,7 @@
 use std::str::FromStr;
 
 use allocative::Allocative;
+use buck2_common::init::BUILDBUDDY_API_KEY_HEADER;
 use buck2_common::init::RemoteExecutionStartupConfig;
 use buck2_common::legacy_configs::configs::LegacyBuckConfig;
 use buck2_common::legacy_configs::key::BuckconfigKeyRef;
@@ -663,6 +664,16 @@ impl FromStr for HttpHeader {
     }
 }
 
+fn apply_buildbuddy_api_key_header(headers: &mut Vec<HttpHeader>, api_key: &str) {
+    headers.retain(|header| !header.key.eq_ignore_ascii_case(BUILDBUDDY_API_KEY_HEADER));
+    if !api_key.trim().is_empty() {
+        headers.push(HttpHeader {
+            key: BUILDBUDDY_API_KEY_HEADER.to_owned(),
+            value: api_key.to_owned(),
+        });
+    }
+}
+
 impl Buck2OssReConfiguration {
     pub fn apply_remote_execution_startup_config(
         &mut self,
@@ -685,6 +696,9 @@ impl Buck2OssReConfiguration {
 
         if let Some(tls) = resolved.tls {
             self.tls = tls;
+        }
+        if let Some(api_key) = &config.buildbuddy_api_key {
+            apply_buildbuddy_api_key_header(&mut self.http_headers, api_key);
         }
 
         Ok(())
@@ -819,6 +833,7 @@ mod tests {
         config.apply_remote_execution_startup_config(&RemoteExecutionStartupConfig {
             remote_cache: Some("cache.example.com".to_owned()),
             remote_executor: Some("executor.example.com".to_owned()),
+            ..Default::default()
         })?;
 
         assert_eq!(
@@ -849,6 +864,83 @@ mod tests {
 
         assert_eq!(config.cas_address, None);
         assert_eq!(config.action_cache_address, None);
+
+        Ok(())
+    }
+
+    #[test]
+    fn api_key_sets_buildbuddy_header() -> buck2_error::Result<()> {
+        let mut config = Buck2OssReConfiguration::default();
+        config.apply_remote_execution_startup_config(&RemoteExecutionStartupConfig {
+            buildbuddy_api_key: Some("secret".to_owned()),
+            ..Default::default()
+        })?;
+
+        assert_eq!(config.http_headers.len(), 1);
+        assert_eq!(config.http_headers[0].key, BUILDBUDDY_API_KEY_HEADER);
+        assert_eq!(config.http_headers[0].value, "secret");
+
+        Ok(())
+    }
+
+    #[test]
+    fn api_key_replaces_existing_buildbuddy_header() -> buck2_error::Result<()> {
+        let mut config = Buck2OssReConfiguration {
+            http_headers: vec![
+                HttpHeader {
+                    key: "X-BuildBuddy-Api-Key".to_owned(),
+                    value: "old".to_owned(),
+                },
+                HttpHeader {
+                    key: "x-other-header".to_owned(),
+                    value: "keep".to_owned(),
+                },
+            ],
+            ..Default::default()
+        };
+        config.apply_remote_execution_startup_config(&RemoteExecutionStartupConfig {
+            buildbuddy_api_key: Some("new".to_owned()),
+            ..Default::default()
+        })?;
+
+        assert_eq!(config.http_headers.len(), 2);
+        assert!(
+            config
+                .http_headers
+                .iter()
+                .any(|header| { header.key == "x-other-header" && header.value == "keep" })
+        );
+        assert!(
+            config
+                .http_headers
+                .iter()
+                .any(|header| { header.key == BUILDBUDDY_API_KEY_HEADER && header.value == "new" })
+        );
+        assert!(
+            !config
+                .http_headers
+                .iter()
+                .any(|header| header.value == "old")
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn empty_api_key_clears_existing_buildbuddy_header() -> buck2_error::Result<()> {
+        let mut config = Buck2OssReConfiguration {
+            http_headers: vec![HttpHeader {
+                key: BUILDBUDDY_API_KEY_HEADER.to_owned(),
+                value: "old".to_owned(),
+            }],
+            ..Default::default()
+        };
+        config.apply_remote_execution_startup_config(&RemoteExecutionStartupConfig {
+            buildbuddy_api_key: Some(String::new()),
+            ..Default::default()
+        })?;
+
+        assert!(config.http_headers.is_empty());
 
         Ok(())
     }

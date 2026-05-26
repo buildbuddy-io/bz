@@ -89,6 +89,12 @@ impl ExpandedArgv {
         }
     }
 
+    fn redacted_arg_values(self, flags: &[&str]) -> ExpandedArgv {
+        Self {
+            args: redact_arg_values_with_sources(self.args, flags),
+        }
+    }
+
     pub fn args(&self) -> impl Iterator<Item = &str> {
         self.args.iter().map(|(v, _)| v as _)
     }
@@ -299,6 +305,64 @@ pub struct SanitizedArgv {
     _priv: (), // Ensure that all ways of creating this are in this file.
 }
 
+fn redact_arg_value(arg: String, flags: &[&str]) -> (String, bool) {
+    if flags.iter().any(|flag| arg == *flag) {
+        return (arg, true);
+    }
+    if let Some((flag, _)) = arg.split_once('=') {
+        if flags.iter().any(|expected| flag == *expected) {
+            return (format!("{flag}=<redacted>"), false);
+        }
+    }
+    (arg, false)
+}
+
+fn redact_arg_values(args: Vec<String>, flags: &[&str]) -> Vec<String> {
+    let mut redact_next = false;
+    args.into_iter()
+        .map(|arg| {
+            if redact_next {
+                redact_next = false;
+                "<redacted>".to_owned()
+            } else {
+                let (arg, should_redact_next) = redact_arg_value(arg, flags);
+                redact_next = should_redact_next;
+                arg
+            }
+        })
+        .collect()
+}
+
+fn redact_arg_values_with_sources(
+    args: Vec<(String, ExpandedArgSource)>,
+    flags: &[&str],
+) -> Vec<(String, ExpandedArgSource)> {
+    let mut redact_next = false;
+    args.into_iter()
+        .map(|(arg, source)| {
+            let arg = if redact_next {
+                redact_next = false;
+                "<redacted>".to_owned()
+            } else {
+                let (arg, should_redact_next) = redact_arg_value(arg, flags);
+                redact_next = should_redact_next;
+                arg
+            };
+            (arg, source)
+        })
+        .collect()
+}
+
+impl SanitizedArgv {
+    pub fn redacted_arg_values(self, flags: &[&str]) -> SanitizedArgv {
+        SanitizedArgv {
+            argv: redact_arg_values(self.argv, flags),
+            expanded_argv: self.expanded_argv.redacted_arg_values(flags),
+            _priv: (),
+        }
+    }
+}
+
 impl Argv {
     pub fn no_need_to_sanitize(self) -> SanitizedArgv {
         let Argv {
@@ -322,6 +386,10 @@ impl Argv {
             expanded_argv: self.expanded_argv.redacted(&to_redact),
             _priv: (),
         }
+    }
+
+    pub fn redacted_arg_values(self, flags: &[&str]) -> SanitizedArgv {
+        self.no_need_to_sanitize().redacted_arg_values(flags)
     }
 }
 
@@ -474,5 +542,52 @@ mod tests {
             vec!["-c section.option=value", "-c section.option2=value",]
         );
         Ok(())
+    }
+
+    #[test]
+    fn redacts_sensitive_arg_values() {
+        let mut expanded_argv = ExpandedArgvBuilder::new();
+        expanded_argv.push("buck2".to_owned());
+        expanded_argv.push("--api-key=secret1".to_owned());
+        expanded_argv.push("build".to_owned());
+        expanded_argv.push("--api-key".to_owned());
+        expanded_argv.push("secret2".to_owned());
+        expanded_argv.push("//:target".to_owned());
+
+        let argv = Argv {
+            argv: vec![
+                "buck2".to_owned(),
+                "--api-key=secret1".to_owned(),
+                "build".to_owned(),
+                "--api-key".to_owned(),
+                "secret2".to_owned(),
+                "//:target".to_owned(),
+            ],
+            expanded_argv: expanded_argv.build(),
+        };
+
+        let sanitized = argv.redacted_arg_values(&["--api-key"]);
+        assert_eq!(
+            sanitized.argv,
+            vec![
+                "buck2",
+                "--api-key=<redacted>",
+                "build",
+                "--api-key",
+                "<redacted>",
+                "//:target"
+            ]
+        );
+        assert_eq!(
+            sanitized.expanded_argv.args().collect::<Vec<_>>(),
+            vec![
+                "buck2",
+                "--api-key=<redacted>",
+                "build",
+                "--api-key",
+                "<redacted>",
+                "//:target"
+            ]
+        );
     }
 }

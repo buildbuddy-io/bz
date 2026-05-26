@@ -10,6 +10,7 @@ use async_trait::async_trait;
 use buck2_cli_proto::BuildTarget;
 use buck2_cli_proto::CommandResult;
 use buck2_cli_proto::command_result;
+use buck2_common::init::BUILDBUDDY_API_KEY_HEADER;
 use buck2_error::ExitCode;
 use buck2_event_log::file_names::find_log_by_trace_id;
 use buck2_event_observer::event_observer::EventObserver;
@@ -120,7 +121,9 @@ impl BuildEventProtocolConfig {
         else {
             return Ok(None);
         };
-        let sanitized_argv = cmd.sanitize_argv(ctx.argv.clone());
+        let sanitized_argv = cmd
+            .sanitize_argv(ctx.argv.clone())
+            .redacted_arg_values(&["--api-key"]);
         let argv = redact_bes_headers(sanitized_argv.argv);
         let target_patterns = cmd.build_event_protocol_target_patterns();
         let workspace_directory = paths
@@ -139,7 +142,12 @@ impl BuildEventProtocolConfig {
 
         Ok(Some(Self {
             backend,
-            headers: event_log_opts.bes_header.clone(),
+            headers: headers_with_buildbuddy_api_key(
+                event_log_opts.bes_header.clone(),
+                ctx.remote_execution_startup_config
+                    .buildbuddy_api_key
+                    .as_deref(),
+            ),
             project_id,
             keywords,
             timeout,
@@ -202,6 +210,19 @@ fn redact_bes_headers(argv: Vec<String>) -> Vec<String> {
         }
     }
     out
+}
+
+fn headers_with_buildbuddy_api_key(mut headers: Vec<String>, api_key: Option<&str>) -> Vec<String> {
+    if let Some(api_key) = api_key {
+        headers.retain(|header| match header.split_once('=') {
+            Some((name, _)) => !name.trim().eq_ignore_ascii_case(BUILDBUDDY_API_KEY_HEADER),
+            None => true,
+        });
+        if !api_key.trim().is_empty() {
+            headers.push(format!("{BUILDBUDDY_API_KEY_HEADER}={api_key}"));
+        }
+    }
+    headers
 }
 
 fn shell_join(args: &[String]) -> String {
@@ -1905,6 +1926,70 @@ mod tests {
                 "--bes-header=<redacted>",
                 "//:target"
             ]
+        );
+    }
+
+    #[test]
+    fn redacts_api_key_values_from_bep_argv() {
+        let argv = buck2_common::argv::Argv {
+            argv: vec![
+                "buck2".to_owned(),
+                "--api-key=secret1".to_owned(),
+                "build".to_owned(),
+                "--api-key".to_owned(),
+                "secret2".to_owned(),
+                "//:target".to_owned(),
+            ],
+            expanded_argv: buck2_common::argv::ExpandedArgv::from_literals(Vec::new()),
+        };
+
+        let sanitized = argv.redacted_arg_values(&["--api-key"]);
+        assert_eq!(
+            sanitized.argv,
+            vec![
+                "buck2",
+                "--api-key=<redacted>",
+                "build",
+                "--api-key",
+                "<redacted>",
+                "//:target"
+            ]
+        );
+    }
+
+    #[test]
+    fn api_key_adds_buildbuddy_header_to_bep_headers() {
+        assert_eq!(
+            headers_with_buildbuddy_api_key(vec!["x-other=value".to_owned()], Some("secret")),
+            vec!["x-other=value", "x-buildbuddy-api-key=secret"]
+        );
+    }
+
+    #[test]
+    fn api_key_replaces_existing_buildbuddy_bep_header() {
+        assert_eq!(
+            headers_with_buildbuddy_api_key(
+                vec![
+                    "X-BuildBuddy-Api-Key=old".to_owned(),
+                    "x-other=value".to_owned()
+                ],
+                Some("new")
+            ),
+            vec!["x-other=value", "x-buildbuddy-api-key=new"]
+        );
+    }
+
+    #[test]
+    fn empty_api_key_clears_existing_buildbuddy_bep_header() {
+        assert_eq!(
+            headers_with_buildbuddy_api_key(
+                vec![
+                    "x-buildbuddy-api-key=old".to_owned(),
+                    "x-other=value".to_owned()
+                ],
+                Some("")
+            ),
+            vec!["x-other=value"]
         );
     }
 

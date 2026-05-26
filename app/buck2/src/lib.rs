@@ -199,6 +199,10 @@ struct BeforeSubcommandOptions {
     #[clap(long = "bb", alias = "buildbuddy", global = true)]
     buildbuddy: bool,
 
+    /// BuildBuddy API key to send to BuildBuddy gRPC endpoints.
+    #[clap(long = "api-key", value_name = "KEY", global = true)]
+    api_key: Option<String>,
+
     /// Print buck wrapper help.
     #[clap(skip)] // @oss-enable
     // @oss-disable: #[clap(long)]
@@ -225,6 +229,7 @@ impl BeforeSubcommandOptions {
             remote_executor: self.remote_executor.clone().or_else(|| {
                 (self.rbe || self.buildbuddy).then(|| BUILDBUDDY_REMOTE_ENDPOINT.to_owned())
             }),
+            buildbuddy_api_key: self.api_key.clone(),
         }
     }
 
@@ -869,6 +874,32 @@ mod tests {
         assert_eq!(
             remote_execution.remote_executor.as_deref(),
             Some("grpc://executor.example.com")
+        );
+    }
+
+    #[test]
+    fn api_key_sets_buildbuddy_api_key_startup_override() {
+        let opts =
+            Opt::try_parse_from(["buck2", "build", "--api-key=secret", "//:target"]).unwrap();
+
+        let remote_execution = opts.common_opts.remote_execution_startup_config();
+        assert_eq!(
+            remote_execution.buildbuddy_api_key.as_deref(),
+            Some("secret")
+        );
+        assert_eq!(remote_execution.remote_cache, None);
+        assert_eq!(remote_execution.remote_executor, None);
+    }
+
+    #[test]
+    fn api_key_is_global() {
+        let opts =
+            Opt::try_parse_from(["buck2", "--api-key", "secret", "build", "//:target"]).unwrap();
+
+        let remote_execution = opts.common_opts.remote_execution_startup_config();
+        assert_eq!(
+            remote_execution.buildbuddy_api_key.as_deref(),
+            Some("secret")
         );
     }
 }

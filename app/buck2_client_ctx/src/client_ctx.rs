@@ -234,7 +234,10 @@ impl<'a> ClientCommandContext<'a> {
             unstable_typecheck: starlark_opts.unstable_typecheck,
             skip_targets_with_duplicate_names: starlark_opts.skip_targets_with_duplicate_names,
             reuse_current_config: config_opts.reuse_current_config,
-            sanitized_argv: cmd.sanitize_argv(self.argv.clone()).argv,
+            sanitized_argv: cmd
+                .sanitize_argv(self.argv.clone())
+                .redacted_arg_values(&["--api-key"])
+                .argv,
             preemptible: match config_opts.preemptible {
                 None => GrpcPreemptibleWhen::Never,
                 Some(PreemptibleWhen::Never) => GrpcPreemptibleWhen::Never,
