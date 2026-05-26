@@ -1,4 +1,6 @@
 use std::io::IsTerminal;
+use std::path::Path;
+use std::path::PathBuf;
 use std::time::Duration;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
@@ -8,10 +10,20 @@ use buck2_cli_proto::BuildTarget;
 use buck2_cli_proto::CommandResult;
 use buck2_cli_proto::command_result;
 use buck2_error::ExitCode;
+use buck2_event_log::file_names::find_log_by_trace_id;
+use buck2_event_observer::event_observer::EventObserver;
+use buck2_event_observer::event_observer::NoopEventObserverExtra;
 use buck2_events::BuckEvent;
+use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
+use buck2_wrapper_common::invocation_id::TraceId;
+use dupe::Dupe;
 use prost::Message;
 use prost_types::Any;
 use prost_types::Timestamp;
+use re_grpc_proto::google::bytestream::WriteRequest;
+use re_grpc_proto::google::bytestream::byte_stream_client::ByteStreamClient;
+use sha2::Digest;
+use sha2::Sha256;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tokio_stream::wrappers::UnboundedReceiverStream;
@@ -28,6 +40,8 @@ const BAZEL_BUILD_EVENT_TYPE_URL: &str = "type.googleapis.com/build_event_stream
 const PUBLISH_BUILD_TOOL_EVENT_STREAM_PATH: &str =
     "/google.devtools.build.v1.PublishBuildEvent/PublishBuildToolEventStream";
 const DEFAULT_PROGRESS_CHUNK_SIZE: usize = 1024 * 1024;
+const PROFILE_NAME: &str = "command.profile.gz";
+const BYTESTREAM_UPLOAD_CHUNK_SIZE: usize = 2 * 1024 * 1024;
 
 pub(crate) fn bes_invocation_url(results_url: &str, invocation_id: &str) -> String {
     let separator = if results_url.ends_with('/') { "" } else { "/" };
@@ -58,6 +72,8 @@ enum BepError {
     InvalidHeader(String),
     #[error("BEP upload failed: {0}")]
     Upload(String),
+    #[error("BEP timing profile upload failed: {0}")]
+    ProfileUpload(String),
     #[error("BEP upload task failed to join: {0}")]
     Join(String),
 }
@@ -78,6 +94,8 @@ pub(crate) struct BuildEventProtocolConfig {
     start_time: SystemTime,
     working_directory: String,
     workspace_directory: String,
+    trace_id: TraceId,
+    event_log_dir: Option<AbsNormPathBuf>,
 }
 
 impl BuildEventProtocolConfig {
@@ -99,6 +117,13 @@ impl BuildEventProtocolConfig {
         let keywords = keywords(T::COMMAND_NAME, &event_log_opts.bes_keywords);
         let project_id = event_log_opts.bes_instance_name.clone().unwrap_or_default();
         let timeout = event_log_opts.bes_timeout_duration()?;
+        let event_log_dir = paths.and_then(|p| {
+            if event_log_opts.no_event_log {
+                None
+            } else {
+                Some(p.log_dir())
+            }
+        });
 
         Ok(Some(Self {
             backend,
@@ -115,6 +140,8 @@ impl BuildEventProtocolConfig {
             start_time: ctx.start_time,
             working_directory: ctx.working_dir.to_string(),
             workspace_directory,
+            trace_id: ctx.trace_id.dupe(),
+            event_log_dir,
         }))
     }
 }
@@ -177,12 +204,15 @@ pub(crate) struct BuildEventProtocolSubscriber {
     error_seen: bool,
     workspace_status_sent: bool,
     finished_sent: bool,
+    final_build_log_sent: bool,
+    observer: EventObserver<NoopEventObserverExtra>,
 }
 
 impl BuildEventProtocolSubscriber {
     pub(crate) fn new(config: BuildEventProtocolConfig) -> Self {
         let (sender, receiver) = mpsc::unbounded_channel();
         let upload = tokio::spawn(upload_build_events(config.clone(), receiver));
+        let trace_id = config.trace_id.dupe();
         let mut this = Self {
             sender: Some(sender),
             upload: Some(upload),
@@ -193,10 +223,13 @@ impl BuildEventProtocolSubscriber {
             error_seen: false,
             workspace_status_sent: false,
             finished_sent: false,
+            final_build_log_sent: false,
+            observer: EventObserver::new(trace_id),
         };
 
         this.send_bazel_event(this.started_event());
         this.send_bazel_event(this.options_parsed_event());
+        this.send_progress_stderr(format!("Build ID: {}", this.config.invocation_id));
         this
     }
 
@@ -271,6 +304,7 @@ impl BuildEventProtocolSubscriber {
             options_parsed_id(),
             workspace_status_id(),
             build_finished_id(),
+            build_tool_logs_id(),
         ];
         if !self.config.target_patterns.is_empty() {
             children.push(pattern_id(self.config.target_patterns.clone()));
@@ -475,6 +509,14 @@ impl BuildEventProtocolSubscriber {
         self.send_bazel_event(event);
     }
 
+    fn send_progress_stderr(&mut self, message: impl AsRef<str>) {
+        let mut message = message.as_ref().to_owned();
+        if !message.ends_with('\n') {
+            message.push('\n');
+        }
+        self.send_progress_text(None, Some(message));
+    }
+
     fn send_progress_bytes(&mut self, stdout: Option<&[u8]>, stderr: Option<&[u8]>) {
         if let Some(stdout) = stdout {
             for chunk in stdout.chunks(DEFAULT_PROGRESS_CHUNK_SIZE) {
@@ -508,7 +550,7 @@ impl BuildEventProtocolSubscriber {
         self.send_bazel_event(build_event_stream::BuildEvent {
             id: Some(build_finished_id()),
             children: Vec::new(),
-            last_message: true,
+            last_message: false,
             payload: Some(build_event_stream::build_event::Payload::Finished(
                 build_event_stream::BuildFinished {
                     overall_success: code == 0,
@@ -521,6 +563,90 @@ impl BuildEventProtocolSubscriber {
                 },
             )),
         });
+    }
+
+    async fn build_tool_logs(&self) -> Vec<build_event_stream::File> {
+        let upload = match self.config.timeout {
+            Some(timeout) if !timeout.is_zero() => {
+                match tokio::time::timeout(timeout, self.maybe_upload_timing_profile()).await {
+                    Ok(result) => result,
+                    Err(_) => {
+                        Err(BepError::ProfileUpload(format!("timed out after {timeout:?}")).into())
+                    }
+                }
+            }
+            _ => self.maybe_upload_timing_profile().await,
+        };
+
+        match upload {
+            Ok(Some(file)) => vec![file],
+            Ok(None) => Vec::new(),
+            Err(error) => {
+                tracing::warn!("Failed to upload BEP timing profile: {error:#}");
+                Vec::new()
+            }
+        }
+    }
+
+    async fn maybe_upload_timing_profile(
+        &self,
+    ) -> buck2_error::Result<Option<build_event_stream::File>> {
+        let Some(event_log_dir) = &self.config.event_log_dir else {
+            return Ok(None);
+        };
+        let Some(event_log) = find_log_by_trace_id(event_log_dir, &self.config.trace_id)? else {
+            tracing::warn!(
+                "Could not find event log for invocation {}; skipping BEP timing profile",
+                self.config.invocation_id
+            );
+            return Ok(None);
+        };
+
+        let profile_path = temporary_profile_path(&self.config.invocation_id);
+        let profile_result = generate_chrome_trace_profile(event_log.path(), &profile_path).await;
+        if let Err(error) = profile_result {
+            let _ignored = tokio::fs::remove_file(&profile_path).await;
+            return Err(error);
+        }
+
+        let upload_result = upload_timing_profile(
+            &self.config.backend,
+            &self.config.headers,
+            &self.config.project_id,
+            &self.config.invocation_id,
+            &profile_path,
+        )
+        .await;
+        let _ignored = tokio::fs::remove_file(&profile_path).await;
+        upload_result.map(Some)
+    }
+
+    fn send_build_tool_logs(&mut self, logs: Vec<build_event_stream::File>) {
+        self.send_bazel_event(build_tool_logs_event(logs));
+    }
+
+    fn send_final_build_log(&mut self) {
+        if self.final_build_log_sent {
+            return;
+        }
+        self.final_build_log_sent = true;
+
+        if self.observer.action_stats().log_stats() {
+            let stats = format!("{}", self.observer.action_stats());
+            self.send_progress_stderr(stats);
+        }
+
+        let success = self
+            .exit_code
+            .as_ref()
+            .map(|(_, code)| *code == 0)
+            .unwrap_or(!self.error_seen);
+        let status = if success {
+            "BUILD SUCCEEDED"
+        } else {
+            "BUILD FAILED"
+        };
+        self.send_progress_stderr(status);
     }
 }
 
@@ -542,8 +668,33 @@ impl EventSubscriber for BuildEventProtocolSubscriber {
 
     async fn handle_events(
         &mut self,
-        _event: &[std::sync::Arc<BuckEvent>],
+        events: &[std::sync::Arc<BuckEvent>],
     ) -> buck2_error::Result<()> {
+        for event in events {
+            self.observer.observe(event).await?;
+            if let buck2_data::buck_event::Data::Instant(instant) = event.data()
+                && let Some(data) = instant.data.as_ref()
+            {
+                match data {
+                    buck2_data::instant_event::Data::ConsoleMessage(message) => {
+                        self.send_progress_stderr(&message.message);
+                    }
+                    buck2_data::instant_event::Data::ConsoleWarning(message) => {
+                        self.send_progress_stderr(&message.message);
+                    }
+                    buck2_data::instant_event::Data::StreamingOutput(message) => {
+                        self.send_progress_text(Some(message.message.clone()), None);
+                    }
+                    buck2_data::instant_event::Data::StructuredError(error) if !error.quiet => {
+                        self.send_progress_stderr(&error.payload);
+                    }
+                    buck2_data::instant_event::Data::ReSession(session) => {
+                        self.send_progress_stderr(format!("RE Session: {}", session.session_id));
+                    }
+                    _ => {}
+                }
+            }
+        }
         Ok(())
     }
 
@@ -553,6 +704,9 @@ impl EventSubscriber for BuildEventProtocolSubscriber {
                 self.emit_build_targets(&response.build_targets, &response.project_root);
                 if !response.errors.is_empty() {
                     self.error_seen = true;
+                    for error in &response.errors {
+                        self.send_progress_stderr(&error.message);
+                    }
                 }
             }
             Some(command_result::Result::TestResponse(response)) => {
@@ -565,11 +719,17 @@ impl EventSubscriber for BuildEventProtocolSubscriber {
                 }
                 if !response.errors.is_empty() || response.executor_exit_code != 0 {
                     self.error_seen = true;
+                    for error in &response.errors {
+                        self.send_progress_stderr(&error.message);
+                    }
                 }
             }
             Some(command_result::Result::BxlResponse(response)) => {
                 if !response.errors.is_empty() {
                     self.error_seen = true;
+                    for error in &response.errors {
+                        self.send_progress_stderr(&error.message);
+                    }
                 }
             }
             Some(command_result::Result::Error(_)) => {
@@ -592,10 +752,13 @@ impl EventSubscriber for BuildEventProtocolSubscriber {
             ExitCode::UnknownFailure
         });
         self.exit_code = Some((result.name().to_owned(), code.exit_code()));
+        self.send_final_build_log();
     }
 
     async fn finalize(mut self: Box<Self>) -> buck2_error::Result<()> {
         self.send_finished();
+        let build_tool_logs = self.build_tool_logs().await;
+        self.send_build_tool_logs(build_tool_logs);
         self.send_component_stream_finished();
         self.sender.take();
 
@@ -693,6 +856,151 @@ async fn upload_build_events(
     })
 }
 
+async fn generate_chrome_trace_profile(
+    event_log: &buck2_fs::paths::abs_path::AbsPath,
+    profile_path: &Path,
+) -> buck2_error::Result<()> {
+    let current_exe =
+        std::env::current_exe().map_err(|e| BepError::ProfileUpload(e.to_string()))?;
+    let output = tokio::process::Command::new(current_exe)
+        .arg("debug")
+        .arg("chrome-trace")
+        .arg(profile_path)
+        .arg(event_log.as_path())
+        .output()
+        .await
+        .map_err(|e| BepError::ProfileUpload(e.to_string()))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        return Err(BepError::ProfileUpload(format!(
+            "chrome-trace exited with {}: stdout: {}, stderr: {}",
+            output.status, stdout, stderr
+        ))
+        .into());
+    }
+
+    Ok(())
+}
+
+async fn upload_timing_profile(
+    backend: &str,
+    headers: &[String],
+    instance_name: &str,
+    invocation_id: &str,
+    profile_path: &Path,
+) -> buck2_error::Result<build_event_stream::File> {
+    let bytes = tokio::fs::read(profile_path)
+        .await
+        .map_err(|e| BepError::ProfileUpload(e.to_string()))?;
+    let size = bytes.len() as i64;
+    let digest = hex::encode(Sha256::digest(&bytes));
+    let backend = BesBackend::parse(backend)?;
+    let authority = backend.authority()?;
+    let resource_name =
+        bytestream_upload_resource_name(instance_name, invocation_id, &digest, size);
+    let uri = bytestream_download_uri(&authority, instance_name, &digest, size);
+
+    let mut endpoint = Endpoint::from_shared(backend.uri.clone())
+        .map_err(|e| BepError::InvalidBackend(format!("{} ({e})", backend.uri)))?;
+    if backend.tls {
+        endpoint = endpoint
+            .tls_config(ClientTlsConfig::new().with_native_roots())
+            .map_err(|e| BepError::ProfileUpload(e.to_string()))?;
+    }
+
+    let channel = endpoint
+        .connect()
+        .await
+        .map_err(|e| BepError::ProfileUpload(e.to_string()))?;
+    let mut client = ByteStreamClient::new(channel);
+    let requests = bytestream_write_requests(resource_name, bytes);
+    let mut request = tonic::Request::new(tokio_stream::iter(requests));
+    add_headers(request.metadata_mut(), headers)?;
+    let response = client
+        .write(request)
+        .await
+        .map_err(|e| BepError::ProfileUpload(e.to_string()))?
+        .into_inner();
+    if response.committed_size != size {
+        return Err(BepError::ProfileUpload(format!(
+            "uploaded {} bytes, expected {}",
+            response.committed_size, size
+        ))
+        .into());
+    }
+
+    Ok(build_event_stream::File {
+        name: PROFILE_NAME.to_owned(),
+        file: Some(build_event_stream::file::File::Uri(uri)),
+        path_prefix: Vec::new(),
+        digest,
+        length: size,
+    })
+}
+
+fn temporary_profile_path(invocation_id: &str) -> PathBuf {
+    let mut path = std::env::temp_dir();
+    path.push(format!("buck2-{invocation_id}-{PROFILE_NAME}"));
+    path
+}
+
+fn bytestream_upload_resource_name(
+    instance_name: &str,
+    invocation_id: &str,
+    digest: &str,
+    size: i64,
+) -> String {
+    let upload = format!("uploads/{invocation_id}/blobs/{digest}/{size}");
+    if instance_name.is_empty() {
+        upload
+    } else {
+        format!("{instance_name}/{upload}")
+    }
+}
+
+fn bytestream_download_uri(
+    authority: &str,
+    instance_name: &str,
+    digest: &str,
+    size: i64,
+) -> String {
+    if instance_name.is_empty() {
+        format!("bytestream://{authority}/blobs/{digest}/{size}")
+    } else {
+        format!("bytestream://{authority}/{instance_name}/blobs/{digest}/{size}")
+    }
+}
+
+fn bytestream_write_requests(resource_name: String, bytes: Vec<u8>) -> Vec<WriteRequest> {
+    if bytes.is_empty() {
+        return vec![WriteRequest {
+            resource_name,
+            write_offset: 0,
+            finish_write: true,
+            data: Vec::new(),
+        }];
+    }
+
+    let mut offset = 0;
+    let chunks = bytes.chunks(BYTESTREAM_UPLOAD_CHUNK_SIZE);
+    let chunk_count = chunks.len();
+    chunks
+        .enumerate()
+        .map(|(idx, chunk)| {
+            let write_offset = offset;
+            offset += chunk.len() as i64;
+            WriteRequest {
+                resource_name: resource_name.clone(),
+                write_offset,
+                finish_write: idx + 1 == chunk_count,
+                data: chunk.to_vec(),
+            }
+        })
+        .collect()
+}
+
 fn add_headers(
     metadata: &mut tonic::metadata::MetadataMap,
     headers: &[String],
@@ -748,6 +1056,16 @@ impl BesBackend {
             uri: format!("https://{value}"),
             tls: true,
         })
+    }
+
+    fn authority(&self) -> buck2_error::Result<String> {
+        let uri: tonic::codegen::http::Uri = self
+            .uri
+            .parse()
+            .map_err(|e| BepError::InvalidBackend(format!("{} ({e})", self.uri)))?;
+        uri.authority()
+            .map(|authority| authority.as_str().to_owned())
+            .ok_or_else(|| BepError::InvalidBackend(self.uri.clone()).into())
     }
 }
 
@@ -864,6 +1182,25 @@ fn build_finished_id() -> build_event_stream::BuildEventId {
     build_event_stream::BuildEventId {
         id: Some(build_event_stream::build_event_id::Id::BuildFinished(
             build_event_stream::build_event_id::BuildFinishedId {},
+        )),
+    }
+}
+
+fn build_tool_logs_id() -> build_event_stream::BuildEventId {
+    build_event_stream::BuildEventId {
+        id: Some(build_event_stream::build_event_id::Id::BuildToolLogs(
+            build_event_stream::build_event_id::BuildToolLogsId {},
+        )),
+    }
+}
+
+fn build_tool_logs_event(logs: Vec<build_event_stream::File>) -> build_event_stream::BuildEvent {
+    build_event_stream::BuildEvent {
+        id: Some(build_tool_logs_id()),
+        children: Vec::new(),
+        last_message: true,
+        payload: Some(build_event_stream::build_event::Payload::BuildToolLogs(
+            build_event_stream::BuildToolLogs { log: logs },
         )),
     }
 }
@@ -1055,7 +1392,7 @@ pub(crate) mod build_event_stream {
 
     #[derive(Clone, PartialEq, ::prost::Message)]
     pub(crate) struct BuildEventId {
-        #[prost(oneof = "build_event_id::Id", tags = "2, 3, 4, 5, 9, 12, 14, 16")]
+        #[prost(oneof = "build_event_id::Id", tags = "2, 3, 4, 5, 9, 12, 14, 16, 20")]
         pub(crate) id: Option<build_event_id::Id>,
     }
 
@@ -1108,6 +1445,9 @@ pub(crate) mod build_event_stream {
         #[derive(Clone, PartialEq, ::prost::Message)]
         pub(crate) struct BuildFinishedId {}
 
+        #[derive(Clone, PartialEq, ::prost::Message)]
+        pub(crate) struct BuildToolLogsId {}
+
         #[derive(Clone, PartialEq, ::prost::Oneof)]
         pub(crate) enum Id {
             #[prost(message, tag = "2")]
@@ -1126,6 +1466,8 @@ pub(crate) mod build_event_stream {
             WorkspaceStatus(WorkspaceStatusId),
             #[prost(message, tag = "16")]
             TargetConfigured(TargetConfiguredId),
+            #[prost(message, tag = "20")]
+            BuildToolLogs(BuildToolLogsId),
         }
     }
 
@@ -1299,6 +1641,12 @@ pub(crate) mod build_event_stream {
     }
 
     #[derive(Clone, PartialEq, ::prost::Message)]
+    pub(crate) struct BuildToolLogs {
+        #[prost(message, repeated, tag = "1")]
+        pub(crate) log: Vec<File>,
+    }
+
+    #[derive(Clone, PartialEq, ::prost::Message)]
     pub(crate) struct BuildEvent {
         #[prost(message, optional, tag = "1")]
         pub(crate) id: Option<BuildEventId>,
@@ -1306,7 +1654,10 @@ pub(crate) mod build_event_stream {
         pub(crate) children: Vec<BuildEventId>,
         #[prost(bool, tag = "20")]
         pub(crate) last_message: bool,
-        #[prost(oneof = "build_event::Payload", tags = "3, 5, 6, 8, 13, 14, 16, 18")]
+        #[prost(
+            oneof = "build_event::Payload",
+            tags = "3, 5, 6, 8, 13, 14, 16, 18, 23"
+        )]
         pub(crate) payload: Option<build_event::Payload>,
     }
 
@@ -1331,6 +1682,8 @@ pub(crate) mod build_event_stream {
             WorkspaceStatus(WorkspaceStatus),
             #[prost(message, tag = "18")]
             Configured(TargetConfigured),
+            #[prost(message, tag = "23")]
+            BuildToolLogs(BuildToolLogs),
         }
     }
 }
@@ -1371,6 +1724,8 @@ mod tests {
             start_time: UNIX_EPOCH,
             working_directory: "/workspace".to_owned(),
             workspace_directory: "/workspace".to_owned(),
+            trace_id: TraceId::null(),
+            event_log_dir: None,
         }
     }
 
@@ -1385,6 +1740,8 @@ mod tests {
             error_seen: false,
             workspace_status_sent: false,
             finished_sent: false,
+            final_build_log_sent: false,
+            observer: EventObserver::new(TraceId::null()),
         }
     }
 
@@ -1430,6 +1787,35 @@ mod tests {
     }
 
     #[test]
+    fn started_event_announces_build_tool_logs() {
+        let event = test_subscriber().started_event();
+
+        assert!(event.children.contains(&build_tool_logs_id()));
+    }
+
+    #[test]
+    fn build_tool_logs_event_is_terminal_bazel_event() {
+        let event = build_tool_logs_event(vec![build_event_stream::File {
+            name: PROFILE_NAME.to_owned(),
+            file: Some(build_event_stream::file::File::Uri(
+                "bytestream://remote.buildbuddy.dev/blobs/hash/123".to_owned(),
+            )),
+            path_prefix: Vec::new(),
+            digest: "hash".to_owned(),
+            length: 123,
+        }]);
+
+        assert_eq!(Some(build_tool_logs_id()), event.id);
+        assert!(event.last_message);
+        let Some(build_event_stream::build_event::Payload::BuildToolLogs(logs)) = event.payload
+        else {
+            panic!("expected build tool logs");
+        };
+        assert_eq!(1, logs.log.len());
+        assert_eq!(PROFILE_NAME, logs.log[0].name);
+    }
+
+    #[test]
     fn progress_events_form_a_chain() {
         let mut subscriber = test_subscriber();
 
@@ -1459,6 +1845,27 @@ mod tests {
         let backend = BesBackend::parse("remote.buildbuddy.io").unwrap();
         assert_eq!(backend.uri, "https://remote.buildbuddy.io");
         assert!(backend.tls);
+        assert_eq!(backend.authority().unwrap(), "remote.buildbuddy.io");
+    }
+
+    #[test]
+    fn bytestream_uris_match_bazel_old_style() {
+        assert_eq!(
+            bytestream_upload_resource_name("", "invocation", "abc", 42),
+            "uploads/invocation/blobs/abc/42"
+        );
+        assert_eq!(
+            bytestream_download_uri("remote.buildbuddy.dev", "", "abc", 42),
+            "bytestream://remote.buildbuddy.dev/blobs/abc/42"
+        );
+        assert_eq!(
+            bytestream_upload_resource_name("instance", "invocation", "abc", 42),
+            "instance/uploads/invocation/blobs/abc/42"
+        );
+        assert_eq!(
+            bytestream_download_uri("remote.buildbuddy.dev", "instance", "abc", 42),
+            "bytestream://remote.buildbuddy.dev/instance/blobs/abc/42"
+        );
     }
 
     #[test]

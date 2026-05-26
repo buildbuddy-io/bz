@@ -47,6 +47,7 @@ rust_library(
         "//games:games",
         "//gazebo/dupe:dupe",
         "//gazebo/gazebo:gazebo",
+        "//remote_execution/oss/re_grpc_proto:re_grpc_proto",
         "//shed/buck2_hash:buck2_hash",
         "//superconsole:superconsole",
     ],

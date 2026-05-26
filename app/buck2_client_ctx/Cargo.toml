@@ -39,6 +39,7 @@ rand = { workspace = true }
 regex = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+sha2 = { workspace = true }
 shlex = { workspace = true }
 strum = { workspace = true }
 superconsole = { version = "0.2.0", path = "../../superconsole" }
@@ -70,6 +71,7 @@ buck2_health_check = { workspace = true }
 buck2_resource_control = { workspace = true }
 buck2_util = { workspace = true }
 buck2_wrapper_common = { workspace = true }
+re_grpc_proto = { path = "../../remote_execution/oss/re_grpc_proto" }
 
 [target.'cfg(unix)'.dependencies]
 termios = { workspace = true }
