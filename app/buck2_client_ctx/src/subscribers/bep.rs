@@ -303,6 +303,7 @@ impl BuildEventProtocolSubscriber {
 
         this.send_bazel_event(this.started_event());
         this.send_bazel_event(this.options_parsed_event());
+        this.send_workspace_status();
         this.queue_results_url_progress();
         this.flush_terminal_progress_now();
         this
@@ -1880,6 +1881,36 @@ mod tests {
         let event = test_subscriber().started_event();
 
         assert!(event.children.contains(&progress_id(0)));
+    }
+
+    #[test]
+    fn started_event_announces_workspace_status() {
+        let event = test_subscriber().started_event();
+
+        assert!(event.children.contains(&workspace_status_id()));
+    }
+
+    #[test]
+    fn workspace_status_is_sent_once() {
+        let (sender, mut receiver) = mpsc::unbounded_channel();
+        let mut subscriber = test_subscriber();
+        subscriber.sender = Some(sender);
+
+        subscriber.send_workspace_status();
+        subscriber.send_workspace_status();
+
+        let request = receiver.try_recv().unwrap();
+        assert!(receiver.try_recv().is_err());
+
+        let ordered_event = request.ordered_build_event.unwrap();
+        assert_eq!(1, ordered_event.sequence_number);
+        let event = ordered_event.event.unwrap();
+        let google_devtools_build_v1::build_event::Event::BazelEvent(any) = event.event.unwrap()
+        else {
+            panic!("expected bazel event");
+        };
+        let decoded = build_event_stream::BuildEvent::decode(any.value.as_slice()).unwrap();
+        assert_eq!(Some(workspace_status_id()), decoded.id);
     }
 
     #[test]
