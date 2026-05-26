@@ -2,6 +2,7 @@ use std::io::IsTerminal;
 use std::path::Path;
 use std::path::PathBuf;
 use std::time::Duration;
+use std::time::Instant;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 
@@ -40,6 +41,7 @@ const BAZEL_BUILD_EVENT_TYPE_URL: &str = "type.googleapis.com/build_event_stream
 const PUBLISH_BUILD_TOOL_EVENT_STREAM_PATH: &str =
     "/google.devtools.build.v1.PublishBuildEvent/PublishBuildToolEventStream";
 const DEFAULT_PROGRESS_CHUNK_SIZE: usize = 1024 * 1024;
+const TERMINAL_PROGRESS_FLUSH_INTERVAL: Duration = Duration::from_secs(1);
 const PROFILE_NAME: &str = "command.profile.gz";
 const BYTESTREAM_UPLOAD_CHUNK_SIZE: usize = 2 * 1024 * 1024;
 
@@ -48,19 +50,23 @@ pub(crate) fn bes_invocation_url(results_url: &str, invocation_id: &str) -> Stri
     format!("{results_url}{separator}{invocation_id}")
 }
 
+fn bes_results_url_message(results_url: &str, invocation_id: &str, color: bool) -> String {
+    let url = bes_invocation_url(results_url, invocation_id);
+    if color {
+        format!("\x1b[1;32mINFO:\x1b[0m Streaming build results to: \x1b[4;36m{url}\x1b[0m")
+    } else {
+        format!("INFO: Streaming build results to: {url}")
+    }
+}
+
 pub(crate) fn print_bes_results_url(
     results_url: &str,
     invocation_id: &str,
 ) -> buck2_error::Result<()> {
-    let url = bes_invocation_url(results_url, invocation_id);
-    if std::io::stderr().is_terminal() {
-        crate::eprintln!(
-            "\x1b[1;32mINFO:\x1b[0m Streaming build results to: \x1b[4;36m{}\x1b[0m",
-            url
-        )
-    } else {
-        crate::eprintln!("INFO: Streaming build results to: {}", url)
-    }
+    crate::eprintln!(
+        "{}",
+        bes_results_url_message(results_url, invocation_id, std::io::stderr().is_terminal())
+    )
 }
 
 #[derive(Debug, buck2_error::Error)]
@@ -194,9 +200,69 @@ fn shell_join(args: &[String]) -> String {
     shlex::try_join(args.iter().map(String::as_str)).unwrap_or_else(|_| args.join(" "))
 }
 
+fn terminal_output_text(bytes: &[u8]) -> String {
+    String::from_utf8_lossy(bytes).into_owned()
+}
+
+struct TerminalProgressCoalescer {
+    // Buffer terminal writes before creating a BES Progress event. BuildBuddy's
+    // log writer applies ANSI cursor movement over each progress payload, so a
+    // one-second batch lets cleared superconsole frames collapse into its
+    // volatile tail instead of becoming durable build log lines.
+    terminal: Vec<u8>,
+    last_flush: Option<Instant>,
+}
+
+impl TerminalProgressCoalescer {
+    fn new() -> Self {
+        Self {
+            terminal: Vec::new(),
+            last_flush: None,
+        }
+    }
+
+    fn push(&mut self, bytes: &[u8]) {
+        // Keep a single terminal-ordered byte stream. Splitting stdout and stderr into
+        // the two BEP Progress fields would let BuildBuddy reorder them when it
+        // reconstructs the build log.
+        self.terminal.extend_from_slice(bytes);
+    }
+
+    fn has_pending(&self) -> bool {
+        !self.terminal.is_empty()
+    }
+
+    fn should_flush(&self, now: Instant) -> bool {
+        self.has_pending()
+            && self.last_flush.is_none_or(|last_flush| {
+                now.duration_since(last_flush) >= TERMINAL_PROGRESS_FLUSH_INTERVAL
+            })
+    }
+
+    fn take_next_chunk(&mut self, now: Instant) -> Option<Vec<u8>> {
+        if !self.has_pending() {
+            return None;
+        }
+        self.last_flush = Some(now);
+        Some(take_progress_chunk(&mut self.terminal))
+    }
+}
+
+fn take_progress_chunk(bytes: &mut Vec<u8>) -> Vec<u8> {
+    if bytes.len() <= DEFAULT_PROGRESS_CHUNK_SIZE {
+        std::mem::take(bytes)
+    } else {
+        let rest = bytes.split_off(DEFAULT_PROGRESS_CHUNK_SIZE);
+        std::mem::replace(bytes, rest)
+    }
+}
+
 pub(crate) struct BuildEventProtocolSubscriber {
     sender: Option<mpsc::UnboundedSender<publish_build_event::PublishBuildToolEventStreamRequest>>,
     upload: Option<JoinHandle<buck2_error::Result<UploadSummary>>>,
+    terminal_output: mpsc::UnboundedReceiver<crate::stdio::OutputEvent>,
+    _terminal_output_tap: crate::stdio::OutputTapGuard,
+    terminal_progress: TerminalProgressCoalescer,
     sequence_number: i64,
     progress_count: i32,
     config: BuildEventProtocolConfig,
@@ -204,18 +270,22 @@ pub(crate) struct BuildEventProtocolSubscriber {
     error_seen: bool,
     workspace_status_sent: bool,
     finished_sent: bool,
-    final_build_log_sent: bool,
     observer: EventObserver<NoopEventObserverExtra>,
 }
 
 impl BuildEventProtocolSubscriber {
     pub(crate) fn new(config: BuildEventProtocolConfig) -> Self {
         let (sender, receiver) = mpsc::unbounded_channel();
+        let (terminal_output_sender, terminal_output) = mpsc::unbounded_channel();
+        let terminal_output_tap = crate::stdio::install_output_tap(terminal_output_sender);
         let upload = tokio::spawn(upload_build_events(config.clone(), receiver));
         let trace_id = config.trace_id.dupe();
         let mut this = Self {
             sender: Some(sender),
             upload: Some(upload),
+            terminal_output,
+            _terminal_output_tap: terminal_output_tap,
+            terminal_progress: TerminalProgressCoalescer::new(),
             sequence_number: 0,
             progress_count: 0,
             config,
@@ -223,13 +293,13 @@ impl BuildEventProtocolSubscriber {
             error_seen: false,
             workspace_status_sent: false,
             finished_sent: false,
-            final_build_log_sent: false,
             observer: EventObserver::new(trace_id),
         };
 
         this.send_bazel_event(this.started_event());
         this.send_bazel_event(this.options_parsed_event());
-        this.send_progress_stderr(format!("Build ID: {}", this.config.invocation_id));
+        this.queue_results_url_progress();
+        this.flush_terminal_progress_now();
         this
     }
 
@@ -509,24 +579,50 @@ impl BuildEventProtocolSubscriber {
         self.send_bazel_event(event);
     }
 
-    fn send_progress_stderr(&mut self, message: impl AsRef<str>) {
+    fn send_terminal_progress_chunk(&mut self, bytes: Vec<u8>) {
+        self.send_progress_text(None, Some(terminal_output_text(&bytes)));
+    }
+
+    fn drain_terminal_output(&mut self) {
+        while let Ok(event) = self.terminal_output.try_recv() {
+            self.terminal_progress.push(&event.bytes);
+        }
+    }
+
+    fn maybe_flush_terminal_progress(&mut self) {
+        let now = Instant::now();
+        if let Some(bytes) = self
+            .terminal_progress
+            .should_flush(now)
+            .then(|| self.terminal_progress.take_next_chunk(now))
+            .flatten()
+        {
+            self.send_terminal_progress_chunk(bytes);
+        }
+    }
+
+    fn flush_terminal_progress_now(&mut self) {
+        let now = Instant::now();
+        while let Some(bytes) = self.terminal_progress.take_next_chunk(now) {
+            self.send_terminal_progress_chunk(bytes);
+        }
+    }
+
+    fn queue_stderr_terminal_progress(&mut self, message: impl AsRef<str>) {
         let mut message = message.as_ref().to_owned();
         if !message.ends_with('\n') {
             message.push('\n');
         }
-        self.send_progress_text(None, Some(message));
+        self.terminal_progress.push(message.as_bytes());
     }
 
-    fn send_progress_bytes(&mut self, stdout: Option<&[u8]>, stderr: Option<&[u8]>) {
-        if let Some(stdout) = stdout {
-            for chunk in stdout.chunks(DEFAULT_PROGRESS_CHUNK_SIZE) {
-                self.send_progress_text(Some(String::from_utf8_lossy(chunk).into_owned()), None);
-            }
-        }
-        if let Some(stderr) = stderr {
-            for chunk in stderr.chunks(DEFAULT_PROGRESS_CHUNK_SIZE) {
-                self.send_progress_text(None, Some(String::from_utf8_lossy(chunk).into_owned()));
-            }
+    fn queue_results_url_progress(&mut self) {
+        if let Some(results_url) = &self.config.results_url {
+            self.queue_stderr_terminal_progress(bes_results_url_message(
+                results_url,
+                &self.config.invocation_id,
+                std::io::stderr().is_terminal(),
+            ));
         }
     }
 
@@ -624,30 +720,6 @@ impl BuildEventProtocolSubscriber {
     fn send_build_tool_logs(&mut self, logs: Vec<build_event_stream::File>) {
         self.send_bazel_event(build_tool_logs_event(logs));
     }
-
-    fn send_final_build_log(&mut self) {
-        if self.final_build_log_sent {
-            return;
-        }
-        self.final_build_log_sent = true;
-
-        if self.observer.action_stats().log_stats() {
-            let stats = format!("{}", self.observer.action_stats());
-            self.send_progress_stderr(stats);
-        }
-
-        let success = self
-            .exit_code
-            .as_ref()
-            .map(|(_, code)| *code == 0)
-            .unwrap_or(!self.error_seen);
-        let status = if success {
-            "BUILD SUCCEEDED"
-        } else {
-            "BUILD FAILED"
-        };
-        self.send_progress_stderr(status);
-    }
 }
 
 #[async_trait]
@@ -657,12 +729,16 @@ impl EventSubscriber for BuildEventProtocolSubscriber {
     }
 
     async fn handle_output(&mut self, raw_output: &[u8]) -> buck2_error::Result<()> {
-        self.send_progress_bytes(Some(raw_output), None);
+        let _ = raw_output;
+        self.drain_terminal_output();
+        self.maybe_flush_terminal_progress();
         Ok(())
     }
 
     async fn handle_tailer_stderr(&mut self, stderr: &str) -> buck2_error::Result<()> {
-        self.send_progress_text(None, Some(format!("{stderr}\n")));
+        let _ = stderr;
+        self.drain_terminal_output();
+        self.maybe_flush_terminal_progress();
         Ok(())
     }
 
@@ -672,29 +748,9 @@ impl EventSubscriber for BuildEventProtocolSubscriber {
     ) -> buck2_error::Result<()> {
         for event in events {
             self.observer.observe(event).await?;
-            if let buck2_data::buck_event::Data::Instant(instant) = event.data()
-                && let Some(data) = instant.data.as_ref()
-            {
-                match data {
-                    buck2_data::instant_event::Data::ConsoleMessage(message) => {
-                        self.send_progress_stderr(&message.message);
-                    }
-                    buck2_data::instant_event::Data::ConsoleWarning(message) => {
-                        self.send_progress_stderr(&message.message);
-                    }
-                    buck2_data::instant_event::Data::StreamingOutput(message) => {
-                        self.send_progress_text(Some(message.message.clone()), None);
-                    }
-                    buck2_data::instant_event::Data::StructuredError(error) if !error.quiet => {
-                        self.send_progress_stderr(&error.payload);
-                    }
-                    buck2_data::instant_event::Data::ReSession(session) => {
-                        self.send_progress_stderr(format!("RE Session: {}", session.session_id));
-                    }
-                    _ => {}
-                }
-            }
         }
+        self.drain_terminal_output();
+        self.maybe_flush_terminal_progress();
         Ok(())
     }
 
@@ -704,32 +760,16 @@ impl EventSubscriber for BuildEventProtocolSubscriber {
                 self.emit_build_targets(&response.build_targets, &response.project_root);
                 if !response.errors.is_empty() {
                     self.error_seen = true;
-                    for error in &response.errors {
-                        self.send_progress_stderr(&error.message);
-                    }
                 }
             }
             Some(command_result::Result::TestResponse(response)) => {
-                self.send_progress_text(
-                    Some(response.executor_stdout.clone()),
-                    Some(response.executor_stderr.clone()),
-                );
-                for message in &response.executor_info_messages {
-                    self.send_progress_text(None, Some(format!("{message}\n")));
-                }
                 if !response.errors.is_empty() || response.executor_exit_code != 0 {
                     self.error_seen = true;
-                    for error in &response.errors {
-                        self.send_progress_stderr(&error.message);
-                    }
                 }
             }
             Some(command_result::Result::BxlResponse(response)) => {
                 if !response.errors.is_empty() {
                     self.error_seen = true;
-                    for error in &response.errors {
-                        self.send_progress_stderr(&error.message);
-                    }
                 }
             }
             Some(command_result::Result::Error(_)) => {
@@ -737,11 +777,21 @@ impl EventSubscriber for BuildEventProtocolSubscriber {
             }
             _ => {}
         }
+        self.drain_terminal_output();
+        self.maybe_flush_terminal_progress();
         Ok(())
     }
 
     async fn handle_error(&mut self, _error: &buck2_error::Error) -> buck2_error::Result<()> {
         self.error_seen = true;
+        self.drain_terminal_output();
+        self.maybe_flush_terminal_progress();
+        Ok(())
+    }
+
+    async fn tick(&mut self, _tick: &crate::ticker::Tick) -> buck2_error::Result<()> {
+        self.drain_terminal_output();
+        self.maybe_flush_terminal_progress();
         Ok(())
     }
 
@@ -752,12 +802,18 @@ impl EventSubscriber for BuildEventProtocolSubscriber {
             ExitCode::UnknownFailure
         });
         self.exit_code = Some((result.name().to_owned(), code.exit_code()));
-        self.send_final_build_log();
+        self.drain_terminal_output();
+        self.maybe_flush_terminal_progress();
     }
 
     async fn finalize(mut self: Box<Self>) -> buck2_error::Result<()> {
+        self.drain_terminal_output();
+        self.queue_results_url_progress();
+        self.flush_terminal_progress_now();
         self.send_finished();
         let build_tool_logs = self.build_tool_logs().await;
+        self.drain_terminal_output();
+        self.flush_terminal_progress_now();
         self.send_build_tool_logs(build_tool_logs);
         self.send_component_stream_finished();
         self.sender.take();
@@ -1730,9 +1786,14 @@ mod tests {
     }
 
     fn test_subscriber() -> BuildEventProtocolSubscriber {
+        let (terminal_output_sender, terminal_output) = mpsc::unbounded_channel();
+        let terminal_output_tap = crate::stdio::install_output_tap(terminal_output_sender);
         BuildEventProtocolSubscriber {
             sender: None,
             upload: None,
+            terminal_output,
+            _terminal_output_tap: terminal_output_tap,
+            terminal_progress: TerminalProgressCoalescer::new(),
             sequence_number: 0,
             progress_count: 0,
             config: test_config(),
@@ -1740,9 +1801,39 @@ mod tests {
             error_seen: false,
             workspace_status_sent: false,
             finished_sent: false,
-            final_build_log_sent: false,
             observer: EventObserver::new(TraceId::null()),
         }
+    }
+
+    #[test]
+    fn terminal_progress_coalescer_rate_limits() {
+        let mut coalescer = TerminalProgressCoalescer::new();
+        let start = Instant::now();
+
+        coalescer.push(b"first");
+        assert!(coalescer.should_flush(start));
+        assert_eq!(coalescer.take_next_chunk(start), Some(b"first".to_vec()));
+
+        coalescer.push(b"second");
+        assert!(!coalescer.should_flush(start + Duration::from_millis(999)));
+        assert!(coalescer.should_flush(start + Duration::from_secs(1)));
+        assert_eq!(
+            coalescer.take_next_chunk(start + Duration::from_secs(1)),
+            Some(b"second".to_vec())
+        );
+    }
+
+    #[test]
+    fn terminal_progress_coalescer_chunks_large_output() {
+        let mut coalescer = TerminalProgressCoalescer::new();
+        let now = Instant::now();
+        coalescer.push(&vec![b'a'; DEFAULT_PROGRESS_CHUNK_SIZE + 1]);
+
+        let first = coalescer.take_next_chunk(now).unwrap();
+        assert_eq!(first.len(), DEFAULT_PROGRESS_CHUNK_SIZE);
+        let second = coalescer.take_next_chunk(now).unwrap();
+        assert_eq!(second, b"a".to_vec());
+        assert!(coalescer.take_next_chunk(now).is_none());
     }
 
     #[test]
