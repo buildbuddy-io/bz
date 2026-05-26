@@ -25,6 +25,7 @@ use buck2_common::cas_digest::DigestAlgorithmFamily;
 use buck2_common::ignores::ignore_set::IgnoreSet;
 use buck2_common::ignores::ignore_set::bazelignore_to_ignore_spec;
 use buck2_common::init::DaemonStartupConfig;
+use buck2_common::init::RemoteExecutionStartupConfig;
 use buck2_common::init::SystemWarningConfig;
 use buck2_common::init::Timeout;
 use buck2_common::invocation_paths::InvocationPaths;
@@ -196,6 +197,9 @@ pub struct DaemonStateData {
     /// the same connection. Once there are no active build commands, the connection will be
     /// terminated
     pub re_client_manager: Arc<ReConnectionManager>,
+
+    /// Remote cache/execution endpoints requested via Bazel-compatible command-line flags.
+    pub remote_execution_startup_config: RemoteExecutionStartupConfig,
 
     /// Executor responsible for coordinating and rate limiting I/O.
     pub blocking_executor: Arc<dyn BlockingExecutor>,
@@ -843,6 +847,10 @@ impl DaemonState {
                 file_watcher,
                 io,
                 re_client_manager,
+                remote_execution_startup_config: init_ctx
+                    .daemon_startup_config
+                    .remote_execution
+                    .clone(),
                 blocking_executor,
                 materializer,
                 forkserver,

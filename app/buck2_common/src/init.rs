@@ -48,6 +48,28 @@ impl RemoteExecutionStartupConfig {
             self.remote_executor.clone_from(&overrides.remote_executor);
         }
     }
+
+    pub fn remote_executor_endpoint_enabled(&self) -> bool {
+        endpoint_is_enabled(self.remote_executor.as_deref())
+    }
+
+    pub fn remote_cache_endpoint_enabled(&self) -> Option<bool> {
+        if let Some(remote_cache) = self.remote_cache.as_deref() {
+            Some(endpoint_is_enabled(Some(remote_cache)))
+        } else if self.remote_executor_endpoint_enabled() {
+            Some(true)
+        } else {
+            None
+        }
+    }
+
+    pub fn should_upload_local_results_to_remote_cache(&self) -> bool {
+        self.remote_cache_endpoint_enabled() == Some(true)
+    }
+}
+
+fn endpoint_is_enabled(endpoint: Option<&str>) -> bool {
+    endpoint.is_some_and(|endpoint| !endpoint.trim().is_empty())
 }
 
 /// Helper enum to categorize the kind of timeout we get from the startup config.
@@ -717,6 +739,40 @@ mod tests {
 
     use super::*;
     use crate::legacy_configs::configs::testing::parse;
+
+    #[test]
+    fn remote_cache_endpoint_enables_uploading_local_results() {
+        let config = RemoteExecutionStartupConfig {
+            remote_cache: Some("remote.buildbuddy.dev".to_owned()),
+            ..Default::default()
+        };
+
+        assert_eq!(config.remote_cache_endpoint_enabled(), Some(true));
+        assert!(config.should_upload_local_results_to_remote_cache());
+    }
+
+    #[test]
+    fn remote_executor_endpoint_implies_remote_cache() {
+        let config = RemoteExecutionStartupConfig {
+            remote_executor: Some("remote.buildbuddy.dev".to_owned()),
+            ..Default::default()
+        };
+
+        assert!(config.remote_executor_endpoint_enabled());
+        assert_eq!(config.remote_cache_endpoint_enabled(), Some(true));
+        assert!(config.should_upload_local_results_to_remote_cache());
+    }
+
+    #[test]
+    fn empty_remote_cache_endpoint_disables_uploading_local_results() {
+        let config = RemoteExecutionStartupConfig {
+            remote_cache: Some(String::new()),
+            remote_executor: Some("remote.buildbuddy.dev".to_owned()),
+        };
+
+        assert_eq!(config.remote_cache_endpoint_enabled(), Some(false));
+        assert!(!config.should_upload_local_results_to_remote_cache());
+    }
 
     #[test]
     fn test_daemon_idle_timeout_s_default() -> buck2_error::Result<()> {

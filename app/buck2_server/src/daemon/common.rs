@@ -16,6 +16,7 @@ use buck2_build_api::actions::execute::dice_data::CommandExecutorResponse;
 use buck2_build_api::actions::execute::dice_data::HasCommandExecutor;
 use buck2_cli_proto::client_context::HostPlatformOverride;
 use buck2_cli_proto::common_build_options::ExecutionStrategy;
+use buck2_common::init::RemoteExecutionStartupConfig;
 use buck2_core::buck2_env;
 use buck2_core::execution_types::executor_config::CacheUploadBehavior;
 use buck2_core::execution_types::executor_config::CommandExecutorConfig;
@@ -103,6 +104,7 @@ pub struct CommandExecutorFactory {
     deduplicate_get_digests_ttl_calls: bool,
     output_trees_download_config: OutputTreesDownloadConfig,
     daemon_id: DaemonId,
+    bazel_remote_endpoint_overrides: BazelRemoteEndpointOverrides,
 }
 
 impl CommandExecutorFactory {
@@ -130,6 +132,7 @@ impl CommandExecutorFactory {
         deduplicate_get_digests_ttl_calls: bool,
         output_trees_download_config: OutputTreesDownloadConfig,
         daemon_id: DaemonId,
+        remote_execution_startup_config: &RemoteExecutionStartupConfig,
     ) -> Self {
         let cache_upload_permission_checker = Arc::new(ActionCacheUploadPermissionChecker::new());
 
@@ -160,6 +163,9 @@ impl CommandExecutorFactory {
             deduplicate_get_digests_ttl_calls,
             output_trees_download_config,
             daemon_id,
+            bazel_remote_endpoint_overrides: BazelRemoteEndpointOverrides::from_startup_config(
+                remote_execution_startup_config,
+            ),
         }
     }
 
@@ -169,6 +175,116 @@ impl CommandExecutorFactory {
     ) -> ManagedRemoteExecutionClient {
         let use_case = self.re_use_case_override.unwrap_or(use_case);
         self.re_connection.get_client().with_use_case(use_case)
+    }
+
+    fn executor_config_with_bazel_remote_endpoint_overrides(
+        &self,
+        executor_config: &CommandExecutorConfig,
+    ) -> CommandExecutorConfig {
+        if self.bazel_remote_endpoint_overrides.is_empty() {
+            return executor_config.clone();
+        }
+
+        CommandExecutorConfig {
+            executor: executor_with_bazel_remote_endpoint_overrides(
+                &executor_config.executor,
+                self.bazel_remote_endpoint_overrides,
+            ),
+            options: executor_config.options,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct BazelRemoteEndpointOverrides {
+    remote_cache: Option<bool>,
+    remote_executor: bool,
+}
+
+impl BazelRemoteEndpointOverrides {
+    fn from_startup_config(config: &RemoteExecutionStartupConfig) -> Self {
+        Self {
+            remote_cache: config.remote_cache_endpoint_enabled(),
+            remote_executor: config.remote_executor_endpoint_enabled(),
+        }
+    }
+
+    fn is_empty(self) -> bool {
+        self.remote_cache.is_none() && !self.remote_executor
+    }
+}
+
+fn cache_upload_behavior_for_bazel_remote_cache(
+    overrides: BazelRemoteEndpointOverrides,
+    existing: CacheUploadBehavior,
+) -> CacheUploadBehavior {
+    match overrides.remote_cache {
+        Some(true) => match existing {
+            CacheUploadBehavior::Disabled => CacheUploadBehavior::Enabled { max_bytes: None },
+            existing => existing,
+        },
+        Some(false) => CacheUploadBehavior::Disabled,
+        None => existing,
+    }
+}
+
+fn executor_with_bazel_remote_endpoint_overrides(
+    executor: &Executor,
+    overrides: BazelRemoteEndpointOverrides,
+) -> Executor {
+    match executor {
+        Executor::Local(local) => Executor::RemoteEnabled(RemoteEnabledExecutorOptions {
+            executor: if overrides.remote_executor {
+                RemoteEnabledExecutor::Hybrid {
+                    local: local.clone(),
+                    remote: RemoteExecutorOptions::default(),
+                    level: HybridExecutionLevel::Full {
+                        fallback_on_failure: true,
+                        low_pass_filter: false,
+                    },
+                }
+            } else {
+                RemoteEnabledExecutor::Local(local.clone())
+            },
+            re_properties: RePlatformFields::default(),
+            re_use_case: RemoteExecutorUseCase::buck2_default(),
+            re_action_key: None,
+            cache_upload_behavior: cache_upload_behavior_for_bazel_remote_cache(
+                overrides,
+                CacheUploadBehavior::Disabled,
+            ),
+            remote_cache_enabled: overrides.remote_cache.unwrap_or(false),
+            remote_dep_file_cache_enabled: false,
+            dependencies: Vec::new(),
+            gang_workers: Vec::new(),
+            custom_image: None,
+            meta_internal_extra_params: MetaInternalExtraParams::default_arc(),
+            priority: None,
+        }),
+        Executor::RemoteEnabled(remote_options) => {
+            let mut remote_options = remote_options.clone();
+            if overrides.remote_executor
+                && let RemoteEnabledExecutor::Local(local) = &remote_options.executor
+            {
+                remote_options.executor = RemoteEnabledExecutor::Hybrid {
+                    local: local.clone(),
+                    remote: RemoteExecutorOptions::default(),
+                    level: HybridExecutionLevel::Full {
+                        fallback_on_failure: true,
+                        low_pass_filter: false,
+                    },
+                };
+            }
+            if let Some(remote_cache) = overrides.remote_cache {
+                remote_options.remote_cache_enabled = remote_cache;
+            }
+            remote_options.cache_upload_behavior = cache_upload_behavior_for_bazel_remote_cache(
+                overrides,
+                remote_options.cache_upload_behavior,
+            );
+            Executor::RemoteEnabled(remote_options)
+        }
+        Executor::None => Executor::None,
     }
 }
 
@@ -195,6 +311,8 @@ impl HasCommandExecutor for CommandExecutorFactory {
         const DEFAULT_RE_MAX_INPUT_FILE_BYTES: u64 = 30 * 1024 * 1024 * 1024;
 
         self.local_action_cache.load().await?;
+        let executor_config =
+            self.executor_config_with_bazel_remote_endpoint_overrides(executor_config);
 
         let local_executor_new = |options: &LocalExecutorOptions| {
             let worker_pool = if options.use_persistent_workers {
@@ -598,5 +716,86 @@ fn get_default_path_separator(host_platform: HostPlatformOverride) -> PathSepara
         HostPlatformOverride::MacOs => PathSeparatorKind::Unix,
         HostPlatformOverride::Windows => PathSeparatorKind::Windows,
         HostPlatformOverride::DefaultPlatform => PathSeparatorKind::system_default(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn remote_cache_overrides() -> BazelRemoteEndpointOverrides {
+        BazelRemoteEndpointOverrides::from_startup_config(&RemoteExecutionStartupConfig {
+            remote_cache: Some("remote.buildbuddy.dev".to_owned()),
+            ..Default::default()
+        })
+    }
+
+    fn remote_executor_overrides() -> BazelRemoteEndpointOverrides {
+        BazelRemoteEndpointOverrides::from_startup_config(&RemoteExecutionStartupConfig {
+            remote_executor: Some("remote.buildbuddy.dev".to_owned()),
+            ..Default::default()
+        })
+    }
+
+    #[test]
+    fn remote_cache_flag_wraps_local_executor_with_remote_cache() {
+        let executor = executor_with_bazel_remote_endpoint_overrides(
+            &Executor::Local(LocalExecutorOptions::default()),
+            remote_cache_overrides(),
+        );
+
+        let Executor::RemoteEnabled(options) = executor else {
+            panic!("expected remote-enabled executor");
+        };
+        assert!(matches!(options.executor, RemoteEnabledExecutor::Local(_)));
+        assert!(options.remote_cache_enabled);
+        assert!(matches!(
+            options.cache_upload_behavior,
+            CacheUploadBehavior::Enabled { max_bytes: None }
+        ));
+    }
+
+    #[test]
+    fn remote_executor_flag_wraps_local_executor_with_hybrid_remote_execution() {
+        let executor = executor_with_bazel_remote_endpoint_overrides(
+            &Executor::Local(LocalExecutorOptions::default()),
+            remote_executor_overrides(),
+        );
+
+        let Executor::RemoteEnabled(options) = executor else {
+            panic!("expected remote-enabled executor");
+        };
+        assert!(matches!(
+            options.executor,
+            RemoteEnabledExecutor::Hybrid { .. }
+        ));
+        assert!(options.remote_cache_enabled);
+    }
+
+    #[test]
+    fn empty_remote_cache_flag_disables_cache_for_remote_executor() {
+        let overrides =
+            BazelRemoteEndpointOverrides::from_startup_config(&RemoteExecutionStartupConfig {
+                remote_cache: Some(String::new()),
+                remote_executor: Some("remote.buildbuddy.dev".to_owned()),
+            });
+
+        let executor = executor_with_bazel_remote_endpoint_overrides(
+            &Executor::Local(LocalExecutorOptions::default()),
+            overrides,
+        );
+
+        let Executor::RemoteEnabled(options) = executor else {
+            panic!("expected remote-enabled executor");
+        };
+        assert!(matches!(
+            options.executor,
+            RemoteEnabledExecutor::Hybrid { .. }
+        ));
+        assert!(!options.remote_cache_enabled);
+        assert!(matches!(
+            options.cache_upload_behavior,
+            CacheUploadBehavior::Disabled
+        ));
     }
 }

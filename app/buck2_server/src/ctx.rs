@@ -506,7 +506,12 @@ impl<'a> ServerCommandContext<'a> {
                 .daemon
                 .use_network_action_output_cache,
             eager_dep_files,
-            default_allow_cache_upload: false,
+            default_allow_cache_upload: !skip_cache_write
+                && self
+                    .base_context
+                    .daemon
+                    .remote_execution_startup_config
+                    .should_upload_local_results_to_remote_cache(),
             action_paths_interner: None,
             deduplicate_get_digests_ttl_calls: false,
         };
@@ -1213,6 +1218,11 @@ impl DiceCommandUpdater<'_, '_> {
             run_action_knobs.deduplicate_get_digests_ttl_calls,
             output_trees_download_config.dupe(),
             self.cmd_ctx.base_context.daemon.daemon_id.dupe(),
+            &self
+                .cmd_ctx
+                .base_context
+                .daemon
+                .remote_execution_startup_config,
         )));
         data.set_blocking_executor(self.cmd_ctx.base_context.daemon.blocking_executor.dupe());
         data.set_http_client(self.cmd_ctx.base_context.daemon.http_client.dupe());
