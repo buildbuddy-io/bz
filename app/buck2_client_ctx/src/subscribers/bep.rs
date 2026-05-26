@@ -21,6 +21,8 @@ use dupe::Dupe;
 use prost::Message;
 use prost_types::Any;
 use prost_types::Timestamp;
+use re_grpc_proto::build::bazel::remote::execution::v2::RequestMetadata;
+use re_grpc_proto::build::bazel::remote::execution::v2::ToolDetails;
 use re_grpc_proto::google::bytestream::WriteRequest;
 use re_grpc_proto::google::bytestream::byte_stream_client::ByteStreamClient;
 use sha2::Digest;
@@ -44,6 +46,7 @@ const DEFAULT_PROGRESS_CHUNK_SIZE: usize = 1024 * 1024;
 const TERMINAL_PROGRESS_FLUSH_INTERVAL: Duration = Duration::from_secs(1);
 const PROFILE_NAME: &str = "command.profile.gz";
 const BYTESTREAM_UPLOAD_CHUNK_SIZE: usize = 2 * 1024 * 1024;
+const BAZEL_REQUEST_METADATA_HEADER: &str = "build.bazel.remote.execution.v2.requestmetadata-bin";
 
 pub(crate) fn bes_invocation_url(results_url: &str, invocation_id: &str) -> String {
     let separator = if results_url.ends_with('/') { "" } else { "/" };
@@ -980,6 +983,7 @@ async fn upload_timing_profile(
     let requests = bytestream_write_requests(resource_name, bytes);
     let mut request = tonic::Request::new(tokio_stream::iter(requests));
     add_headers(request.metadata_mut(), headers)?;
+    add_bazel_request_metadata(request.metadata_mut(), invocation_id);
     let response = client
         .write(request)
         .await
@@ -1033,6 +1037,34 @@ fn bytestream_download_uri(
     } else {
         format!("bytestream://{authority}/{instance_name}/blobs/{digest}/{size}")
     }
+}
+
+fn bes_upload_request_metadata(invocation_id: &str) -> RequestMetadata {
+    RequestMetadata {
+        tool_details: Some(ToolDetails {
+            tool_name: "buck2".to_owned(),
+            tool_version: buck2_build_info::revision()
+                .map(|revision| revision.to_owned())
+                .unwrap_or_default(),
+        }),
+        action_id: "bes-upload".to_owned(),
+        tool_invocation_id: invocation_id.to_owned(),
+        correlated_invocations_id: invocation_id.to_owned(),
+        action_mnemonic: String::new(),
+        target_id: String::new(),
+        configuration_id: String::new(),
+    }
+}
+
+fn add_bazel_request_metadata(metadata: &mut tonic::metadata::MetadataMap, invocation_id: &str) {
+    let mut encoded = Vec::new();
+    bes_upload_request_metadata(invocation_id)
+        .encode(&mut encoded)
+        .expect("Encoding into a Vec cannot fail");
+    metadata.insert_bin(
+        BAZEL_REQUEST_METADATA_HEADER,
+        MetadataValue::from_bytes(&encoded),
+    );
 }
 
 fn bytestream_write_requests(resource_name: String, bytes: Vec<u8>) -> Vec<WriteRequest> {
@@ -1809,6 +1841,16 @@ mod tests {
             finished_sent: false,
             observer: EventObserver::new(TraceId::null()),
         }
+    }
+
+    #[test]
+    fn bes_upload_metadata_identifies_invocation() {
+        let metadata = bes_upload_request_metadata("invocation-id");
+
+        assert_eq!(metadata.tool_invocation_id, "invocation-id");
+        assert_eq!(metadata.correlated_invocations_id, "invocation-id");
+        assert_eq!(metadata.action_id, "bes-upload");
+        assert_eq!(metadata.tool_details.unwrap().tool_name, "buck2");
     }
 
     #[test]
