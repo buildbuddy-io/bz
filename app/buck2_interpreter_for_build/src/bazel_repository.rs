@@ -38,6 +38,8 @@ use buck2_common::dice::cells::HasCellResolver;
 use buck2_common::file_ops::dice::DiceFileComputations;
 use buck2_common::file_ops::error::FileReadErrorContext;
 use buck2_common::file_ops::metadata::RawPathMetadata;
+use buck2_common::legacy_configs::cells::BZLMOD_REPOSITORY_OS_ARCH_ENV;
+use buck2_common::legacy_configs::cells::BZLMOD_REPOSITORY_OS_NAME_ENV;
 use buck2_common::legacy_configs::cells::GetBzlmodRepositoryEnvironment;
 use buck2_core::bzl::ImportPath;
 use buck2_core::cells::CellAliasResolver;
@@ -519,6 +521,48 @@ fn bazel_host_os_name() -> &'static str {
     }
 }
 
+fn repository_os_name_value(repo_env: &BTreeMap<String, String>) -> String {
+    repo_env
+        .get(BZLMOD_REPOSITORY_OS_NAME_ENV)
+        .cloned()
+        .unwrap_or_else(|| bazel_host_os_name().to_owned())
+}
+
+fn repository_os_arch_value(repo_env: &BTreeMap<String, String>) -> String {
+    repo_env
+        .get(BZLMOD_REPOSITORY_OS_ARCH_ENV)
+        .cloned()
+        .unwrap_or_else(|| env::consts::ARCH.to_owned())
+}
+
+fn repository_os_name(
+    repo_env: &BTreeMap<String, String>,
+    recorded_inputs: &Mutex<Vec<BazelRepositoryRecordedInput>>,
+) -> String {
+    record_repository_input(
+        recorded_inputs,
+        BazelRepositoryRecordedInput::EnvVar {
+            name: BZLMOD_REPOSITORY_OS_NAME_ENV.to_owned(),
+            value: repo_env.get(BZLMOD_REPOSITORY_OS_NAME_ENV).cloned(),
+        },
+    );
+    repository_os_name_value(repo_env)
+}
+
+fn repository_os_arch(
+    repo_env: &BTreeMap<String, String>,
+    recorded_inputs: &Mutex<Vec<BazelRepositoryRecordedInput>>,
+) -> String {
+    record_repository_input(
+        recorded_inputs,
+        BazelRepositoryRecordedInput::EnvVar {
+            name: BZLMOD_REPOSITORY_OS_ARCH_ENV.to_owned(),
+            value: repo_env.get(BZLMOD_REPOSITORY_OS_ARCH_ENV).cloned(),
+        },
+    );
+    repository_os_arch_value(repo_env)
+}
+
 fn host_environ<'v>(
     heap: Heap<'v>,
     repo_env: &BTreeMap<String, String>,
@@ -557,6 +601,64 @@ mod tests {
         assert!(repository_rule_should_scan_loaded_module_cell(
             &bzlmod_cell_name("rules_go+")
         ));
+    }
+
+    #[test]
+    fn test_repository_os_uses_fake_values_and_records_inputs() {
+        let repo_env = BTreeMap::from([
+            (BZLMOD_REPOSITORY_OS_NAME_ENV.to_owned(), "linux".to_owned()),
+            (
+                BZLMOD_REPOSITORY_OS_ARCH_ENV.to_owned(),
+                "x86_64".to_owned(),
+            ),
+        ]);
+        let recorded_inputs = Mutex::new(Vec::new());
+
+        assert_eq!("linux", repository_os_name(&repo_env, &recorded_inputs));
+        assert_eq!("x86_64", repository_os_arch(&repo_env, &recorded_inputs));
+
+        assert_eq!(
+            vec![
+                BazelRepositoryRecordedInput::EnvVar {
+                    name: BZLMOD_REPOSITORY_OS_NAME_ENV.to_owned(),
+                    value: Some("linux".to_owned()),
+                },
+                BazelRepositoryRecordedInput::EnvVar {
+                    name: BZLMOD_REPOSITORY_OS_ARCH_ENV.to_owned(),
+                    value: Some("x86_64".to_owned()),
+                },
+            ],
+            recorded_inputs.into_inner().unwrap()
+        );
+    }
+
+    #[test]
+    fn test_repository_os_defaults_to_host_and_records_missing_inputs() {
+        let repo_env = BTreeMap::new();
+        let recorded_inputs = Mutex::new(Vec::new());
+
+        assert_eq!(
+            bazel_host_os_name(),
+            repository_os_name(&repo_env, &recorded_inputs)
+        );
+        assert_eq!(
+            env::consts::ARCH,
+            repository_os_arch(&repo_env, &recorded_inputs)
+        );
+
+        assert_eq!(
+            vec![
+                BazelRepositoryRecordedInput::EnvVar {
+                    name: BZLMOD_REPOSITORY_OS_NAME_ENV.to_owned(),
+                    value: None,
+                },
+                BazelRepositoryRecordedInput::EnvVar {
+                    name: BZLMOD_REPOSITORY_OS_ARCH_ENV.to_owned(),
+                    value: None,
+                },
+            ],
+            recorded_inputs.into_inner().unwrap()
+        );
     }
 
     #[test]
@@ -2161,9 +2263,9 @@ pub async fn bzlmod_repository_rule_cache_info(
     let repo_env = ctx.get_bzlmod_repository_environment().await?;
 
     let mut hasher = blake3::Hasher::new();
-    update_repository_rule_cache_key(&mut hasher, "buck2-bzlmod-repository-rule-cache-v1");
-    update_repository_rule_cache_key(&mut hasher, std::env::consts::OS);
-    update_repository_rule_cache_key(&mut hasher, std::env::consts::ARCH);
+    update_repository_rule_cache_key(&mut hasher, "buck2-bzlmod-repository-rule-cache-v2");
+    update_repository_rule_cache_key(&mut hasher, &repository_os_name_value(&repo_env));
+    update_repository_rule_cache_key(&mut hasher, &repository_os_arch_value(&repo_env));
     update_repository_rule_cache_key(&mut hasher, &invocation.rule_id.path.to_string());
     update_repository_rule_cache_key(&mut hasher, &invocation.rule_id.name);
     update_repository_rule_cache_key(&mut hasher, &bzl_transitive_digest);
@@ -3392,9 +3494,9 @@ impl<'v> StarlarkValue<'v> for StarlarkRepositoryOs {
 
     fn get_attr(&self, attribute: &str, heap: Heap<'v>) -> Option<Value<'v>> {
         match attribute {
-            "arch" => Some(heap.alloc(env::consts::ARCH)),
+            "arch" => Some(heap.alloc(repository_os_arch(&self.repo_env, &self.recorded_inputs))),
             "environ" => Some(host_environ(heap, &self.repo_env, &self.recorded_inputs)),
-            "name" => Some(heap.alloc(bazel_host_os_name())),
+            "name" => Some(heap.alloc(repository_os_name(&self.repo_env, &self.recorded_inputs))),
             _ => None,
         }
     }
@@ -3449,9 +3551,9 @@ impl<'v> StarlarkValue<'v> for FrozenStarlarkRepositoryOs {
 
     fn get_attr(&self, attribute: &str, heap: Heap<'v>) -> Option<Value<'v>> {
         match attribute {
-            "arch" => Some(heap.alloc(env::consts::ARCH)),
+            "arch" => Some(heap.alloc(repository_os_arch(&self.repo_env, &self.recorded_inputs))),
             "environ" => Some(host_environ(heap, &self.repo_env, &self.recorded_inputs)),
-            "name" => Some(heap.alloc(bazel_host_os_name())),
+            "name" => Some(heap.alloc(repository_os_name(&self.repo_env, &self.recorded_inputs))),
             _ => None,
         }
     }

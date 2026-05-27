@@ -8,6 +8,7 @@
  * above-listed licenses.
  */
 
+use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::fs as std_fs;
 use std::future::Future;
@@ -59,6 +60,8 @@ use buck2_common::http::SetHttpClient;
 use buck2_common::invocation_paths::InvocationPaths;
 use buck2_common::io::trace::TracingIoProvider;
 use buck2_common::legacy_configs::cells::BZLMOD_ALLOWED_YANKED_VERSIONS_ENV;
+use buck2_common::legacy_configs::cells::BZLMOD_REPOSITORY_OS_ARCH_ENV;
+use buck2_common::legacy_configs::cells::BZLMOD_REPOSITORY_OS_NAME_ENV;
 use buck2_common::legacy_configs::cells::BuckConfigBasedCells;
 use buck2_common::legacy_configs::cells::SetBzlmodClientEnvironment;
 use buck2_common::legacy_configs::cells::SetBzlmodRegistryInvalidation;
@@ -853,6 +856,60 @@ fn configured_prelude_path(
     )?)))
 }
 
+fn repository_os_name(platform: InterpreterHostPlatform) -> &'static str {
+    match platform {
+        InterpreterHostPlatform::Linux => "linux",
+        InterpreterHostPlatform::MacOS => "mac os x",
+        InterpreterHostPlatform::Windows => "windows",
+        InterpreterHostPlatform::FreeBsd => "freebsd",
+        InterpreterHostPlatform::Unknown => match std::env::consts::OS {
+            "macos" => "mac os x",
+            "windows" => "windows",
+            other => other,
+        },
+    }
+}
+
+fn repository_os_arch(architecture: InterpreterHostArchitecture) -> &'static str {
+    match architecture {
+        InterpreterHostArchitecture::AArch64 => "aarch64",
+        InterpreterHostArchitecture::X86_64 => "x86_64",
+        InterpreterHostArchitecture::Arm => "arm",
+        InterpreterHostArchitecture::Riscv64 => "riscv64",
+        InterpreterHostArchitecture::X86 => "x86",
+        InterpreterHostArchitecture::Mips => "mips",
+        InterpreterHostArchitecture::Mips64 => "mips64",
+        InterpreterHostArchitecture::PowerPc => "powerpc",
+        InterpreterHostArchitecture::PowerPc64 => "powerpc64",
+        InterpreterHostArchitecture::Unknown => std::env::consts::ARCH,
+    }
+}
+
+fn bzlmod_repository_environment(
+    repo_environment: &[ClientEnvironmentVariable],
+    platform: InterpreterHostPlatform,
+    architecture: InterpreterHostArchitecture,
+) -> BTreeMap<String, String> {
+    let mut env = repo_environment
+        .iter()
+        .filter_map(|entry| {
+            entry
+                .value
+                .as_ref()
+                .map(|value| (entry.name.clone(), value.clone()))
+        })
+        .collect::<BTreeMap<_, _>>();
+    env.insert(
+        BZLMOD_REPOSITORY_OS_NAME_ENV.to_owned(),
+        repository_os_name(platform).to_owned(),
+    );
+    env.insert(
+        BZLMOD_REPOSITORY_OS_ARCH_ENV.to_owned(),
+        repository_os_arch(architecture).to_owned(),
+    );
+    env
+}
+
 #[async_trait]
 impl DiceUpdater for DiceCommandUpdater<'_, '_> {
     async fn update(
@@ -926,18 +983,11 @@ impl DiceUpdater for DiceCommandUpdater<'_, '_> {
             ));
         }
         ctx.set_bzlmod_client_environment(bzlmod_client_environment)?;
-        ctx.set_bzlmod_repository_environment(
-            self.cmd_ctx
-                .repo_environment
-                .iter()
-                .filter_map(|entry| {
-                    entry
-                        .value
-                        .as_ref()
-                        .map(|value| (entry.name.clone(), value.clone()))
-                })
-                .collect(),
-        )?;
+        ctx.set_bzlmod_repository_environment(bzlmod_repository_environment(
+            &self.cmd_ctx.repo_environment,
+            self.interpreter_platform,
+            self.interpreter_architecture,
+        ))?;
         let registry_epoch_hour = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|duration| duration.as_secs() / 3600)
@@ -1248,18 +1298,11 @@ impl DiceCommandUpdater<'_, '_> {
         );
         data.set_keep_going(self.keep_going);
         data.set_critical_path_backend(critical_path_backend);
-        data.set_bzlmod_repository_environment_data(
-            self.cmd_ctx
-                .repo_environment
-                .iter()
-                .filter_map(|entry| {
-                    entry
-                        .value
-                        .as_ref()
-                        .map(|value| (entry.name.clone(), value.clone()))
-                })
-                .collect(),
-        );
+        data.set_bzlmod_repository_environment_data(bzlmod_repository_environment(
+            &self.cmd_ctx.repo_environment,
+            self.interpreter_platform,
+            self.interpreter_architecture,
+        ));
         data.init_local_resource_registry();
         data.init_bxl_streaming_tracker();
         initialize_read_dir_cache(&mut data);
@@ -1650,6 +1693,39 @@ mod tests {
         assert_eq!(
             action_concurrency_from_host_headroom(10, None, memory(64, 40)),
             10
+        );
+    }
+
+    #[test]
+    fn bzlmod_repository_environment_sets_fake_host_values() {
+        let env = bzlmod_repository_environment(
+            &[
+                ClientEnvironmentVariable {
+                    name: "USER_DEFINED".to_owned(),
+                    value: Some("present".to_owned()),
+                },
+                ClientEnvironmentVariable {
+                    name: "UNSET".to_owned(),
+                    value: None,
+                },
+                ClientEnvironmentVariable {
+                    name: BZLMOD_REPOSITORY_OS_NAME_ENV.to_owned(),
+                    value: Some("ignored".to_owned()),
+                },
+            ],
+            InterpreterHostPlatform::Linux,
+            InterpreterHostArchitecture::X86_64,
+        );
+
+        assert_eq!(Some("present"), env.get("USER_DEFINED").map(String::as_str));
+        assert!(!env.contains_key("UNSET"));
+        assert_eq!(
+            Some("linux"),
+            env.get(BZLMOD_REPOSITORY_OS_NAME_ENV).map(String::as_str)
+        );
+        assert_eq!(
+            Some("x86_64"),
+            env.get(BZLMOD_REPOSITORY_OS_ARCH_ENV).map(String::as_str)
         );
     }
 }

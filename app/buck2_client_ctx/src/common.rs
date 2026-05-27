@@ -328,11 +328,37 @@ pub struct CommonBuildConfigurationOptions {
     )]
     pub config_files: Vec<String>,
 
-    #[clap(long, ignore_case = true, value_name = "HOST", value_enum)]
+    #[clap(
+        long,
+        alias = "fake-os",
+        ignore_case = true,
+        value_name = "HOST",
+        value_enum
+    )]
     pub fake_host: Option<HostPlatformOverride>,
 
     #[clap(long, ignore_case = true, value_name = "ARCH", value_enum)]
     pub fake_arch: Option<HostArchOverride>,
+
+    /// Bazel-compatible target CPU setting. This populates
+    /// `//command_line_option:cpu` for Bazel rules.
+    #[clap(long = "cpu", value_name = "CPU", num_args = 1)]
+    pub bazel_cpu: Vec<String>,
+
+    /// Bazel-compatible host CPU setting. This populates
+    /// `//command_line_option:host_cpu` for Bazel rules.
+    #[clap(
+        long = "host_cpu",
+        alias = "host-cpu",
+        value_name = "CPU",
+        num_args = 1
+    )]
+    pub bazel_host_cpu: Vec<String>,
+
+    /// Bazel-compatible target platform setting. This accepts Bazel's
+    /// comma-separated label list and populates `//command_line_option:platforms`.
+    #[clap(long = "platforms", value_name = "PLATFORMS", num_args = 1)]
+    pub bazel_platforms: Vec<String>,
 
     /// Value must be formatted as: version-build (e.g., 14.3.0-14C18 or 14.1-14B47b)
     #[clap(long, value_name = "VERSION-BUILD")]
@@ -364,6 +390,42 @@ pub struct CommonBuildConfigurationOptions {
 }
 
 impl CommonBuildConfigurationOptions {
+    fn bazel_command_line_build_setting_entry(kind: &str, key: &str, value: &str) -> String {
+        format!("{kind}\t{key}\t{value}")
+    }
+
+    fn bazel_command_line_build_settings_override(settings: Vec<String>) -> ConfigOverride {
+        ConfigOverride {
+            cell: None,
+            config_override: format!("bazel.command_line_build_settings={}", settings.join("\n")),
+            config_type: ConfigType::Value as i32,
+        }
+    }
+
+    fn bazel_command_line_string_build_setting(key: &str, value: &str) -> String {
+        Self::bazel_command_line_build_setting_entry("string", key, value)
+    }
+
+    fn bazel_command_line_list_build_setting(key: &str, value: &str) -> Vec<String> {
+        value
+            .split(',')
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(|value| Self::bazel_command_line_build_setting_entry("list", key, value))
+            .collect()
+    }
+
+    fn parse_bazel_command_line_build_settings_override(raw_arg: &str) -> Option<Vec<String>> {
+        let value = raw_arg.strip_prefix("bazel.command_line_build_settings=")?;
+        Some(
+            value
+                .split('\n')
+                .filter(|value| !value.is_empty())
+                .map(|value| value.to_owned())
+                .collect(),
+        )
+    }
+
     /// Produces a single, ordered list of config overrides. A `ConfigOverride`
     /// represents either a file, passed via `--config-file`, or a config value,
     /// passed via `-c`/`--config`. The relative order of those are important,
@@ -394,28 +456,35 @@ impl CommonBuildConfigurationOptions {
             Ok(indices.into_iter().zip(collection))
         }
 
-        let config_values_args = with_indices(&self.config_values, "config_values", matches)?
-            .map(|(index, config_value)| {
-                let (cell, raw_arg) = match config_value.split_once("//") {
-                    Some((cell, val)) if !cell.contains('=') => {
-                        let cell = immediate_ctx
-                            .resolve_alias_to_path_in_cwd(cell)?
-                            .to_string();
-                        (Some(cell), val)
-                    }
-                    _ => (None, config_value.as_str()),
-                };
+        let mut bazel_command_line_build_setting_args = Vec::new();
+        let mut config_values_args = Vec::new();
+        for (index, config_value) in with_indices(&self.config_values, "config_values", matches)? {
+            let (cell, raw_arg) = match config_value.split_once("//") {
+                Some((cell, val)) if !cell.contains('=') => {
+                    let cell = immediate_ctx
+                        .resolve_alias_to_path_in_cwd(cell)?
+                        .to_string();
+                    (Some(cell), val)
+                }
+                _ => (None, config_value.as_str()),
+            };
 
-                buck2_error::Ok((
+            if cell.is_none()
+                && let Some(settings) =
+                    Self::parse_bazel_command_line_build_settings_override(raw_arg)
+            {
+                bazel_command_line_build_setting_args.push((index, settings));
+            } else {
+                config_values_args.push((
                     index,
                     ConfigOverride {
                         cell,
                         config_override: raw_arg.to_owned(),
                         config_type: ConfigType::Value as i32,
                     },
-                ))
-            })
-            .collect::<buck2_error::Result<Vec<_>>>()?;
+                ));
+            }
+        }
 
         let config_file_args = with_indices(&self.config_files, "config_files", matches)?
             .map(|(index, file)| {
@@ -446,8 +515,69 @@ impl CommonBuildConfigurationOptions {
             })
             .collect::<buck2_error::Result<Vec<_>>>()?;
 
+        bazel_command_line_build_setting_args.extend(
+            with_indices(&self.bazel_cpu, "bazel_cpu", matches)?.map(|(index, cpu)| {
+                (
+                    index,
+                    vec![Self::bazel_command_line_string_build_setting(
+                        "//command_line_option:cpu",
+                        cpu,
+                    )],
+                )
+            }),
+        );
+
+        bazel_command_line_build_setting_args.extend(
+            with_indices(&self.bazel_host_cpu, "bazel_host_cpu", matches)?.map(|(index, cpu)| {
+                (
+                    index,
+                    vec![Self::bazel_command_line_string_build_setting(
+                        "//command_line_option:host_cpu",
+                        cpu,
+                    )],
+                )
+            }),
+        );
+
+        bazel_command_line_build_setting_args.extend(
+            with_indices(&self.bazel_platforms, "bazel_platforms", matches)?.filter_map(
+                |(index, platforms)| {
+                    let settings = Self::bazel_command_line_list_build_setting(
+                        "//command_line_option:platforms",
+                        platforms,
+                    );
+                    if settings.is_empty() {
+                        None
+                    } else {
+                        Some((index, settings))
+                    }
+                },
+            ),
+        );
+
+        let bazel_command_line_build_setting_arg =
+            if bazel_command_line_build_setting_args.is_empty() {
+                None
+            } else {
+                bazel_command_line_build_setting_args
+                    .sort_by(|(lhs_index, _), (rhs_index, _)| lhs_index.cmp(rhs_index));
+                let index = bazel_command_line_build_setting_args
+                    .last()
+                    .map(|(index, _)| *index)
+                    .unwrap();
+                let settings = bazel_command_line_build_setting_args
+                    .into_iter()
+                    .flat_map(|(_, settings)| settings)
+                    .collect();
+                Some((
+                    index,
+                    Self::bazel_command_line_build_settings_override(settings),
+                ))
+            };
+
         let mut ordered_merged_configs: Vec<(usize, ConfigOverride)> = config_file_args;
         ordered_merged_configs.extend(config_values_args);
+        ordered_merged_configs.extend(bazel_command_line_build_setting_arg);
         ordered_merged_configs.sort_by(|(lhs_index, _), (rhs_index, _)| lhs_index.cmp(rhs_index));
 
         Ok(ordered_merged_configs.into_map(|(_, config_arg)| config_arg))
@@ -475,6 +605,9 @@ impl CommonBuildConfigurationOptions {
             config_files: vec![],
             fake_host: None,
             fake_arch: None,
+            bazel_cpu: vec![],
+            bazel_host_cpu: vec![],
+            bazel_platforms: vec![],
             fake_xcode_version: None,
             reuse_current_config: false,
             preemptible: Some(PreemptibleWhen::Never),
@@ -489,6 +622,9 @@ impl CommonBuildConfigurationOptions {
             config_files: vec![],
             fake_host: None,
             fake_arch: None,
+            bazel_cpu: vec![],
+            bazel_host_cpu: vec![],
+            bazel_platforms: vec![],
             fake_xcode_version: None,
             reuse_current_config: true,
             preemptible: Some(PreemptibleWhen::OnDifferentState),
@@ -726,11 +862,30 @@ mod tests {
     use buck2_core::cells::cell_path::CellPath;
     use buck2_core::fs::project::ProjectRootTemp;
     use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
+    use clap::CommandFactory;
+    use clap::FromArgMatches;
 
     use super::*;
 
     fn source(flag: RepresentativeConfigFlagSource) -> RepresentativeConfigFlag {
         RepresentativeConfigFlag { source: Some(flag) }
+    }
+
+    #[derive(Debug, clap::Parser)]
+    struct TestConfigOpts {
+        #[clap(flatten)]
+        config: CommonBuildConfigurationOptions,
+    }
+
+    fn test_cwd() -> buck2_fs::working_dir::AbsWorkingDir {
+        use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
+        use buck2_fs::working_dir::AbsWorkingDir;
+
+        if cfg!(windows) {
+            AbsWorkingDir::unchecked_new(AbsNormPathBuf::new("C:\\tmp".into()).unwrap())
+        } else {
+            AbsWorkingDir::unchecked_new(AbsNormPathBuf::new("/tmp".into()).unwrap())
+        }
     }
 
     #[test]
@@ -892,16 +1047,9 @@ mod tests {
 
     #[test]
     fn test_config_overrides_with_default_opts_and_unregistered_args() -> buck2_error::Result<()> {
-        use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
-        use buck2_fs::working_dir::AbsWorkingDir;
-
         use crate::immediate_config::ImmediateConfigContext;
 
-        let cwd = if cfg!(windows) {
-            AbsWorkingDir::unchecked_new(AbsNormPathBuf::new("C:\\tmp".into()).unwrap())
-        } else {
-            AbsWorkingDir::unchecked_new(AbsNormPathBuf::new("/tmp".into()).unwrap())
-        };
+        let cwd = test_cwd();
         let immediate_ctx = ImmediateConfigContext::new(&cwd);
 
         let opts = CommonBuildConfigurationOptions::default();
@@ -911,6 +1059,40 @@ mod tests {
 
         let overrides = opts.config_overrides(matches, &immediate_ctx, &cwd)?;
         assert!(overrides.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn test_bazel_native_flags_become_build_settings() -> buck2_error::Result<()> {
+        let clap = TestConfigOpts::command()
+            .try_get_matches_from([
+                "test",
+                "--cpu=k8",
+                "-c",
+                "foo.bar=baz",
+                "--platforms=//platforms:linux,@platforms//cpu:x86_64",
+                "--host_cpu",
+                "k8",
+            ])
+            .unwrap();
+        let opts = TestConfigOpts::from_arg_matches(&clap).unwrap();
+        let argv = ExpandedArgvBuilder::new().build();
+        let matches = BuckArgMatches::from_clap(&clap, &argv);
+        use crate::immediate_config::ImmediateConfigContext;
+
+        let cwd = test_cwd();
+        let immediate_ctx = ImmediateConfigContext::new(&cwd);
+
+        let overrides = opts
+            .config
+            .config_overrides(matches, &immediate_ctx, &cwd)?;
+
+        assert_eq!(overrides.len(), 2);
+        assert_eq!(overrides[0].config_override, "foo.bar=baz");
+        assert_eq!(
+            overrides[1].config_override,
+            "bazel.command_line_build_settings=string\t//command_line_option:cpu\tk8\nlist\t//command_line_option:platforms\t//platforms:linux\nlist\t//command_line_option:platforms\t@platforms//cpu:x86_64\nstring\t//command_line_option:host_cpu\tk8"
+        );
         Ok(())
     }
 }

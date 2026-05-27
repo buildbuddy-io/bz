@@ -43,6 +43,8 @@ use buck2_common::file_ops::metadata::RawSymlink;
 use buck2_common::io::IoProvider;
 use buck2_common::io::NoWatchFsMetadataCache;
 use buck2_common::io::fs::FsIoProvider;
+use buck2_common::legacy_configs::cells::BZLMOD_REPOSITORY_OS_ARCH_ENV;
+use buck2_common::legacy_configs::cells::BZLMOD_REPOSITORY_OS_NAME_ENV;
 use buck2_common::legacy_configs::cells::BzlmodModuleExtensionRepoMappingBase;
 use buck2_common::legacy_configs::cells::GetBzlmodModuleExtensionRepoMappingBase;
 use buck2_common::legacy_configs::cells::GetBzlmodRepositoryEnvironmentVariable;
@@ -2735,7 +2737,7 @@ fn bzlmod_generated_repository_rule_materialization_stamp_content(
     let mut hasher = blake3::Hasher::new();
     update_bzlmod_repo_contents_cache_key(
         &mut hasher,
-        "buck2-bzlmod-generated-repository-rule-materialization-v1",
+        "buck2-bzlmod-generated-repository-rule-materialization-v2",
     );
     update_bzlmod_repo_contents_cache_key(
         &mut hasher,
@@ -2747,7 +2749,7 @@ fn bzlmod_generated_repository_rule_materialization_stamp_content(
 
 fn bzlmod_generated_repo_contents_cache_key(setup: &BzlmodGeneratedCellSetup) -> String {
     let mut hasher = blake3::Hasher::new();
-    update_bzlmod_repo_contents_cache_key(&mut hasher, "buck2-bzlmod-generated-materialization-v4");
+    update_bzlmod_repo_contents_cache_key(&mut hasher, "buck2-bzlmod-generated-materialization-v5");
     update_bzlmod_repo_contents_cache_key(&mut hasher, std::env::consts::OS);
     update_bzlmod_repo_contents_cache_key(&mut hasher, std::env::consts::ARCH);
     update_bzlmod_repo_contents_cache_key(&mut hasher, &setup.canonical_repo_name);
@@ -3007,7 +3009,7 @@ async fn bzlmod_generated_materialization_value(
     let mut hasher = blake3::Hasher::new();
     update_bzlmod_repo_contents_cache_key(
         &mut hasher,
-        "buck2-bzlmod-generated-materialization-value-v1",
+        "buck2-bzlmod-generated-materialization-value-v2",
     );
     update_bzlmod_repo_contents_cache_key(&mut hasher, path.as_str());
     update_bzlmod_repo_contents_cache_key(&mut hasher, stamp_content);
@@ -3020,7 +3022,7 @@ async fn bzlmod_generated_materialization_value(
 
 fn bzlmod_module_extension_evaluation_cache_key(setup: &BzlmodModuleExtensionRepoSetup) -> String {
     let mut hasher = blake3::Hasher::new();
-    update_bzlmod_repo_contents_cache_key(&mut hasher, "buck2-bzlmod-module-extension-v2");
+    update_bzlmod_repo_contents_cache_key(&mut hasher, "buck2-bzlmod-module-extension-v3");
     update_bzlmod_repo_contents_cache_key(&mut hasher, &setup.parent_canonical_repo_name);
     update_bzlmod_repo_contents_cache_key(&mut hasher, &setup.parent_is_root.to_string());
     update_bzlmod_repo_contents_cache_key(&mut hasher, &setup.extension_bzl_file);
@@ -3373,14 +3375,16 @@ impl BzlmodModuleExtensionEvalFactors {
     ) -> buck2_error::Result<Self> {
         let deps = bzlmod_module_extension_eval_factor_deps(ctx, setup).await?;
         Ok(Self {
-            os: deps
-                .os_dependent
-                .then(|| bzlmod_bazel_current_os_name().to_owned())
-                .unwrap_or_default(),
-            arch: deps
-                .arch_dependent
-                .then(bzlmod_bazel_current_arch_name)
-                .unwrap_or_default(),
+            os: if deps.os_dependent {
+                bzlmod_bazel_current_os_name(ctx).await?
+            } else {
+                String::new()
+            },
+            arch: if deps.arch_dependent {
+                bzlmod_bazel_current_arch_name(ctx).await?
+            } else {
+                String::new()
+            },
         })
     }
 
@@ -3399,29 +3403,44 @@ impl BzlmodModuleExtensionEvalFactors {
     }
 }
 
-fn bzlmod_bazel_current_os_name() -> &'static str {
-    if cfg!(target_os = "macos") {
-        "osx"
-    } else if cfg!(target_os = "linux") {
-        "linux"
-    } else if cfg!(target_os = "windows") {
-        "windows"
-    } else if cfg!(target_os = "freebsd") {
-        "freebsd"
-    } else if cfg!(target_os = "openbsd") {
-        "openbsd"
-    } else {
-        "unknown"
-    }
+async fn bzlmod_bazel_current_os_name(
+    ctx: &mut DiceComputations<'_>,
+) -> buck2_error::Result<String> {
+    Ok(
+        match ctx
+            .get_bzlmod_repository_environment_variable(BZLMOD_REPOSITORY_OS_NAME_ENV)
+            .await?
+            .as_deref()
+        {
+            Some("mac os x" | "macos" | "osx" | "darwin") => "osx".to_owned(),
+            Some("linux") => "linux".to_owned(),
+            Some("windows") => "windows".to_owned(),
+            Some("freebsd") => "freebsd".to_owned(),
+            Some("openbsd") => "openbsd".to_owned(),
+            Some(other) => other.to_owned(),
+            None if cfg!(target_os = "macos") => "osx".to_owned(),
+            None if cfg!(target_os = "linux") => "linux".to_owned(),
+            None if cfg!(target_os = "windows") => "windows".to_owned(),
+            None if cfg!(target_os = "freebsd") => "freebsd".to_owned(),
+            None if cfg!(target_os = "openbsd") => "openbsd".to_owned(),
+            None => "unknown".to_owned(),
+        },
+    )
 }
 
-fn bzlmod_bazel_current_arch_name() -> String {
-    match std::env::consts::ARCH {
+async fn bzlmod_bazel_current_arch_name(
+    ctx: &mut DiceComputations<'_>,
+) -> buck2_error::Result<String> {
+    let arch = ctx
+        .get_bzlmod_repository_environment_variable(BZLMOD_REPOSITORY_OS_ARCH_ENV)
+        .await?
+        .unwrap_or_else(|| std::env::consts::ARCH.to_owned());
+    Ok(match arch.as_str() {
         "x86_64" => "x86_64".to_owned(),
         "aarch64" => "aarch64".to_owned(),
         "arm" => "arm".to_owned(),
         arch => arch.to_owned(),
-    }
+    })
 }
 
 fn bzlmod_bzl_path_to_label_path(path: &str) -> String {

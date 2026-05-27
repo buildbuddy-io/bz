@@ -1213,7 +1213,9 @@ fn bazelrc_command_line_build_setting_entry(kind: &str, key: &str, value: &str) 
 fn bazelrc_native_command_line_string_option(name: &str) -> bool {
     matches!(
         name,
-        "java_language_version"
+        "cpu"
+            | "host_cpu"
+            | "java_language_version"
             | "tool_java_language_version"
             | "java_runtime_version"
             | "tool_java_runtime_version"
@@ -1225,11 +1227,32 @@ fn bazelrc_native_command_line_list_option(name: &str) -> bool {
     matches!(name, "javacopt" | "host_javacopt" | "platforms")
 }
 
+fn bazelrc_native_command_line_comma_separated_list_option(name: &str) -> bool {
+    matches!(name, "platforms")
+}
+
+fn bazelrc_command_line_list_build_setting_entries(
+    name: &str,
+    key: &str,
+    value: &str,
+) -> Vec<String> {
+    if !bazelrc_native_command_line_comma_separated_list_option(name) {
+        return vec![bazelrc_command_line_build_setting_entry("list", key, value)];
+    }
+
+    value
+        .split(',')
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| bazelrc_command_line_build_setting_entry("list", key, value))
+        .collect()
+}
+
 fn bazelrc_label_build_setting_key(value: &str) -> bool {
     value.starts_with('@') || value.starts_with("//") || value.starts_with(':')
 }
 
-fn bazelrc_command_line_build_setting(args: &[String], index: &mut usize) -> Option<String> {
+fn bazelrc_command_line_build_setting(args: &[String], index: &mut usize) -> Option<Vec<String>> {
     let arg = &args[*index];
     let option = arg.strip_prefix("--")?;
     if option.is_empty() {
@@ -1249,7 +1272,7 @@ fn bazelrc_command_line_build_setting(args: &[String], index: &mut usize) -> Opt
         if !bazelrc_label_build_setting_key(key) {
             return None;
         }
-        return Some(match value {
+        return Some(vec![match value {
             Some("true" | "True" | "1") => {
                 bazelrc_command_line_build_setting_entry("bool", key, "true")
             }
@@ -1262,7 +1285,7 @@ fn bazelrc_command_line_build_setting(args: &[String], index: &mut usize) -> Opt
                 key,
                 if negated { "false" } else { "true" },
             ),
-        });
+        }]);
     }
 
     if negated {
@@ -1287,12 +1310,13 @@ fn bazelrc_command_line_build_setting(args: &[String], index: &mut usize) -> Opt
         }
     };
     let key = format!("//command_line_option:{name}");
-    let kind = if bazelrc_native_command_line_list_option(name) {
-        "list"
+    Some(if bazelrc_native_command_line_list_option(name) {
+        bazelrc_command_line_list_build_setting_entries(name, &key, &value)
     } else {
-        "string"
-    };
-    Some(bazelrc_command_line_build_setting_entry(kind, &key, &value))
+        vec![bazelrc_command_line_build_setting_entry(
+            "string", &key, &value,
+        )]
+    })
 }
 
 fn bazelrc_add_options(
@@ -1327,8 +1351,8 @@ fn bazelrc_add_options(
                 bazelrc_arg_value(args, &mut index, "--host_macos_minimum_os")
             {
                 options.host_macos_minimum_os.push(value);
-            } else if let Some(value) = bazelrc_command_line_build_setting(args, &mut index) {
-                options.command_line_build_settings.push(value);
+            } else if let Some(values) = bazelrc_command_line_build_setting(args, &mut index) {
+                options.command_line_build_settings.extend(values);
             }
         }
         index += 1;
@@ -2009,6 +2033,8 @@ struct BzlmodRepoSpecValue {
 }
 
 pub const BZLMOD_ALLOWED_YANKED_VERSIONS_ENV: &str = "BZLMOD_ALLOW_YANKED_VERSIONS";
+pub const BZLMOD_REPOSITORY_OS_NAME_ENV: &str = "BUCK2_REPOSITORY_OS_NAME";
+pub const BZLMOD_REPOSITORY_OS_ARCH_ENV: &str = "BUCK2_REPOSITORY_OS_ARCH";
 
 fn empty_bzlmod_lockfile_data() -> BzlmodModuleLockfileData {
     BzlmodModuleLockfileData {
@@ -9281,6 +9307,29 @@ mod tests {
             super::get_bazelrc_options(CellRootPath::testing_new(""), &mut file_ops).await?;
 
         assert_eq!(options.copt, vec!["-DFROM_IMPORTED"]);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_bazelrc_bazel_native_configuration_flags() -> buck2_error::Result<()> {
+        let mut file_ops = TestConfigParserFileOps::new(&[(
+            ".bazelrc",
+            "build --cpu=k8 --host_cpu=k8 --platforms=//platforms:linux,@platforms//cpu:x86_64 --javacopt=-Akey=a,b\n",
+        )])?;
+
+        let options =
+            super::get_bazelrc_options(CellRootPath::testing_new(""), &mut file_ops).await?;
+
+        assert_eq!(
+            options.command_line_build_settings,
+            vec![
+                "string\t//command_line_option:cpu\tk8",
+                "string\t//command_line_option:host_cpu\tk8",
+                "list\t//command_line_option:platforms\t//platforms:linux",
+                "list\t//command_line_option:platforms\t@platforms//cpu:x86_64",
+                "list\t//command_line_option:javacopt\t-Akey=a,b",
+            ]
+        );
         Ok(())
     }
 
