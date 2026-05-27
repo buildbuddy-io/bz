@@ -981,6 +981,7 @@ impl InterpreterForDir {
         extension_usages_json: &str,
         module_ctx_working_dir: &str,
         repo_env: std::sync::Arc<std::collections::BTreeMap<String, String>>,
+        command_executor: crate::bazel_repository::BazelRepositoryCommandExecutor,
         buckconfigs: &mut dyn BuckConfigsViewForStarlark,
         eval_provider: StarlarkEvaluatorProvider,
         cancellation: &CancellationContext,
@@ -1016,6 +1017,7 @@ impl InterpreterForDir {
                 BazelRepositoryContextForStarlark {
                     recorded_inputs: recorded_inputs.clone(),
                     working_dir: module_ctx_working_dir.to_owned(),
+                    command_executor: command_executor.clone(),
                 },
             );
 
@@ -1124,6 +1126,7 @@ impl InterpreterForDir {
         invocation: &BazelRepositoryRuleInvocation,
         repository_ctx_working_dir: &str,
         repo_env: std::sync::Arc<std::collections::BTreeMap<String, String>>,
+        command_executor: crate::bazel_repository::BazelRepositoryCommandExecutor,
         buckconfigs: &mut dyn BuckConfigsViewForStarlark,
         eval_provider: StarlarkEvaluatorProvider,
         cancellation: &CancellationContext,
@@ -1158,6 +1161,7 @@ impl InterpreterForDir {
                 BazelRepositoryContextForStarlark {
                     recorded_inputs: recorded_inputs.clone(),
                     working_dir: repository_ctx_working_dir.to_owned(),
+                    command_executor: command_executor.clone(),
                 },
             );
 

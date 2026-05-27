@@ -14,8 +14,12 @@ use std::sync::Arc;
 
 use allocative::Allocative;
 use async_trait::async_trait;
+use buck2_build_api::actions::artifact::get_artifact_fs::GetArtifactFs;
+use buck2_build_api::actions::execute::dice_data::DiceHasCommandExecutor;
+use buck2_build_api::actions::execute::dice_data::HasFallbackExecutorConfig;
 use buck2_common::dice::cells::HasCellResolver;
 use buck2_common::dice::cycles::CycleGuard;
+use buck2_common::dice::data::HasIoProvider;
 use buck2_common::file_ops::dice::DiceFileComputations;
 use buck2_common::file_ops::error::FileReadErrorContext;
 use buck2_common::file_ops::metadata::RawPathMetadata;
@@ -32,11 +36,16 @@ use buck2_core::cells::build_file_cell::BuildFileCell;
 use buck2_core::cells::cell_path::CellPath;
 use buck2_core::cells::cell_path_with_allowed_relative_dir::CellPathWithAllowedRelativeDir;
 use buck2_core::cells::external::is_bzlmod_cell_name;
+use buck2_core::execution_types::executor_config::Executor;
+use buck2_core::execution_types::executor_config::RemoteEnabledExecutor;
 use buck2_core::package::PackageLabel;
 use buck2_error::BuckErrorContext;
 use buck2_error::internal_error;
 use buck2_events::dispatch::span;
 use buck2_events::dispatch::span_async_simple;
+use buck2_execute::digest_config::HasDigestConfig;
+use buck2_execute::execute::blocking::HasBlockingExecutor;
+use buck2_execute::execute::command_executor::CommandExecutor;
 use buck2_interpreter::allow_relative_paths::HasAllowRelativePaths;
 use buck2_interpreter::dice::starlark_provider::StarlarkEvalKind;
 use buck2_interpreter::factory::StarlarkEvaluatorProvider;
@@ -70,6 +79,8 @@ use starlark::environment::Module;
 use starlark::syntax::AstModule;
 use starlark::values::FrozenHeapName;
 
+use crate::bazel_repository::BazelRemoteRepositoryCommandExecutor;
+use crate::bazel_repository::BazelRepositoryCommandExecutor;
 use crate::bazel_repository::BazelRepositoryRuleEvaluation;
 use crate::interpreter::bazel_glob::BazelPackageDataRequest;
 use crate::interpreter::bazel_glob::compute_bazel_package_data;
@@ -235,6 +246,54 @@ impl<'c, 'd: 'c> DiceCalculationDelegate<'c, 'd> {
         self.ctx
             .get_legacy_config_on_dice(self.build_file_cell.name())
             .await
+    }
+
+    async fn bazel_repository_command_executor(
+        &mut self,
+    ) -> buck2_error::Result<BazelRepositoryCommandExecutor> {
+        let executor_config = self.ctx.get_fallback_executor_config().dupe();
+        let remote_execution_enabled = match &executor_config.executor {
+            Executor::RemoteEnabled(options) => matches!(
+                options.executor,
+                RemoteEnabledExecutor::Remote(_) | RemoteEnabledExecutor::Hybrid { .. }
+            ),
+            Executor::Local(_) | Executor::None => false,
+        };
+        if !remote_execution_enabled {
+            return Ok(BazelRepositoryCommandExecutor::Local);
+        }
+
+        let artifact_fs = self.ctx.get_artifact_fs().await?;
+        let digest_config = self.ctx.global_data().get_digest_config();
+        let project_root = self
+            .ctx
+            .global_data()
+            .get_io_provider()
+            .project_root()
+            .dupe();
+        let blocking_executor = self.ctx.get_blocking_executor();
+        let response = self
+            .ctx
+            .get_command_executor_from_dice(&executor_config)
+            .await?;
+        let command_executor = CommandExecutor::new(
+            response.executor,
+            response.action_cache_checker,
+            response.remote_dep_file_cache_checker,
+            response.cache_uploader,
+            artifact_fs.clone(),
+            executor_config.options,
+            response.platform,
+        );
+        Ok(BazelRepositoryCommandExecutor::Remote(Arc::new(
+            BazelRemoteRepositoryCommandExecutor::new(
+                command_executor,
+                artifact_fs,
+                project_root,
+                blocking_executor,
+                digest_config,
+            ),
+        )))
     }
 
     async fn parse_file(
@@ -480,6 +539,7 @@ impl<'c, 'd: 'c> DiceCalculationDelegate<'c, 'd> {
     ) -> buck2_error::Result<crate::bazel_repository::BazelModuleExtensionEvaluation> {
         let buckconfig = self.get_legacy_buck_config_for_starlark().await?;
         let root_buckconfig = self.ctx.get_legacy_root_config_on_dice().await?;
+        let command_executor = self.bazel_repository_command_executor().await?;
 
         let configs = &self.configs;
         let ctx = &mut *self.ctx;
@@ -495,6 +555,7 @@ impl<'c, 'd: 'c> DiceCalculationDelegate<'c, 'd> {
             extension_usages_json,
             module_ctx_working_dir,
             repo_env,
+            command_executor,
             &mut buckconfigs,
             provider,
             cancellation,
@@ -543,6 +604,7 @@ impl<'c, 'd: 'c> DiceCalculationDelegate<'c, 'd> {
     ) -> buck2_error::Result<BazelRepositoryRuleEvaluation> {
         let buckconfig = self.get_legacy_buck_config_for_starlark().await?;
         let root_buckconfig = self.ctx.get_legacy_root_config_on_dice().await?;
+        let command_executor = self.bazel_repository_command_executor().await?;
 
         let configs = &self.configs;
         let ctx = &mut *self.ctx;
@@ -557,6 +619,7 @@ impl<'c, 'd: 'c> DiceCalculationDelegate<'c, 'd> {
             invocation,
             repository_ctx_working_dir,
             repo_env,
+            command_executor,
             &mut buckconfigs,
             provider,
             cancellation,

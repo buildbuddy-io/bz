@@ -27,6 +27,7 @@ use buck2_node::rule_type::StarlarkRuleType;
 use starlark::any::ProvidesStaticType;
 use starlark::eval::Evaluator;
 
+use crate::bazel_repository::BazelRepositoryCommandExecutor;
 use crate::interpreter::buckconfig::BuckConfigsViewForStarlark;
 use crate::interpreter::buckconfig::LegacyBuckConfigsForStarlark;
 use crate::interpreter::bzl_eval_ctx::BzlEvalCtx;
@@ -350,6 +351,7 @@ pub enum BazelRepositoryRecordedInput {
 pub(crate) struct BazelRepositoryContextForStarlark {
     pub(crate) recorded_inputs: Arc<Mutex<Vec<BazelRepositoryRecordedInput>>>,
     pub(crate) working_dir: String,
+    pub(crate) command_executor: BazelRepositoryCommandExecutor,
 }
 
 #[derive(Debug, Default, Eq, PartialEq, allocative::Allocative)]

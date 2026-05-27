@@ -14,6 +14,7 @@ use std::collections::HashMap;
 use std::env;
 use std::fmt;
 use std::fs;
+use std::fs::File;
 use std::io;
 use std::io::Read;
 use std::io::Write;
@@ -37,10 +38,12 @@ use buck2_common::bzlmod_patch::apply_unified_patch_file;
 use buck2_common::dice::cells::HasCellResolver;
 use buck2_common::file_ops::dice::DiceFileComputations;
 use buck2_common::file_ops::error::FileReadErrorContext;
+use buck2_common::file_ops::metadata::FileDigestConfig;
 use buck2_common::file_ops::metadata::RawPathMetadata;
 use buck2_common::legacy_configs::cells::BZLMOD_REPOSITORY_OS_ARCH_ENV;
 use buck2_common::legacy_configs::cells::BZLMOD_REPOSITORY_OS_NAME_ENV;
 use buck2_common::legacy_configs::cells::GetBzlmodRepositoryEnvironment;
+use buck2_common::liveliness_observer::NoopLivelinessObserver;
 use buck2_core::bzl::ImportPath;
 use buck2_core::cells::CellAliasResolver;
 use buck2_core::cells::alias::NonEmptyCellAlias;
@@ -56,12 +59,39 @@ use buck2_core::cells::external::bzlmod_canonical_repo_name_for_cell;
 use buck2_core::cells::external::bzlmod_cell_name;
 use buck2_core::cells::name::CellName;
 use buck2_core::cells::paths::CellRelativePathBuf;
+use buck2_core::fs::artifact_path_resolver::ArtifactFs;
+use buck2_core::fs::buck_out_path::BuckOutTestPath;
+use buck2_core::fs::project::ProjectRoot;
+use buck2_core::fs::project_rel_path::ProjectRelativePath;
+use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
 use buck2_core::target::label::interner::ConcurrentTargetLabelInterner;
+use buck2_directory::directory::entry::DirectoryEntry;
+use buck2_error::BuckErrorContext;
+use buck2_execute::digest_config::DigestConfig;
+use buck2_execute::directory::ActionDirectoryBuilder;
+use buck2_execute::directory::ActionDirectoryEntry;
+use buck2_execute::directory::ActionSharedDirectory;
+use buck2_execute::directory::INTERNER;
+use buck2_execute::entry::build_entry_from_disk;
+use buck2_execute::execute::blocking::BlockingExecutor;
+use buck2_execute::execute::claim::MutexClaimManager;
+use buck2_execute::execute::command_executor::CommandExecutor;
+use buck2_execute::execute::manager::CommandExecutionManager;
+use buck2_execute::execute::prepared::PreparedCommand;
+use buck2_execute::execute::request::CommandExecutionInput;
+use buck2_execute::execute::request::CommandExecutionOutput;
+use buck2_execute::execute::request::CommandExecutionPaths;
+use buck2_execute::execute::request::ExecutorPreference;
+use buck2_execute::execute::request::OutputCreationBehavior;
+use buck2_execute::execute::result::CommandExecutionStatus;
+use buck2_execute::execute::target::CommandExecutionTarget;
 use buck2_execute_local::CommandEvent;
 use buck2_execute_local::DefaultKillProcess;
 use buck2_execute_local::GatherOutputStatus;
 use buck2_execute_local::spawn_command_and_stream_events;
 use buck2_execute_local::status_decoder::DefaultStatusDecoder;
+use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
+use buck2_hash::BuckIndexSet;
 use buck2_hash::StdBuckHashMap;
 use buck2_interpreter::file_loader::LoadedModule;
 use buck2_interpreter::load_module::InterpreterCalculation;
@@ -140,6 +170,7 @@ use starlark::values::structs::AllocStruct;
 use starlark::values::tuple::TupleRef;
 use starlark::values::typing::StarlarkCallable;
 use starlark_map::small_map::SmallMap;
+use tar::Archive;
 use tokio::io::AsyncRead;
 use tokio::io::AsyncReadExt;
 use tokio_util::io::StreamReader;
@@ -1188,6 +1219,463 @@ struct RepositoryCommandOutput {
     stdout: Vec<u8>,
     stderr: Vec<u8>,
     return_code: i32,
+}
+
+static REPOSITORY_CTX_REMOTE_EXECUTE_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+#[derive(Clone)]
+pub(crate) enum BazelRepositoryCommandExecutor {
+    Local,
+    Remote(Arc<BazelRemoteRepositoryCommandExecutor>),
+}
+
+impl fmt::Debug for BazelRepositoryCommandExecutor {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Local => f.write_str("Local"),
+            Self::Remote(_) => f.write_str("Remote"),
+        }
+    }
+}
+
+impl BazelRepositoryCommandExecutor {
+    fn execute(
+        &self,
+        command: Command,
+        repository_working_dir: &str,
+        timeout: i32,
+        quiet: bool,
+    ) -> Result<RepositoryCommandOutput, String> {
+        match self {
+            Self::Local => repository_ctx_execute_output_local(command, timeout, quiet),
+            Self::Remote(remote) => remote.execute(command, repository_working_dir, timeout, quiet),
+        }
+    }
+}
+
+pub(crate) struct BazelRemoteRepositoryCommandExecutor {
+    command_executor: CommandExecutor,
+    artifact_fs: ArtifactFs,
+    project_root: ProjectRoot,
+    blocking_executor: Arc<dyn BlockingExecutor>,
+    digest_config: DigestConfig,
+}
+
+impl BazelRemoteRepositoryCommandExecutor {
+    pub(crate) fn new(
+        command_executor: CommandExecutor,
+        artifact_fs: ArtifactFs,
+        project_root: ProjectRoot,
+        blocking_executor: Arc<dyn BlockingExecutor>,
+        digest_config: DigestConfig,
+    ) -> Self {
+        Self {
+            command_executor,
+            artifact_fs,
+            project_root,
+            blocking_executor,
+            digest_config,
+        }
+    }
+
+    fn execute(
+        self: &Arc<Self>,
+        command: Command,
+        repository_working_dir: &str,
+        timeout: i32,
+        quiet: bool,
+    ) -> Result<RepositoryCommandOutput, String> {
+        if timeout <= 0 {
+            return Err(format!("timeout must be positive, got {timeout}"));
+        }
+        let executor = self.dupe();
+        let repository_working_dir = repository_working_dir.to_owned();
+        std::thread::spawn(move || {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .map_err(|error| {
+                    format!("could not create remote repository_ctx.execute runtime: {error}")
+                })?
+                .block_on(executor.execute_async(command, &repository_working_dir, timeout, quiet))
+        })
+        .join()
+        .map_err(|_| "remote repository_ctx.execute worker thread panicked".to_owned())?
+    }
+
+    async fn execute_async(
+        &self,
+        command: Command,
+        repository_working_dir: &str,
+        timeout: i32,
+        quiet: bool,
+    ) -> Result<RepositoryCommandOutput, String> {
+        let repository_working_dir_abs = Path::new(repository_working_dir);
+        let repository_working_dir_rel = self
+            .project_relative_from_abs_path(repository_working_dir_abs)
+            .ok_or_else(|| {
+                format!(
+                    "remote repository_ctx.execute requires repository working dir `{}` to be under project root `{}`",
+                    repository_working_dir_abs.display(),
+                    self.project_root.root()
+                )
+            })?;
+
+        let program = command.get_program().to_string_lossy().into_owned();
+        let args = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        let current_dir = command
+            .get_current_dir()
+            .ok_or_else(|| {
+                "remote repository_ctx.execute command has no working directory".to_owned()
+            })?
+            .to_path_buf();
+        let env = self.remote_environment(&command, repository_working_dir_abs)?;
+
+        let mut inputs = Vec::new();
+        self.add_disk_input(&mut inputs, repository_working_dir_abs)
+            .await?;
+        for value in std::iter::once(program.as_str()).chain(args.iter().map(String::as_str)) {
+            if let Some(path) = self.absolute_project_path(value)
+                && !path.starts_with(repository_working_dir_abs)
+            {
+                self.add_disk_input(&mut inputs, &path).await?;
+            }
+        }
+
+        let counter = REPOSITORY_CTX_REMOTE_EXECUTE_COUNTER
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let output_base = ForwardRelativePathBuf::unchecked_new(
+            "buck-out/v2/tmp/repository_ctx_execute".to_owned(),
+        );
+        let output_file = ForwardRelativePathBuf::unchecked_new(format!("{counter}/repo.tar"));
+        let output_project_path = ProjectRelativePathBuf::from(output_base.join(&output_file));
+        let outputs: BuckIndexSet<_> = [CommandExecutionOutput::TestPath {
+            path: BuckOutTestPath::new(output_base, output_file),
+            create: OutputCreationBehavior::Parent,
+        }]
+        .into_iter()
+        .collect();
+
+        let paths = CommandExecutionPaths::new(
+            inputs,
+            outputs,
+            &self.artifact_fs,
+            self.digest_config,
+            None,
+        )
+        .map_err(|error| error.to_string())?;
+
+        let remote_repo_root = "__buck2_repository_ctx_work";
+        let remote_input_root = repository_working_dir_rel.as_str().to_owned();
+        let remote_working_dir =
+            self.remote_path_for_local_path(&current_dir, repository_working_dir_abs)?;
+        let remote_program = self.remote_arg(&program, repository_working_dir_abs);
+        let remote_args = args
+            .iter()
+            .map(|arg| self.remote_arg(arg, repository_working_dir_abs))
+            .collect::<Vec<_>>();
+        let script = r#"
+set +e
+input_root="$1"
+work_root="$2"
+remote_working_dir="$3"
+output_tar="$4"
+shift 4
+rm -rf "$work_root"
+mkdir -p "$work_root"
+if [ -d "$input_root" ]; then
+  cp -a "$input_root"/. "$work_root"/
+fi
+mkdir -p "$remote_working_dir"
+cd "$remote_working_dir"
+"$@"
+rc=$?
+mkdir -p "$(dirname "$output_tar")"
+tar -cf "$output_tar" -C "$work_root" .
+tar_rc=$?
+if [ "$tar_rc" -ne 0 ]; then
+  exit "$tar_rc"
+fi
+exit "$rc"
+"#;
+
+        let mut request_args = vec![
+            "-c".to_owned(),
+            script.to_owned(),
+            "buck2-remote-repository-ctx".to_owned(),
+            remote_input_root,
+            remote_repo_root.to_owned(),
+            remote_working_dir,
+            output_project_path.as_str().to_owned(),
+            remote_program,
+        ];
+        request_args.extend(remote_args);
+
+        let request = buck2_execute::execute::request::CommandExecutionRequest::new(
+            vec!["/bin/sh".to_owned()],
+            request_args,
+            paths,
+            env,
+        )
+        .with_timeout(Duration::from_secs(timeout as u64))
+        .with_executor_preference(ExecutorPreference::RemoteRequired)
+        .with_prefetch_lossy_stderr(true);
+
+        let prepared_action = self
+            .command_executor
+            .prepare_action(&request, self.digest_config, true)
+            .map_err(|error| error.to_string())?;
+        let target = RepositoryCommandExecutionTarget {
+            repository: repository_working_dir_rel.as_str().to_owned(),
+            program: program.clone(),
+        };
+        let prepared_command = PreparedCommand {
+            request: &request,
+            target: &target,
+            prepared_action: &prepared_action,
+            digest_config: self.digest_config,
+        };
+        let manager = CommandExecutionManager::new(
+            Box::new(MutexClaimManager::new()),
+            buck2_events::dispatch::get_dispatcher(),
+            NoopLivelinessObserver::create(),
+            Default::default(),
+        );
+        let result = self
+            .command_executor
+            .exec_cmd(
+                manager,
+                &prepared_command,
+                dice_futures::cancellation::CancellationContext::never_cancelled(),
+            )
+            .await;
+
+        let status_string = result.report.status.to_string();
+        let return_code = result.report.exit_code.unwrap_or(256);
+        let streams = result
+            .report
+            .std_streams
+            .into_bytes()
+            .await
+            .map_err(|error| error.to_string())?;
+        if !quiet {
+            std::io::stderr()
+                .write_all(&streams.stdout)
+                .map_err(|error| error.to_string())?;
+            std::io::stderr()
+                .write_all(&streams.stderr)
+                .map_err(|error| error.to_string())?;
+        }
+
+        match result.report.status {
+            CommandExecutionStatus::Success { .. }
+            | CommandExecutionStatus::Failure { .. }
+            | CommandExecutionStatus::TimedOut { .. } => {
+                self.unpack_remote_repository_tree(
+                    &output_project_path,
+                    repository_working_dir_abs,
+                )
+                .map_err(|error| error.to_string())?;
+                Ok(RepositoryCommandOutput {
+                    stdout: streams.stdout,
+                    stderr: streams.stderr,
+                    return_code,
+                })
+            }
+            _ => Err(status_string),
+        }
+    }
+
+    fn remote_environment(
+        &self,
+        command: &Command,
+        repository_working_dir: &Path,
+    ) -> Result<sorted_vector_map::SortedVectorMap<String, String>, String> {
+        let mut env = sorted_vector_map::SortedVectorMap::new();
+        for (key, value) in command.get_envs() {
+            let key = key
+                .to_str()
+                .ok_or_else(|| "repository_ctx.execute environment key is not UTF-8".to_owned())?
+                .to_owned();
+            if let Some(value) = value {
+                env.insert(
+                    key,
+                    self.remote_arg(&value.to_string_lossy(), repository_working_dir),
+                );
+            }
+        }
+        Ok(env)
+    }
+
+    async fn add_disk_input(
+        &self,
+        inputs: &mut Vec<CommandExecutionInput>,
+        path: &Path,
+    ) -> Result<(), String> {
+        let Some(project_relative_path) = self.project_relative_from_abs_path(path) else {
+            return Ok(());
+        };
+        if inputs.iter().any(|input| match input {
+            CommandExecutionInput::IncrementalRemoteOutput(existing, _) => {
+                existing == &project_relative_path
+            }
+            _ => false,
+        }) {
+            return Ok(());
+        }
+        let abs_path = self.project_root.resolve(&project_relative_path);
+        let (entry, _hashing) = build_entry_from_disk(
+            abs_path,
+            FileDigestConfig::build(self.digest_config.cas_digest_config()),
+            self.blocking_executor.as_ref(),
+            self.project_root.root(),
+        )
+        .await
+        .map_err(|error| error.to_string())?;
+        let entry = match entry {
+            Some(entry) => self.share_entry(entry),
+            None => DirectoryEntry::Dir(self.digest_config.empty_directory()),
+        };
+        inputs.push(CommandExecutionInput::IncrementalRemoteOutput(
+            project_relative_path,
+            entry,
+        ));
+        Ok(())
+    }
+
+    fn share_entry(
+        &self,
+        entry: ActionDirectoryEntry<ActionDirectoryBuilder>,
+    ) -> ActionDirectoryEntry<ActionSharedDirectory> {
+        entry.map_dir(|dir| {
+            dir.fingerprint(self.digest_config.as_directory_serializer())
+                .shared(&*INTERNER)
+        })
+    }
+
+    fn absolute_project_path(&self, value: &str) -> Option<PathBuf> {
+        let path = Path::new(value);
+        if !path.is_absolute() || !path.starts_with(self.project_root.root().as_path()) {
+            return None;
+        }
+        Some(path.to_path_buf())
+    }
+
+    fn remote_path_for_local_path(
+        &self,
+        path: &Path,
+        repository_working_dir: &Path,
+    ) -> Result<String, String> {
+        if path.starts_with(repository_working_dir) {
+            let suffix = path
+                .strip_prefix(repository_working_dir)
+                .map_err(|error| error.to_string())?;
+            return Ok(remote_repo_path(suffix));
+        }
+        self.project_relative_from_abs_path(path)
+            .map(|path| path.as_str().to_owned())
+            .ok_or_else(|| {
+                format!(
+                    "remote repository_ctx.execute cannot use working directory outside project root: {}",
+                    path.display()
+                )
+            })
+    }
+
+    fn remote_arg(&self, value: &str, repository_working_dir: &Path) -> String {
+        let path = Path::new(value);
+        if path.is_absolute() {
+            if path.starts_with(repository_working_dir)
+                && let Ok(suffix) = path.strip_prefix(repository_working_dir)
+            {
+                return remote_repo_path(suffix);
+            }
+            if let Some(project_relative) = self.project_relative_from_abs_path(path) {
+                return project_relative.as_str().to_owned();
+            }
+        }
+        value.to_owned()
+    }
+
+    fn project_relative_from_abs_path(&self, path: &Path) -> Option<ProjectRelativePathBuf> {
+        let suffix = path.strip_prefix(self.project_root.root().as_path()).ok()?;
+        let suffix = suffix.to_string_lossy();
+        Some(ProjectRelativePathBuf::unchecked_new(suffix.into_owned()))
+    }
+
+    fn unpack_remote_repository_tree(
+        &self,
+        output_project_path: &ProjectRelativePath,
+        repository_working_dir: &Path,
+    ) -> buck2_error::Result<()> {
+        let tar_path = self.project_root.resolve(output_project_path);
+        fs::remove_dir_all(repository_working_dir).or_else(|error| {
+            if error.kind() == std::io::ErrorKind::NotFound {
+                Ok(())
+            } else {
+                Err(error)
+            }
+        })?;
+        fs::create_dir_all(repository_working_dir)?;
+        let file = File::open(&tar_path)
+            .with_buck_error_context(|| format!("opening remote repository result `{tar_path}`"))?;
+        let mut archive = Archive::new(file);
+        archive
+            .unpack(repository_working_dir)
+            .with_buck_error_context(|| {
+                format!(
+                    "extracting remote repository result `{}` into `{}`",
+                    tar_path,
+                    repository_working_dir.display()
+                )
+            })?;
+        Ok(())
+    }
+}
+
+fn remote_repo_path(suffix: &Path) -> String {
+    if suffix.as_os_str().is_empty() {
+        "__buck2_repository_ctx_work".to_owned()
+    } else {
+        format!("__buck2_repository_ctx_work/{}", suffix.to_string_lossy())
+    }
+}
+
+#[derive(Debug)]
+struct RepositoryCommandExecutionTarget {
+    repository: String,
+    program: String,
+}
+
+impl CommandExecutionTarget for RepositoryCommandExecutionTarget {
+    fn re_action_key(&self) -> String {
+        format!(
+            "repository_ctx_execute {} {}",
+            self.repository, self.program
+        )
+    }
+
+    fn re_affinity_key(&self) -> String {
+        self.repository.clone()
+    }
+
+    fn as_proto_action_key(&self) -> buck2_data::ActionKey {
+        buck2_data::ActionKey {
+            id: self.re_action_key().into_bytes(),
+            owner: None,
+            key: self.re_action_key(),
+        }
+    }
+
+    fn as_proto_action_name(&self) -> buck2_data::ActionName {
+        buck2_data::ActionName {
+            category: "BazelRepositoryExecute".to_owned(),
+            identifier: self.program.clone(),
+        }
+    }
 }
 
 impl RepositoryPathLabelDep {
@@ -2806,12 +3294,18 @@ pub(crate) fn alloc_bzlmod_module_extension_context<'v>(
     }
     let modules = eval.heap().alloc(AllocList(modules));
 
+    let command_executor = BuildContext::from_context(eval)?
+        .bazel_repository_context
+        .as_ref()
+        .map(|context| context.command_executor.clone())
+        .unwrap_or(BazelRepositoryCommandExecutor::Local);
     let module_ctx = StarlarkModuleExtensionContext::new(
         modules,
         working_dir.to_owned(),
         config.root_module_has_non_dev_dependency,
         repo_env,
         recorded_inputs,
+        command_executor,
     );
     for name in &extension.environ {
         record_repository_env_var(&module_ctx.repo_env, &module_ctx.recorded_inputs, name);
@@ -2879,6 +3373,11 @@ pub(crate) fn alloc_bzlmod_repository_context<'v>(
         attrs,
         name: invocation.name.clone(),
     };
+    let command_executor = BuildContext::from_context(eval)?
+        .bazel_repository_context
+        .as_ref()
+        .map(|context| context.command_executor.clone())
+        .unwrap_or(BazelRepositoryCommandExecutor::Local);
     let repository_ctx = StarlarkRepositoryContext::new(
         invocation.name.clone(),
         invocation.original_name.clone(),
@@ -2887,6 +3386,7 @@ pub(crate) fn alloc_bzlmod_repository_context<'v>(
         repository_ctx_workspace_root(working_dir),
         repo_env,
         recorded_inputs,
+        command_executor,
     );
     for name in &repository_rule.environ {
         record_repository_env_var(
@@ -3559,35 +4059,75 @@ impl<'v> StarlarkValue<'v> for FrozenStarlarkRepositoryOs {
     }
 }
 
-#[derive(
-    Clone,
-    Debug,
-    ProvidesStaticType,
-    Trace,
-    Freeze,
-    NoSerialize,
-    Allocative
-)]
+#[derive(Clone, Debug)]
+struct BazelRepositoryPathRemoteContext {
+    working_dir: String,
+    command_executor: BazelRepositoryCommandExecutor,
+}
+
+#[derive(Clone, Debug, ProvidesStaticType, Trace, NoSerialize, Allocative)]
 pub(crate) struct StarlarkRepositoryPath {
     path: String,
     #[trace(unsafe_ignore)]
     dep: Option<RepositoryPathLabelDep>,
+    #[trace(unsafe_ignore)]
+    #[allocative(skip)]
+    remote_context: Option<BazelRepositoryPathRemoteContext>,
 }
 
 starlark_simple_value!(StarlarkRepositoryPath);
 
+impl Freeze for StarlarkRepositoryPath {
+    type Frozen = StarlarkRepositoryPath;
+
+    fn freeze(self, _freezer: &Freezer) -> FreezeResult<Self::Frozen> {
+        Ok(self)
+    }
+}
+
 impl StarlarkRepositoryPath {
     fn new(path: String) -> Self {
-        Self { path, dep: None }
+        Self {
+            path,
+            dep: None,
+            remote_context: None,
+        }
+    }
+
+    fn new_remote(path: String, remote_context: BazelRepositoryPathRemoteContext) -> Self {
+        Self {
+            path,
+            dep: None,
+            remote_context: Some(remote_context),
+        }
     }
 
     fn new_with_dep(path: String, dep: Option<RepositoryPathLabelDep>) -> Self {
-        Self { path, dep }
+        Self {
+            path,
+            dep,
+            remote_context: None,
+        }
+    }
+
+    fn new_with_remote(
+        path: String,
+        remote_context: Option<BazelRepositoryPathRemoteContext>,
+        dep: Option<RepositoryPathLabelDep>,
+    ) -> Self {
+        Self {
+            path,
+            dep,
+            remote_context,
+        }
     }
 }
 
 impl Display for StarlarkRepositoryPath {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.remote_context.is_some() {
+            return self.path.fmt(f);
+        }
         repository_path_for_read_abs(&self.path)
             .to_string_lossy()
             .fmt(f)
@@ -3618,8 +4158,17 @@ fn repository_path_methods(builder: &mut MethodsBuilder) {
             .parent()
             .map(|path| path.to_string_lossy().into_owned())
             .unwrap_or_default();
-        let dep = repository_ctx_external_input_tree_dep(Path::new(&path));
-        Ok(StarlarkRepositoryPath::new_with_dep(path, dep))
+        let remote_context = this.remote_context.clone();
+        let dep = if remote_context.is_some() {
+            None
+        } else {
+            repository_ctx_external_input_tree_dep(Path::new(&path))
+        };
+        Ok(StarlarkRepositoryPath::new_with_remote(
+            path,
+            remote_context,
+            dep,
+        ))
     }
 
     fn get_child<'v>(
@@ -3640,23 +4189,53 @@ fn repository_path_methods(builder: &mut MethodsBuilder) {
             };
             path.push(child);
         }
-        Ok(StarlarkRepositoryPath::new(
+        Ok(StarlarkRepositoryPath::new_with_remote(
             path.to_string_lossy().into_owned(),
+            this.remote_context.clone(),
+            None,
         ))
     }
 
     #[starlark(attribute)]
     fn exists(this: &StarlarkRepositoryPath) -> starlark::Result<bool> {
+        if let Some(remote_context) = &this.remote_context {
+            return repository_remote_path_test(remote_context, "test -e \"$1\"", &this.path);
+        }
         Ok(Path::new(&repository_path_for_read(&this.path)).exists())
     }
 
     #[starlark(attribute)]
     fn is_dir(this: &StarlarkRepositoryPath) -> starlark::Result<bool> {
+        if let Some(remote_context) = &this.remote_context {
+            return repository_remote_path_test(remote_context, "test -d \"$1\"", &this.path);
+        }
         Ok(Path::new(&repository_path_for_read(&this.path)).is_dir())
     }
 
     #[starlark(attribute)]
     fn realpath(this: &StarlarkRepositoryPath) -> starlark::Result<StarlarkRepositoryPath> {
+        if let Some(remote_context) = &this.remote_context {
+            let output = repository_remote_shell(
+                remote_context,
+                "readlink -f \"$1\"",
+                &[this.path.clone()],
+                60,
+                true,
+            )?;
+            if output.return_code != 0 {
+                return Err(buck2_error::Error::from(
+                    BazelRepositoryError::RepositoryPathRealpath {
+                        path: this.path.clone(),
+                        error: repository_ctx_latin1_output(&output.stderr),
+                    },
+                )
+                .into());
+            }
+            return Ok(StarlarkRepositoryPath::new_remote(
+                String::from_utf8_lossy(&output.stdout).trim().to_owned(),
+                remote_context.clone(),
+            ));
+        }
         let read_path = repository_path_for_read(&this.path);
         let path = fs::canonicalize(&read_path).map_err(|error| {
             buck2_error::Error::from(BazelRepositoryError::RepositoryPathRealpath {
@@ -3677,12 +4256,46 @@ fn repository_path_methods(builder: &mut MethodsBuilder) {
         if repository_should_record_watch(watch)?
             && let Ok(build_context) = BuildContext::from_context(eval)
             && let Some(repository_context) = &build_context.bazel_repository_context
+            && this.remote_context.is_none()
         {
             record_repository_dirents_input(
                 &repository_context.recorded_inputs,
                 &this.path,
                 &repository_context.working_dir,
             )?;
+        }
+        if let Some(remote_context) = &this.remote_context {
+            let output = repository_remote_shell(
+                remote_context,
+                "for f in \"$1\"/* \"$1\"/.[!.]* \"$1\"/..?*; do [ -e \"$f\" ] && basename \"$f\"; done",
+                &[this.path.clone()],
+                60,
+                true,
+            )?;
+            if output.return_code != 0 {
+                return Err(buck2_error::Error::from(
+                    BazelRepositoryError::RepositoryPathReaddir {
+                        path: this.path.clone(),
+                        error: repository_ctx_latin1_output(&output.stderr),
+                    },
+                )
+                .into());
+            }
+            let mut paths = repository_ctx_latin1_output(&output.stdout)
+                .lines()
+                .filter(|entry| !entry.is_empty())
+                .map(|entry| {
+                    StarlarkRepositoryPath::new_remote(
+                        Path::new(&this.path)
+                            .join(entry)
+                            .to_string_lossy()
+                            .into_owned(),
+                        remote_context.clone(),
+                    )
+                })
+                .collect::<Vec<_>>();
+            paths.sort_by(|left, right| left.path.cmp(&right.path));
+            return Ok(paths);
         }
         let read_path = repository_path_for_read(&this.path);
         let entries = fs::read_dir(&read_path).map_err(|error| {
@@ -3758,6 +4371,89 @@ fn repository_path_and_dep_from_value_relative_to(
         ))
         .into(),
     )
+}
+
+fn repository_remote_path_test(
+    remote_context: &BazelRepositoryPathRemoteContext,
+    script: &str,
+    path: &str,
+) -> starlark::Result<bool> {
+    let output = repository_remote_shell(remote_context, script, &[path.to_owned()], 60, true)?;
+    Ok(output.return_code == 0)
+}
+
+fn repository_remote_shell(
+    remote_context: &BazelRepositoryPathRemoteContext,
+    script: &str,
+    args: &[String],
+    timeout: i32,
+    quiet: bool,
+) -> starlark::Result<RepositoryCommandOutput> {
+    repository_remote_shell_with_env_in_context(remote_context, script, args, &[], timeout, quiet)
+}
+
+fn repository_remote_shell_with_env(
+    eval: &mut Evaluator<'_, '_, '_>,
+    script: &str,
+    args: &[String],
+    envs: &[(&str, String)],
+    timeout: i32,
+    quiet: bool,
+) -> starlark::Result<RepositoryCommandOutput> {
+    let build_context = BuildContext::from_context(eval)?;
+    let repository_context = build_context
+        .bazel_repository_context
+        .as_ref()
+        .ok_or_else(|| {
+            buck2_error::buck2_error!(
+                buck2_error::ErrorTag::Input,
+                "remote repository path operation is only available in repository/module context"
+            )
+        })?;
+    let remote_context = BazelRepositoryPathRemoteContext {
+        working_dir: repository_context.working_dir.clone(),
+        command_executor: repository_context.command_executor.clone(),
+    };
+    repository_remote_shell_with_env_in_context(&remote_context, script, args, envs, timeout, quiet)
+}
+
+fn repository_remote_shell_with_env_in_context(
+    remote_context: &BazelRepositoryPathRemoteContext,
+    script: &str,
+    args: &[String],
+    envs: &[(&str, String)],
+    timeout: i32,
+    quiet: bool,
+) -> starlark::Result<RepositoryCommandOutput> {
+    let BazelRepositoryCommandExecutor::Remote(command_executor) =
+        remote_context.command_executor.clone()
+    else {
+        return Err(buck2_error::buck2_error!(
+            buck2_error::ErrorTag::Input,
+            "remote repository path operation requires a remote repository executor"
+        )
+        .into());
+    };
+    let working_dir_abs =
+        repository_path_for_write(&remote_context.working_dir).map_err(starlark::Error::from)?;
+    let mut command = Command::new("/bin/sh");
+    command.env_clear();
+    command.env("PATH", "/usr/bin:/bin:/usr/local/bin");
+    for (key, value) in envs {
+        command.env(key, value);
+    }
+    command.args(["-c", script, "buck2-remote-repository-path"]);
+    command.args(args);
+    command.current_dir(working_dir_abs);
+    command_executor
+        .execute(command, &remote_context.working_dir, timeout, quiet)
+        .map_err(|error| {
+            buck2_error::Error::from(BazelRepositoryError::RepositoryCtxExecuteFailed {
+                program: "/bin/sh".to_owned(),
+                error,
+            })
+            .into()
+        })
 }
 
 fn repository_join_normalized(root: &str, path: &str) -> String {
@@ -3978,6 +4674,9 @@ pub(crate) struct StarlarkRepositoryContext<'v> {
     #[trace(unsafe_ignore)]
     #[allocative(skip)]
     recorded_inputs: Arc<Mutex<Vec<BazelRepositoryRecordedInput>>>,
+    #[trace(unsafe_ignore)]
+    #[allocative(skip)]
+    command_executor: BazelRepositoryCommandExecutor,
     _marker: std::marker::PhantomData<&'v ()>,
 }
 
@@ -3990,6 +4689,7 @@ impl<'v> StarlarkRepositoryContext<'v> {
         workspace_root: String,
         repo_env: Arc<BTreeMap<String, String>>,
         recorded_inputs: Arc<Mutex<Vec<BazelRepositoryRecordedInput>>>,
+        command_executor: BazelRepositoryCommandExecutor,
     ) -> Self {
         Self {
             name,
@@ -4001,6 +4701,7 @@ impl<'v> StarlarkRepositoryContext<'v> {
             files: Mutex::new(Vec::new()),
             path_label_deps: Mutex::new(Vec::new()),
             recorded_inputs,
+            command_executor,
             _marker: std::marker::PhantomData,
         }
     }
@@ -4096,6 +4797,7 @@ impl<'v> Freeze for StarlarkRepositoryContext<'v> {
                     .expect("repository_ctx path label deps poisoned"),
             ),
             recorded_inputs: self.recorded_inputs,
+            command_executor: self.command_executor,
         })
     }
 }
@@ -4115,6 +4817,8 @@ pub(crate) struct FrozenStarlarkRepositoryContext {
     path_label_deps: Mutex<Vec<RepositoryPathLabelDep>>,
     #[allocative(skip)]
     recorded_inputs: Arc<Mutex<Vec<BazelRepositoryRecordedInput>>>,
+    #[allocative(skip)]
+    command_executor: BazelRepositoryCommandExecutor,
 }
 
 impl Display for FrozenStarlarkRepositoryContext {
@@ -4427,6 +5131,15 @@ fn repository_ctx_recorded_inputs<'v>(
     match this.unpack() {
         either::Either::Left(ctx) => ctx.recorded_inputs.clone(),
         either::Either::Right(ctx) => ctx.recorded_inputs.clone(),
+    }
+}
+
+fn repository_ctx_command_executor<'v>(
+    this: ValueTypedComplex<'v, StarlarkRepositoryContext<'v>>,
+) -> BazelRepositoryCommandExecutor {
+    match this.unpack() {
+        either::Either::Left(ctx) => ctx.command_executor.clone(),
+        either::Either::Right(ctx) => ctx.command_executor.clone(),
     }
 }
 
@@ -5144,7 +5857,7 @@ fn repository_ctx_rename_files_from_entries(
     Ok(rename_files)
 }
 
-fn repository_ctx_execute_output(
+fn repository_ctx_execute_output_local(
     command: Command,
     timeout: i32,
     quiet: bool,
@@ -5505,8 +6218,31 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<NoneType> {
         let working_dir = repository_ctx_working_dir(this);
+        let target_remote_context = target
+            .downcast_ref::<StarlarkRepositoryPath>()
+            .and_then(|path| path.remote_context.clone());
         let target = repository_ctx_path_from_value_relative_to(this, target, eval)?;
         let link = repository_ctx_output_path_from_value_relative_to(link_name, eval, working_dir)?;
+        if let Some(remote_context) = target_remote_context {
+            let output = repository_remote_shell(
+                &remote_context,
+                "mkdir -p \"$(dirname \"$2\")\" && rm -rf \"$2\" && ln -s \"$1\" \"$2\"",
+                &[target.clone(), link.clone()],
+                60,
+                true,
+            )?;
+            if output.return_code != 0 {
+                return Err(
+                    buck2_error::Error::from(BazelRepositoryError::RepositoryCtxSymlink {
+                        target,
+                        link,
+                        error: repository_ctx_latin1_output(&output.stderr),
+                    })
+                    .into(),
+                );
+            }
+            return Ok(NoneType);
+        }
         let target_path = repository_path_for_read_abs_relative_to(&target, working_dir);
         let link_abs = Path::new(working_dir)
             .join(&link)
@@ -5574,6 +6310,35 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
         let Some(path) = record_repository_env_var(&repo_env, &recorded_inputs, "PATH") else {
             return Ok(Value::new_none());
         };
+        if matches!(
+            repository_ctx_command_executor(this),
+            BazelRepositoryCommandExecutor::Remote(_)
+        ) {
+            let remote_context = BazelRepositoryPathRemoteContext {
+                working_dir: repository_ctx_working_dir(this).to_owned(),
+                command_executor: repository_ctx_command_executor(this),
+            };
+            let output = repository_remote_shell_with_env(
+                eval,
+                "command -v \"$1\"",
+                &[program.to_owned()],
+                &[("PATH", path.clone())],
+                60,
+                true,
+            )?;
+            if output.return_code == 0 {
+                let path = repository_ctx_latin1_output(&output.stdout)
+                    .trim()
+                    .to_owned();
+                if !path.is_empty() {
+                    return Ok(eval
+                        .heap()
+                        .alloc(StarlarkRepositoryPath::new_remote(path, remote_context))
+                        .to_value());
+                }
+            }
+            return Ok(Value::new_none());
+        }
         for dir in env::split_paths(std::ffi::OsStr::new(&path)) {
             if !dir.is_absolute() {
                 continue;
@@ -5670,12 +6435,14 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
             })
         })?;
         command.current_dir(working_directory);
-        let output = repository_ctx_execute_output(command, timeout, quiet).map_err(|error| {
-            buck2_error::Error::from(BazelRepositoryError::RepositoryCtxExecuteFailed {
-                program: program.clone(),
-                error,
-            })
-        })?;
+        let output = repository_ctx_command_executor(this)
+            .execute(command, &repository_working_dir, timeout, quiet)
+            .map_err(|error| {
+                buck2_error::Error::from(BazelRepositoryError::RepositoryCtxExecuteFailed {
+                    program: program.clone(),
+                    error,
+                })
+            })?;
         Ok(eval.heap().alloc(AllocStruct([
             (
                 "stdout",
@@ -5832,6 +6599,9 @@ pub(crate) struct StarlarkModuleExtensionContext<'v> {
     #[trace(unsafe_ignore)]
     #[allocative(skip)]
     recorded_inputs: Arc<Mutex<Vec<BazelRepositoryRecordedInput>>>,
+    #[trace(unsafe_ignore)]
+    #[allocative(skip)]
+    command_executor: BazelRepositoryCommandExecutor,
 }
 
 #[allow(dead_code)]
@@ -5842,6 +6612,7 @@ impl<'v> StarlarkModuleExtensionContext<'v> {
         root_module_has_non_dev_dependency: bool,
         repo_env: Arc<BTreeMap<String, String>>,
         recorded_inputs: Arc<Mutex<Vec<BazelRepositoryRecordedInput>>>,
+        command_executor: BazelRepositoryCommandExecutor,
     ) -> Self {
         Self {
             modules,
@@ -5850,6 +6621,7 @@ impl<'v> StarlarkModuleExtensionContext<'v> {
             repo_env,
             path_label_deps: Mutex::new(Vec::new()),
             recorded_inputs,
+            command_executor,
         }
     }
 
@@ -5935,6 +6707,7 @@ impl<'v> Freeze for StarlarkModuleExtensionContext<'v> {
                     .expect("module_ctx path label deps poisoned"),
             ),
             recorded_inputs: self.recorded_inputs,
+            command_executor: self.command_executor,
         })
     }
 }
@@ -5951,6 +6724,8 @@ pub(crate) struct FrozenStarlarkModuleExtensionContext {
     path_label_deps: Mutex<Vec<RepositoryPathLabelDep>>,
     #[allocative(skip)]
     recorded_inputs: Arc<Mutex<Vec<BazelRepositoryRecordedInput>>>,
+    #[allocative(skip)]
+    command_executor: BazelRepositoryCommandExecutor,
 }
 
 impl Display for FrozenStarlarkModuleExtensionContext {
@@ -7519,6 +8294,15 @@ fn module_ctx_recorded_inputs<'v>(
     }
 }
 
+fn module_ctx_command_executor<'v>(
+    this: ValueTypedComplex<'v, StarlarkModuleExtensionContext<'v>>,
+) -> BazelRepositoryCommandExecutor {
+    match this.unpack() {
+        either::Either::Left(ctx) => ctx.command_executor.clone(),
+        either::Either::Right(ctx) => ctx.command_executor.clone(),
+    }
+}
+
 #[starlark_module]
 fn module_extension_context_methods(builder: &mut MethodsBuilder) {
     fn is_dev_dependency<'v>(
@@ -7691,12 +8475,14 @@ fn module_extension_context_methods(builder: &mut MethodsBuilder) {
             })
         })?;
         command.current_dir(working_directory);
-        let output = repository_ctx_execute_output(command, timeout, quiet).map_err(|error| {
-            buck2_error::Error::from(BazelRepositoryError::RepositoryCtxExecuteFailed {
-                program: program.clone(),
-                error,
-            })
-        })?;
+        let output = module_ctx_command_executor(this)
+            .execute(command, &repository_working_dir, timeout, quiet)
+            .map_err(|error| {
+                buck2_error::Error::from(BazelRepositoryError::RepositoryCtxExecuteFailed {
+                    program: program.clone(),
+                    error,
+                })
+            })?;
         Ok(eval.heap().alloc(AllocStruct([
             (
                 "stdout",
