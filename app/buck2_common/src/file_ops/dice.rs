@@ -73,6 +73,12 @@ const MAX_NO_WATCHFS_FILE_CHANGE_RECORDS: usize = 100;
 const MAX_EXTERNAL_SYMLINK_EXPANSIONS: usize = 256;
 static EXTERNAL_FILE_STATE_SEEN: AtomicBool = AtomicBool::new(false);
 
+#[derive(Copy, Clone, Dupe, Debug, Eq, PartialEq)]
+pub enum FollowedPathType {
+    File,
+    Directory,
+}
+
 /// Functions for accessing files with keys on the dice graph.
 impl DiceFileComputations {
     /// Filters out ignored paths
@@ -183,6 +189,57 @@ impl DiceFileComputations {
         match Self::read_path_metadata_if_exists(ctx, path).await {
             Ok(result) => result.ok_or_else(|| FileReadError::NotFound(path.to_string())),
             Err(e) => Err(FileReadError::Buck(e)),
+        }
+    }
+
+    /// Returns the real file type after resolving symlinks, matching Bazel's `FileValue`
+    /// behavior for exact glob patterns.
+    pub async fn followed_path_type_if_exists(
+        ctx: &mut DiceComputations<'_>,
+        path: CellPathRef<'_>,
+    ) -> buck2_error::Result<Option<FollowedPathType>> {
+        let mut metadata = ctx
+            .compute(&PathMetadataForNoWatchFsKey(path.to_owned()))
+            .await??;
+        let mut seen = StdBuckHashSet::default();
+        loop {
+            match metadata {
+                None => return Ok(None),
+                Some(RawPathMetadataForNoWatchFs::File(_)) => {
+                    return Ok(Some(FollowedPathType::File));
+                }
+                Some(RawPathMetadataForNoWatchFs::Directory) => {
+                    return Ok(Some(FollowedPathType::Directory));
+                }
+                Some(RawPathMetadataForNoWatchFs::Symlink {
+                    at: _,
+                    to: RawSymlink::Relative(target, _),
+                }) => {
+                    let target = target.as_ref().clone();
+                    if !seen.insert(target.clone()) {
+                        mark_bazel_skyframe_key_with_detail(
+                            ctx,
+                            BazelSkyframeFunction::FileSymlinkCycleUniqueness,
+                            target.to_string(),
+                        )
+                        .await?;
+                        return Err(internal_error!(
+                            "symlink cycle while resolving path metadata at `{}`",
+                            target
+                        ));
+                    }
+                    metadata = ctx.compute(&PathMetadataForNoWatchFsKey(target)).await??;
+                }
+                Some(RawPathMetadataForNoWatchFs::Symlink {
+                    at: _,
+                    to: RawSymlink::External(target),
+                }) => {
+                    let external_metadata = ctx
+                        .compute(&ExternalPathMetadataKey(target.with_full_target()?))
+                        .await??;
+                    return Ok(external_metadata.followed_path_type());
+                }
+            }
         }
     }
 
@@ -774,6 +831,23 @@ struct ExternalPathState {
     metadata: Option<RawPathMetadataForNoWatchFs<Arc<ExternalSymlink>>>,
 }
 
+impl ExternalPathMetadata {
+    fn followed_path_type(&self) -> Option<FollowedPathType> {
+        match self
+            .logical_chain
+            .last()
+            .and_then(|state| state.metadata.as_ref())
+        {
+            Some(RawPathMetadataForNoWatchFs::File(_)) => Some(FollowedPathType::File),
+            Some(RawPathMetadataForNoWatchFs::Directory) => Some(FollowedPathType::Directory),
+            Some(RawPathMetadataForNoWatchFs::Symlink { .. }) => {
+                unreachable!("external path metadata resolution stops at non-symlink metadata")
+            }
+            None => None,
+        }
+    }
+}
+
 async fn read_external_path_metadata(
     path: Arc<ExternalSymlink>,
 ) -> buck2_error::Result<ExternalPathMetadata> {
@@ -1060,6 +1134,31 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn followed_path_type_resolves_relative_symlink() -> buck2_error::Result<()> {
+        let cell = CellName::testing_new("cell");
+        let link = cell_path(cell, "link");
+        let target = cell_path(cell, "target");
+
+        let file_ops = TestFileOps::new_with_files_and_relative_symlinks(
+            BTreeMap::from([(target.clone(), "contents".to_owned())]),
+            BTreeMap::from([(link.clone(), target)]),
+        );
+        let mut ctx = file_ops
+            .mock_in_cell(cell, DiceBuilder::new())
+            .build(UserComputationData::new())
+            .unwrap()
+            .commit()
+            .await;
+
+        assert_eq!(
+            DiceFileComputations::followed_path_type_if_exists(&mut ctx, link.as_ref()).await?,
+            Some(FollowedPathType::File)
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn read_file_key_tracks_external_symlink_target_metadata() -> buck2_error::Result<()> {
         let cell = CellName::testing_new("cell");
         let link = cell_path(cell, "link");
@@ -1093,6 +1192,34 @@ mod tests {
         assert_eq!(
             DiceFileComputations::read_file_if_exists(&mut ctx, link.as_ref()).await?,
             Some("new".to_owned())
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn followed_path_type_resolves_external_symlink() -> buck2_error::Result<()> {
+        let cell = CellName::testing_new("cell");
+        let link = cell_path(cell, "link");
+        let tempdir = TempDir::new()?;
+        let external_file = tempdir.path().join("external");
+        std::fs::write(&external_file, "contents")?;
+
+        let symlink = Arc::new(ExternalSymlink::new(
+            external_file,
+            ForwardRelativePathBuf::default(),
+        )?);
+        let file_ops = TestFileOps::new_with_symlinks(BTreeMap::from([(link.clone(), symlink)]));
+        let mut ctx = file_ops
+            .mock_in_cell(cell, DiceBuilder::new())
+            .build(UserComputationData::new())
+            .unwrap()
+            .commit()
+            .await;
+
+        assert_eq!(
+            DiceFileComputations::followed_path_type_if_exists(&mut ctx, link.as_ref()).await?,
+            Some(FollowedPathType::File)
         );
 
         Ok(())

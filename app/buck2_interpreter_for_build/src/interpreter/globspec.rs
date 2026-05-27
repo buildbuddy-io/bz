@@ -173,6 +173,10 @@ impl GlobSpec {
                 .any(|p| p.0.matches_with(path, options))
     }
 
+    pub(crate) fn exact_matches(&self) -> impl Iterator<Item = &str> {
+        self.exact_matches.iter().map(|path| path.as_str())
+    }
+
     pub(crate) fn resolve_glob<'a>(
         &'a self,
         spec: &'a PackageFileListing,

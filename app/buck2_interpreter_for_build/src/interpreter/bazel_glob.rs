@@ -15,6 +15,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use buck2_common::dice::cells::HasCellResolver;
 use buck2_common::file_ops::dice::DiceFileComputations;
+use buck2_common::file_ops::dice::FollowedPathType;
 use buck2_common::file_ops::metadata::SimpleDirEntry;
 use buck2_common::find_buildfile::find_buildfile;
 use buck2_common::package_listing::PackageListingStrategy;
@@ -215,7 +216,7 @@ async fn compute_package_data_from_single_listing(
         });
     }
     let listing = DicePackageListingResolver(ctx)
-        .resolve_package_listing_with_strategy(package, strategy)
+        .resolve_package_listing_with_strategy(package.dupe(), strategy)
         .await?;
 
     let mut results = BTreeMap::new();
@@ -235,6 +236,14 @@ async fn compute_package_data_from_single_listing(
                             .map(|path| path.as_str().to_owned()),
                     );
                 }
+                add_exact_matches_from_file_values(
+                    ctx,
+                    package.dupe(),
+                    &spec,
+                    request.include_directories,
+                    &mut result,
+                )
+                .await?;
                 result.sort();
                 result.dedup();
                 result
@@ -259,7 +268,7 @@ async fn compute_glob(
     let strategy = package_listing_strategy_from_glob_patterns(&request.include);
     if should_use_fast_package_listing_for_bazel_package_data(ctx, package.dupe()).await? {
         let listing = DicePackageListingResolver(ctx)
-            .resolve_package_listing_with_strategy(package, strategy)
+            .resolve_package_listing_with_strategy(package.dupe(), strategy)
             .await?;
         let mut results = spec
             .resolve_glob(listing.files())
@@ -273,6 +282,14 @@ async fn compute_glob(
                     .map(|path| path.as_str().to_owned()),
             );
         }
+        add_exact_matches_from_file_values(
+            ctx,
+            package.dupe(),
+            &spec,
+            request.include_directories,
+            &mut results,
+        )
+        .await?;
         results.sort();
         results.dedup();
         return Ok(results);
@@ -332,6 +349,32 @@ async fn compute_glob(
     results.sort();
     results.dedup();
     Ok(results)
+}
+
+async fn add_exact_matches_from_file_values(
+    ctx: &mut DiceComputations<'_>,
+    package: PackageLabel,
+    spec: &GlobSpec,
+    include_directories: bool,
+    results: &mut Vec<String>,
+) -> buck2_error::Result<()> {
+    for exact in spec.exact_matches() {
+        if !spec.matches(exact) {
+            continue;
+        }
+        let package_path = PackageRelativePath::new(exact)?;
+        let cell_path = package
+            .as_cell_path()
+            .join(package_path.as_forward_rel_path());
+        match DiceFileComputations::followed_path_type_if_exists(ctx, cell_path.as_ref()).await? {
+            Some(FollowedPathType::File) => results.push(exact.to_owned()),
+            Some(FollowedPathType::Directory) if include_directories => {
+                results.push(exact.to_owned());
+            }
+            Some(FollowedPathType::Directory) | None => {}
+        }
+    }
+    Ok(())
 }
 
 async fn compute_subpackages(

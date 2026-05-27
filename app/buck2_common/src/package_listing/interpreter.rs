@@ -8,7 +8,6 @@
  * above-listed licenses.
  */
 
-use std::io::ErrorKind;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -924,25 +923,10 @@ fn read_raw_dir_entries_direct(
                 file_name
             )
         })?;
-        let mut file_type: FileType = entry
+        let file_type: FileType = entry
             .file_type()
             .buck_error_context("Error reading directory entry type")?
             .into();
-
-        if file_type.is_symlink() {
-            match fs_util::metadata(entry.path()) {
-                Ok(metadata) if metadata.is_dir() => {
-                    file_type = FileType::Directory;
-                }
-                Ok(_) => {}
-                Err(error)
-                    if matches!(
-                        error.io_error_kind(),
-                        Some(ErrorKind::NotFound | ErrorKind::NotADirectory)
-                    ) => {}
-                Err(error) => return Err(error.categorize_internal()),
-            }
-        }
 
         entries.push(RawDirEntry {
             file_name: CompactString::from(file_name),
@@ -1013,4 +997,40 @@ fn bazel_compat_enabled(
         .as_deref()
         .map(|value| matches!(value.trim(), "1" | "true" | "True" | "TRUE"))
         .unwrap_or(false))
+}
+
+#[cfg(test)]
+mod tests {
+    use buck2_core::fs::project::ProjectRootTemp;
+    use buck2_core::fs::project_rel_path::ProjectRelativePath;
+
+    use super::*;
+
+    #[test]
+    #[cfg(unix)]
+    fn read_raw_dir_entries_direct_does_not_follow_symlink_dirs() -> buck2_error::Result<()> {
+        let fs = ProjectRootTemp::new()?;
+        let repo = fs
+            .path()
+            .resolve(ProjectRelativePath::unchecked_new("repo"));
+        let real_dir = repo.join("real_dir");
+        let link_dir = repo.join("link_dir");
+        std::fs::create_dir_all(&real_dir)?;
+        std::os::unix::fs::symlink("real_dir", &link_dir)?;
+
+        let entries =
+            read_raw_dir_entries_direct(fs.path(), ProjectRelativePath::unchecked_new("repo"))?;
+        let real_dir = entries
+            .iter()
+            .find(|entry| entry.file_name.as_str() == "real_dir")
+            .expect("real_dir entry should be present");
+        let link_dir = entries
+            .iter()
+            .find(|entry| entry.file_name.as_str() == "link_dir")
+            .expect("link_dir entry should be present");
+
+        assert_eq!(real_dir.file_type, FileType::Directory);
+        assert_eq!(link_dir.file_type, FileType::Symlink);
+        Ok(())
+    }
 }
