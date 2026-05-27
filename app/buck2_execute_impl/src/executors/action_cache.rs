@@ -155,7 +155,9 @@ async fn query_action_cache_and_download_result(
         );
         return ControlFlow::Continue(manager);
     }
-    if let Some(missing_output) = missing_mandatory_output(request.paths(), &response) {
+    if let Some(missing_output) =
+        missing_mandatory_output(request.paths(), request.working_directory(), &response)
+    {
         tracing::debug!(
             "Cached action result for `{}` did not contain mandatory output `{}`; treating it as a cache miss",
             digest,

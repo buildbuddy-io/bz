@@ -354,6 +354,36 @@ impl CommandExecutionPaths {
         &self.output_paths
     }
 
+    pub fn output_paths_relative_to_working_directory(
+        &self,
+        working_directory: &ProjectRelativePath,
+    ) -> buck2_error::Result<Vec<(ProjectRelativePathBuf, OutputType)>> {
+        self.output_paths
+            .iter()
+            .map(|(path, output_type)| {
+                Ok((
+                    Self::output_path_relative_to_working_directory(path, working_directory)?,
+                    *output_type,
+                ))
+            })
+            .collect()
+    }
+
+    pub fn output_path_relative_to_working_directory(
+        path: &ProjectRelativePath,
+        working_directory: &ProjectRelativePath,
+    ) -> buck2_error::Result<ProjectRelativePathBuf> {
+        let relative = path.strip_prefix_opt(working_directory).ok_or_else(|| {
+            buck2_error!(
+                buck2_error::ErrorTag::Input,
+                "Remote execution output path `{}` is outside working directory `{}`",
+                path,
+                working_directory
+            )
+        })?;
+        Ok(relative.to_owned().into())
+    }
+
     pub fn input_files_bytes(&self) -> u64 {
         self.input_files_bytes
     }
@@ -1074,5 +1104,48 @@ impl ResolvedCommandExecutionOutput {
             OutputCreationBehavior::Create => Some(&self.path),
             OutputCreationBehavior::Parent => self.path.parent(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn output_path_relative_to_empty_working_directory_is_unchanged() -> buck2_error::Result<()> {
+        let path = ProjectRelativePath::new("buck-out/bin/cfg/pkg/out")?;
+        let relative = CommandExecutionPaths::output_path_relative_to_working_directory(
+            path,
+            ProjectRelativePath::empty(),
+        )?;
+        assert_eq!(relative.as_str(), "buck-out/bin/cfg/pkg/out");
+        Ok(())
+    }
+
+    #[test]
+    fn output_path_relative_to_working_directory_strips_prefix() -> buck2_error::Result<()> {
+        let path =
+            ProjectRelativePath::new("buck-out/v2/__bazel_execroot/action/buck-out/bin/cfg/out")?;
+        let working_directory = ProjectRelativePath::new("buck-out/v2/__bazel_execroot/action")?;
+        let relative = CommandExecutionPaths::output_path_relative_to_working_directory(
+            path,
+            working_directory,
+        )?;
+        assert_eq!(relative.as_str(), "buck-out/bin/cfg/out");
+        Ok(())
+    }
+
+    #[test]
+    fn output_path_outside_working_directory_is_rejected() -> buck2_error::Result<()> {
+        let path = ProjectRelativePath::new("buck-out/bin/cfg/out")?;
+        let working_directory = ProjectRelativePath::new("buck-out/v2/__bazel_execroot/action")?;
+        assert!(
+            CommandExecutionPaths::output_path_relative_to_working_directory(
+                path,
+                working_directory
+            )
+            .is_err()
+        );
+        Ok(())
     }
 }

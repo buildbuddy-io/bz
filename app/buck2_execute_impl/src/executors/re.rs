@@ -462,7 +462,8 @@ impl PreparedCommandExecutor for ReExecutor {
 
         #[cfg(not(fbcode_build))]
         if response.execute_response.cached_result {
-            let missing_output = missing_mandatory_output(request.paths(), &response);
+            let missing_output =
+                missing_mandatory_output(request.paths(), request.working_directory(), &response);
             if response.execute_response.action_result.exit_code != 0 || missing_output.is_some() {
                 if let Some(missing_output) = missing_output {
                     tracing::debug!(

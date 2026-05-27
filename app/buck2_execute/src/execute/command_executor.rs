@@ -300,10 +300,13 @@ impl CommandExecutor {
             } else {
                 request.all_args_vec()
             };
+            let output_paths = request
+                .paths()
+                .output_paths_relative_to_working_directory(request.working_directory())?;
             let action = re_create_action(
                 request.args().to_vec(),
                 all_args,
-                request.paths().output_paths(),
+                &output_paths,
                 request.working_directory(),
                 request.env(),
                 input_digest,

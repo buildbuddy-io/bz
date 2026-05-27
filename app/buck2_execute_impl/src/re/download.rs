@@ -8,8 +8,8 @@
  * above-listed licenses.
  */
 
-use std::convert::Infallible;
 use std::collections::HashSet;
+use std::convert::Infallible;
 use std::ops::ControlFlow;
 use std::ops::FromResidual;
 use std::path::Path;
@@ -21,6 +21,7 @@ use buck2_common::file_ops::metadata::Symlink;
 use buck2_common::file_ops::metadata::TrackedFileDigest;
 use buck2_core::fs::artifact_path_resolver::ArtifactFs;
 use buck2_core::fs::buck_out_path::BuildArtifactPath;
+use buck2_core::fs::project_rel_path::ProjectRelativePath;
 use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
 use buck2_directory::directory::entry::DirectoryEntry;
 use buck2_error::BuckErrorContext;
@@ -76,6 +77,7 @@ use crate::storage_resource_exhausted::is_storage_resource_exhausted;
 
 pub fn missing_mandatory_output(
     paths: &CommandExecutionPaths,
+    working_directory: &ProjectRelativePath,
     output_spec: &dyn RemoteActionResult,
 ) -> Option<String> {
     let mut actual_outputs = HashSet::new();
@@ -89,8 +91,12 @@ pub fn missing_mandatory_output(
         actual_outputs.insert(output.name.as_str());
     }
 
-    paths
-        .output_paths()
+    let output_paths = match paths.output_paths_relative_to_working_directory(working_directory) {
+        Ok(output_paths) => output_paths,
+        Err(e) => return Some(e.to_string()),
+    };
+
+    output_paths
         .iter()
         .map(|(path, _)| path.as_str())
         .find(|path| !actual_outputs.contains(*path))
@@ -159,6 +165,7 @@ pub async fn download_action_results<'a>(
         identity,
         stage,
         paths,
+        request.working_directory(),
         requested_outputs,
         response,
         &details,
@@ -311,6 +318,7 @@ impl CasDownloader<'_> {
         identity: &ReActionIdentity<'_>,
         stage: buck2_data::executor_stage_start::Stage,
         paths: &CommandExecutionPaths,
+        working_directory: &ProjectRelativePath,
         requested_outputs: impl IntoIterator<Item = CommandExecutionOutputRef<'a>>,
         output_spec: &dyn RemoteActionResult,
         details: &RemoteCommandExecutionDetails,
@@ -325,7 +333,14 @@ impl CasDownloader<'_> {
         let manager = manager.with_execution_kind(output_spec.execution_kind(details.clone()));
         executor_stage_async(stage, async {
             let artifacts = self
-                .extract_artifacts(artifact_fs, identity, paths, requested_outputs, output_spec)
+                .extract_artifacts(
+                    artifact_fs,
+                    identity,
+                    paths,
+                    working_directory,
+                    requested_outputs,
+                    output_spec,
+                )
                 .await;
 
             let artifacts =
@@ -405,6 +420,7 @@ impl CasDownloader<'_> {
         artifact_fs: &ArtifactFs,
         identity: &ReActionIdentity<'_>,
         paths: &CommandExecutionPaths,
+        working_directory: &ProjectRelativePath,
         requested_outputs: impl IntoIterator<Item = CommandExecutionOutputRef<'a>>,
         output_spec: &dyn RemoteActionResult,
     ) -> buck2_error::Result<ExtractedArtifacts> {
@@ -433,14 +449,16 @@ impl CasDownloader<'_> {
                 is_executable: x.executable,
             }));
 
-            input_dir.insert(re_forward_path(x.name.as_str())?, entry)?;
+            let output_path = re_output_path_to_project_path(working_directory, x.name.as_str())?;
+            input_dir.insert(&output_path, entry)?;
         }
 
         for x in output_spec.output_symlinks() {
             let entry = DirectoryEntry::Leaf(ActionDirectoryMember::Symlink(Arc::new(
                 Symlink::new(RelativePathBuf::from_path(Path::new(&x.target))?),
             )));
-            input_dir.insert(re_forward_path(x.name.as_str())?, entry)?;
+            let output_path = re_output_path_to_project_path(working_directory, x.name.as_str())?;
+            input_dir.insert(&output_path, entry)?;
         }
 
         {
@@ -487,10 +505,9 @@ impl CasDownloader<'_> {
                     self.output_trees_download_config
                         .fingerprint_re_output_trees_eagerly(),
                 )?;
-                input_dir.insert(
-                    re_forward_path(dir.path.as_str())?,
-                    DirectoryEntry::Dir(entry),
-                )?;
+                let output_path =
+                    re_output_path_to_project_path(working_directory, dir.path.as_str())?;
+                input_dir.insert(&output_path, DirectoryEntry::Dir(entry))?;
             }
         }
 
@@ -564,6 +581,13 @@ fn re_forward_path(re_path: &str) -> buck2_error::Result<&ForwardRelativePath> {
     // RE sends us paths with trailing slash.
     ForwardRelativePath::new_trim_trailing_slashes(re_path)
         .buck_error_context("Path received from RE is not normalized.")
+}
+
+fn re_output_path_to_project_path(
+    working_directory: &ProjectRelativePath,
+    re_path: &str,
+) -> buck2_error::Result<ProjectRelativePathBuf> {
+    Ok(working_directory.join(re_forward_path(re_path)?))
 }
 
 struct ExtractedArtifacts {
