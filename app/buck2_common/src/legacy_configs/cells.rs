@@ -4587,7 +4587,7 @@ fn resolve_generated_bzlmod_repos(
                     parent_canonical_repo_name, import.repo_name
                 );
                 let generator_json = serde_json::to_string(
-                    &BzlmodGeneratedCellGenerator::HostPlatform(BzlmodHostPlatformSetup {}),
+                    &BzlmodGeneratedCellGenerator::HostPlatform(BzlmodHostPlatformSetup::default()),
                 )
                 .buck_error_context(
                     "Error serializing generated host_platform repo configuration",
@@ -9270,9 +9270,10 @@ mod tests {
             })
         }
 
-        let host_platform_json = serde_json::to_string(
-            &super::BzlmodGeneratedCellGenerator::HostPlatform(super::BzlmodHostPlatformSetup {}),
-        )?;
+        let host_platform_json =
+            serde_json::to_string(&super::BzlmodGeneratedCellGenerator::HostPlatform(
+                super::BzlmodHostPlatformSetup::default(),
+            ))?;
         assert!(super::bzlmod_external_module_is_configure_repo(&generated(
             "platforms+host_platform+host_platform",
             host_platform_json

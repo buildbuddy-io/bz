@@ -1416,7 +1416,7 @@ fn write_bazel_features_version_repo(
 
 fn write_host_platform_repo(
     dest: &AbsNormPath,
-    _setup: &BzlmodHostPlatformSetup,
+    setup: &BzlmodHostPlatformSetup,
 ) -> buck2_error::Result<()> {
     write_generated_module_file(dest, "host_platform")?;
     fs_util::write(
@@ -1426,10 +1426,18 @@ fn write_host_platform_repo(
     .categorize_internal()?;
 
     let mut constraints = Vec::new();
-    if let Some(cpu) = host_platform_cpu_constraint() {
+    let cpu_constraint = match setup.cpu_constraint.as_deref() {
+        Some(cpu_constraint) => Some(cpu_constraint),
+        None => host_platform_cpu_constraint(),
+    };
+    if let Some(cpu) = cpu_constraint {
         constraints.push(format!("    '@platforms//cpu:{cpu}',"));
     }
-    if let Some(os) = host_platform_os_constraint() {
+    let os_constraint = match setup.os_constraint.as_deref() {
+        Some(os_constraint) => Some(os_constraint),
+        None => host_platform_os_constraint(),
+    };
+    if let Some(os) = os_constraint {
         constraints.push(format!("    '@platforms//os:{os}',"));
     }
     let constraints = if constraints.is_empty() {
@@ -1449,29 +1457,46 @@ fn write_host_platform_repo(
 }
 
 fn host_platform_cpu_constraint() -> Option<&'static str> {
-    match std::env::consts::ARCH {
-        "x86" | "i386" | "i486" | "i586" | "i686" | "i786" => Some("x86_32"),
-        "x86_64" => Some("x86_64"),
-        "powerpc" | "powerpc64" => Some("ppc"),
-        "powerpc64le" => Some("ppc64le"),
-        "arm" | "armv7" => Some("arm"),
+    translate_host_platform_cpu_constraint(std::env::consts::ARCH)
+}
+
+fn translate_host_platform_cpu_constraint(arch: &str) -> Option<&'static str> {
+    match arch {
+        "i386" | "i486" | "i586" | "i686" | "i786" | "x86" => Some("x86_32"),
+        "amd64" | "x86_64" | "x64" => Some("x86_64"),
+        "ppc" | "powerpc" | "powerpc64" => Some("ppc"),
+        "ppc64le" | "powerpc64le" => Some("ppc64le"),
+        "arm" | "armv7" | "armv7l" => Some("arm"),
         "aarch64" => Some("aarch64"),
-        "s390x" => Some("s390x"),
-        "mips64" => Some("mips64"),
+        "s390x" | "s390" => Some("s390x"),
+        "mips64el" | "mips64" => Some("mips64"),
         "riscv64" => Some("riscv64"),
         _ => None,
     }
 }
 
 fn host_platform_os_constraint() -> Option<&'static str> {
-    match std::env::consts::OS {
-        "macos" => Some("osx"),
-        "freebsd" => Some("freebsd"),
-        "openbsd" => Some("openbsd"),
-        "linux" => Some("linux"),
-        "windows" => Some("windows"),
-        _ => None,
+    translate_host_platform_os_constraint(std::env::consts::OS)
+}
+
+fn translate_host_platform_os_constraint(os: &str) -> Option<&'static str> {
+    let os = os.to_ascii_lowercase();
+    if os.starts_with("mac os") || matches!(os.as_str(), "macos" | "osx" | "darwin") {
+        return Some("osx");
     }
+    if os.starts_with("freebsd") {
+        return Some("freebsd");
+    }
+    if os.starts_with("openbsd") {
+        return Some("openbsd");
+    }
+    if os.starts_with("linux") {
+        return Some("linux");
+    }
+    if os.starts_with("windows") {
+        return Some("windows");
+    }
+    None
 }
 
 fn write_bazel_features_globals_repo(
@@ -1726,6 +1751,69 @@ mod tests {
             bzlmod_generated_materialization_stamp_content(&setup)
         );
         assert_eq!(64, key.len());
+    }
+
+    #[test]
+    fn bzlmod_host_platform_translates_bazel_constraints() {
+        assert_eq!(
+            translate_host_platform_cpu_constraint("amd64"),
+            Some("x86_64")
+        );
+        assert_eq!(
+            translate_host_platform_cpu_constraint("armv7l"),
+            Some("arm")
+        );
+        assert_eq!(
+            translate_host_platform_os_constraint("mac os x"),
+            Some("osx")
+        );
+        assert_eq!(
+            translate_host_platform_os_constraint("linux"),
+            Some("linux")
+        );
+        assert_eq!(translate_host_platform_os_constraint("plan9"), None);
+    }
+
+    #[test]
+    fn bzlmod_host_platform_cache_key_includes_constraints() {
+        fn setup(cpu_constraint: &str, os_constraint: &str) -> BzlmodGeneratedCellSetup {
+            BzlmodGeneratedCellSetup {
+                canonical_repo_name: Arc::from("platforms+host_platform+host_platform"),
+                generator: BzlmodGeneratedCellGenerator::HostPlatform(BzlmodHostPlatformSetup {
+                    cpu_constraint: Some(Arc::from(cpu_constraint)),
+                    os_constraint: Some(Arc::from(os_constraint)),
+                }),
+            }
+        }
+
+        assert_ne!(
+            bzlmod_generated_repo_contents_cache_key(&setup("aarch64", "osx")),
+            bzlmod_generated_repo_contents_cache_key(&setup("x86_64", "linux"))
+        );
+    }
+
+    #[test]
+    fn bzlmod_host_platform_repo_writes_effective_constraints() -> buck2_error::Result<()> {
+        let project_root = ProjectRootTemp::new()?;
+        let dest_rel = ProjectRelativePathBuf::testing_new("host_platform");
+        let dest = project_root.path().resolve(&dest_rel);
+        fs_util::create_dir_all(dest.clone()).categorize_internal()?;
+
+        write_host_platform_repo(
+            &dest,
+            &BzlmodHostPlatformSetup {
+                cpu_constraint: Some(Arc::from("x86_64")),
+                os_constraint: Some(Arc::from("linux")),
+            },
+        )?;
+
+        let constraints =
+            fs_util::read_to_string(dest.join(ForwardRelativePath::new("constraints.bzl")?))
+                .categorize_internal()?;
+        assert!(constraints.contains("'@platforms//cpu:x86_64'"));
+        assert!(constraints.contains("'@platforms//os:linux'"));
+        assert!(!constraints.contains("'@platforms//os:osx'"));
+        Ok(())
     }
 
     #[test]
@@ -2763,8 +2851,10 @@ fn bzlmod_generated_repo_contents_cache_key(setup: &BzlmodGeneratedCellSetup) ->
             update_bzlmod_repo_contents_cache_key(&mut hasher, "bazel_features_version");
             update_bzlmod_repo_contents_cache_key(&mut hasher, &setup.bazel_version);
         }
-        BzlmodGeneratedCellGenerator::HostPlatform(_) => {
+        BzlmodGeneratedCellGenerator::HostPlatform(setup) => {
             update_bzlmod_repo_contents_cache_key(&mut hasher, "host_platform");
+            update_bzlmod_repo_contents_cache_key_opt(&mut hasher, setup.cpu_constraint.as_deref());
+            update_bzlmod_repo_contents_cache_key_opt(&mut hasher, setup.os_constraint.as_deref());
         }
         BzlmodGeneratedCellGenerator::CcAutoconfToolchains(setup) => {
             update_bzlmod_repo_contents_cache_key(&mut hasher, "cc_autoconf_toolchains");
@@ -5716,9 +5806,40 @@ async fn ensure_generated_materialized(
     path: ProjectRelativePathBuf,
     setup: BzlmodGeneratedCellSetup,
 ) -> buck2_error::Result<()> {
+    let setup = bzlmod_generated_effective_setup(ctx, setup).await?;
     ctx.compute(&BzlmodGeneratedCellMaterializationKey { path, setup })
         .await??;
     Ok(())
+}
+
+async fn bzlmod_generated_effective_setup(
+    ctx: &mut DiceComputations<'_>,
+    setup: BzlmodGeneratedCellSetup,
+) -> buck2_error::Result<BzlmodGeneratedCellSetup> {
+    let BzlmodGeneratedCellSetup {
+        canonical_repo_name,
+        generator,
+    } = setup;
+    match generator {
+        BzlmodGeneratedCellGenerator::HostPlatform(_) => {
+            let arch = bzlmod_bazel_current_arch_name(ctx).await?;
+            let os = bzlmod_bazel_current_os_name(ctx).await?;
+            let cpu_constraint =
+                translate_host_platform_cpu_constraint(&arch).map(Arc::<str>::from);
+            let os_constraint = translate_host_platform_os_constraint(&os).map(Arc::<str>::from);
+            Ok(BzlmodGeneratedCellSetup {
+                canonical_repo_name,
+                generator: BzlmodGeneratedCellGenerator::HostPlatform(BzlmodHostPlatformSetup {
+                    cpu_constraint,
+                    os_constraint,
+                }),
+            })
+        }
+        generator => Ok(BzlmodGeneratedCellSetup {
+            canonical_repo_name,
+            generator,
+        }),
+    }
 }
 
 #[derive(allocative::Allocative, Pagable)]

@@ -404,10 +404,16 @@ pub struct BzlmodBazelFeaturesVersionSetup {
     Eq,
     Hash,
     Pagable,
+    Default,
     Serialize,
     Deserialize
 )]
-pub struct BzlmodHostPlatformSetup {}
+pub struct BzlmodHostPlatformSetup {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cpu_constraint: Option<Arc<str>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub os_constraint: Option<Arc<str>>,
+}
 
 #[derive(
     Debug,
