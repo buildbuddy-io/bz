@@ -195,13 +195,23 @@ where
     ///
     /// In other words, this cannot be used to "replace" any existing things in the directory
     pub fn merge_with_compatible_leaves(&mut self, other: Self) -> Result<(), DirectoryMergeError> {
+        self.merge_with_compatible_leaves_and_leaf_dir_conflict_handler(other, |_| false)
+    }
+
+    pub fn merge_with_compatible_leaves_and_leaf_dir_conflict_handler(
+        &mut self,
+        other: Self,
+        leaf_covers_dir: impl Fn(&L) -> bool,
+    ) -> Result<(), DirectoryMergeError> {
         if !buck2_core::faster_directories::is_enabled() {
-            return self.merge(other);
+            return self
+                .merge_inner_old(other, &leaf_covers_dir)
+                .map_err(|path| DirectoryMergeError::CannotTraverseLeaf { path });
         }
 
         let v = std::mem::replace(self, DirectoryBuilder::empty());
         let v = v
-            .merge_inner(other, true)
+            .merge_inner(other, true, &leaf_covers_dir)
             .map_err(|path| DirectoryMergeError::CannotTraverseLeaf { path })?;
         *self = v;
         Ok(())
@@ -211,12 +221,12 @@ where
         if buck2_core::faster_directories::is_enabled() {
             let v = std::mem::replace(self, DirectoryBuilder::empty());
             let v = v
-                .merge_inner(other, false)
+                .merge_inner(other, false, &|_| false)
                 .map_err(|path| DirectoryMergeError::CannotTraverseLeaf { path })?;
             *self = v;
             Ok(())
         } else {
-            self.merge_inner_old(other)
+            self.merge_inner_old(other, &|_| false)
                 .map_err(|path| DirectoryMergeError::CannotTraverseLeaf { path })
         }
     }
@@ -225,6 +235,7 @@ where
         mut self,
         mut other: Self,
         leaf_compatible: bool,
+        leaf_covers_dir: &impl Fn(&L) -> bool,
     ) -> Result<Self, PathAccumulator> {
         match (&self, &other) {
             (Self::Immutable(d1), Self::Immutable(d2)) if d1.fingerprint() == d2.fingerprint() => {
@@ -263,7 +274,7 @@ where
                     DirectoryEntry::Dir(dir_right) => {
                         Ok(MapEntryOperation::Overwrite(DirectoryEntry::Dir(
                             dir_left
-                                .merge_inner(dir_right, leaf_compatible)
+                                .merge_inner(dir_right, leaf_compatible, leaf_covers_dir)
                                 .map_err(|e| e.with(needle))?,
                         )))
                     }
@@ -273,6 +284,7 @@ where
                 },
                 |v, leaf_left, needle| match v {
                     DirectoryEntry::Dir(dir_right) => match leaf_left {
+                        Some(leaf) if leaf_covers_dir(leaf) => Ok(MapEntryOperation::Keep(())),
                         Some(_) => Err(PathAccumulator::new(needle)),
                         None => Ok(MapEntryOperation::Overwrite(DirectoryEntry::Dir(dir_right))),
                     },
@@ -293,7 +305,11 @@ where
     }
 
     /// Old implementation of `merge_inner`, preserved for a/b test
-    fn merge_inner_old(&mut self, mut other: Self) -> Result<(), PathAccumulator> {
+    fn merge_inner_old(
+        &mut self,
+        mut other: Self,
+        leaf_covers_dir: &impl Fn(&L) -> bool,
+    ) -> Result<(), PathAccumulator> {
         match (&self, &other) {
             (Self::Immutable(d1), Self::Immutable(d2)) if d1.fingerprint() == d2.fingerprint() => {
                 return Ok(());
@@ -309,11 +325,13 @@ where
             match entries.entry(k) {
                 Entry::Occupied(mut entry) => match (entry.get_mut(), v) {
                     (DirectoryEntry::Dir(d), DirectoryEntry::Dir(o)) => {
-                        d.merge_inner_old(o).map_err(|e| e.with(entry.key()))?;
+                        d.merge_inner_old(o, leaf_covers_dir)
+                            .map_err(|e| e.with(entry.key()))?;
                     }
                     (entry, DirectoryEntry::Leaf(o)) => {
                         *entry = DirectoryEntry::Leaf(o);
                     }
+                    (DirectoryEntry::Leaf(l), DirectoryEntry::Dir(_)) if leaf_covers_dir(l) => {}
                     _ => return Err(PathAccumulator::new(entry.key())),
                 },
                 Entry::Vacant(entry) => {

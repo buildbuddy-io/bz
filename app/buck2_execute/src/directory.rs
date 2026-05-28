@@ -701,12 +701,19 @@ fn artifact_value_needs_deps(value: &ArtifactValue) -> bool {
 pub fn finalize_lazy_action_directory(
     builder: LazyActionDirectoryBuilder,
 ) -> buck2_error::Result<ActionDirectoryBuilder> {
-    builder.finalize_with_insert_conflict_handler(|leaf| {
-        // Bazel expands spawn inputs and runfiles into a flat path map
-        // (`SpawnInputExpander#getInputMapping`), so a symlinked runfiles root can cover all
-        // descendant paths without making the descendants traverse through it.
-        matches!(leaf, ActionDirectoryMember::ExternalSymlink(_))
-    })
+    fn symlink_covers_descendants(leaf: &ActionDirectoryMember) -> bool {
+        // Bazel expands spawn inputs into a flat path map (`SpawnInputExpander#getInputMapping`)
+        // and its Merkle tree builder lets an aggregate source directory subsume separately staged
+        // descendants. A symlink staged at a path has the same filesystem boundary: descendants are
+        // reached through the symlink target, not by creating a directory at the symlink path too.
+        matches!(
+            leaf,
+            ActionDirectoryMember::Symlink(_) | ActionDirectoryMember::ExternalSymlink(_)
+        )
+    }
+
+    let mut ignore_insert_conflict = symlink_covers_descendants;
+    builder.finalize_with_conflict_handlers(&mut ignore_insert_conflict, symlink_covers_descendants)
 }
 
 pub fn insert_file<D>(
@@ -939,6 +946,87 @@ mod tests {
                 "Walks differ at path {p1}"
             );
         }
+    }
+
+    fn file_metadata(bytes: &[u8]) -> FileMetadata {
+        let digest_config = DigestConfig::testing_default();
+        FileMetadata {
+            digest: TrackedFileDigest::from_content(bytes, digest_config.cas_digest_config()),
+            is_executable: false,
+        }
+    }
+
+    fn shared(builder: ActionDirectoryBuilder) -> ActionSharedDirectory {
+        builder
+            .fingerprint(DigestConfig::testing_default().as_directory_serializer())
+            .shared(&*INTERNER)
+    }
+
+    #[test]
+    fn lazy_action_directory_symlink_covers_descendant_insert() -> buck2_error::Result<()> {
+        let mut builder = LazyActionDirectoryBuilder::empty();
+
+        insert_entry(
+            &mut builder,
+            path("repo/src"),
+            DirectoryEntry::Leaf(ActionDirectoryMember::Symlink(Arc::new(Symlink::new(
+                ".tmp_git_root/repo/src".into(),
+            )))),
+        )?;
+        insert_file(&mut builder, path("repo/src/lib.rs"), file_metadata(b"lib"))?;
+
+        let result = finalize_lazy_action_directory(builder)?;
+
+        let expected = {
+            let mut builder = ActionDirectoryBuilder::empty();
+            insert_symlink(
+                &mut builder,
+                path("repo/src"),
+                Arc::new(Symlink::new(".tmp_git_root/repo/src".into())),
+            )?;
+            builder
+        };
+        assert_dirs_eq(&result, &expected);
+
+        Ok(())
+    }
+
+    #[test]
+    fn lazy_action_directory_symlink_covers_descendant_merge() -> buck2_error::Result<()> {
+        let symlink_dir = {
+            let mut builder = ActionDirectoryBuilder::empty();
+            insert_symlink(
+                &mut builder,
+                path("repo/src"),
+                Arc::new(Symlink::new(".tmp_git_root/repo/src".into())),
+            )?;
+            insert_file(&mut builder, path("repo/marker"), file_metadata(b"larger"))?;
+            shared(builder)
+        };
+        let descendant_dir = {
+            let mut builder = ActionDirectoryBuilder::empty();
+            insert_file(&mut builder, path("repo/src/lib.rs"), file_metadata(b"lib"))?;
+            shared(builder)
+        };
+
+        let mut builder = LazyActionDirectoryBuilder::empty();
+        builder.merge(symlink_dir)?;
+        builder.merge(descendant_dir)?;
+        let result = finalize_lazy_action_directory(builder)?;
+
+        let expected = {
+            let mut builder = ActionDirectoryBuilder::empty();
+            insert_symlink(
+                &mut builder,
+                path("repo/src"),
+                Arc::new(Symlink::new(".tmp_git_root/repo/src".into())),
+            )?;
+            insert_file(&mut builder, path("repo/marker"), file_metadata(b"larger"))?;
+            builder
+        };
+        assert_dirs_eq(&result, &expected);
+
+        Ok(())
     }
 
     #[test]

@@ -103,6 +103,14 @@ where
         self,
         mut ignore_insert_conflict: impl FnMut(&L) -> bool,
     ) -> buck2_error::Result<DirectoryBuilder<L, H>> {
+        self.finalize_with_conflict_handlers(&mut ignore_insert_conflict, |_| false)
+    }
+
+    pub fn finalize_with_conflict_handlers(
+        self,
+        ignore_insert_conflict: &mut impl FnMut(&L) -> bool,
+        leaf_covers_dir: impl Fn(&L) -> bool,
+    ) -> buck2_error::Result<DirectoryBuilder<L, H>> {
         let mut to_merge = self.to_merge;
         to_merge.sort_by_key(|d| std::cmp::Reverse(d.size()));
         to_merge.dedup();
@@ -115,12 +123,15 @@ where
         // directories
         let mut builder = self.builder;
         for d in to_merge {
-            builder.merge_with_compatible_leaves(d.into_builder())?;
+            builder.merge_with_compatible_leaves_and_leaf_dir_conflict_handler(
+                d.into_builder(),
+                &leaf_covers_dir,
+            )?;
         }
 
         for (p, e) in to_insert {
             if let Err(error) = builder.insert(&p, e.map_dir(|d| d.into_builder())) {
-                if lazy_insert_conflict_is_covered(&builder, &error, &mut ignore_insert_conflict) {
+                if lazy_insert_conflict_is_covered(&builder, &error, ignore_insert_conflict) {
                     continue;
                 }
                 return Err(error.into());
