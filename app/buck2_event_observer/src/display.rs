@@ -559,8 +559,8 @@ pub fn display_executor_stage(
         Stage::Prepare(..) => "prepare",
         Stage::CacheQuery(cache_query) => {
             match buck2_data::CacheType::try_from(cache_query.cache_type).unwrap() {
-                buck2_data::CacheType::ActionCache => "re_action_cache",
-                buck2_data::CacheType::RemoteDepFileCache => "re_dep_file_cache",
+                buck2_data::CacheType::ActionCache => "remote_cache_check",
+                buck2_data::CacheType::RemoteDepFileCache => "remote_dep_file_cache_check",
             }
         }
         Stage::CacheHit(..) => "re_download",

@@ -364,6 +364,27 @@ impl ProgressHeader<'_> {
         )
     }
 
+    fn render_remote_cache_checks(&self, style: Style, mode: DrawMode) -> Option<String> {
+        let running = self.progress_stats.running_remote_cache_checks;
+        let started = self.progress_stats.remote_cache_checks_started;
+        let finished = self.progress_stats.remote_cache_checks_finished;
+
+        if started == 0 || running == 0 || matches!(mode, DrawMode::Final) {
+            return None;
+        }
+
+        // Always use 20-char header for alignment with "Running validations."
+        Some(style.render(
+            mode,
+            "Checking cache.     ",
+            "Checked",
+            finished,
+            started,
+            &style.display_num(running),
+            running,
+        ))
+    }
+
     fn render_actions_extra(&self) -> String {
         let exec_time_ms = self.progress_stats.exec_time_ms;
         if exec_time_ms > 0 {
@@ -468,10 +489,14 @@ impl Component for ProgressHeader<'_> {
         let analysis = &self.phase_stats.analyses;
         let actions = &self.phase_stats.actions;
         let validations = &self.phase_stats.validations;
+        let remote_cache_checks_started = self.progress_stats.remote_cache_checks_started;
 
         let max_total = std::cmp::max(
             std::cmp::max(
-                std::cmp::max(loads.started, analysis.started),
+                std::cmp::max(
+                    std::cmp::max(loads.started, analysis.started),
+                    remote_cache_checks_started,
+                ),
                 actions.started,
             ),
             validations.started,
@@ -525,6 +550,11 @@ impl Component for ProgressHeader<'_> {
             main.push(self.header.to_owned());
             extra.push(String::new());
         } else {
+            if let Some(line) = self.render_remote_cache_checks(style, mode) {
+                main.push(line);
+                extra.push(String::new());
+            }
+
             main.push(self.render_actions(style, mode));
             if let Style::Normal(..) = style {
                 extra.push(self.render_actions_extra());
@@ -662,6 +692,9 @@ mod tests {
             targets: 22222,
             actions_declared: 3333333,
             artifacts_declared: 4444444,
+            remote_cache_checks_started: 0,
+            remote_cache_checks_finished: 0,
+            running_remote_cache_checks: 0,
             running_local: 55,
             running_remote: 66,
             exec_time_ms: 7777000,
@@ -872,6 +905,57 @@ mod tests {
             !output_str.contains("Running validations."),
             "Validation line should not appear when validations haven't started:\n{output_str}"
         );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_remote_cache_check_line() -> buck2_error::Result<()> {
+        let mut progress_stats = progress_stats();
+        progress_stats.remote_cache_checks_started = 1234;
+        progress_stats.remote_cache_checks_finished = 100;
+        progress_stats.running_remote_cache_checks = 30;
+
+        let output = ProgressHeader {
+            header: "header",
+            phase_stats: &phase_stats(),
+            progress_stats: &progress_stats,
+            action_stats: &action_stats(),
+            time_elapsed: "1234s".to_owned(),
+        }
+        .draw(
+            Dimensions {
+                width: 140,
+                height: 10,
+            },
+            DrawMode::Normal,
+        )?
+        .fmt_for_test()
+        .to_string();
+
+        assert!(output.contains("Checking cache."));
+        assert!(output.contains("Checked"));
+        assert!(output.contains("100/1234"));
+        assert!(output.contains("running:    30"));
+
+        let final_output = ProgressHeader {
+            header: "header",
+            phase_stats: &phase_stats(),
+            progress_stats: &progress_stats,
+            action_stats: &action_stats(),
+            time_elapsed: "1234s".to_owned(),
+        }
+        .draw(
+            Dimensions {
+                width: 140,
+                height: 10,
+            },
+            DrawMode::Final,
+        )?
+        .fmt_for_test()
+        .to_string();
+
+        assert!(!final_output.contains("Checking cache."));
 
         Ok(())
     }

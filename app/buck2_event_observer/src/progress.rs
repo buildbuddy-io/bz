@@ -137,6 +137,10 @@ pub struct BuildProgressStats {
     pub actions_declared: u64,
     pub artifacts_declared: u64,
 
+    pub remote_cache_checks_started: u64,
+    pub remote_cache_checks_finished: u64,
+    pub running_remote_cache_checks: u64,
+
     pub running_local: u64,
     pub running_remote: u64,
 
@@ -176,6 +180,7 @@ pub struct BuildProgressStateTracker {
     analyses: SpanMap<TrackedAnalysisSpan>,
     actions: SpanMap<TrackedActionSpan>,
     validations: SpanMap<TrackedValidationSpan>,
+    remote_cache_checks: StdBuckHashMap<SpanId, ()>,
 }
 
 impl BuildProgressStateTracker {
@@ -191,6 +196,7 @@ impl BuildProgressStateTracker {
         self.handle_load(&ev)?;
         self.handle_analysis(&ev)?;
         self.handle_actions(&ev)?;
+        self.handle_remote_cache_checks(&ev)?;
 
         match unpack_event(event)? {
             UnpackedBuckEvent::Instant(_, _, instant_event::Data::DiceStateSnapshot(snapshot)) => {
@@ -242,6 +248,7 @@ impl BuildProgressStateTracker {
                 if let Some(v) = self.actions.cancelled(*span_id) {
                     self.action_finished(v);
                 }
+                self.remote_cache_check_cancelled(*span_id);
             }
             _ => {
                 // ignored
@@ -325,6 +332,60 @@ impl BuildProgressStateTracker {
             }
             _ => {}
         }
+        Ok(())
+    }
+
+    fn remote_cache_check_started(&mut self, span_id: SpanId) {
+        if self.remote_cache_checks.insert(span_id, ()).is_none() {
+            self.stats.remote_cache_checks_started += 1;
+            self.stats.running_remote_cache_checks += 1;
+        }
+    }
+
+    fn remote_cache_check_finished(&mut self, span_id: SpanId) {
+        if self.remote_cache_checks.remove(&span_id).is_some() {
+            self.stats.remote_cache_checks_finished += 1;
+            self.stats.running_remote_cache_checks =
+                self.stats.running_remote_cache_checks.saturating_sub(1);
+        }
+    }
+
+    fn remote_cache_check_cancelled(&mut self, span_id: SpanId) {
+        if self.remote_cache_checks.remove(&span_id).is_some() {
+            self.stats.running_remote_cache_checks =
+                self.stats.running_remote_cache_checks.saturating_sub(1);
+        }
+    }
+
+    fn handle_remote_cache_checks(&mut self, ev: &UnpackedBuckEvent) -> buck2_error::Result<()> {
+        match ev {
+            UnpackedBuckEvent::SpanStart(
+                BuckEvent {
+                    span_id: Some(span_id),
+                    ..
+                },
+                _,
+                span_start_event::Data::ExecutorStage(ExecutorStageStart {
+                    stage: Some(executor_stage_start::Stage::CacheQuery(cache_query)),
+                }),
+            ) => {
+                if buck2_data::CacheType::try_from(cache_query.cache_type).is_ok() {
+                    self.remote_cache_check_started(*span_id);
+                }
+            }
+            UnpackedBuckEvent::SpanEnd(
+                BuckEvent {
+                    span_id: Some(span_id),
+                    ..
+                },
+                _,
+                span_end_event::Data::ExecutorStage(..),
+            ) => {
+                self.remote_cache_check_finished(*span_id);
+            }
+            _ => {}
+        }
+
         Ok(())
     }
 
