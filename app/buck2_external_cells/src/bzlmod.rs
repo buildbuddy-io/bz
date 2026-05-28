@@ -152,6 +152,7 @@ const BZLMOD_DOWNLOAD_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const BZLMOD_DOWNLOAD_READ_TIMEOUT: Duration = Duration::from_secs(20);
 const BZLMOD_DOWNLOAD_WRITE_TIMEOUT: Duration = Duration::from_secs(20);
 const BZLMOD_GENERATED_RECORDED_INPUTS_SUFFIX: &str = ".recorded_inputs.json";
+const BZLMOD_GENERATED_LATEST_ENTRY: &str = "latest";
 
 #[derive(buck2_error::Error, Debug)]
 #[buck2(tag = Tier0)]
@@ -248,6 +249,7 @@ fn bzlmod_generated_repo_kind(setup: &BzlmodGeneratedCellSetup) -> &'static str 
 
 #[derive(Debug)]
 struct BzlmodGeneratedRepoContentsCacheCandidate {
+    entry_name: String,
     repo: ProjectRelativePathBuf,
     recorded_inputs_path: ProjectRelativePathBuf,
     recorded_inputs: Vec<BazelRepositoryRecordedInput>,
@@ -2335,6 +2337,12 @@ fn bzlmod_generated_repo_contents_cache_recorded_inputs_path(
     ))
 }
 
+fn bzlmod_generated_repo_contents_cache_latest_path(
+    cache_info: &BazelRepositoryRuleCacheInfo,
+) -> ProjectRelativePathBuf {
+    bzlmod_generated_repo_contents_cache_entry_path(cache_info, BZLMOD_GENERATED_LATEST_ENTRY)
+}
+
 fn bzlmod_repo_contents_cache_alias_path(canonical_repo_name: &str) -> ProjectRelativePathBuf {
     ProjectRelativePathBuf::unchecked_new(format!(
         "buck-out/v2/cache/bzlmod_repo_contents/by_canonical/{canonical_repo_name}",
@@ -2360,6 +2368,37 @@ fn bzlmod_generated_repo_contents_cache_new_entry_name() -> String {
         .map(|duration| duration.as_nanos())
         .unwrap_or(0);
     format!("repo.{}.{}.{}", std::process::id(), nanos, counter)
+}
+
+fn write_bzlmod_generated_repo_contents_cache_latest(
+    project_fs: &ProjectRoot,
+    cache_info: &BazelRepositoryRuleCacheInfo,
+    entry_name: &str,
+) -> buck2_error::Result<()> {
+    let latest_path =
+        project_fs.resolve(bzlmod_generated_repo_contents_cache_latest_path(cache_info));
+    let latest_parent = latest_path.parent().ok_or_else(|| {
+        internal_error!(
+            "bzlmod generated cache latest path has no parent: `{}`",
+            latest_path.display()
+        )
+    })?;
+    fs_util::create_dir_all(latest_parent)?;
+    let tmp_counter = BZLMOD_CACHE_ALIAS_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let tmp_latest_path = latest_parent.join(ForwardRelativePath::new(&format!(
+        ".{}.tmp.{}.{}",
+        BZLMOD_GENERATED_LATEST_ENTRY,
+        std::process::id(),
+        tmp_counter
+    ))?);
+    fs_util::write(&tmp_latest_path, format!("{entry_name}\n")).categorize_internal()?;
+    match fs_util::rename(&tmp_latest_path, &latest_path) {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            let _ignored = fs_util::remove_file(&tmp_latest_path);
+            Err(error.categorize_internal())
+        }
+    }
 }
 
 fn write_bzlmod_generated_recorded_inputs_json(
@@ -2479,6 +2518,85 @@ async fn bzlmod_generated_repo_contents_cache_candidates(
     let entry_dir = bzlmod_generated_repo_contents_cache_entry_dir(cache_info);
     let cache_info = cache_info.clone();
     run_bzlmod_cache_io(move || {
+        let candidate_for_entry = |entry_name: &str| -> buck2_error::Result<
+            Option<(u128, BzlmodGeneratedRepoContentsCacheCandidate)>,
+        > {
+            let recorded_inputs_path =
+                bzlmod_generated_repo_contents_cache_recorded_inputs_path(&cache_info, entry_name);
+            let recorded_inputs_abs = project_root.resolve(&recorded_inputs_path);
+            let recorded_inputs_json = match fs_util::read_to_string(&recorded_inputs_abs) {
+                Ok(recorded_inputs_json) => recorded_inputs_json,
+                Err(error)
+                    if matches!(
+                        error.io_error_kind(),
+                        Some(ErrorKind::NotFound | ErrorKind::NotADirectory)
+                    ) =>
+                {
+                    return Ok(None);
+                }
+                Err(error) => return Err(error.categorize_internal()),
+            };
+            let Ok(recorded_inputs) =
+                serde_json::from_str::<Vec<BazelRepositoryRecordedInput>>(&recorded_inputs_json)
+            else {
+                return Ok(None);
+            };
+            let repo = ProjectRelativePathBuf::unchecked_new(format!(
+                "{}/{}",
+                entry_dir.as_str(),
+                entry_name
+            ));
+            if !bzlmod_repo_contents_cache_exists(&project_root, &repo)? {
+                return Ok(None);
+            }
+            let repo_abs = project_root.resolve(&repo);
+            if !bzlmod_generated_repo_symlink_targets_exist(&repo_abs)? {
+                return Ok(None);
+            }
+            let modified = fs_util::metadata(recorded_inputs_abs)
+                .categorize_internal()?
+                .modified()
+                .ok()
+                .and_then(|modified| modified.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|duration| duration.as_nanos())
+                .unwrap_or(0);
+            Ok(Some((
+                modified,
+                BzlmodGeneratedRepoContentsCacheCandidate {
+                    entry_name: entry_name.to_owned(),
+                    repo,
+                    recorded_inputs_path,
+                    recorded_inputs,
+                },
+            )))
+        };
+
+        let mut candidates = Vec::new();
+
+        let latest_path = bzlmod_generated_repo_contents_cache_latest_path(&cache_info);
+        let latest_entry_name = match fs_util::read_to_string(project_root.resolve(&latest_path)) {
+            Ok(latest_entry_name) => {
+                let latest_entry_name = latest_entry_name.trim().to_owned();
+                if latest_entry_name.is_empty() {
+                    None
+                } else {
+                    if let Some((_, candidate)) = candidate_for_entry(&latest_entry_name)? {
+                        candidates.push((u128::MAX, candidate));
+                    }
+                    Some(latest_entry_name)
+                }
+            }
+            Err(error)
+                if matches!(
+                    error.io_error_kind(),
+                    Some(ErrorKind::NotFound | ErrorKind::NotADirectory)
+                ) =>
+            {
+                None
+            }
+            Err(error) => return Err(error.categorize_internal()),
+        };
+
         let entry_dir_abs = project_root.resolve(&entry_dir);
         let entries = match fs_util::read_dir(&entry_dir_abs) {
             Ok(entries) => entries,
@@ -2488,11 +2606,13 @@ async fn bzlmod_generated_repo_contents_cache_candidates(
                     Some(ErrorKind::NotFound | ErrorKind::NotADirectory)
                 ) =>
             {
-                return Ok(Vec::new());
+                return Ok(candidates
+                    .into_iter()
+                    .map(|(_, candidate)| candidate)
+                    .collect());
             }
             Err(error) => return Err(error.categorize_internal()),
         };
-        let mut candidates = Vec::new();
         for entry in entries {
             let entry = entry?;
             let file_name = entry.file_name().to_string_lossy().into_owned();
@@ -2500,46 +2620,15 @@ async fn bzlmod_generated_repo_contents_cache_candidates(
             else {
                 continue;
             };
+            if latest_entry_name.as_deref() == Some(entry_name) {
+                continue;
+            }
             if !entry.file_type()?.is_file() {
                 continue;
             }
-            let recorded_inputs_json =
-                fs_util::read_to_string(entry.path()).categorize_internal()?;
-            let Ok(recorded_inputs) =
-                serde_json::from_str::<Vec<BazelRepositoryRecordedInput>>(&recorded_inputs_json)
-            else {
-                continue;
-            };
-            let repo = ProjectRelativePathBuf::unchecked_new(format!(
-                "{}/{}",
-                entry_dir.as_str(),
-                entry_name
-            ));
-            if !bzlmod_repo_contents_cache_exists(&project_root, &repo)? {
-                continue;
+            if let Some(candidate) = candidate_for_entry(entry_name)? {
+                candidates.push(candidate);
             }
-            let repo_abs = project_root.resolve(&repo);
-            if !bzlmod_generated_repo_symlink_targets_exist(&repo_abs)? {
-                continue;
-            }
-            let modified = entry
-                .metadata()?
-                .modified()
-                .ok()
-                .and_then(|modified| modified.duration_since(std::time::UNIX_EPOCH).ok())
-                .map(|duration| duration.as_nanos())
-                .unwrap_or(0);
-            candidates.push((
-                modified,
-                BzlmodGeneratedRepoContentsCacheCandidate {
-                    repo,
-                    recorded_inputs_path: bzlmod_generated_repo_contents_cache_recorded_inputs_path(
-                        &cache_info,
-                        entry_name,
-                    ),
-                    recorded_inputs,
-                },
-            ));
         }
         candidates.sort_by(|(a, _), (b, _)| b.cmp(a));
         Ok(candidates
@@ -2571,6 +2660,7 @@ async fn prepare_bzlmod_generated_external_cell_root_from_cache_candidate(
     let path = path.to_owned();
     let setup = setup.dupe();
     let cache_info = cache_info.clone();
+    let cache_entry_name = candidate.entry_name;
     let cache_recorded_inputs_path = candidate.recorded_inputs_path;
     let recorded_inputs_json = serde_json::to_string(&candidate.recorded_inputs)
         .buck_error_context("Error serializing bzlmod repository recorded inputs")?;
@@ -2591,6 +2681,11 @@ async fn prepare_bzlmod_generated_external_cell_root_from_cache_candidate(
         let _ = touch_bzlmod_generated_repo_contents_cache_recorded_inputs(
             &project_root,
             &cache_recorded_inputs_path,
+        );
+        let _ = write_bzlmod_generated_repo_contents_cache_latest(
+            &project_root,
+            &cache_info,
+            &cache_entry_name,
         );
         Ok(())
     })
@@ -5184,6 +5279,7 @@ async fn promote_current_bzlmod_generated_repo_to_cache(
             &cache_recorded_inputs,
             &recorded_inputs_json,
         )?;
+        write_bzlmod_generated_repo_contents_cache_latest(&project_root, &cache_info, &entry_name)?;
         prepare_bzlmod_generated_external_cell_root_with_repository_rule_stamp(
             &project_root,
             &cache_repo,
