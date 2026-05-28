@@ -39,9 +39,9 @@ pub const BUILDBUDDY_API_KEY_HEADER: &str = "x-buildbuddy-api-key";
 #[serde(rename_all = "lowercase")]
 pub enum RemoteDownloadOutputsMode {
     /// Download only outputs required by later local actions.
-    Minimal,
-    /// Download requested top-level outputs. This matches Bazel's default.
     #[default]
+    Minimal,
+    /// Download requested top-level outputs.
     Toplevel,
     /// Download all declared remote outputs.
     All,
@@ -99,8 +99,8 @@ impl FromStr for RemoteDownloadOutputsMode {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "" | "toplevel" => Ok(Self::Toplevel),
-            "minimal" => Ok(Self::Minimal),
+            "" | "minimal" => Ok(Self::Minimal),
+            "toplevel" => Ok(Self::Toplevel),
             "all" => Ok(Self::All),
             value => Err(buck2_error::buck2_error!(
                 buck2_error::ErrorTag::Input,
@@ -860,11 +860,11 @@ mod tests {
     }
 
     #[test]
-    fn remote_download_outputs_defaults_to_toplevel() -> buck2_error::Result<()> {
+    fn remote_download_outputs_defaults_to_minimal() -> buck2_error::Result<()> {
         let startup_config = DaemonStartupConfig::new(&LegacyBuckConfig::empty())?;
         assert_eq!(
             startup_config.remote_download_outputs,
-            RemoteDownloadOutputsMode::Toplevel
+            RemoteDownloadOutputsMode::Minimal
         );
         Ok(())
     }
@@ -874,13 +874,13 @@ mod tests {
         let config = parse(indoc!(
             r#"
             [buck2]
-            remote_download_outputs = minimal
+            remote_download_outputs = toplevel
             "#
         ))?;
         let startup_config = DaemonStartupConfig::new(&config)?;
         assert_eq!(
             startup_config.remote_download_outputs,
-            RemoteDownloadOutputsMode::Minimal
+            RemoteDownloadOutputsMode::Toplevel
         );
         Ok(())
     }
