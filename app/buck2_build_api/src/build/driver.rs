@@ -37,6 +37,7 @@ use crate::build::HasBuildEventSink;
 use crate::build::ProvidersToBuild;
 use crate::build::completion::TargetCompletionKey;
 use crate::build::completion::emit_configured_build_event;
+use crate::build::eager::HasEagerBuildExecution;
 use crate::build::graph_properties::GraphPropertiesOptions;
 use crate::materialize::MaterializationAndUploadContext;
 
@@ -134,7 +135,11 @@ async fn compute_build_driver(
         key.skippable,
     );
 
-    match ctx.compute(&completion_key).await?? {
+    ctx.per_transaction_data().enable_eager_build_execution()?;
+    let completion = ctx.compute(&completion_key).await;
+    ctx.per_transaction_data().cancel_eager_build_execution();
+
+    match completion?? {
         MaybeCompatible::Compatible(_) => Ok(()),
         MaybeCompatible::Incompatible(reason) => {
             let variant = if key.skippable {

@@ -27,6 +27,8 @@ use dice::DiceComputations;
 use dupe::Dupe;
 
 use crate::analysis::AnalysisResult;
+use crate::build::eager::schedule_eager_inputs_from_analysis;
+use crate::build::overlap::HasBuildOverlapTracker;
 use crate::interpreter::rule_defs::provider::collection::FrozenProviderCollectionValue;
 use crate::validation::transitive_validations::TransitiveValidations;
 
@@ -89,10 +91,20 @@ impl RuleAnalysisCalculation for DiceComputations<'_> {
         &mut self,
         target: &ConfiguredTargetLabel,
     ) -> buck2_error::Result<MaybeCompatible<AnalysisResult>> {
-        RULE_ANALYSIS_CALCULATION
+        self.per_transaction_data()
+            .record_analysis_started_for_overlap();
+        let result = RULE_ANALYSIS_CALCULATION
             .get()?
             .get_analysis_result(self, target)
-            .await
+            .await;
+        self.per_transaction_data()
+            .record_analysis_finished_for_overlap();
+
+        if let Ok(MaybeCompatible::Compatible(result)) = &result {
+            schedule_eager_inputs_from_analysis(self, result)?;
+        }
+
+        result
     }
 
     async fn get_configuration_analysis_result(

@@ -112,7 +112,7 @@ impl HasEagerBuildExecution for UserComputationData {
 fn should_eager_ensure_input(input: &ArtifactGroup) -> bool {
     match input {
         ArtifactGroup::Artifact(artifact) => artifact.action_key().is_some(),
-        ArtifactGroup::Promise(_) | ArtifactGroup::TransitiveSetProjection(_) => true,
+        ArtifactGroup::Promise(_) | ArtifactGroup::TransitiveSetProjection(_) => false,
     }
 }
 
