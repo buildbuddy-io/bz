@@ -25,6 +25,92 @@ use crate::legacy_configs::key::BuckconfigKeyRef;
 pub const DEFAULT_RETAINED_EVENT_LOGS: usize = 12;
 pub const BUILDBUDDY_API_KEY_HEADER: &str = "x-buildbuddy-api-key";
 
+#[derive(
+    Allocative,
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq
+)]
+#[serde(rename_all = "lowercase")]
+pub enum RemoteDownloadOutputsMode {
+    /// Download only outputs required by later local actions.
+    Minimal,
+    /// Download requested top-level outputs. This matches Bazel's default.
+    #[default]
+    Toplevel,
+    /// Download all declared remote outputs.
+    All,
+}
+
+impl RemoteDownloadOutputsMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Minimal => "minimal",
+            Self::Toplevel => "toplevel",
+            Self::All => "all",
+        }
+    }
+
+    pub fn materializes_final_artifacts(self) -> bool {
+        !matches!(self, Self::Minimal)
+    }
+
+    pub fn materializes_remote_outputs_eagerly(self) -> bool {
+        matches!(self, Self::All)
+    }
+
+    fn from_legacy_materializations(value: &str) -> buck2_error::Result<Self> {
+        match value {
+            "" | "deferred" => Ok(Self::Toplevel),
+            "deferred_skip_final_artifacts" => Ok(Self::Minimal),
+            "all" => Ok(Self::All),
+            value => Err(buck2_error::buck2_error!(
+                buck2_error::ErrorTag::Input,
+                "Invalid value for buckconfig `[buck2] materializations`. Got `{}`. Expected one of `all`, `deferred`, or `deferred_skip_final_artifacts`.",
+                value
+            )),
+        }
+    }
+
+    fn from_config(config: &LegacyBuckConfig) -> buck2_error::Result<Self> {
+        if let Some(value) = config.get(BuckconfigKeyRef {
+            section: "buck2",
+            property: "remote_download_outputs",
+        }) {
+            value.parse()
+        } else if let Some(value) = config.get(BuckconfigKeyRef {
+            section: "buck2",
+            property: "materializations",
+        }) {
+            Self::from_legacy_materializations(value)
+        } else {
+            Ok(Self::default())
+        }
+    }
+}
+
+impl FromStr for RemoteDownloadOutputsMode {
+    type Err = buck2_error::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "" | "toplevel" => Ok(Self::Toplevel),
+            "minimal" => Ok(Self::Minimal),
+            "all" => Ok(Self::All),
+            value => Err(buck2_error::buck2_error!(
+                buck2_error::ErrorTag::Input,
+                "Invalid remote download output mode: `{}`. Expected one of `minimal`, `toplevel`, or `all`.",
+                value
+            )),
+        }
+    }
+}
+
 #[derive(Allocative, Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RemoteDefaultExecProperty {
     pub name: String,
@@ -585,7 +671,8 @@ pub struct DaemonStartupConfig {
     pub source_digest_algorithm: Option<String>,
     pub watchfs: bool,
     pub paranoid: bool,
-    pub materializations: Option<String>,
+    #[serde(default)]
+    pub remote_download_outputs: RemoteDownloadOutputsMode,
     pub http: HttpConfig,
     pub resource_control: ResourceControlConfig,
     pub log_download_method: LogDownloadMethod,
@@ -666,12 +753,7 @@ impl DaemonStartupConfig {
                 })?
                 .unwrap_or(cfg!(fbcode_build)),
             paranoid: false, // Setup later in ImmediateConfig
-            materializations: config
-                .get(BuckconfigKeyRef {
-                    section: "buck2",
-                    property: "materializations",
-                })
-                .map(ToOwned::to_owned),
+            remote_download_outputs: RemoteDownloadOutputsMode::from_config(config)?,
             http: HttpConfig::from_config(config)?,
             resource_control: ResourceControlConfig::from_config(config)?,
             log_download_method,
@@ -733,7 +815,7 @@ impl DaemonStartupConfig {
             source_digest_algorithm: None,
             watchfs: false,
             paranoid: false,
-            materializations: None,
+            remote_download_outputs: RemoteDownloadOutputsMode::default(),
             http: HttpConfig::default(),
             resource_control: ResourceControlConfig::testing_default(),
             log_download_method: if cfg!(fbcode_build) {
@@ -766,6 +848,48 @@ mod tests {
 
         assert_eq!(config.remote_cache_endpoint_enabled(), Some(true));
         assert!(config.should_upload_local_results_to_remote_cache());
+    }
+
+    #[test]
+    fn remote_download_outputs_defaults_to_toplevel() -> buck2_error::Result<()> {
+        let startup_config = DaemonStartupConfig::new(&LegacyBuckConfig::empty())?;
+        assert_eq!(
+            startup_config.remote_download_outputs,
+            RemoteDownloadOutputsMode::Toplevel
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn remote_download_outputs_reads_bazel_style_config() -> buck2_error::Result<()> {
+        let config = parse(indoc!(
+            r#"
+            [buck2]
+            remote_download_outputs = minimal
+            "#
+        ))?;
+        let startup_config = DaemonStartupConfig::new(&config)?;
+        assert_eq!(
+            startup_config.remote_download_outputs,
+            RemoteDownloadOutputsMode::Minimal
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn remote_download_outputs_translates_legacy_materializations() -> buck2_error::Result<()> {
+        let config = parse(indoc!(
+            r#"
+            [buck2]
+            materializations = deferred_skip_final_artifacts
+            "#
+        ))?;
+        let startup_config = DaemonStartupConfig::new(&config)?;
+        assert_eq!(
+            startup_config.remote_download_outputs,
+            RemoteDownloadOutputsMode::Minimal
+        );
+        Ok(())
     }
 
     #[test]

@@ -55,6 +55,7 @@ use buck2_cmd_starlark_client::StarlarkCommand;
 use buck2_common::argv::Argv;
 use buck2_common::init::DaemonStartupConfig;
 use buck2_common::init::RemoteDefaultExecProperty;
+use buck2_common::init::RemoteDownloadOutputsMode;
 use buck2_common::init::RemoteExecutionStartupConfig;
 use buck2_common::invocation_paths_result::InvocationPathsResult;
 use buck2_common::invocation_roots::get_invocation_paths_result;
@@ -104,6 +105,10 @@ fn parse_remote_default_exec_property(
         name: name.to_owned(),
         value: value.to_owned(),
     })
+}
+
+fn parse_remote_download_outputs(value: &str) -> buck2_error::Result<RemoteDownloadOutputsMode> {
+    value.parse()
 }
 
 fn parse_isolation_dir(s: &str) -> buck2_error::Result<FileNameBuf> {
@@ -236,6 +241,44 @@ struct BeforeSubcommandOptions {
     )]
     remote_default_exec_properties: Vec<RemoteDefaultExecProperty>,
 
+    /// Bazel-compatible remote output download mode: minimal, toplevel, or all.
+    #[clap(
+        long = "remote_download_outputs",
+        alias = "remote-download-outputs",
+        value_name = "MODE",
+        global = true,
+        value_parser = buck_error_clap_parser(parse_remote_download_outputs),
+        conflicts_with_all = ["remote_download_minimal", "remote_download_toplevel", "remote_download_all"]
+    )]
+    remote_download_outputs: Option<RemoteDownloadOutputsMode>,
+
+    /// Download only remote outputs required as local action inputs.
+    #[clap(
+        long = "remote_download_minimal",
+        alias = "remote-download-minimal",
+        global = true,
+        conflicts_with_all = ["remote_download_outputs", "remote_download_toplevel", "remote_download_all"]
+    )]
+    remote_download_minimal: bool,
+
+    /// Download requested top-level outputs.
+    #[clap(
+        long = "remote_download_toplevel",
+        alias = "remote-download-toplevel",
+        global = true,
+        conflicts_with_all = ["remote_download_outputs", "remote_download_minimal", "remote_download_all"]
+    )]
+    remote_download_toplevel: bool,
+
+    /// Download all remote outputs.
+    #[clap(
+        long = "remote_download_all",
+        alias = "remote-download-all",
+        global = true,
+        conflicts_with_all = ["remote_download_outputs", "remote_download_minimal", "remote_download_toplevel"]
+    )]
+    remote_download_all: bool,
+
     /// Print buck wrapper help.
     #[clap(skip)] // @oss-enable
     // @oss-disable: #[clap(long)]
@@ -287,15 +330,31 @@ impl BeforeSubcommandOptions {
     fn buildbuddy_bes(&self) -> bool {
         self.buildbuddy
     }
+
+    fn remote_download_outputs_override(&self) -> Option<RemoteDownloadOutputsMode> {
+        if self.remote_download_minimal {
+            Some(RemoteDownloadOutputsMode::Minimal)
+        } else if self.remote_download_toplevel {
+            Some(RemoteDownloadOutputsMode::Toplevel)
+        } else if self.remote_download_all {
+            Some(RemoteDownloadOutputsMode::All)
+        } else {
+            self.remote_download_outputs
+        }
+    }
 }
 
 fn apply_daemon_startup_config_overrides(
     mut daemon_startup_config: DaemonStartupConfig,
     watchfs_override: Option<bool>,
     remote_execution_startup_config: &RemoteExecutionStartupConfig,
+    remote_download_outputs_override: Option<RemoteDownloadOutputsMode>,
 ) -> DaemonStartupConfig {
     if let Some(watchfs) = watchfs_override {
         daemon_startup_config.watchfs = watchfs;
+    }
+    if let Some(remote_download_outputs) = remote_download_outputs_override {
+        daemon_startup_config.remote_download_outputs = remote_download_outputs;
     }
     daemon_startup_config
         .remote_execution
@@ -609,6 +668,7 @@ impl CommandKind {
         let runtime = runtime.get_or_init()?;
         let watchfs_override = common_opts.watchfs_override();
         let remote_execution_startup_config = common_opts.remote_execution_startup_config();
+        let remote_download_outputs_override = common_opts.remote_download_outputs_override();
         let buildbuddy_bes = common_opts.buildbuddy_bes();
 
         let start_in_process_daemon = if common_opts.no_buckd {
@@ -617,6 +677,7 @@ impl CommandKind {
                 immediate_config.daemon_startup_config()?.clone(),
                 watchfs_override,
                 &remote_execution_startup_config,
+                remote_download_outputs_override,
             );
             #[cfg(not(client_only))]
             let v = buck2_daemon::no_buckd::start_in_process_daemon(
@@ -651,6 +712,7 @@ impl CommandKind {
             common_opts.agent_context,
             watchfs_override,
             remote_execution_startup_config,
+            remote_download_outputs_override,
             buildbuddy_bes,
         );
         if let Some(recorder) = events_ctx.recorder.as_mut() {
@@ -1022,6 +1084,33 @@ mod tests {
         assert_eq!(
             remote_execution.buildbuddy_api_key.as_deref(),
             Some("secret")
+        );
+    }
+
+    #[test]
+    fn remote_download_outputs_is_global_startup_override() {
+        let opts = Opt::try_parse_from([
+            "buck2",
+            "build",
+            "--remote_download_outputs=minimal",
+            "//:target",
+        ])
+        .unwrap();
+
+        assert_eq!(
+            opts.common_opts.remote_download_outputs_override(),
+            Some(RemoteDownloadOutputsMode::Minimal)
+        );
+    }
+
+    #[test]
+    fn remote_download_aliases_set_startup_override() {
+        let opts =
+            Opt::try_parse_from(["buck2", "--remote_download_all", "build", "//:target"]).unwrap();
+
+        assert_eq!(
+            opts.common_opts.remote_download_outputs_override(),
+            Some(RemoteDownloadOutputsMode::All)
         );
     }
 }

@@ -52,7 +52,6 @@ use buck2_events::daemon_id::DaemonId;
 use buck2_events::dispatch::EventDispatcher;
 use buck2_events::source::ChannelEventSource;
 use buck2_execute::digest_config::DigestConfig;
-use buck2_execute::materialize::materializer::MaterializationMethod;
 use buck2_execute_impl::executors::local::ForkserverAccess;
 use buck2_fs::cwd::WorkingDirectory;
 use buck2_fs::fs_util;
@@ -261,9 +260,7 @@ impl BuckdServer {
         let (shutdown_channel, shutdown_receiver): (UnboundedSender<()>, _) = mpsc::unbounded();
         let (command_channel, command_receiver): (UnboundedSender<()>, _) = mpsc::unbounded();
 
-        let materializations = MaterializationMethod::try_new_from_config_value(
-            init_ctx.daemon_startup_config.materializations.as_deref(),
-        )?;
+        let remote_download_outputs = init_ctx.daemon_startup_config.remote_download_outputs;
 
         // Create buck-out and potentially chdir to there.
         fs_util::create_dir_all(paths.buck_out_path())
@@ -298,7 +295,7 @@ impl BuckdServer {
                 paths,
                 init_ctx,
                 &rt,
-                materializations,
+                remote_download_outputs,
                 cwd,
                 cgroup_tree,
                 daemon_id,

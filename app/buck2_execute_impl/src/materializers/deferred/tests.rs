@@ -11,6 +11,7 @@
 use std::sync::Arc;
 
 use buck2_common::file_ops::metadata::FileMetadata;
+use buck2_common::init::RemoteDownloadOutputsMode;
 use buck2_core::fs::project_rel_path::ProjectRelativePath;
 use buck2_error::internal_error;
 use buck2_execute::digest_config::DigestConfig;
@@ -528,7 +529,7 @@ mod state_machine {
             DeferredMaterializerAccessor {
                 command_thread: Some(command_thread),
                 command_sender,
-                materialize_final_artifacts: true,
+                remote_download_outputs: RemoteDownloadOutputsMode::Toplevel,
                 defer_write_actions: true,
                 eager_materialization_enabled: true,
                 io,

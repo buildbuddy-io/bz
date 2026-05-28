@@ -21,7 +21,6 @@ use buck2_error::internal_error;
 use buck2_events::daemon_id::DaemonId;
 use buck2_execute::digest_config::DigestConfig;
 use buck2_execute::execute::blocking::BlockingExecutor;
-use buck2_execute::materialize::materializer::MaterializationMethod;
 use buck2_execute_impl::materializers::deferred::DeferredMaterializerConfigs;
 use buck2_execute_impl::sqlite::incremental_state_db::INCREMENTAL_DB_SCHEMA_VERSION;
 use buck2_execute_impl::sqlite::incremental_state_db::IncrementalDbState;
@@ -44,15 +43,8 @@ pub struct DiskStateOptions {
 }
 
 impl DiskStateOptions {
-    pub fn new(
-        root_config: &LegacyBuckConfig,
-        materialization_method: MaterializationMethod,
-    ) -> buck2_error::Result<Self> {
-        let sqlite_materializer_state = matches!(
-            // We can only enable materializer state on sqlite if you use deferred materializer
-            materialization_method,
-            MaterializationMethod::Deferred | MaterializationMethod::DeferredSkipFinalArtifacts
-        ) && root_config
+    pub fn new(root_config: &LegacyBuckConfig) -> buck2_error::Result<Self> {
+        let sqlite_materializer_state = root_config
             .parse::<RolloutPercentage>(BuckconfigKeyRef {
                 section: "buck2",
                 property: "sqlite_materializer_state",

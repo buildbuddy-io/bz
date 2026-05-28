@@ -35,6 +35,7 @@ use artifact_tree::ProcessingFuture;
 use async_trait::async_trait;
 use buck2_common::file_ops::metadata::FileMetadata;
 use buck2_common::file_ops::metadata::TrackedFileDigest;
+use buck2_common::init::RemoteDownloadOutputsMode;
 use buck2_common::liveliness_observer::LivelinessGuard;
 use buck2_core::fs::project::ProjectRoot;
 use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
@@ -127,9 +128,7 @@ pub struct DeferredMaterializerAccessor<T: IoHandler + 'static> {
     #[allocative(skip)]
     #[cfg_attr(not(test), expect(dead_code))]
     command_thread: Option<std::thread::JoinHandle<()>>,
-    /// Determines what to do on `try_materialize_final_artifact`: if true,
-    /// materializes them, otherwise skips them.
-    materialize_final_artifacts: bool,
+    remote_download_outputs: RemoteDownloadOutputsMode,
     defer_write_actions: bool,
     eager_materialization_enabled: bool,
 
@@ -158,7 +157,7 @@ pub struct DeferredMaterializerStats {
 }
 
 pub struct DeferredMaterializerConfigs {
-    pub materialize_final_artifacts: bool,
+    pub remote_download_outputs: RemoteDownloadOutputsMode,
     pub defer_write_actions: bool,
     pub ttl_refresh: TtlRefreshConfiguration,
     pub update_access_times: AccessTimesUpdates,
@@ -381,6 +380,11 @@ impl<T: IoHandler + Allocative> Materializer for DeferredMaterializerAccessor<T>
         info: Arc<CasDownloadInfo>,
         artifacts: Vec<DeclareArtifactPayload>,
     ) -> buck2_error::Result<()> {
+        let materialize_paths = self
+            .remote_download_outputs
+            .materializes_remote_outputs_eagerly()
+            .then(|| artifacts.iter().map(|a| a.path.clone()).collect::<Vec<_>>());
+
         for a in artifacts {
             let cmd = MaterializerCommand::Declare(
                 a,
@@ -389,6 +393,9 @@ impl<T: IoHandler + Allocative> Materializer for DeferredMaterializerAccessor<T>
                 current_span(),
             );
             self.command_sender.send(cmd)?;
+        }
+        if let Some(paths) = materialize_paths {
+            self.ensure_materialized(paths).await?;
         }
         Ok(())
     }
@@ -399,6 +406,10 @@ impl<T: IoHandler + Allocative> Materializer for DeferredMaterializerAccessor<T>
         info: HttpDownloadInfo,
         configuration_path: Option<ProjectRelativePathBuf>,
     ) -> buck2_error::Result<()> {
+        let materialize_path = self
+            .remote_download_outputs
+            .materializes_remote_outputs_eagerly()
+            .then(|| path.clone());
         let cmd = MaterializerCommand::Declare(
             DeclareArtifactPayload {
                 path,
@@ -410,6 +421,9 @@ impl<T: IoHandler + Allocative> Materializer for DeferredMaterializerAccessor<T>
             current_span(),
         );
         self.command_sender.send(cmd)?;
+        if let Some(path) = materialize_path {
+            self.ensure_materialized(vec![path]).await?;
+        }
 
         Ok(())
     }
@@ -575,7 +589,7 @@ impl<T: IoHandler + Allocative> Materializer for DeferredMaterializerAccessor<T>
         &self,
         artifact_path: ProjectRelativePathBuf,
     ) -> buck2_error::Result<bool> {
-        if self.materialize_final_artifacts {
+        if self.remote_download_outputs.materializes_final_artifacts() {
             self.ensure_materialized(vec![artifact_path]).await?;
             Ok(true)
         } else {
@@ -802,7 +816,7 @@ impl DeferredMaterializerAccessor<DefaultIoHandler> {
         Ok(Self {
             command_thread: Some(command_thread),
             command_sender,
-            materialize_final_artifacts: configs.materialize_final_artifacts,
+            remote_download_outputs: configs.remote_download_outputs,
             defer_write_actions: configs.defer_write_actions,
             eager_materialization_enabled: configs.eager_materialization_enabled,
             io,

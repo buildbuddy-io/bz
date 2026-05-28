@@ -20,6 +20,7 @@ use buck2_cli_proto::client_context::PreemptibleWhen as GrpcPreemptibleWhen;
 use buck2_common::argv::Argv;
 use buck2_common::init::DaemonStartupConfig;
 use buck2_common::init::LogDownloadMethod;
+use buck2_common::init::RemoteDownloadOutputsMode;
 use buck2_common::init::RemoteExecutionStartupConfig;
 use buck2_common::invocation_paths::InvocationPaths;
 use buck2_common::invocation_paths_result::InvocationPathsResult;
@@ -74,6 +75,7 @@ pub struct ClientCommandContext<'a> {
     pub(crate) isolation: FileNameBuf,
     pub(crate) agent_context: Vec<AgentContextEntry>,
     pub(crate) watchfs_override: Option<bool>,
+    pub(crate) remote_download_outputs_override: Option<RemoteDownloadOutputsMode>,
     pub(crate) remote_execution_startup_config: RemoteExecutionStartupConfig,
     pub(crate) buildbuddy_bes: bool,
 }
@@ -98,6 +100,7 @@ impl<'a> ClientCommandContext<'a> {
         agent_context: Vec<AgentContextEntry>,
         watchfs_override: Option<bool>,
         remote_execution_startup_config: RemoteExecutionStartupConfig,
+        remote_download_outputs_override: Option<RemoteDownloadOutputsMode>,
         buildbuddy_bes: bool,
     ) -> Self {
         ClientCommandContext {
@@ -118,6 +121,7 @@ impl<'a> ClientCommandContext<'a> {
             isolation,
             agent_context,
             watchfs_override,
+            remote_download_outputs_override,
             remote_execution_startup_config,
             buildbuddy_bes,
         }
@@ -340,6 +344,9 @@ impl<'a> ClientCommandContext<'a> {
         let mut daemon_startup_config = self.immediate_config.daemon_startup_config()?.clone();
         if let Some(watchfs) = self.watchfs_override {
             daemon_startup_config.watchfs = watchfs;
+        }
+        if let Some(remote_download_outputs) = self.remote_download_outputs_override {
+            daemon_startup_config.remote_download_outputs = remote_download_outputs;
         }
         daemon_startup_config
             .remote_execution

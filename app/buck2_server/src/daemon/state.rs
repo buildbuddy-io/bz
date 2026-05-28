@@ -25,6 +25,7 @@ use buck2_common::cas_digest::DigestAlgorithmFamily;
 use buck2_common::ignores::ignore_set::IgnoreSet;
 use buck2_common::ignores::ignore_set::bazelignore_to_ignore_spec;
 use buck2_common::init::DaemonStartupConfig;
+use buck2_common::init::RemoteDownloadOutputsMode;
 use buck2_common::init::RemoteExecutionStartupConfig;
 use buck2_common::init::SystemWarningConfig;
 use buck2_common::init::Timeout;
@@ -57,7 +58,6 @@ use buck2_execute::digest_config::DigestConfig;
 use buck2_execute::execute::blocking::BlockingExecutor;
 use buck2_execute::execute::blocking::BuckBlockingExecutor;
 use buck2_execute::execute::blocking::DirectIoExecutor;
-use buck2_execute::materialize::materializer::MaterializationMethod;
 use buck2_execute::materialize::materializer::Materializer;
 use buck2_execute::re::manager::ReConnectionManager;
 use buck2_execute_impl::executors::local::ForkserverAccess;
@@ -310,7 +310,7 @@ impl DaemonState {
         paths: InvocationPaths,
         init_ctx: BuckdServerInitPreferences,
         rt: &Handle,
-        materializations: MaterializationMethod,
+        remote_download_outputs: RemoteDownloadOutputsMode,
         working_directory: WorkingDirectory,
         cgroup_tree: Option<BuckCgroupTree>,
         daemon_id: DaemonId,
@@ -320,7 +320,7 @@ impl DaemonState {
             paths.clone(),
             init_ctx,
             rt,
-            materializations,
+            remote_download_outputs,
             cgroup_tree,
             daemon_id,
         )
@@ -350,7 +350,7 @@ impl DaemonState {
         paths: InvocationPaths,
         init_ctx: BuckdServerInitPreferences,
         rt: &Handle,
-        materializations: MaterializationMethod,
+        remote_download_outputs: RemoteDownloadOutputsMode,
         cgroup_tree: Option<BuckCgroupTree>,
         daemon_id: DaemonId,
     ) -> buck2_error::Result<Arc<DaemonStateData>> {
@@ -515,7 +515,7 @@ impl DaemonState {
                 );
             }
 
-            let disk_state_options = DiskStateOptions::new(root_config, materializations.dupe())?;
+            let disk_state_options = DiskStateOptions::new(root_config)?;
 
             let blocking_executor: Arc<dyn BlockingExecutor> =
                 if cfg!(any(target_os = "macos", target_os = "windows")) {
@@ -593,10 +593,7 @@ impl DaemonState {
                     .roll();
 
                 DeferredMaterializerConfigs {
-                    materialize_final_artifacts: matches!(
-                        materializations,
-                        MaterializationMethod::Deferred
-                    ),
+                    remote_download_outputs,
                     defer_write_actions,
                     ttl_refresh: TtlRefreshConfiguration {
                         frequency: std::time::Duration::from_secs(ttl_refresh_frequency),
@@ -708,7 +705,6 @@ impl DaemonState {
                 paths.buck_out_dir(),
                 re_client_manager.dupe(),
                 blocking_executor.dupe(),
-                materializations,
                 deferred_materializer_configs,
                 materializer_db,
                 http_client.dupe(),
@@ -885,27 +881,22 @@ impl DaemonState {
         buck_out_path: ProjectRelativePathBuf,
         re_client_manager: Arc<ReConnectionManager>,
         blocking_executor: Arc<dyn BlockingExecutor>,
-        materializations: MaterializationMethod,
         deferred_materializer_configs: DeferredMaterializerConfigs,
         materializer_db: Option<MaterializerStateSqliteDbDeferredLoad>,
         http_client: HttpClient,
         daemon_dispatcher: EventDispatcher,
     ) -> buck2_error::Result<Arc<dyn Materializer>> {
-        match materializations {
-            MaterializationMethod::Deferred | MaterializationMethod::DeferredSkipFinalArtifacts => {
-                Ok(Arc::new(DeferredMaterializer::new(
-                    fs,
-                    digest_config,
-                    buck_out_path,
-                    re_client_manager,
-                    blocking_executor,
-                    deferred_materializer_configs,
-                    materializer_db,
-                    http_client,
-                    daemon_dispatcher,
-                )?))
-            }
-        }
+        Ok(Arc::new(DeferredMaterializer::new(
+            fs,
+            digest_config,
+            buck_out_path,
+            re_client_manager,
+            blocking_executor,
+            deferred_materializer_configs,
+            materializer_db,
+            http_client,
+            daemon_dispatcher,
+        )?))
     }
 
     fn init_scribe_sink(
