@@ -25,6 +25,12 @@ use crate::legacy_configs::key::BuckconfigKeyRef;
 pub const DEFAULT_RETAINED_EVENT_LOGS: usize = 12;
 pub const BUILDBUDDY_API_KEY_HEADER: &str = "x-buildbuddy-api-key";
 
+#[derive(Allocative, Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RemoteDefaultExecProperty {
+    pub name: String,
+    pub value: String,
+}
+
 #[derive(
     Allocative,
     Clone,
@@ -39,6 +45,7 @@ pub struct RemoteExecutionStartupConfig {
     pub remote_cache: Option<String>,
     pub remote_executor: Option<String>,
     pub buildbuddy_api_key: Option<String>,
+    pub remote_default_exec_properties: Option<Vec<RemoteDefaultExecProperty>>,
 }
 
 impl RemoteExecutionStartupConfig {
@@ -52,6 +59,10 @@ impl RemoteExecutionStartupConfig {
         if overrides.buildbuddy_api_key.is_some() {
             self.buildbuddy_api_key
                 .clone_from(&overrides.buildbuddy_api_key);
+        }
+        if overrides.remote_default_exec_properties.is_some() {
+            self.remote_default_exec_properties
+                .clone_from(&overrides.remote_default_exec_properties);
         }
     }
 

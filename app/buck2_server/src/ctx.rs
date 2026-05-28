@@ -152,6 +152,7 @@ use tracing::warn;
 
 use crate::active_commands::ActiveCommandDropGuard;
 use crate::daemon::common::CommandExecutorFactory;
+use crate::daemon::common::executor_config_with_bazel_remote_startup_overrides;
 use crate::daemon::common::get_default_executor_config;
 use crate::daemon::state::CachedBuckConfigBasedCells;
 use crate::daemon::state::ConfigPathSnapshot;
@@ -525,7 +526,10 @@ impl<'a> ServerCommandContext<'a> {
             .and_then(|opts| opts.concurrency.as_ref())
             .and_then(|obj| parse_concurrency(obj.concurrency));
 
-        let executor_config = get_default_executor_config(self.host_platform_override);
+        let executor_config = executor_config_with_bazel_remote_startup_overrides(
+            &get_default_executor_config(self.host_platform_override),
+            &self.base_context.daemon.remote_execution_startup_config,
+        );
         let re_connection = Arc::new(self.get_re_connection());
 
         let upload_all_actions = self

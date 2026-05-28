@@ -97,8 +97,12 @@ where
         &self,
         command: &PreparedCommand<'_, '_>,
     ) -> buck2_error::Result<ExecutorPreference> {
-        self.executor_preference
-            .and(command.request.executor_preference())
+        let action_preference = command.request.executor_preference();
+        if action_preference.requires_local() || action_preference.requires_remote() {
+            return Ok(action_preference);
+        }
+
+        self.executor_preference.and(action_preference)
     }
 
     /// Indicate whether an action is too big to run on RE.

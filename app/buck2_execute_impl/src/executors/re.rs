@@ -68,6 +68,10 @@ use crate::re::paranoid_download::ParanoidDownloader;
 use crate::sqlite::incremental_state_db::IncrementalDbState;
 use crate::storage_resource_exhausted::is_storage_resource_exhausted;
 
+const RE_TRANSIENT_RETRY_ATTEMPTS: usize = 5;
+const RE_TRANSIENT_RETRY_INITIAL_DELAY: Duration = Duration::from_millis(100);
+const RE_TRANSIENT_RETRY_MAX_DELAY: Duration = Duration::from_secs(5);
+
 #[derive(Debug, buck2_error::Error)]
 pub enum RemoteExecutorError {
     #[error("Trying to execute a `local_only = True` action on remote executor")]
@@ -183,43 +187,64 @@ impl ReExecutor {
         );
 
         let now = TimeSpan::start_now();
+        let dependencies = dependencies.into_iter().collect::<Vec<_>>();
 
-        let execute_response_fut = self.re_client.execute(
-            action_digest.dupe(),
-            platform,
-            dependencies,
-            re_gang_workers,
-            identity,
-            &mut manager,
-            self.skip_cache_read || force_skip_cache_read,
-            self.skip_cache_write,
-            self.re_max_queue_time,
-            self.re_resource_units,
-            &self.knobs,
-            meta_internal_extra_params,
-            worker_tool_action_digest,
-            self.priority,
-        );
+        let mut delay = RE_TRANSIENT_RETRY_INITIAL_DELAY;
+        let mut attempt = 0;
+        let execute_response = loop {
+            let execute_response_fut = self.re_client.execute(
+                action_digest.dupe(),
+                platform,
+                dependencies.iter().copied(),
+                re_gang_workers,
+                identity,
+                &mut manager,
+                self.skip_cache_read || force_skip_cache_read,
+                self.skip_cache_write,
+                self.re_max_queue_time,
+                self.re_resource_units,
+                &self.knobs,
+                meta_internal_extra_params,
+                worker_tool_action_digest,
+                self.priority,
+            );
 
-        let execute_response =
-            if let Some(timeout) = buck2_common::self_test_timeout::maybe_cap_timeout(None) {
-                match tokio::time::timeout(timeout, execute_response_fut).await {
-                    Ok(resp) => resp,
-                    Err(_) => {
-                        return ControlFlow::Break(manager.error(
-                            "re_timeout_exceeded",
-                            buck2_error::buck2_error!(
-                                buck2_error::ErrorTag::Tier0,
-                                "Command {} exceeded its timeout (timeout was {}s)",
-                                &identity.action_key,
-                                timeout.as_secs(),
-                            ),
-                        ));
+            let execute_response =
+                if let Some(timeout) = buck2_common::self_test_timeout::maybe_cap_timeout(None) {
+                    match tokio::time::timeout(timeout, execute_response_fut).await {
+                        Ok(resp) => resp,
+                        Err(_) => {
+                            return ControlFlow::Break(manager.error(
+                                "re_timeout_exceeded",
+                                buck2_error::buck2_error!(
+                                    buck2_error::ErrorTag::Tier0,
+                                    "Command {} exceeded its timeout (timeout was {}s)",
+                                    &identity.action_key,
+                                    timeout.as_secs(),
+                                ),
+                            ));
+                        }
                     }
+                } else {
+                    execute_response_fut.await
+                };
+
+            match &execute_response {
+                Err(error)
+                    if attempt < RE_TRANSIENT_RETRY_ATTEMPTS && is_transient_re_error(error) =>
+                {
+                    tracing::warn!(
+                        "Transient RE error in execute, retrying after {:?}: {:#}",
+                        delay,
+                        error
+                    );
+                    attempt += 1;
+                    tokio::time::sleep(delay).await;
+                    delay = std::cmp::min(delay * 2, RE_TRANSIENT_RETRY_MAX_DELAY);
                 }
-            } else {
-                execute_response_fut.await
-            };
+                _ => break execute_response,
+            }
+        };
 
         let remote_details = RemoteCommandExecutionDetails::new(
             action_digest.dupe(),
@@ -617,4 +642,20 @@ fn is_re_queue_full(e: &buck2_error::Error) -> bool {
 
     e.find_typed_context::<RemoteExecutionError>()
         .is_some_and(|re_err| re_err.group == TCodeReasonGroup::USER_QUEUE_FULL)
+}
+
+fn is_transient_re_error(e: &buck2_error::Error) -> bool {
+    e.find_typed_context::<RemoteExecutionError>()
+        .is_some_and(|re_err| {
+            matches!(
+                re_err.code,
+                TCode::CANCELLED
+                    | TCode::UNKNOWN
+                    | TCode::DEADLINE_EXCEEDED
+                    | TCode::ABORTED
+                    | TCode::INTERNAL
+                    | TCode::UNAVAILABLE
+                    | TCode::RESOURCE_EXHAUSTED
+            )
+        })
 }

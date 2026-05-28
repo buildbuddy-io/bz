@@ -11,4 +11,5 @@
 pub mod expanded_command_line;
 pub mod json;
 pub mod run_action_knobs;
+pub mod solib_symlink;
 pub mod workspace_status;

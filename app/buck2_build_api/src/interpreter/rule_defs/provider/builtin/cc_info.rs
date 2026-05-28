@@ -20,15 +20,19 @@ use buck2_core::cells::cell_path::CellPath;
 use buck2_core::cells::external::bzlmod_cell_name;
 use buck2_core::cells::name::CellName;
 use buck2_core::cells::paths::CellRelativePathBuf;
+use buck2_core::fs::buck_out_path::BazelOutputPathKind;
+use buck2_core::fs::buck_out_path::BazelOutputRoot;
 use buck2_core::fs::buck_out_path::BuckOutPathKind;
 use buck2_core::provider::id::ProviderId;
 use buck2_execute::execute::request::OutputType;
+use buck2_hash::buck_indexset;
 use buck2_interpreter::types::configured_providers_label::StarlarkConfiguredProvidersLabel;
 use buck2_interpreter::types::configured_providers_label::StarlarkProvidersLabel;
 use buck2_interpreter::types::provider::callable::ProviderCallableLike;
 use buck2_util::late_binding::LateBinding;
 use dupe::Dupe;
 use serde::Serializer;
+use sha2::Digest;
 use starlark::any::ProvidesStaticType;
 use starlark::coerce::Coerce;
 use starlark::collections::SmallMap;
@@ -67,7 +71,9 @@ use starlark::values::tuple::UnpackTuple;
 use starlark_map::StarlarkHasher;
 
 use crate as buck2_build_api;
+use crate::actions::impls::solib_symlink::UnregisteredSolibSymlinkAction;
 use crate::interpreter::rule_defs::artifact::associated::AssociatedArtifacts;
+use crate::interpreter::rule_defs::artifact::starlark_artifact_like::ValueAsInputArtifactLike;
 use crate::interpreter::rule_defs::artifact::starlark_declared_artifact::StarlarkDeclaredArtifact;
 use crate::interpreter::rule_defs::cmd_args::StarlarkCmdArgs;
 use crate::interpreter::rule_defs::context::AnalysisActions;
@@ -2887,6 +2893,8 @@ impl<'v> StarlarkValue<'v> for BazelCcInternal {
             "create_header_info".to_owned(),
             "create_header_info_with_deps".to_owned(),
             "declare_compile_output_file".to_owned(),
+            "dynamic_library_symlink".to_owned(),
+            "dynamic_library_symlink2".to_owned(),
             "dynamic_library_soname".to_owned(),
             "exec_os".to_owned(),
             "freeze".to_owned(),
@@ -2928,6 +2936,125 @@ fn bazel_cc_dynamic_library_soname(path: &str, preserve_name: bool, mnemonic: &s
         .map(|idx| format!("{}_", &mnemonic[idx..]))
         .unwrap_or_default();
     format!("lib{}{}", mnemonic_mangling, bazel_cc_escape_path(path))
+}
+
+fn bazel_cc_maybe_hash_preserve_extension(filename: &str) -> String {
+    const MAX_FILENAME_LENGTH: usize = 255;
+    if filename.len() <= MAX_FILENAME_LENGTH {
+        return filename.to_owned();
+    }
+
+    let hashed_name = hex::encode(sha2::Sha256::digest(filename.as_bytes()));
+    match filename.rsplit_once('.') {
+        Some((_, extension)) if !extension.is_empty() => {
+            format!("{hashed_name}.{extension}")
+        }
+        _ => hashed_name,
+    }
+}
+
+fn bazel_cc_join_path(left: &str, right: &str) -> String {
+    if left.is_empty() {
+        right.trim_start_matches('/').to_owned()
+    } else if right.is_empty() {
+        left.trim_end_matches('/').to_owned()
+    } else {
+        format!(
+            "{}/{}",
+            left.trim_end_matches('/'),
+            right.trim_start_matches('/')
+        )
+    }
+}
+
+fn bazel_cc_dynamic_library_symlink_name(
+    label: Option<&str>,
+    solib_directory: &str,
+    library_path: &str,
+    preserve_name: bool,
+    prefix_consumer: bool,
+) -> String {
+    let escaped_rule_path = bazel_cc_escape_path(&format!("_{}", label.unwrap_or("")));
+    let soname = bazel_cc_dynamic_library_soname(library_path, preserve_name, "");
+    if preserve_name {
+        let library_parent = library_path
+            .rsplit_once('/')
+            .map(|(parent, _)| parent)
+            .unwrap_or("");
+        let escaped_library_path = bazel_cc_escape_path(&format!("_{library_parent}"));
+        let escaped_full_path = if prefix_consumer {
+            format!("{escaped_rule_path}__{escaped_library_path}")
+        } else {
+            escaped_library_path
+        };
+        let mangled_dir = bazel_cc_join_path(
+            solib_directory,
+            &bazel_cc_maybe_hash_preserve_extension(&escaped_full_path),
+        );
+        bazel_cc_join_path(&mangled_dir, &soname)
+    } else {
+        let filename = if prefix_consumer {
+            format!("{escaped_rule_path}__{soname}")
+        } else {
+            soname
+        };
+        bazel_cc_join_path(
+            solib_directory,
+            &bazel_cc_maybe_hash_preserve_extension(&filename),
+        )
+    }
+}
+
+fn bazel_cc_library_root_relative_path<'v>(
+    library: &ValueAsInputArtifactLike<'v>,
+    heap: Heap<'v>,
+) -> starlark::Result<String> {
+    Ok(library
+        .0
+        .with_bazel_short_path(&|path| heap.alloc_str(path))?
+        .as_str()
+        .to_owned())
+}
+
+fn bazel_cc_register_solib_symlink<'v>(
+    actions: ValueTyped<'v, AnalysisActions<'v>>,
+    library: ValueAsInputArtifactLike<'v>,
+    path: String,
+    eval: &mut Evaluator<'v, '_, '_>,
+) -> starlark::Result<StarlarkDeclaredArtifact<'v>> {
+    let artifact_group = library.0.get_artifact_group()?;
+    let associated_artifacts = library
+        .0
+        .get_associated_artifacts()
+        .cloned()
+        .unwrap_or_else(AssociatedArtifacts::new);
+    let bazel_owner = actions.as_ref().bazel_owner();
+    let mut state = actions.as_ref().state()?;
+    let artifact = state.declare_bazel_shareable_output(
+        &path,
+        OutputType::Symlink,
+        eval.call_stack_top_location(),
+        BuckOutPathKind::Configuration,
+        bazel_owner,
+        BazelOutputRoot::Bin,
+        BazelOutputPathKind::OutputDirRelative,
+        eval.heap(),
+    )?;
+    let output_artifact = artifact.as_output();
+    let action_signature = format!("SolibSymlink:{artifact_group:?}");
+    if state.should_register_bazel_shareable_action(&output_artifact, action_signature)? {
+        state.register_action(
+            buck_indexset![output_artifact],
+            UnregisteredSolibSymlinkAction::new(artifact_group),
+            None,
+            None,
+        )?;
+    }
+    Ok(StarlarkDeclaredArtifact::new(
+        eval.call_stack_top_location(),
+        artifact,
+        associated_artifacts,
+    ))
 }
 
 fn bazel_cc_build_variable_from_dict<'v>(variables: Value<'v>, name: &str) -> Option<Value<'v>> {
@@ -3652,6 +3779,42 @@ fn bazel_cc_internal_methods(builder: &mut MethodsBuilder) {
     ) -> starlark::Result<String> {
         let _unused = actions;
         Ok(bazel_cc_dynamic_library_soname(path, preserve_name, ""))
+    }
+
+    fn dynamic_library_symlink<'v>(
+        #[starlark(this)] _this: &BazelCcInternal,
+        actions: ValueTyped<'v, AnalysisActions<'v>>,
+        library: ValueAsInputArtifactLike<'v>,
+        solib_directory: &str,
+        preserve_name: bool,
+        prefix_consumer: bool,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<StarlarkDeclaredArtifact<'v>> {
+        let library_path = bazel_cc_library_root_relative_path(&library, eval.heap())?;
+        let label = actions
+            .as_ref()
+            .bazel_owner()
+            .map(|owner| owner.unconfigured().to_string());
+        let path = bazel_cc_dynamic_library_symlink_name(
+            label.as_deref(),
+            solib_directory,
+            &library_path,
+            preserve_name,
+            prefix_consumer,
+        );
+        bazel_cc_register_solib_symlink(actions, library, path, eval)
+    }
+
+    fn dynamic_library_symlink2<'v>(
+        #[starlark(this)] _this: &BazelCcInternal,
+        actions: ValueTyped<'v, AnalysisActions<'v>>,
+        library: ValueAsInputArtifactLike<'v>,
+        solib_directory: &str,
+        path: &str,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<StarlarkDeclaredArtifact<'v>> {
+        let path = bazel_cc_join_path(solib_directory, path);
+        bazel_cc_register_solib_symlink(actions, library, path, eval)
     }
 
     fn get_link_args<'v>(

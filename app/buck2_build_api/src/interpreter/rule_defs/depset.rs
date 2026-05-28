@@ -247,12 +247,64 @@ impl<'v, V: ValueLike<'v>> BazelDepsetGen<'v, V> {
                 self.collect_transitive(values, seen_values, seen_depsets, hash_cache)?;
                 self.collect_direct(values, seen_values, hash_cache)?;
             }
-            BazelDepsetOrder::Preorder | BazelDepsetOrder::Topological => {
+            BazelDepsetOrder::Preorder => {
                 self.collect_direct(values, seen_values, hash_cache)?;
                 self.collect_transitive(values, seen_values, seen_depsets, hash_cache)?;
             }
+            BazelDepsetOrder::Topological => {
+                self.collect_topological(values, seen_values, seen_depsets, hash_cache)?;
+            }
         }
         Ok(())
+    }
+
+    fn collect_topological(
+        &self,
+        values: &mut Vec<BazelDepsetCollectedValue<'v>>,
+        seen_values: &mut SmallSet<Value<'v>>,
+        seen_depsets: &mut SmallSet<Value<'v>>,
+        hash_cache: &mut BazelDepsetHashCache<'v>,
+    ) -> starlark::Result<()> {
+        let start = values.len();
+        self.collect_topological_internal(values, seen_values, seen_depsets, hash_cache)?;
+        values[start..].reverse();
+        Ok(())
+    }
+
+    fn collect_topological_internal(
+        &self,
+        values: &mut Vec<BazelDepsetCollectedValue<'v>>,
+        seen_values: &mut SmallSet<Value<'v>>,
+        seen_depsets: &mut SmallSet<Value<'v>>,
+        hash_cache: &mut BazelDepsetHashCache<'v>,
+    ) -> starlark::Result<()> {
+        for transitive in self.transitive.iter().rev() {
+            let transitive = transitive.to_value();
+            if seen_depsets.insert_hashed(bazel_depset_identity_hash(transitive)) {
+                let transitive = depset_from_value(transitive)?;
+                if transitive.order() == BazelDepsetOrder::Topological {
+                    transitive.collect_topological_internal(
+                        values,
+                        seen_values,
+                        seen_depsets,
+                        hash_cache,
+                    )?;
+                } else if let Some(cached) = transitive.to_list_cache.values.get() {
+                    Self::collect_hashed_values(
+                        values,
+                        seen_values,
+                        cached.iter().map(|value| BazelDepsetCollectedValue {
+                            hash: value.hash,
+                            value: value.value.to_value(),
+                        }),
+                    )?;
+                } else {
+                    transitive.collect_to_list(values, seen_values, seen_depsets, hash_cache)?;
+                }
+            }
+        }
+
+        self.collect_direct_reversed(values, seen_values, hash_cache)
     }
 
     fn collect_transitive(
@@ -293,6 +345,20 @@ impl<'v, V: ValueLike<'v>> BazelDepsetGen<'v, V> {
             values,
             seen,
             self.direct.iter().map(|value| value.to_value()),
+            hash_cache,
+        )
+    }
+
+    fn collect_direct_reversed(
+        &self,
+        values: &mut Vec<BazelDepsetCollectedValue<'v>>,
+        seen: &mut SmallSet<Value<'v>>,
+        hash_cache: &mut BazelDepsetHashCache<'v>,
+    ) -> starlark::Result<()> {
+        Self::collect_values(
+            values,
+            seen,
+            self.direct.iter().rev().map(|value| value.to_value()),
             hash_cache,
         )
     }
@@ -894,5 +960,77 @@ pub fn register_bazel_depset(builder: &mut GlobalsBuilder) {
         let direct = direct.into_option().unwrap_or_default().items;
         let transitive = transitive.into_option().unwrap_or_default().items;
         bazel_depset_from_direct_and_transitive_value(heap, direct, transitive, order)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use starlark::assert::Assert;
+
+    use crate::interpreter::rule_defs::depset::register_bazel_depset;
+
+    fn depset_assert() -> Assert<'static> {
+        let mut a = Assert::new();
+        a.globals_add(register_bazel_depset);
+        a
+    }
+
+    #[test]
+    fn topological_order_matches_bazel_for_default_child() {
+        let mut a = depset_assert();
+        a.pass(
+            r#"
+s = depset([3, 4, 5], transitive = [depset([2, 4, 6])], order = "topological")
+assert_eq(s.to_list(), [3, 5, 6, 4, 2])
+            "#,
+        );
+    }
+
+    #[test]
+    fn topological_order_matches_bazel_for_diamond() {
+        let mut a = depset_assert();
+        a.pass(
+            r#"
+d = depset(["d"], order = "topological")
+c = depset(["c"], transitive = [d], order = "topological")
+b = depset(["b"], transitive = [d], order = "topological")
+a = depset(["a"], transitive = [b, c], order = "topological")
+assert_eq(a.to_list(), ["a", "b", "c", "d"])
+            "#,
+        );
+    }
+
+    #[test]
+    fn topological_order_matches_bazel_for_ijar_link_shape() {
+        let mut a = depset_assert();
+        a.pass(
+            r#"
+strings = depset(["strings"], order = "topological")
+port = depset(["port"], order = "topological")
+logging = depset(["logging"], transitive = [strings], order = "topological")
+errors = depset(["errors"], transitive = [logging, port, strings], order = "topological")
+filesystem = depset(["filesystem"], transitive = [errors, logging, strings], order = "topological")
+platform_utils = depset(["platform_utils"], transitive = [errors, filesystem, logging], order = "topological")
+zlib = depset(["zlib"], order = "topological")
+zlib_client = depset(["zlib_client"], transitive = [zlib], order = "topological")
+zip = depset(["zip"], transitive = [platform_utils, zlib_client], order = "topological")
+zipper = depset(["zipper"], transitive = [zip], order = "topological")
+assert_eq(
+    zipper.to_list(),
+    [
+        "zipper",
+        "zip",
+        "platform_utils",
+        "filesystem",
+        "errors",
+        "port",
+        "logging",
+        "strings",
+        "zlib_client",
+        "zlib",
+    ],
+)
+            "#,
+        );
     }
 }

@@ -46,6 +46,7 @@ use buck2_events::dispatch::span_async_simple;
 use buck2_execute::digest_config::HasDigestConfig;
 use buck2_execute::execute::blocking::HasBlockingExecutor;
 use buck2_execute::execute::command_executor::CommandExecutor;
+use buck2_execute::materialize::materializer::HasMaterializer;
 use buck2_interpreter::allow_relative_paths::HasAllowRelativePaths;
 use buck2_interpreter::dice::starlark_provider::StarlarkEvalKind;
 use buck2_interpreter::factory::StarlarkEvaluatorProvider;
@@ -272,6 +273,7 @@ impl<'c, 'd: 'c> DiceCalculationDelegate<'c, 'd> {
             .project_root()
             .dupe();
         let blocking_executor = self.ctx.get_blocking_executor();
+        let materializer = self.ctx.per_transaction_data().get_materializer();
         let response = self
             .ctx
             .get_command_executor_from_dice(&executor_config)
@@ -291,6 +293,7 @@ impl<'c, 'd: 'c> DiceCalculationDelegate<'c, 'd> {
                 artifact_fs,
                 project_root,
                 blocking_executor,
+                materializer,
                 digest_config,
             ),
         )))

@@ -54,6 +54,7 @@ use buck2_cmd_rage_client::rage::RageCommand;
 use buck2_cmd_starlark_client::StarlarkCommand;
 use buck2_common::argv::Argv;
 use buck2_common::init::DaemonStartupConfig;
+use buck2_common::init::RemoteDefaultExecProperty;
 use buck2_common::init::RemoteExecutionStartupConfig;
 use buck2_common::invocation_paths_result::InvocationPathsResult;
 use buck2_common::invocation_roots::get_invocation_paths_result;
@@ -82,6 +83,28 @@ pub mod panic;
 pub mod process_context;
 
 const BUILDBUDDY_REMOTE_ENDPOINT: &str = "remote.buildbuddy.dev";
+const BUILDBUDDY_DEFAULT_RBE_CONTAINER_IMAGE: &str = "docker://gcr.io/flame-public/rbe-ubuntu20-04@sha256:09261f2019e9baa7482f7742cdee8e9972a3971b08af27363a61816b2968f622";
+
+fn parse_remote_default_exec_property(
+    value: &str,
+) -> buck2_error::Result<RemoteDefaultExecProperty> {
+    let (name, value) = value.split_once('=').ok_or_else(|| {
+        buck2_error!(
+            ErrorTag::Input,
+            "Expected remote exec property in NAME=VALUE form"
+        )
+    })?;
+    if name.is_empty() {
+        return Err(buck2_error!(
+            ErrorTag::Input,
+            "Expected remote exec property name to be non-empty"
+        ));
+    }
+    Ok(RemoteDefaultExecProperty {
+        name: name.to_owned(),
+        value: value.to_owned(),
+    })
+}
 
 fn parse_isolation_dir(s: &str) -> buck2_error::Result<FileNameBuf> {
     FileNameBuf::try_from(s.to_owned()).buck_error_context("isolation dir must be a directory name")
@@ -203,6 +226,16 @@ struct BeforeSubcommandOptions {
     #[clap(long = "api-key", value_name = "KEY", global = true)]
     api_key: Option<String>,
 
+    /// Bazel-compatible default remote execution platform property.
+    #[clap(
+        long = "remote_default_exec_properties",
+        alias = "remote-default-exec-properties",
+        value_name = "NAME=VALUE",
+        global = true,
+        value_parser = buck_error_clap_parser(parse_remote_default_exec_property)
+    )]
+    remote_default_exec_properties: Vec<RemoteDefaultExecProperty>,
+
     /// Print buck wrapper help.
     #[clap(skip)] // @oss-enable
     // @oss-disable: #[clap(long)]
@@ -221,6 +254,23 @@ impl BeforeSubcommandOptions {
     }
 
     fn remote_execution_startup_config(&self) -> RemoteExecutionStartupConfig {
+        let remote_default_exec_properties = if !self.remote_default_exec_properties.is_empty() {
+            Some(self.remote_default_exec_properties.clone())
+        } else if self.rbe || self.buildbuddy {
+            Some(vec![
+                RemoteDefaultExecProperty {
+                    name: "OSFamily".to_owned(),
+                    value: "Linux".to_owned(),
+                },
+                RemoteDefaultExecProperty {
+                    name: "container-image".to_owned(),
+                    value: BUILDBUDDY_DEFAULT_RBE_CONTAINER_IMAGE.to_owned(),
+                },
+            ])
+        } else {
+            None
+        };
+
         RemoteExecutionStartupConfig {
             remote_cache: self.remote_cache.clone().or_else(|| {
                 (self.rbe || self.cache || self.buildbuddy)
@@ -230,6 +280,7 @@ impl BeforeSubcommandOptions {
                 (self.rbe || self.buildbuddy).then(|| BUILDBUDDY_REMOTE_ENDPOINT.to_owned())
             }),
             buildbuddy_api_key: self.api_key.clone(),
+            remote_default_exec_properties,
         }
     }
 
@@ -766,6 +817,22 @@ mod tests {
             remote_execution.remote_executor.as_deref(),
             Some(BUILDBUDDY_REMOTE_ENDPOINT)
         );
+        assert_eq!(
+            remote_execution.remote_default_exec_properties.as_deref(),
+            Some(
+                [
+                    RemoteDefaultExecProperty {
+                        name: "OSFamily".to_owned(),
+                        value: "Linux".to_owned(),
+                    },
+                    RemoteDefaultExecProperty {
+                        name: "container-image".to_owned(),
+                        value: BUILDBUDDY_DEFAULT_RBE_CONTAINER_IMAGE.to_owned(),
+                    },
+                ]
+                .as_slice()
+            )
+        );
     }
 
     #[test]
@@ -801,6 +868,61 @@ mod tests {
             Some(BUILDBUDDY_REMOTE_ENDPOINT)
         );
         assert_eq!(remote_execution.remote_executor, None);
+        assert_eq!(remote_execution.remote_default_exec_properties, None);
+    }
+
+    #[test]
+    fn parses_remote_default_exec_properties() {
+        let opts = Opt::try_parse_from([
+            "buck2",
+            "build",
+            "--remote_default_exec_properties=OSFamily=Linux",
+            "--remote_default_exec_properties=container-image=docker://example/image",
+            "//:target",
+        ])
+        .unwrap();
+
+        let remote_execution = opts.common_opts.remote_execution_startup_config();
+        assert_eq!(
+            remote_execution.remote_default_exec_properties.as_deref(),
+            Some(
+                [
+                    RemoteDefaultExecProperty {
+                        name: "OSFamily".to_owned(),
+                        value: "Linux".to_owned(),
+                    },
+                    RemoteDefaultExecProperty {
+                        name: "container-image".to_owned(),
+                        value: "docker://example/image".to_owned(),
+                    },
+                ]
+                .as_slice()
+            )
+        );
+    }
+
+    #[test]
+    fn explicit_remote_default_exec_properties_replace_rbe_defaults() {
+        let opts = Opt::try_parse_from([
+            "buck2",
+            "build",
+            "--rbe",
+            "--remote_default_exec_properties=container-image=docker://custom",
+            "//:target",
+        ])
+        .unwrap();
+
+        let remote_execution = opts.common_opts.remote_execution_startup_config();
+        assert_eq!(
+            remote_execution.remote_default_exec_properties.as_deref(),
+            Some(
+                [RemoteDefaultExecProperty {
+                    name: "container-image".to_owned(),
+                    value: "docker://custom".to_owned(),
+                }]
+                .as_slice()
+            )
+        );
     }
 
     #[test]

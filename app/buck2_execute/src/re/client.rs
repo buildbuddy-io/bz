@@ -157,6 +157,27 @@ enum ChunkDownloadResult {
 #[buck2(tag = MaterializationCancelled)]
 struct MaterializationCancelled;
 
+const RE_TRANSIENT_RETRY_ATTEMPTS: usize = 5;
+const RE_TRANSIENT_RETRY_INITIAL_DELAY: Duration = Duration::from_millis(100);
+const RE_TRANSIENT_RETRY_MAX_DELAY: Duration = Duration::from_secs(5);
+
+fn is_transient_re_error(error: &buck2_error::Error) -> bool {
+    error
+        .find_typed_context::<RemoteExecutionError>()
+        .is_some_and(|error| {
+            matches!(
+                error.code,
+                TCode::CANCELLED
+                    | TCode::UNKNOWN
+                    | TCode::DEADLINE_EXCEEDED
+                    | TCode::ABORTED
+                    | TCode::INTERNAL
+                    | TCode::UNAVAILABLE
+                    | TCode::RESOURCE_EXHAUSTED
+            )
+        })
+}
+
 #[derive(Clone, Dupe, Allocative)]
 pub struct RemoteExecutionClient {
     data: Arc<RemoteExecutionClientData>,
@@ -284,22 +305,43 @@ impl RemoteExecutionClient {
         // Actually upload to CAS
         let _cas = self.data.client.cas_semaphore.acquire().await;
 
-        self.data
-            .uploads
-            .op(Uploader::upload(
-                fs,
-                self,
-                materializer,
-                dir_path,
-                input_dir,
-                input_paths,
-                blobs,
-                use_case,
-                identity,
-                digest_config,
-                deduplicate_get_digests_ttl_calls,
-            ))
-            .await
+        let mut delay = RE_TRANSIENT_RETRY_INITIAL_DELAY;
+        for attempt in 0..=RE_TRANSIENT_RETRY_ATTEMPTS {
+            let result = self
+                .data
+                .uploads
+                .op(Uploader::upload(
+                    fs,
+                    self,
+                    materializer,
+                    dir_path,
+                    input_dir,
+                    input_paths,
+                    blobs,
+                    use_case,
+                    identity,
+                    digest_config,
+                    deduplicate_get_digests_ttl_calls,
+                ))
+                .await;
+
+            match result {
+                Ok(stats) => return Ok(stats),
+                Err(error)
+                    if attempt < RE_TRANSIENT_RETRY_ATTEMPTS && is_transient_re_error(&error) =>
+                {
+                    tracing::warn!(
+                        "Transient RE error in upload, retrying after {:?}: {:#}",
+                        delay,
+                        error
+                    );
+                    tokio::time::sleep(delay).await;
+                    delay = std::cmp::min(delay * 2, RE_TRANSIENT_RETRY_MAX_DELAY);
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        unreachable!("retry loop returns on success or final error")
     }
 
     pub async fn upload_files_and_directories(
@@ -1933,21 +1975,41 @@ impl RemoteExecutionClientImpl {
         digests: Vec<TDigest>,
         metadata: RemoteExecutionMetadata,
     ) -> buck2_error::Result<GetDigestsTtlResponse> {
-        with_error_handler(
-            "get_digests_ttl",
-            self.get_session_id(),
-            self.client()
-                .get_cas_client()
-                .get_digests_ttl(
-                    metadata,
-                    GetDigestsTtlRequest {
-                        digests,
-                        ..Default::default()
-                    },
-                )
-                .await,
-        )
-        .await
+        let mut delay = RE_TRANSIENT_RETRY_INITIAL_DELAY;
+        for attempt in 0..=RE_TRANSIENT_RETRY_ATTEMPTS {
+            let result = with_error_handler(
+                "get_digests_ttl",
+                self.get_session_id(),
+                self.client()
+                    .get_cas_client()
+                    .get_digests_ttl(
+                        metadata.clone(),
+                        GetDigestsTtlRequest {
+                            digests: digests.clone(),
+                            ..Default::default()
+                        },
+                    )
+                    .await,
+            )
+            .await;
+
+            match result {
+                Ok(response) => return Ok(response),
+                Err(error)
+                    if attempt < RE_TRANSIENT_RETRY_ATTEMPTS && is_transient_re_error(&error) =>
+                {
+                    tracing::warn!(
+                        "Transient RE error in get_digests_ttl, retrying after {:?}: {:#}",
+                        delay,
+                        error
+                    );
+                    tokio::time::sleep(delay).await;
+                    delay = std::cmp::min(delay * 2, RE_TRANSIENT_RETRY_MAX_DELAY);
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        unreachable!("retry loop returns on success or final error")
     }
 
     async fn extend_digest_ttl(

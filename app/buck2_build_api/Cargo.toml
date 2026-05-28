@@ -17,6 +17,7 @@ derive_more = { workspace = true }
 either = { workspace = true }
 futures = { workspace = true }
 fxhash = { workspace = true }
+hex = { workspace = true }
 indexmap = { workspace = true }
 internment = { workspace = true }
 inventory = { workspace = true }
@@ -29,6 +30,7 @@ ref-cast = { workspace = true }
 regex = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+sha2 = { workspace = true }
 smallvec = { workspace = true }
 static_assertions = { workspace = true }
 strong_hash = { workspace = true }

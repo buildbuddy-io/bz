@@ -608,14 +608,50 @@ fn create_pending_archive_links(links: &[PendingArchiveLink]) -> buck2_error::Re
         }
         match link.kind {
             PendingArchiveLinkKind::Symlink => {
+                remove_existing_archive_link_destination(&link.destination)?;
                 create_symlink(&link.target, &link.destination)?;
             }
             PendingArchiveLinkKind::Hardlink => {
+                if link.destination == link.target {
+                    continue;
+                }
+                remove_existing_archive_link_destination(&link.destination)?;
                 create_hard_link(&link.target, &link.destination)?;
             }
         }
     }
     Ok(())
+}
+
+fn remove_existing_archive_link_destination(destination: &Path) -> buck2_error::Result<()> {
+    let metadata = match fs::symlink_metadata(destination) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => {
+            return Err(error).with_buck_error_context(|| {
+                format!(
+                    "Error checking existing archive link destination `{}`",
+                    destination.display()
+                )
+            });
+        }
+    };
+
+    if metadata.is_dir() {
+        fs::remove_dir(destination).with_buck_error_context(|| {
+            format!(
+                "Error removing existing archive link directory `{}`",
+                destination.display()
+            )
+        })
+    } else {
+        fs::remove_file(destination).with_buck_error_context(|| {
+            format!(
+                "Error removing existing archive link file `{}`",
+                destination.display()
+            )
+        })
+    }
 }
 
 fn prepare_archive_symlink_target(
@@ -1098,6 +1134,42 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn test_extract_tar_replaces_existing_symlink() -> buck2_error::Result<()> {
+        let dir = tempfile::tempdir().unwrap();
+        let archive = dir.path().join("source.tar.gz");
+        let file = fs::File::create(&archive).unwrap();
+        let encoder = GzEncoder::new(file, Compression::default());
+        let mut tar = Builder::new(encoder);
+        let mut header = tar::Header::new_gnu();
+        header.set_size(7);
+        header.set_cksum();
+        tar.append_data(&mut header, "pkg/file.txt", "content".as_bytes())
+            .unwrap();
+        let mut header = tar::Header::new_gnu();
+        header.set_entry_type(EntryType::Symlink);
+        header.set_size(0);
+        tar.append_link(&mut header, "pkg/dir/link.txt", "pkg/file.txt")
+            .unwrap();
+        let encoder = tar.into_inner().unwrap();
+        encoder.finish().unwrap();
+
+        let output = dir.path().join("out");
+        extract_archive(&archive, &output, ArchiveKind::TarGz, "pkg", 0, &[])?;
+        extract_archive(&archive, &output, ArchiveKind::TarGz, "pkg", 0, &[])?;
+
+        assert_eq!(
+            fs::read_link(output.join("dir/link.txt")).unwrap(),
+            PathBuf::from("../file.txt")
+        );
+        assert_eq!(
+            fs::read_to_string(output.join("dir/link.txt")).unwrap(),
+            "content"
+        );
+        Ok(())
+    }
+
     #[test]
     fn test_extract_gz_writes_single_file() -> buck2_error::Result<()> {
         let dir = tempfile::tempdir().unwrap();
@@ -1254,6 +1326,37 @@ mod tests {
         encoder.finish().unwrap();
 
         let output = dir.path().join("out");
+        extract_archive(&archive, &output, ArchiveKind::TarGz, "pkg", 0, &[])?;
+
+        assert_eq!(
+            fs::read_to_string(output.join("link.txt")).unwrap(),
+            "content"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_extract_tar_replaces_existing_hardlink() -> buck2_error::Result<()> {
+        let dir = tempfile::tempdir().unwrap();
+        let archive = dir.path().join("source.tar.gz");
+        let file = fs::File::create(&archive).unwrap();
+        let encoder = GzEncoder::new(file, Compression::default());
+        let mut tar = Builder::new(encoder);
+        let mut header = tar::Header::new_gnu();
+        header.set_size(7);
+        header.set_cksum();
+        tar.append_data(&mut header, "pkg/file.txt", "content".as_bytes())
+            .unwrap();
+        let mut header = tar::Header::new_gnu();
+        header.set_entry_type(EntryType::Link);
+        header.set_size(0);
+        tar.append_link(&mut header, "pkg/link.txt", "pkg/file.txt")
+            .unwrap();
+        let encoder = tar.into_inner().unwrap();
+        encoder.finish().unwrap();
+
+        let output = dir.path().join("out");
+        extract_archive(&archive, &output, ArchiveKind::TarGz, "pkg", 0, &[])?;
         extract_archive(&archive, &output, ArchiveKind::TarGz, "pkg", 0, &[])?;
 
         assert_eq!(
