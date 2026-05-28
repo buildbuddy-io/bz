@@ -29,6 +29,7 @@ use buck2_events::dispatch::console_message;
 use buck2_execute::artifact_value::ArtifactValue;
 use buck2_execute::digest::CasDigestFromReExt;
 use buck2_execute::digest_config::DigestConfig;
+use buck2_execute::directory::ActionDirectoryBuilder;
 use buck2_execute::directory::ActionDirectoryMember;
 use buck2_execute::directory::extract_artifact_value;
 use buck2_execute::directory::re_tree_to_directory;
@@ -67,7 +68,6 @@ use dice_futures::cancellation::CancellationContext;
 use dupe::Dupe;
 use futures::FutureExt;
 use futures::future;
-use gazebo::prelude::*;
 use remote_execution as RE;
 
 use crate::executors::local::materialize_input_path_aliases;
@@ -428,13 +428,11 @@ impl CasDownloader<'_> {
         let ttl = Duration::seconds(output_spec.ttl());
         let expires = now + ttl;
 
-        // Download process:
-        // 1. merges all the outputs (files and trees) into the inputs structure
-        // 2. computes the ArtifactValue for all outputs from that merged structure
-        // 3. pass those new ArtifactValue to the materializer
-        let input_dir = paths.input_directory();
+        // Bazel's remote cache-hit path derives output metadata from the ActionResult and
+        // injects it into the action output metadata store. Mirror that shape here: build an
+        // output-only metadata tree instead of cloning the full input tree just to overlay outputs.
         let output_paths = paths.output_paths();
-        let mut input_dir = input_dir.clone().into_builder();
+        let mut output_dir = ActionDirectoryBuilder::empty();
 
         for x in output_spec.output_files() {
             let digest = FileDigest::from_re(&x.digest.digest, self.digest_config)?;
@@ -450,7 +448,7 @@ impl CasDownloader<'_> {
             }));
 
             let output_path = re_output_path_to_project_path(working_directory, x.name.as_str())?;
-            input_dir.insert(&output_path, entry)?;
+            output_dir.insert(&output_path, entry)?;
         }
 
         for x in output_spec.output_symlinks() {
@@ -458,7 +456,7 @@ impl CasDownloader<'_> {
                 Symlink::new(RelativePathBuf::from_path(Path::new(&x.target))?),
             )));
             let output_path = re_output_path_to_project_path(working_directory, x.name.as_str())?;
-            input_dir.insert(&output_path, entry)?;
+            output_dir.insert(&output_path, entry)?;
         }
 
         {
@@ -466,6 +464,7 @@ impl CasDownloader<'_> {
                 let blob_size = output_spec
                     .output_directories()
                     .iter()
+                    .filter(|x| !is_empty_re_tree_digest(x.tree_digest.size_in_bytes))
                     .map(|x| x.tree_digest.size_in_bytes)
                     .sum::<i64>();
 
@@ -483,21 +482,37 @@ impl CasDownloader<'_> {
                 None
             };
 
-            // Compute the re_outputs from the output_directories
-            // This requires traversing the trees to find symlinks that point outside such trees
+            // Compute output metadata from output_directories. Empty Tree messages are common and
+            // always encode to two bytes, so avoid a CAS roundtrip for them like Bazel does.
+            let tree_digests = output_spec
+                .output_directories()
+                .iter()
+                .filter(|x| !is_empty_re_tree_digest(x.tree_digest.size_in_bytes))
+                .map(|x| x.tree_digest.clone())
+                .collect();
             let trees = self
                 .re_client
-                .download_typed_blobs::<RE::Tree>(
-                    Some(identity),
-                    output_spec
-                        .output_directories()
-                        .map(|x| x.tree_digest.clone()),
-                )
+                .download_typed_blobs::<RE::Tree>(Some(identity), tree_digests)
                 .boxed()
                 .await
                 .buck_error_context("Failed to download trees")?;
+            let mut trees = trees.into_iter();
 
-            for (dir, tree) in output_spec.output_directories().iter().zip(trees) {
+            for dir in output_spec.output_directories() {
+                let tree = if is_empty_re_tree_digest(dir.tree_digest.size_in_bytes) {
+                    RE::Tree {
+                        root: Some(RE::Directory::default()),
+                        children: Vec::new(),
+                    }
+                } else {
+                    trees.next().ok_or_else(|| {
+                        buck2_error::buck2_error!(
+                            buck2_error::ErrorTag::Tier0,
+                            "missing downloaded tree metadata for `{}`",
+                            dir.path
+                        )
+                    })?
+                };
                 let entry = re_tree_to_directory(
                     &tree,
                     &expires,
@@ -507,7 +522,7 @@ impl CasDownloader<'_> {
                 )?;
                 let output_path =
                     re_output_path_to_project_path(working_directory, dir.path.as_str())?;
-                input_dir.insert(&output_path, DirectoryEntry::Dir(entry))?;
+                output_dir.insert(&output_path, DirectoryEntry::Dir(entry))?;
             }
         }
 
@@ -515,7 +530,7 @@ impl CasDownloader<'_> {
         let mut mapped_outputs = BuckIndexMap::with_capacity(output_paths.len());
 
         for (requested, (path, _)) in requested_outputs.into_iter().zip(output_paths.iter()) {
-            let value = extract_artifact_value(&input_dir, path, self.digest_config)?;
+            let value = extract_artifact_value(&output_dir, path, self.digest_config)?;
             if let Some(value) = value {
                 let configuration_path = if self.materializer.is_eager_materialization_enabled()
                     && requested.has_content_based_path()
@@ -572,6 +587,10 @@ impl CasDownloader<'_> {
 
         Ok(artifacts.mapped_outputs)
     }
+}
+
+fn is_empty_re_tree_digest(size_in_bytes: i64) -> bool {
+    size_in_bytes == 2
 }
 
 /// Takes a path that came from RE and tries to convert it to

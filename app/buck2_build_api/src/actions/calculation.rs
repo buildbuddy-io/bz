@@ -81,6 +81,7 @@ use crate::actions::error_handler::ActionSubErrorResult;
 use crate::actions::error_handler::StarlarkActionErrorContext;
 use crate::actions::execute::action_executor::ActionExecutionKind;
 use crate::actions::execute::action_executor::ActionExecutionMetadata;
+use crate::actions::execute::action_executor::ActionExecutionValue;
 use crate::actions::execute::action_executor::ActionOutputs;
 use crate::actions::execute::action_executor::BuckActionExecutor;
 use crate::actions::execute::action_executor::HasActionExecutor;
@@ -103,7 +104,7 @@ async fn build_action_impl(
     ctx: &mut DiceComputations<'_>,
     cancellation: &CancellationContext,
     key: &ActionKey,
-) -> buck2_error::Result<ActionOutputs> {
+) -> buck2_error::Result<ActionExecutionValue> {
     // Compute is only called if we have cache miss
     debug!("compute {}", key);
 
@@ -116,7 +117,7 @@ async fn build_action_impl(
         // pointing at the same underlying action. We need to make sure that
         // underlying action only gets called once, so call build_action once
         // again with the new key to get DICE deduplication.
-        let res = ActionCalculation::build_action(ctx, action.key()).await;
+        let res = ActionCalculation::build_action_value(ctx, action.key()).await;
         return res;
     }
 
@@ -127,7 +128,7 @@ async fn build_action_no_redirect(
     ctx: &mut DiceComputations<'_>,
     cancellation: &CancellationContext,
     action: Arc<RegisteredAction>,
-) -> buck2_error::Result<ActionOutputs> {
+) -> buck2_error::Result<ActionExecutionValue> {
     let inputs = action.inputs()?;
     let waiting_data = WaitingData::new();
     let executor = ctx
@@ -256,7 +257,7 @@ async fn build_action_after_inputs(
     target_rule_type_name: Option<String>,
     is_eligible_for_dedupe: buck2_data::EligibleForDedupe,
     is_expected_eligible_for_dedupe: buck2_data::ExpectedEligibleForDedupe,
-) -> buck2_error::Result<ActionOutputs> {
+) -> buck2_error::Result<ActionExecutionValue> {
     let start_event = action_execution_start_event(&action);
     ctx.per_transaction_data()
         .record_action_started_for_overlap(|| action.key().to_string());
@@ -396,7 +397,7 @@ fn finish_action_execution(
     now: TimeSpanBuilder,
     action_execution_data: ActionExecutionData,
     spans: SmallVec<[SpanId; 1]>,
-) -> buck2_error::Result<ActionOutputs> {
+) -> buck2_error::Result<ActionExecutionValue> {
     let execution_metrics = ActionExecutionMetrics {
         key: action.key().dupe(),
         execution_time_ms: action_execution_data
@@ -541,7 +542,7 @@ async fn build_action_result(
 
         return (
             ActionExecutionData {
-                action_result: Ok(outputs),
+                action_result: Ok(ActionExecutionValue::new(outputs)),
                 wall_time,
                 queue_duration,
                 memory_peak: None,
@@ -658,7 +659,7 @@ async fn build_action_result(
     let error_diagnostics = match execute_result {
         Ok((outputs, meta)) => {
             output_size = outputs.calc_output_count_and_bytes(false).bytes;
-            action_result = Ok(outputs);
+            action_result = Ok(ActionExecutionValue::new(outputs));
             execution_kind = Some(meta.execution_kind.as_enum());
             wall_time = Some(meta.timing.wall_time);
             error = None;
@@ -1055,7 +1056,7 @@ pub struct ActionExtraData {
 }
 
 struct ActionExecutionData {
-    action_result: buck2_error::Result<ActionOutputs>,
+    action_result: buck2_error::Result<ActionExecutionValue>,
     wall_time: Option<std::time::Duration>,
     queue_duration: Option<std::time::Duration>,
     memory_peak: Option<u64>,
@@ -1095,6 +1096,13 @@ impl ActionCalculation {
         }
     }
 
+    fn build_action_value<'a>(
+        ctx: &'a mut DiceComputations<'_>,
+        action_key: &ActionKey,
+    ) -> impl Future<Output = buck2_error::Result<ActionExecutionValue>> + use<'a> {
+        ctx.compute(BuildKey::ref_cast(action_key)).map(|v| v?)
+    }
+
     pub fn build_action<'a>(
         ctx: &'a mut DiceComputations<'_>,
         action_key: &ActionKey,
@@ -1102,7 +1110,8 @@ impl ActionCalculation {
         // build_action is called for every action key. We don't use `async fn` to ensure that it has minimal cost.
         // We don't currently consume this in buck_e2e but it's good to log for debugging purposes.
         debug!("build_action {}", action_key);
-        ctx.compute(BuildKey::ref_cast(action_key)).map(|v| v?)
+        ctx.compute(BuildKey::ref_cast(action_key))
+            .map(|v| Ok(v??.outputs().dupe()))
     }
 
     pub fn build_artifact<'a>(
@@ -1123,7 +1132,7 @@ pub struct BuildKey(pub ActionKey);
 
 #[async_trait]
 impl Key for BuildKey {
-    type Value = buck2_error::Result<ActionOutputs>;
+    type Value = buck2_error::Result<ActionExecutionValue>;
 
     async fn compute(
         &self,

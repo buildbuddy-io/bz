@@ -123,6 +123,25 @@ struct ActionOutputsData {
     outputs: BuckIndexMap<BuildArtifactPath, ArtifactValue>,
 }
 
+/// Bazel-shaped action completion value.
+///
+/// This is intentionally the value stored under `BuildKey`: one action execution
+/// produces one reusable output metadata value, and artifact completion projects
+/// individual artifacts from it.
+#[derive(Clone, Dupe, Debug, PartialEq, Eq, Allocative, PagablePanic)]
+pub struct ActionExecutionValue(Arc<ActionExecutionValueData>);
+
+#[derive(Debug, PartialEq, Eq, Allocative)]
+struct ActionExecutionValueData {
+    outputs: ActionOutputs,
+}
+
+impl OutputSize for ActionExecutionValue {
+    fn calc_output_count_and_bytes(&self, include_symlinks: bool) -> OutputCountAndBytes {
+        self.outputs().calc_output_count_and_bytes(include_symlinks)
+    }
+}
+
 /// Metadata associated with the execution of this action.
 #[derive(Debug)]
 pub struct ActionExecutionMetadata {
@@ -250,6 +269,20 @@ impl ActionOutputs {
 
     pub fn values(&self) -> impl Iterator<Item = &ArtifactValue> {
         self.0.outputs.values()
+    }
+}
+
+impl ActionExecutionValue {
+    pub fn new(outputs: ActionOutputs) -> Self {
+        Self(Arc::new(ActionExecutionValueData { outputs }))
+    }
+
+    pub fn outputs(&self) -> &ActionOutputs {
+        &self.0.outputs
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&BuildArtifactPath, &ArtifactValue)> {
+        self.outputs().iter()
     }
 }
 
