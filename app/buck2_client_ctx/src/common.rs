@@ -51,6 +51,9 @@ pub const EVENT_LOG: &str = "event-log";
 pub const NO_EVENT_LOG: &str = "no-event-log";
 const BUILDBUDDY_BES_BACKEND: &str = "remote.buildbuddy.dev";
 const BUILDBUDDY_BES_RESULTS_URL: &str = "https://app.buildbuddy.dev/invocation/";
+const BAZEL_JAVA_RUNTIME_VERSION: &str = "//command_line_option:java_runtime_version";
+const BAZEL_TOOL_JAVA_RUNTIME_VERSION: &str = "//command_line_option:tool_java_runtime_version";
+const BAZEL_REMOTE_JDK_VERSION: &str = "remotejdk_11";
 
 #[derive(Debug, buck2_error::Error)]
 #[error("indices len is not equal to collection len for flag `{flag_name}`")]
@@ -401,6 +404,26 @@ pub struct CommonBuildConfigurationOptions {
     #[clap(long = "platforms", value_name = "PLATFORMS", num_args = 1)]
     pub bazel_platforms: Vec<String>,
 
+    /// Bazel-compatible Java runtime setting. This populates
+    /// `//command_line_option:java_runtime_version`.
+    #[clap(
+        long = "java_runtime_version",
+        alias = "java-runtime-version",
+        value_name = "VERSION",
+        num_args = 1
+    )]
+    pub bazel_java_runtime_version: Vec<String>,
+
+    /// Bazel-compatible tool Java runtime setting. This populates
+    /// `//command_line_option:tool_java_runtime_version`.
+    #[clap(
+        long = "tool_java_runtime_version",
+        alias = "tool-java-runtime-version",
+        value_name = "VERSION",
+        num_args = 1
+    )]
+    pub bazel_tool_java_runtime_version: Vec<String>,
+
     /// Value must be formatted as: version-build (e.g., 14.3.0-14C18 or 14.1-14B47b)
     #[clap(long, value_name = "VERSION-BUILD")]
     pub fake_xcode_version: Option<String>,
@@ -454,6 +477,18 @@ impl CommonBuildConfigurationOptions {
             .filter(|value| !value.is_empty())
             .map(|value| Self::bazel_command_line_build_setting_entry("list", key, value))
             .collect()
+    }
+
+    fn first_flag_index(matches: BuckArgMatches<'_>, names: &[&str]) -> Option<usize> {
+        names
+            .iter()
+            .filter_map(|name| {
+                matches
+                    .inner
+                    .indices_of(name)
+                    .and_then(|mut indices| indices.next())
+            })
+            .min()
     }
 
     fn parse_bazel_command_line_build_settings_override(raw_arg: &str) -> Option<Vec<String>> {
@@ -596,6 +631,59 @@ impl CommonBuildConfigurationOptions {
             ),
         );
 
+        bazel_command_line_build_setting_args.extend(
+            with_indices(
+                &self.bazel_java_runtime_version,
+                "bazel_java_runtime_version",
+                matches,
+            )?
+            .map(|(index, java_runtime_version)| {
+                (
+                    index,
+                    vec![Self::bazel_command_line_string_build_setting(
+                        BAZEL_JAVA_RUNTIME_VERSION,
+                        java_runtime_version,
+                    )],
+                )
+            }),
+        );
+
+        bazel_command_line_build_setting_args.extend(
+            with_indices(
+                &self.bazel_tool_java_runtime_version,
+                "bazel_tool_java_runtime_version",
+                matches,
+            )?
+            .map(|(index, tool_java_runtime_version)| {
+                (
+                    index,
+                    vec![Self::bazel_command_line_string_build_setting(
+                        BAZEL_TOOL_JAVA_RUNTIME_VERSION,
+                        tool_java_runtime_version,
+                    )],
+                )
+            }),
+        );
+
+        if self.host_platform_override() == HostPlatformOverride::Linux
+            && let Some(index) =
+                Self::first_flag_index(matches, &["fake_host", "linux", "linux_arm"])
+        {
+            bazel_command_line_build_setting_args.push((
+                index,
+                vec![
+                    Self::bazel_command_line_string_build_setting(
+                        BAZEL_JAVA_RUNTIME_VERSION,
+                        BAZEL_REMOTE_JDK_VERSION,
+                    ),
+                    Self::bazel_command_line_string_build_setting(
+                        BAZEL_TOOL_JAVA_RUNTIME_VERSION,
+                        BAZEL_REMOTE_JDK_VERSION,
+                    ),
+                ],
+            ));
+        }
+
         let bazel_command_line_build_setting_arg =
             if bazel_command_line_build_setting_args.is_empty() {
                 None
@@ -659,6 +747,8 @@ impl CommonBuildConfigurationOptions {
             bazel_cpu: vec![],
             bazel_host_cpu: vec![],
             bazel_platforms: vec![],
+            bazel_java_runtime_version: vec![],
+            bazel_tool_java_runtime_version: vec![],
             fake_xcode_version: None,
             reuse_current_config: false,
             preemptible: Some(PreemptibleWhen::Never),
@@ -680,6 +770,8 @@ impl CommonBuildConfigurationOptions {
             bazel_cpu: vec![],
             bazel_host_cpu: vec![],
             bazel_platforms: vec![],
+            bazel_java_runtime_version: vec![],
+            bazel_tool_java_runtime_version: vec![],
             fake_xcode_version: None,
             reuse_current_config: true,
             preemptible: Some(PreemptibleWhen::OnDifferentState),
@@ -1036,6 +1128,29 @@ mod tests {
     }
 
     #[test]
+    fn test_linux_alias_sets_remote_java_runtime() -> buck2_error::Result<()> {
+        let clap = TestConfigOpts::command()
+            .try_get_matches_from(["test", "--linux"])
+            .unwrap();
+        let opts = TestConfigOpts::from_arg_matches(&clap).unwrap();
+        let argv = ExpandedArgvBuilder::new().build();
+        let matches = BuckArgMatches::from_clap(&clap, &argv);
+        let cwd = test_cwd();
+        let immediate_ctx = ImmediateConfigContext::new(&cwd);
+
+        let overrides = opts
+            .config
+            .config_overrides(matches, &immediate_ctx, &cwd)?;
+
+        assert_eq!(overrides.len(), 1);
+        assert_eq!(
+            overrides[0].config_override,
+            "bazel.command_line_build_settings=string\t//command_line_option:java_runtime_version\tremotejdk_11\nstring\t//command_line_option:tool_java_runtime_version\tremotejdk_11"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn test_linux_arm_alias_sets_linux_aarch64() {
         let clap = TestConfigOpts::command()
             .try_get_matches_from(["test", "--linux_arm"])
@@ -1047,6 +1162,57 @@ mod tests {
             HostPlatformOverride::Linux
         );
         assert_eq!(opts.config.host_arch_override(), HostArchOverride::AArch64);
+    }
+
+    #[test]
+    fn test_java_runtime_flags_become_build_settings() -> buck2_error::Result<()> {
+        let clap = TestConfigOpts::command()
+            .try_get_matches_from([
+                "test",
+                "--java_runtime_version=remotejdk_17",
+                "--tool_java_runtime_version=remotejdk_21",
+            ])
+            .unwrap();
+        let opts = TestConfigOpts::from_arg_matches(&clap).unwrap();
+        let argv = ExpandedArgvBuilder::new().build();
+        let matches = BuckArgMatches::from_clap(&clap, &argv);
+        let cwd = test_cwd();
+        let immediate_ctx = ImmediateConfigContext::new(&cwd);
+
+        let overrides = opts
+            .config
+            .config_overrides(matches, &immediate_ctx, &cwd)?;
+
+        assert_eq!(overrides.len(), 1);
+        assert_eq!(
+            overrides[0].config_override,
+            "bazel.command_line_build_settings=string\t//command_line_option:java_runtime_version\tremotejdk_17\nstring\t//command_line_option:tool_java_runtime_version\tremotejdk_21"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_java_runtime_flag_after_linux_alias_overrides_remote_jdk_default()
+    -> buck2_error::Result<()> {
+        let clap = TestConfigOpts::command()
+            .try_get_matches_from(["test", "--linux", "--java_runtime_version=local_jdk"])
+            .unwrap();
+        let opts = TestConfigOpts::from_arg_matches(&clap).unwrap();
+        let argv = ExpandedArgvBuilder::new().build();
+        let matches = BuckArgMatches::from_clap(&clap, &argv);
+        let cwd = test_cwd();
+        let immediate_ctx = ImmediateConfigContext::new(&cwd);
+
+        let overrides = opts
+            .config
+            .config_overrides(matches, &immediate_ctx, &cwd)?;
+
+        assert_eq!(overrides.len(), 1);
+        assert_eq!(
+            overrides[0].config_override,
+            "bazel.command_line_build_settings=string\t//command_line_option:java_runtime_version\tremotejdk_11\nstring\t//command_line_option:tool_java_runtime_version\tremotejdk_11\nstring\t//command_line_option:java_runtime_version\tlocal_jdk"
+        );
+        Ok(())
     }
 
     #[test]
