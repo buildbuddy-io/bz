@@ -66,6 +66,8 @@ struct IndicesLengthMismatchError {
     Clone,
     Dupe,
     Copy,
+    PartialEq,
+    Eq,
     clap::ValueEnum
 )]
 #[clap(rename_all = "lower")]
@@ -128,6 +130,8 @@ pub enum ExitWhen {
     Clone,
     Dupe,
     Copy,
+    PartialEq,
+    Eq,
     clap::ValueEnum
 )]
 #[clap(rename_all = "lower")]
@@ -331,14 +335,51 @@ pub struct CommonBuildConfigurationOptions {
     #[clap(
         long,
         alias = "fake-os",
+        alias = "os",
         ignore_case = true,
         value_name = "HOST",
         value_enum
     )]
     pub fake_host: Option<HostPlatformOverride>,
 
-    #[clap(long, ignore_case = true, value_name = "ARCH", value_enum)]
+    #[clap(
+        long,
+        alias = "arch",
+        ignore_case = true,
+        value_name = "ARCH",
+        value_enum
+    )]
     pub fake_arch: Option<HostArchOverride>,
+
+    /// Alias for `--os=linux --arch=x8664`.
+    #[clap(
+        long,
+        conflicts_with_all = ["linux_arm", "mac", "mac_intel"]
+    )]
+    pub linux: bool,
+
+    /// Alias for `--os=linux --arch=aarch64`.
+    #[clap(
+        long = "linux_arm",
+        alias = "linux-arm",
+        conflicts_with_all = ["linux", "mac", "mac_intel"]
+    )]
+    pub linux_arm: bool,
+
+    /// Alias for `--os=macos --arch=aarch64`.
+    #[clap(
+        long,
+        conflicts_with_all = ["linux", "linux_arm", "mac_intel"]
+    )]
+    pub mac: bool,
+
+    /// Alias for `--os=macos --arch=x8664`.
+    #[clap(
+        long = "mac_intel",
+        alias = "mac-intel",
+        conflicts_with_all = ["linux", "linux_arm", "mac"]
+    )]
+    pub mac_intel: bool,
 
     /// Bazel-compatible target CPU setting. This populates
     /// `//command_line_option:cpu` for Bazel rules.
@@ -586,12 +627,18 @@ impl CommonBuildConfigurationOptions {
     pub fn host_platform_override(&self) -> HostPlatformOverride {
         match &self.fake_host {
             Some(v) => *v,
+            None if self.linux || self.linux_arm => HostPlatformOverride::Linux,
+            None if self.mac || self.mac_intel => HostPlatformOverride::MacOs,
             None => HostPlatformOverride::Default,
         }
     }
     pub fn host_arch_override(&self) -> HostArchOverride {
         match &self.fake_arch {
             Some(v) => *v,
+            None if self.linux => HostArchOverride::X86_64,
+            None if self.linux_arm => HostArchOverride::AArch64,
+            None if self.mac => HostArchOverride::AArch64,
+            None if self.mac_intel => HostArchOverride::X86_64,
             None => HostArchOverride::Default,
         }
     }
@@ -605,6 +652,10 @@ impl CommonBuildConfigurationOptions {
             config_files: vec![],
             fake_host: None,
             fake_arch: None,
+            linux: false,
+            linux_arm: false,
+            mac: false,
+            mac_intel: false,
             bazel_cpu: vec![],
             bazel_host_cpu: vec![],
             bazel_platforms: vec![],
@@ -622,6 +673,10 @@ impl CommonBuildConfigurationOptions {
             config_files: vec![],
             fake_host: None,
             fake_arch: None,
+            linux: false,
+            linux_arm: false,
+            mac: false,
+            mac_intel: false,
             bazel_cpu: vec![],
             bazel_host_cpu: vec![],
             bazel_platforms: vec![],
@@ -950,6 +1005,76 @@ mod tests {
             opts.bes_results_url_with_buildbuddy_default(true),
             Some(BUILDBUDDY_BES_RESULTS_URL)
         );
+    }
+
+    #[test]
+    fn test_os_and_arch_alias_fake_host_and_arch() {
+        let clap = TestConfigOpts::command()
+            .try_get_matches_from(["test", "--os=linux", "--arch=x8664"])
+            .unwrap();
+        let opts = TestConfigOpts::from_arg_matches(&clap).unwrap();
+
+        assert_eq!(
+            opts.config.host_platform_override(),
+            HostPlatformOverride::Linux
+        );
+        assert_eq!(opts.config.host_arch_override(), HostArchOverride::X86_64);
+    }
+
+    #[test]
+    fn test_linux_alias_sets_linux_x8664() {
+        let clap = TestConfigOpts::command()
+            .try_get_matches_from(["test", "--linux"])
+            .unwrap();
+        let opts = TestConfigOpts::from_arg_matches(&clap).unwrap();
+
+        assert_eq!(
+            opts.config.host_platform_override(),
+            HostPlatformOverride::Linux
+        );
+        assert_eq!(opts.config.host_arch_override(), HostArchOverride::X86_64);
+    }
+
+    #[test]
+    fn test_linux_arm_alias_sets_linux_aarch64() {
+        let clap = TestConfigOpts::command()
+            .try_get_matches_from(["test", "--linux_arm"])
+            .unwrap();
+        let opts = TestConfigOpts::from_arg_matches(&clap).unwrap();
+
+        assert_eq!(
+            opts.config.host_platform_override(),
+            HostPlatformOverride::Linux
+        );
+        assert_eq!(opts.config.host_arch_override(), HostArchOverride::AArch64);
+    }
+
+    #[test]
+    fn test_mac_alias_sets_macos_aarch64() {
+        let clap = TestConfigOpts::command()
+            .try_get_matches_from(["test", "--mac"])
+            .unwrap();
+        let opts = TestConfigOpts::from_arg_matches(&clap).unwrap();
+
+        assert_eq!(
+            opts.config.host_platform_override(),
+            HostPlatformOverride::MacOs
+        );
+        assert_eq!(opts.config.host_arch_override(), HostArchOverride::AArch64);
+    }
+
+    #[test]
+    fn test_mac_intel_alias_sets_macos_x8664() {
+        let clap = TestConfigOpts::command()
+            .try_get_matches_from(["test", "--mac_intel"])
+            .unwrap();
+        let opts = TestConfigOpts::from_arg_matches(&clap).unwrap();
+
+        assert_eq!(
+            opts.config.host_platform_override(),
+            HostPlatformOverride::MacOs
+        );
+        assert_eq!(opts.config.host_arch_override(), HostArchOverride::X86_64);
     }
 
     #[test]
