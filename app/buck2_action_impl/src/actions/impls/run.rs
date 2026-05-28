@@ -4926,6 +4926,16 @@ impl Action for RunAction {
             result.dep_file_key = upload_result.dep_file_cache_upload_key;
         }
 
+        if result.was_success()
+            && !result.was_locally_executed()
+            && let Some(local_action_cache_key) = request.local_action_cache_key()
+        {
+            ctx.insert_unprepared_action_cache_metadata(local_action_cache_key, &result.outputs)
+                .buck_error_context(
+                    "Failed to persist remote output metadata in the local action cache",
+                )?;
+        }
+
         let was_locally_executed = result.was_locally_executed();
         let (outputs, metadata) = ctx.unpack_command_execution_result(
             executor_preference,

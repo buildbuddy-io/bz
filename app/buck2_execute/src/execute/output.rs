@@ -52,6 +52,7 @@ impl ReStdStream {
     pub fn new(raw: Option<Vec<u8>>, digest: Option<TDigest>) -> Self {
         match (raw, digest) {
             (Some(raw), _) if !raw.is_empty() => Self::Raw(raw),
+            (_, Some(digest)) if digest.size_in_bytes == 0 => Self::None,
             (_, Some(digest)) => Self::Digest(digest),
             (_, None) => Self::None,
         }
