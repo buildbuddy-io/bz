@@ -837,8 +837,11 @@ fn gather_bzlmod_package_listing_fast_blocking(
         let project_path = root_project_path.join(package_path.as_forward_rel_path());
         let mut attempts = 0;
         let entries = loop {
-            let entries = read_raw_dir_entries_direct(&project_root, project_path.as_ref())
-                .map_err(|e| GatherPackageListingError::error(cell_path.as_ref(), e))?;
+            let entries = read_raw_dir_entries_direct_following_symlinks(
+                &project_root,
+                project_path.as_ref(),
+            )
+            .map_err(|e| GatherPackageListingError::error(cell_path.as_ref(), e))?;
             let entries = file_ops
                 .make_read_dir_output(cell_path.path(), entries)
                 .map_err(|e| GatherPackageListingError::error(cell_path.as_ref(), e))?
@@ -904,9 +907,25 @@ fn gather_bzlmod_package_listing_fast_blocking(
     ))
 }
 
+#[cfg(test)]
 fn read_raw_dir_entries_direct(
     project_root: &ProjectRoot,
     project_path: &ProjectRelativePath,
+) -> buck2_error::Result<Arc<[RawDirEntry]>> {
+    read_raw_dir_entries_direct_impl(project_root, project_path, false)
+}
+
+fn read_raw_dir_entries_direct_following_symlinks(
+    project_root: &ProjectRoot,
+    project_path: &ProjectRelativePath,
+) -> buck2_error::Result<Arc<[RawDirEntry]>> {
+    read_raw_dir_entries_direct_impl(project_root, project_path, true)
+}
+
+fn read_raw_dir_entries_direct_impl(
+    project_root: &ProjectRoot,
+    project_path: &ProjectRelativePath,
+    follow_symlinks: bool,
 ) -> buck2_error::Result<Arc<[RawDirEntry]>> {
     let abs_path = project_root.resolve(project_path);
     let dir_entries = fs_util::read_dir(&abs_path).categorize_input()?;
@@ -923,10 +942,29 @@ fn read_raw_dir_entries_direct(
                 file_name
             )
         })?;
-        let file_type: FileType = entry
+        let mut file_type: FileType = entry
             .file_type()
             .buck_error_context("Error reading directory entry type")?
             .into();
+        if follow_symlinks && file_type.is_symlink() {
+            // Bazel globbing follows symlinks to files and directories when deciding whether a
+            // matching path is traversable or should appear as a file result.
+            file_type = match std::fs::metadata(entry.path()) {
+                Ok(metadata) => metadata.file_type().into(),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(error) => {
+                    return Err(error).with_buck_error_context(|| {
+                        format!(
+                            "Error reading symlink target type for `{}`",
+                            entry.path().display()
+                        )
+                    });
+                }
+            };
+        }
+        if follow_symlinks && matches!(file_type, FileType::Symlink | FileType::Unknown) {
+            continue;
+        }
 
         entries.push(RawDirEntry {
             file_name: CompactString::from(file_name),
@@ -1031,6 +1069,42 @@ mod tests {
 
         assert_eq!(real_dir.file_type, FileType::Directory);
         assert_eq!(link_dir.file_type, FileType::Symlink);
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn read_raw_dir_entries_direct_following_symlinks_treats_linked_dir_as_dir()
+    -> buck2_error::Result<()> {
+        let fs = ProjectRootTemp::new()?;
+        let repo = fs
+            .path()
+            .resolve(ProjectRelativePath::unchecked_new("repo"));
+        let real_dir = repo.join("real_dir");
+        let link_dir = repo.join("link_dir");
+        std::fs::create_dir_all(&real_dir)?;
+        std::fs::write(real_dir.join("header.h"), "")?;
+        std::os::unix::fs::symlink("real_dir", &link_dir)?;
+
+        let entries = read_raw_dir_entries_direct_following_symlinks(
+            fs.path(),
+            ProjectRelativePath::unchecked_new("repo"),
+        )?;
+        let link_dir = entries
+            .iter()
+            .find(|entry| entry.file_name.as_str() == "link_dir")
+            .expect("link_dir entry should be present");
+        assert_eq!(link_dir.file_type, FileType::Directory);
+
+        let linked_entries = read_raw_dir_entries_direct_following_symlinks(
+            fs.path(),
+            ProjectRelativePath::unchecked_new("repo/link_dir"),
+        )?;
+        let header = linked_entries
+            .iter()
+            .find(|entry| entry.file_name.as_str() == "header.h")
+            .expect("header should be visible through the symlink directory");
+        assert_eq!(header.file_type, FileType::File);
         Ok(())
     }
 }
