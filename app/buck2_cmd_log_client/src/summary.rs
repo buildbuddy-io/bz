@@ -24,8 +24,8 @@ use buck2_client_ctx::subscribers::recorder::process_memory;
 use buck2_data::ActionExecutionKind;
 use buck2_event_log::stream_value::StreamValue;
 use buck2_event_observer::fmt_duration;
+use buck2_event_observer::humanized::HumanizedBitsPerSecond;
 use buck2_event_observer::humanized::HumanizedBytes;
-use buck2_event_observer::humanized::HumanizedBytesPerSecond;
 use buck2_util::network_speed_average::NetworkSpeedAverage;
 use buck2_util::sliding_window::SlidingWindow;
 use tokio_stream::StreamExt;
@@ -223,7 +223,9 @@ impl Display for Stats {
                 writeln!(
                     f,
                     "  - Average: {}",
-                    HumanizedBytesPerSecond::fixed_width(re_avg_download_speed)
+                    HumanizedBitsPerSecond::fixed_width_from_bytes_per_second(
+                        re_avg_download_speed
+                    )
                 )?;
             }
 
@@ -236,7 +238,9 @@ impl Display for Stats {
                 writeln!(
                     f,
                     "  - Peak: {}",
-                    HumanizedBytesPerSecond::fixed_width(re_max_download_speed)
+                    HumanizedBitsPerSecond::fixed_width_from_bytes_per_second(
+                        re_max_download_speed
+                    )
                 )?;
             }
         }
@@ -254,7 +258,7 @@ impl Display for Stats {
                 writeln!(
                     f,
                     "  - Average: {}",
-                    HumanizedBytesPerSecond::fixed_width(re_avg_upload_speed)
+                    HumanizedBitsPerSecond::fixed_width_from_bytes_per_second(re_avg_upload_speed)
                 )?;
             }
 
@@ -267,7 +271,7 @@ impl Display for Stats {
                 writeln!(
                     f,
                     "  - Peak: {}",
-                    HumanizedBytesPerSecond::fixed_width(re_max_upload_speed)
+                    HumanizedBitsPerSecond::fixed_width_from_bytes_per_second(re_max_upload_speed)
                 )?;
             }
         }

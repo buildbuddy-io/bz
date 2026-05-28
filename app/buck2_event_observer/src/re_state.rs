@@ -13,8 +13,8 @@ use superconsole::DrawMode;
 use superconsole::Line;
 use superconsole::Lines;
 
+use crate::humanized::HumanizedBitsPerSecond;
 use crate::humanized::HumanizedBytes;
-use crate::humanized::HumanizedBytesPerSecond;
 use crate::two_snapshots::TwoSnapshots;
 
 pub struct ReState {
@@ -66,11 +66,14 @@ impl ReState {
 
                 let part = match draw_mode {
                     DrawMode::Normal => {
-                        fn format_byte_per_second(bytes_per_second: u64) -> String {
+                        fn format_bits_per_second(bytes_per_second: u64) -> String {
                             if bytes_per_second == 0 {
-                                " ".repeat(HumanizedBytesPerSecond::FIXED_WIDTH_WIDTH)
+                                " ".repeat(HumanizedBitsPerSecond::FIXED_WIDTH_WIDTH)
                             } else {
-                                HumanizedBytesPerSecond::fixed_width(bytes_per_second).to_string()
+                                HumanizedBitsPerSecond::fixed_width_from_bytes_per_second(
+                                    bytes_per_second,
+                                )
+                                .to_string()
                             }
                         }
 
@@ -86,9 +89,9 @@ impl ReState {
                         format!(
                             "Up: {} {}  Down: {} {}",
                             HumanizedBytes::fixed_width(re_upload_bytes),
-                            format_byte_per_second(re_upload_bytes_per_second),
+                            format_bits_per_second(re_upload_bytes_per_second),
                             HumanizedBytes::fixed_width(re_download_bytes + http_download_bytes),
-                            format_byte_per_second(
+                            format_bits_per_second(
                                 re_download_bytes_per_second + http_download_bytes_per_second
                             ),
                         )

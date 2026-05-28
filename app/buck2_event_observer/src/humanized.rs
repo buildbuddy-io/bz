@@ -40,6 +40,11 @@ pub struct HumanizedBytesPerSecond {
     fixed_width: bool,
 }
 
+pub struct HumanizedBitsPerSecond {
+    bits_per_second: u64,
+    fixed_width: bool,
+}
+
 impl HumanizedBytesPerSecond {
     pub fn new(bytes_per_second: u64) -> Self {
         HumanizedBytesPerSecond {
@@ -53,6 +58,24 @@ impl HumanizedBytesPerSecond {
     pub fn fixed_width(bytes_per_second: u64) -> Self {
         HumanizedBytesPerSecond {
             bytes_per_second,
+            fixed_width: true,
+        }
+    }
+}
+
+impl HumanizedBitsPerSecond {
+    pub fn from_bytes_per_second(bytes_per_second: u64) -> Self {
+        HumanizedBitsPerSecond {
+            bits_per_second: bytes_per_second.saturating_mul(8),
+            fixed_width: false,
+        }
+    }
+
+    pub const FIXED_WIDTH_WIDTH: usize = 8;
+
+    pub fn fixed_width_from_bytes_per_second(bytes_per_second: u64) -> Self {
+        HumanizedBitsPerSecond {
+            bits_per_second: bytes_per_second.saturating_mul(8),
             fixed_width: true,
         }
     }
@@ -166,6 +189,24 @@ impl fmt::Display for HumanizedBytesPerSecond {
     }
 }
 
+impl fmt::Display for HumanizedBitsPerSecond {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Preformat { val, label, point } = preformat(
+            self.bits_per_second,
+            1000.0,
+            "bps",
+            &["Kbps", "Mbps", "Gbps"],
+        );
+
+        match (point, self.fixed_width) {
+            (false, false) => write!(f, "{val:.0}{label}"),
+            (true, false) => write!(f, "{val:.1}{label}"),
+            (false, true) => write!(f, "{val:>4.0}{label:<4}"),
+            (true, true) => write!(f, "{val:>4.1}{label:<4}"),
+        }
+    }
+}
+
 impl fmt::Display for HumanizedCount {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let Preformat { val, label, point } = preformat(self.count, 1000.0, "", &["K", "M", "B"]);
@@ -202,6 +243,7 @@ impl fmt::Display for CommaSeparatedCount {
 #[cfg(test)]
 mod tests {
     use super::CommaSeparatedCount;
+    use super::HumanizedBitsPerSecond;
     use super::HumanizedBytes;
     use super::HumanizedBytesPerSecond;
     use super::HumanizedCount;
@@ -281,6 +323,29 @@ mod tests {
         t(0, "0B/s", "  0B/s  ");
         t(22, "22B/s", " 22B/s  ");
         t(1024 * 1024, "1.0MiB/s", "1.0MiB/s");
+    }
+
+    #[test]
+    fn test_humanized_bits_per_second() {
+        fn t(value: u64, expected: &str, expected_fixed_width: &str) {
+            assert_eq!(
+                HumanizedBitsPerSecond::from_bytes_per_second(value).to_string(),
+                expected
+            );
+            assert_eq!(
+                HumanizedBitsPerSecond::FIXED_WIDTH_WIDTH,
+                expected_fixed_width.len()
+            );
+            assert_eq!(
+                HumanizedBitsPerSecond::fixed_width_from_bytes_per_second(value).to_string(),
+                expected_fixed_width
+            );
+        }
+
+        t(0, "0bps", "   0bps ");
+        t(22, "176bps", " 176bps ");
+        t(1024, "8.2Kbps", " 8.2Kbps");
+        t(1024 * 1024, "8.4Mbps", " 8.4Mbps");
     }
 
     #[test]
