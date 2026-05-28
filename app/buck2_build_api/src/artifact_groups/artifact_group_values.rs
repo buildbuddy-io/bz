@@ -16,16 +16,21 @@ use allocative::Allocative;
 use buck2_artifact::artifact::artifact_type::Artifact;
 use buck2_common::file_ops::metadata::TrackedFileDigest;
 use buck2_core::fs::artifact_path_resolver::ArtifactFs;
+use buck2_directory::directory::entry::DirectoryEntry;
 use buck2_error::BuckErrorContext;
 use buck2_error::internal_error;
 use buck2_execute::artifact::artifact_dyn::ArtifactDyn;
 use buck2_execute::artifact::group::artifact_group_values_dyn::ArtifactGroupValuesDyn;
 use buck2_execute::artifact_value::ArtifactValue;
 use buck2_execute::digest_config::DigestConfig;
+use buck2_execute::directory::ActionDirectoryMember;
 use buck2_execute::directory::ActionSharedDirectory;
+use buck2_execute::directory::ExternalSymlinkUploadPath;
 use buck2_execute::directory::INTERNER;
 use buck2_execute::directory::LazyActionDirectoryBuilder;
 use buck2_execute::directory::insert_artifact_lazy;
+use buck2_execute::directory::insert_artifact_lazy_for_execution;
+use buck2_execute::directory::merge_artifact_directory_for_execution;
 use dupe::Dupe;
 use pagable::PagablePanic;
 use smallvec::SmallVec;
@@ -44,11 +49,15 @@ impl ArtifactGroupValues {
         artifact_fs: &ArtifactFs,
         digest_config: DigestConfig,
     ) -> buck2_error::Result<Self> {
-        if values
-            .iter()
-            .any(|(_, value)| value.has_source_file_proxy())
-            || children.iter().any(|child| child.0.directory.is_none())
-        {
+        let should_defer_directory = values.iter().any(|(_, value)| {
+            value.has_source_file_proxy()
+                || matches!(
+                    value.entry(),
+                    DirectoryEntry::Leaf(ActionDirectoryMember::ExternalSymlink(_))
+                )
+        }) || children.iter().any(|child| child.0.directory.is_none());
+
+        if should_defer_directory {
             return Ok(Self(Arc::new(ArtifactGroupValuesData {
                 action_cache_fingerprint: Some(compute_action_cache_fingerprint(
                     &values,
@@ -169,9 +178,15 @@ impl ArtifactGroupValues {
         builder: &mut LazyActionDirectoryBuilder,
         artifact_fs: &ArtifactFs,
         digest_config: DigestConfig,
+        external_symlink_upload_paths: &mut Vec<ExternalSymlinkUploadPath>,
     ) -> buck2_error::Result<()> {
         if let Some(d) = self.0.directory.as_ref() {
-            builder.merge(d.dupe())?;
+            merge_artifact_directory_for_execution(
+                builder,
+                d,
+                digest_config,
+                external_symlink_upload_paths,
+            )?;
             return Ok(());
         }
 
@@ -187,7 +202,13 @@ impl ArtifactGroupValues {
             )?;
             let abs_path = artifact_fs.fs().resolve(&projrel_path);
             let value = value.resolve_source_file_proxy(abs_path.as_abs_path(), digest_config)?;
-            insert_artifact_lazy(builder, projrel_path, &value)?;
+            insert_artifact_lazy_for_execution(
+                builder,
+                projrel_path,
+                &value,
+                digest_config,
+                external_symlink_upload_paths,
+            )?;
         }
 
         Ok(())
@@ -450,8 +471,14 @@ impl ArtifactGroupValuesDyn for ArtifactGroupValues {
         builder: &mut LazyActionDirectoryBuilder,
         artifact_fs: &ArtifactFs,
         digest_config: DigestConfig,
+        external_symlink_upload_paths: &mut Vec<ExternalSymlinkUploadPath>,
     ) -> buck2_error::Result<()> {
-        self.add_to_directory_for_execution(builder, artifact_fs, digest_config)
+        self.add_to_directory_for_execution(
+            builder,
+            artifact_fs,
+            digest_config,
+            external_symlink_upload_paths,
+        )
     }
 }
 

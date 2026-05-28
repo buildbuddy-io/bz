@@ -23,21 +23,28 @@ use crate::artifact_value::ArtifactValue;
 use crate::digest_config::DigestConfig;
 use crate::directory::ActionDirectoryBuilder;
 use crate::directory::ActionDirectoryMember;
+use crate::directory::ExternalSymlinkUploadPath;
 use crate::directory::LazyActionDirectoryBuilder;
 use crate::directory::finalize_lazy_action_directory;
-use crate::directory::insert_artifact_lazy;
+use crate::directory::insert_artifact_lazy_for_execution;
 use crate::execute::request::CommandExecutionInput;
 
 pub fn inputs_directory(
     inputs: &[CommandExecutionInput],
     digest_config: DigestConfig,
     fs: &ArtifactFs,
-) -> buck2_error::Result<ActionDirectoryBuilder> {
+) -> buck2_error::Result<(ActionDirectoryBuilder, Vec<ExternalSymlinkUploadPath>)> {
     let mut builder = LazyActionDirectoryBuilder::empty();
+    let mut external_symlink_upload_paths = Vec::new();
     for input in inputs {
         match input {
             CommandExecutionInput::Artifact(group) => {
-                group.add_to_directory_for_execution(&mut builder, fs, digest_config)?;
+                group.add_to_directory_for_execution(
+                    &mut builder,
+                    fs,
+                    digest_config,
+                    &mut external_symlink_upload_paths,
+                )?;
             }
             CommandExecutionInput::ArtifactPathAlias {
                 source_path,
@@ -49,7 +56,13 @@ pub fn inputs_directory(
                 let value =
                     value.resolve_source_file_proxy(abs_path.as_abs_path(), digest_config)?;
                 let value = rebase_target_file_symlink_alias(source_path, path, value)?;
-                insert_artifact_lazy(&mut builder, path.clone(), &value)?;
+                insert_artifact_lazy_for_execution(
+                    &mut builder,
+                    path.clone(),
+                    &value,
+                    digest_config,
+                    &mut external_symlink_upload_paths,
+                )?;
             }
             CommandExecutionInput::EmptyFile(path) => {
                 builder.insert(
@@ -86,7 +99,10 @@ pub fn inputs_directory(
             },
         };
     }
-    finalize_lazy_action_directory(builder)
+    Ok((
+        finalize_lazy_action_directory(builder)?,
+        external_symlink_upload_paths,
+    ))
 }
 
 fn rebase_target_file_symlink_alias(

@@ -268,6 +268,21 @@ impl Uploader {
                 }
                 (exact_paths, directory_paths)
             });
+            let external_symlink_upload_paths = input_paths.map(|input_paths| {
+                let mut exact_paths = StdBuckHashMap::default();
+                let mut directory_paths = Vec::new();
+                for upload_path in input_paths.external_symlink_upload_paths() {
+                    if upload_path.is_dir {
+                        directory_paths.push((&upload_path.path, &upload_path.source_path));
+                    } else {
+                        exact_paths.insert(
+                            upload_path.path.as_forward_relative_path(),
+                            &upload_path.source_path,
+                        );
+                    }
+                }
+                (exact_paths, directory_paths)
+            });
             let mut upload_file_paths = Vec::new();
             let mut upload_file_digests = Vec::new();
 
@@ -291,6 +306,29 @@ impl Uploader {
                         DirectoryEntry::Leaf(ActionDirectoryMember::File(..)) => {
                             let input_path = path.get();
                             let input_path = &*input_path;
+                            if let Some(upload_file_path) = external_symlink_upload_paths
+                                .as_ref()
+                                .and_then(|(exact_paths, directory_paths)| {
+                                    if let Some(source_path) = exact_paths.get(input_path) {
+                                        return Some((*source_path).clone());
+                                    }
+                                    for (path, source_path) in directory_paths {
+                                        if let Some(suffix) = input_path
+                                            .strip_prefix_opt(path.as_forward_relative_path())
+                                        {
+                                            return Some(source_path.join(suffix.as_str()));
+                                        }
+                                    }
+                                    None
+                                })
+                            {
+                                upload_files.push(NamedDigest {
+                                    name: upload_file_path.display().to_string(),
+                                    digest: digest.to_re(),
+                                    ..Default::default()
+                                });
+                                continue;
+                            }
                             let upload_file_path = artifact_path_alias_upload_paths
                                 .as_ref()
                                 .and_then(|(exact_paths, directory_paths)| {

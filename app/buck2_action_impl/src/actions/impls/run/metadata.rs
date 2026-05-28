@@ -28,8 +28,14 @@ pub(crate) fn metadata_content(
     let mut blob_builder = PathsWithDigestBuilder::default();
 
     let mut builder = LazyActionDirectoryBuilder::empty();
+    let mut external_symlink_upload_paths = Vec::new();
     for &group in inputs {
-        group.add_to_directory_for_execution(&mut builder, fs, digest_config)?;
+        group.add_to_directory_for_execution(
+            &mut builder,
+            fs,
+            digest_config,
+            &mut external_symlink_upload_paths,
+        )?;
     }
     let builder = builder.finalize()?;
 
@@ -65,8 +71,14 @@ pub(crate) fn metadata_digest(
     let mut blob_builder = PathsWithDigestBuilder::default();
 
     let mut builder = LazyActionDirectoryBuilder::empty();
+    let mut external_symlink_upload_paths = Vec::new();
     for &group in inputs {
-        group.add_to_directory_for_execution(&mut builder, fs, digest_config)?;
+        group.add_to_directory_for_execution(
+            &mut builder,
+            fs,
+            digest_config,
+            &mut external_symlink_upload_paths,
+        )?;
     }
     let builder = builder.finalize()?;
 

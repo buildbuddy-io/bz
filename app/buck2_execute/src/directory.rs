@@ -10,6 +10,8 @@
 
 use std::fmt;
 use std::fmt::Debug;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -19,6 +21,7 @@ use buck2_common::cas_digest::CasDigestConfig;
 use buck2_common::cas_digest::DigestAlgorithm;
 use buck2_common::external_symlink::ExternalSymlink;
 use buck2_common::file_ops::metadata::FileDigest;
+use buck2_common::file_ops::metadata::FileDigestConfig;
 use buck2_common::file_ops::metadata::FileMetadata;
 use buck2_common::file_ops::metadata::SourceFileMetadata;
 use buck2_common::file_ops::metadata::Symlink;
@@ -46,6 +49,7 @@ use buck2_directory::directory::shared_directory::SharedDirectory;
 use buck2_directory::directory::walk::unordered_entry_walk;
 use buck2_error::internal_error;
 use buck2_fs::paths::RelativePathBuf;
+use buck2_fs::paths::abs_path::AbsPath;
 use buck2_fs::paths::file_name::FileName;
 use buck2_fs::paths::file_name::FileNameBuf;
 use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
@@ -101,6 +105,18 @@ pub type ActionDirectoryBuilder = DirectoryBuilder<ActionDirectoryMember, Tracke
 
 pub type LazyActionDirectoryBuilder =
     LazyDirectoryBuilder<ActionDirectoryMember, TrackedFileDigest>;
+
+#[derive(Clone, Debug)]
+pub struct ExternalSymlinkUploadPath {
+    pub path: ProjectRelativePathBuf,
+    pub source_path: PathBuf,
+    pub is_dir: bool,
+}
+
+struct ExternalSymlinkUploadSource {
+    source_path: PathBuf,
+    is_dir: bool,
+}
 
 pub trait ActionDirectory = Directory<ActionDirectoryMember, TrackedFileDigest>;
 
@@ -691,6 +707,257 @@ pub fn insert_artifact_lazy(
     Ok(())
 }
 
+pub fn insert_artifact_lazy_for_execution(
+    builder: &mut LazyActionDirectoryBuilder,
+    path: ProjectRelativePathBuf,
+    value: &ArtifactValue,
+    digest_config: DigestConfig,
+    external_symlink_upload_paths: &mut Vec<ExternalSymlinkUploadPath>,
+) -> buck2_error::Result<()> {
+    if let Some((entry, upload_path)) =
+        external_symlink_entry_for_execution(path.clone(), value.entry(), digest_config)?
+    {
+        builder.insert(path.into(), entry)?;
+        external_symlink_upload_paths.push(upload_path);
+        return Ok(());
+    }
+
+    insert_artifact_lazy(builder, path, value)
+}
+
+pub fn merge_artifact_directory_for_execution(
+    builder: &mut LazyActionDirectoryBuilder,
+    directory: &ActionSharedDirectory,
+    digest_config: DigestConfig,
+    external_symlink_upload_paths: &mut Vec<ExternalSymlinkUploadPath>,
+) -> buck2_error::Result<()> {
+    if !directory_contains_external_symlink(directory) {
+        builder.merge(directory.dupe())?;
+        return Ok(());
+    }
+
+    let expanded = expand_external_symlinks_for_execution(
+        ProjectRelativePath::empty(),
+        directory,
+        digest_config,
+        external_symlink_upload_paths,
+    )?;
+    builder.merge(
+        expanded
+            .fingerprint(digest_config.as_directory_serializer())
+            .shared(&*INTERNER),
+    )?;
+    Ok(())
+}
+
+fn directory_contains_external_symlink(directory: &ActionSharedDirectory) -> bool {
+    let mut leaves = directory.unordered_walk_leaves();
+    while let Some((_path, leaf)) = leaves.next() {
+        if matches!(leaf, ActionDirectoryMember::ExternalSymlink(_)) {
+            return true;
+        }
+    }
+    false
+}
+
+fn expand_external_symlinks_for_execution(
+    prefix: &ProjectRelativePath,
+    directory: &ActionSharedDirectory,
+    digest_config: DigestConfig,
+    external_symlink_upload_paths: &mut Vec<ExternalSymlinkUploadPath>,
+) -> buck2_error::Result<ActionDirectoryBuilder> {
+    let mut builder = ActionDirectoryBuilder::empty();
+    for (name, entry) in directory.entries() {
+        let path = prefix.join(name);
+        let entry = match entry {
+            DirectoryEntry::Dir(directory) => {
+                DirectoryEntry::Dir(expand_external_symlinks_for_execution(
+                    &path,
+                    directory,
+                    digest_config,
+                    external_symlink_upload_paths,
+                )?)
+            }
+            DirectoryEntry::Leaf(ActionDirectoryMember::ExternalSymlink(symlink)) => {
+                match external_symlink_path_entry_for_execution(symlink, digest_config)? {
+                    Some((entry, upload_path)) => {
+                        external_symlink_upload_paths.push(ExternalSymlinkUploadPath {
+                            path,
+                            source_path: upload_path.source_path,
+                            is_dir: upload_path.is_dir,
+                        });
+                        entry
+                    }
+                    None => {
+                        DirectoryEntry::Leaf(ActionDirectoryMember::ExternalSymlink(symlink.dupe()))
+                    }
+                }
+            }
+            DirectoryEntry::Leaf(leaf) => DirectoryEntry::Leaf(leaf.dupe()),
+        };
+        builder.insert(name.to_owned(), entry)?;
+    }
+    Ok(builder)
+}
+
+fn external_symlink_entry_for_execution(
+    path: ProjectRelativePathBuf,
+    entry: &ActionDirectoryEntry<ActionSharedDirectory>,
+    digest_config: DigestConfig,
+) -> buck2_error::Result<
+    Option<(
+        ActionDirectoryEntry<ActionSharedDirectory>,
+        ExternalSymlinkUploadPath,
+    )>,
+> {
+    let DirectoryEntry::Leaf(ActionDirectoryMember::ExternalSymlink(symlink)) = entry else {
+        return Ok(None);
+    };
+
+    Ok(
+        external_symlink_path_entry_for_execution(symlink, digest_config)?.map(
+            |(entry, upload_path)| {
+                (
+                    entry.map_dir(|d| {
+                        d.fingerprint(digest_config.as_directory_serializer())
+                            .shared(&*INTERNER)
+                    }),
+                    ExternalSymlinkUploadPath {
+                        path,
+                        source_path: upload_path.source_path,
+                        is_dir: upload_path.is_dir,
+                    },
+                )
+            },
+        ),
+    )
+}
+
+fn external_symlink_path_entry_for_execution(
+    symlink: &ExternalSymlink,
+    digest_config: DigestConfig,
+) -> buck2_error::Result<
+    Option<(
+        ActionDirectoryEntry<ActionDirectoryBuilder>,
+        ExternalSymlinkUploadSource,
+    )>,
+> {
+    // Bazel plants symlinks for local execroot layout, but its remote Merkle tree uses the
+    // dereferenced file or directory for non-dangling absolute symlink inputs. A remote worker
+    // cannot follow a symlink to the client machine's external repository cache.
+    let path = symlink.to_path_buf();
+    let metadata = match std::fs::metadata(&path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    let path = AbsPath::new(path.as_path())?;
+
+    if metadata.is_file() {
+        return Ok(Some((
+            DirectoryEntry::Leaf(ActionDirectoryMember::File(external_file_metadata(
+                path,
+                &metadata,
+                digest_config,
+            )?)),
+            ExternalSymlinkUploadSource {
+                source_path: symlink.to_path_buf(),
+                is_dir: false,
+            },
+        )));
+    }
+
+    if metadata.is_dir() {
+        return Ok(Some((
+            DirectoryEntry::Dir(external_directory_entry_for_execution(path, digest_config)?),
+            ExternalSymlinkUploadSource {
+                source_path: symlink.to_path_buf(),
+                is_dir: true,
+            },
+        )));
+    }
+
+    Ok(None)
+}
+
+fn external_directory_entry_for_execution(
+    path: &AbsPath,
+    digest_config: DigestConfig,
+) -> buck2_error::Result<ActionDirectoryBuilder> {
+    let mut builder = ActionDirectoryBuilder::empty();
+    for entry in std::fs::read_dir(path)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        let name = name
+            .to_str()
+            .ok_or_else(|| internal_error!("Filename is not UTF-8"))
+            .and_then(|name| FileNameBuf::try_from(name.to_owned()))?;
+        let child_path = entry.path();
+        let child_path = AbsPath::new(child_path.as_path())?;
+
+        if let Some(entry) = external_path_entry_for_execution(child_path, digest_config)? {
+            builder.insert(name, entry)?;
+        }
+    }
+    Ok(builder)
+}
+
+fn external_path_entry_for_execution(
+    path: &AbsPath,
+    digest_config: DigestConfig,
+) -> buck2_error::Result<Option<ActionDirectoryEntry<ActionDirectoryBuilder>>> {
+    let metadata = match std::fs::metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+
+    if metadata.is_file() {
+        return Ok(Some(DirectoryEntry::Leaf(ActionDirectoryMember::File(
+            external_file_metadata(path, &metadata, digest_config)?,
+        ))));
+    }
+
+    if metadata.is_dir() {
+        return Ok(Some(DirectoryEntry::Dir(
+            external_directory_entry_for_execution(path, digest_config)?,
+        )));
+    }
+
+    Ok(None)
+}
+
+fn external_file_metadata(
+    path: &AbsPath,
+    metadata: &std::fs::Metadata,
+    digest_config: DigestConfig,
+) -> buck2_error::Result<FileMetadata> {
+    let file_digest_config = FileDigestConfig::source(digest_config.cas_digest_config());
+    let digest = FileDigest::from_file_with_metadata(path, file_digest_config, metadata)?;
+    Ok(FileMetadata {
+        digest: TrackedFileDigest::new(digest, file_digest_config.as_cas_digest_config()),
+        is_executable: external_file_is_executable(path, metadata)?,
+    })
+}
+
+#[cfg(unix)]
+fn external_file_is_executable(
+    _path: &AbsPath,
+    metadata: &std::fs::Metadata,
+) -> buck2_error::Result<bool> {
+    Ok(metadata.permissions().mode() & 0o111 != 0)
+}
+
+#[cfg(not(unix))]
+fn external_file_is_executable(
+    path: &AbsPath,
+    _metadata: &std::fs::Metadata,
+) -> buck2_error::Result<bool> {
+    use faccess::PathExt;
+
+    Ok(path.executable()?)
+}
+
 fn artifact_value_needs_deps(value: &ArtifactValue) -> bool {
     matches!(
         value.entry(),
@@ -1025,6 +1292,53 @@ mod tests {
             builder
         };
         assert_dirs_eq(&result, &expected);
+
+        Ok(())
+    }
+
+    #[test]
+    fn external_symlink_input_is_dereferenced_for_execution() -> buck2_error::Result<()> {
+        let tempdir = tempfile::tempdir()?;
+        let external_root = tempdir.path().join("llvm-project");
+        std::fs::create_dir_all(external_root.join("llvm/lib/Support/BLAKE3"))?;
+        std::fs::write(
+            external_root.join("llvm/lib/Support/BLAKE3/blake3.c"),
+            b"blake3",
+        )?;
+
+        let digest_config = DigestConfig::testing_default();
+        let value = ArtifactValue::new(
+            ActionDirectoryEntry::Leaf(ActionDirectoryMember::ExternalSymlink(Arc::new(
+                ExternalSymlink::new(
+                    external_root,
+                    ForwardRelativePathBuf::try_from(
+                        "llvm/lib/Support/BLAKE3/blake3.c".to_owned(),
+                    )?,
+                )?,
+            ))),
+            None,
+        );
+
+        let input_path = path("external/+llvm+llvm-project/llvm/lib/Support/BLAKE3/blake3.c");
+        let mut builder = LazyActionDirectoryBuilder::empty();
+        let mut external_symlink_upload_paths = Vec::new();
+        insert_artifact_lazy_for_execution(
+            &mut builder,
+            input_path.clone(),
+            &value,
+            digest_config,
+            &mut external_symlink_upload_paths,
+        )?;
+        assert_eq!(external_symlink_upload_paths.len(), 1);
+        assert_eq!(external_symlink_upload_paths[0].path, input_path);
+
+        let result = finalize_lazy_action_directory(builder)?;
+        let entry = find(result.as_ref(), input_path.as_forward_relative_path())?
+            .expect("input should be present");
+        let DirectoryEntry::Leaf(member) = entry else {
+            panic!("input should be a file");
+        };
+        assert!(matches!(member, ActionDirectoryMember::File(_)));
 
         Ok(())
     }

@@ -1458,7 +1458,7 @@ impl LocalExecutor {
         // directly. Only fall back to the full input+output directory when an output symlink may
         // need Buck's dependency extraction logic to resolve targets through known inputs.
         let mut builder = if output_contains_symlink {
-            inputs_directory(request.inputs(), digest_config, &self.artifact_fs)?
+            inputs_directory(request.inputs(), digest_config, &self.artifact_fs)?.0
         } else {
             ActionDirectoryBuilder::empty()
         };
