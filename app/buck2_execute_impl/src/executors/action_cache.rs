@@ -37,6 +37,7 @@ use buck2_util::time_span::TimeSpan;
 use dice_futures::cancellation::CancellationContext;
 use dupe::Dupe;
 use prost::Message;
+use tokio::sync::Semaphore;
 
 use crate::incremental_actions_helper::save_content_based_incremental_state;
 use crate::re::download::DownloadResult;
@@ -56,6 +57,7 @@ pub struct ActionCacheChecker {
     pub paranoid: Option<ParanoidDownloader>,
     pub deduplicate_get_digests_ttl_calls: bool,
     pub output_trees_download_config: OutputTreesDownloadConfig,
+    pub remote_metadata_semaphore: Arc<Semaphore>,
 }
 
 enum CacheType {
@@ -90,6 +92,7 @@ async fn query_action_cache_and_download_result(
     details: RemoteCommandExecutionDetails,
     deduplicate_get_digests_ttl_calls: bool,
     output_trees_download_config: &OutputTreesDownloadConfig,
+    remote_metadata_semaphore: &Arc<Semaphore>,
 ) -> ControlFlow<CommandExecutionResult, CommandExecutionManager> {
     let request = command.request;
     let action_blobs = &command.prepared_action.action_and_blobs.blobs;
@@ -110,11 +113,21 @@ async fn query_action_cache_and_download_result(
             action_digest: digest.to_string(),
             cache_type: cache_type.to_proto().into(),
         },
-        re_client.action_cache(
-            digest.dupe(),
-            &command.prepared_action.platform,
-            Some(&identity),
-        ),
+        async {
+            let _permit = remote_metadata_semaphore.acquire().await.map_err(|_| {
+                buck2_error::buck2_error!(
+                    buck2_error::ErrorTag::InternalError,
+                    "remote metadata semaphore was closed"
+                )
+            })?;
+            re_client
+                .action_cache(
+                    digest.dupe(),
+                    &command.prepared_action.platform,
+                    Some(&identity),
+                )
+                .await
+        },
     )
     .await;
 
@@ -296,6 +309,7 @@ impl PreparedCommandOptionalExecutor for ActionCacheChecker {
             details,
             self.deduplicate_get_digests_ttl_calls,
             &self.output_trees_download_config,
+            &self.remote_metadata_semaphore,
         )
         .await
     }
@@ -312,6 +326,7 @@ pub struct RemoteDepFileCacheChecker {
     pub paranoid: Option<ParanoidDownloader>,
     pub deduplicate_get_digests_ttl_calls: bool,
     pub output_trees_download_config: OutputTreesDownloadConfig,
+    pub remote_metadata_semaphore: Arc<Semaphore>,
 }
 
 #[async_trait]
@@ -362,6 +377,7 @@ impl PreparedCommandOptionalExecutor for RemoteDepFileCacheChecker {
             details,
             self.deduplicate_get_digests_ttl_calls,
             &self.output_trees_download_config,
+            &self.remote_metadata_semaphore,
         )
         .await
     }

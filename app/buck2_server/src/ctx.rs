@@ -181,6 +181,9 @@ fn parse_concurrency(requested: u32) -> Option<usize> {
 
 const ACTION_PARALLELISM_WITH_HEADROOM_PER_CPU: usize = 3;
 const MIN_AVAILABLE_MEMORY_FOR_ACTION_PARALLELISM_HEADROOM: u64 = 2 * 1024 * 1024 * 1024;
+const REMOTE_METADATA_PARALLELISM_MULTIPLIER: usize = 4;
+const MIN_REMOTE_METADATA_PARALLELISM: usize = 64;
+const MAX_REMOTE_METADATA_PARALLELISM: usize = 512;
 
 #[derive(Clone, Copy)]
 enum ActionConcurrencySource {
@@ -239,6 +242,13 @@ fn action_concurrency_from_host_headroom(
         idle_cpus.saturating_mul(ACTION_PARALLELISM_WITH_HEADROOM_PER_CPU.saturating_sub(1));
 
     base.saturating_add(extra_parallelism).min(max_parallelism)
+}
+
+fn default_remote_metadata_concurrency(action_concurrency: usize) -> usize {
+    action_concurrency
+        .saturating_mul(REMOTE_METADATA_PARALLELISM_MULTIPLIER)
+        .max(MIN_REMOTE_METADATA_PARALLELISM)
+        .min(MAX_REMOTE_METADATA_PARALLELISM)
 }
 
 fn has_memory_headroom_for_action_parallelism(memory: SystemMemoryStats) -> bool {
@@ -1064,6 +1074,14 @@ impl DiceCommandUpdater<'_, '_> {
             )
         };
 
+        let remote_metadata_concurrency = root_config
+            .parse::<u32>(BuckconfigKeyRef {
+                section: "build",
+                property: "remote_metadata_threads",
+            })?
+            .and_then(parse_concurrency)
+            .unwrap_or_else(|| default_remote_metadata_concurrency(concurrency));
+
         if let Some(max_lines) = root_config.parse(BuckconfigKeyRef {
             section: "ui",
             property: "thread_line_limit",
@@ -1271,6 +1289,7 @@ impl DiceCommandUpdater<'_, '_> {
             self.cmd_ctx.base_context.daemon.local_action_cache.dupe(),
             run_action_knobs.deduplicate_get_digests_ttl_calls,
             output_trees_download_config.dupe(),
+            remote_metadata_concurrency,
             self.cmd_ctx.base_context.daemon.daemon_id.dupe(),
             &self
                 .cmd_ctx
@@ -1320,6 +1339,10 @@ impl DiceCommandUpdater<'_, '_> {
             format!(
                 "action-parallelism-source:{}",
                 concurrency_source.as_tag_value()
+            ),
+            format!(
+                "remote-metadata-parallelism:{}",
+                remote_metadata_concurrency
             ),
         ];
         self.cmd_ctx
@@ -1698,6 +1721,21 @@ mod tests {
             action_concurrency_from_host_headroom(10, None, memory(64, 40)),
             10
         );
+    }
+
+    #[test]
+    fn remote_metadata_concurrency_has_bazel_shaped_minimum() {
+        assert_eq!(default_remote_metadata_concurrency(10), 64);
+    }
+
+    #[test]
+    fn remote_metadata_concurrency_scales_independently_from_local_actions() {
+        assert_eq!(default_remote_metadata_concurrency(32), 128);
+    }
+
+    #[test]
+    fn remote_metadata_concurrency_is_capped() {
+        assert_eq!(default_remote_metadata_concurrency(1000), 512);
     }
 
     #[test]

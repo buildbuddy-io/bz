@@ -69,6 +69,7 @@ use buck2_execute_impl::sqlite::incremental_state_db::IncrementalDbState;
 use buck2_resource_control::memory_tracker::MemoryTrackerHandle;
 use dupe::Dupe;
 use host_sharing::HostSharingBroker;
+use tokio::sync::Semaphore;
 
 /// For each buck invocations, we'll have a single CommandExecutorFactory. This contains shared
 /// state used by all command executor strategies.
@@ -103,6 +104,7 @@ pub struct CommandExecutorFactory {
     local_executor_shared_state: LocalExecutorSharedState,
     deduplicate_get_digests_ttl_calls: bool,
     output_trees_download_config: OutputTreesDownloadConfig,
+    remote_metadata_semaphore: Arc<Semaphore>,
     daemon_id: DaemonId,
     bazel_remote_endpoint_overrides: BazelRemoteEndpointOverrides,
 }
@@ -131,6 +133,7 @@ impl CommandExecutorFactory {
         local_action_cache: Arc<LocalActionCache>,
         deduplicate_get_digests_ttl_calls: bool,
         output_trees_download_config: OutputTreesDownloadConfig,
+        remote_metadata_concurrency: usize,
         daemon_id: DaemonId,
         remote_execution_startup_config: &RemoteExecutionStartupConfig,
     ) -> Self {
@@ -162,6 +165,7 @@ impl CommandExecutorFactory {
             local_executor_shared_state: LocalExecutorSharedState::default(),
             deduplicate_get_digests_ttl_calls,
             output_trees_download_config,
+            remote_metadata_semaphore: Arc::new(Semaphore::new(remote_metadata_concurrency)),
             daemon_id,
             bazel_remote_endpoint_overrides: BazelRemoteEndpointOverrides::from_startup_config(
                 remote_execution_startup_config,
@@ -553,6 +557,7 @@ impl HasCommandExecutor for CommandExecutorFactory {
                                 paranoid: self.paranoid.dupe(),
                                 deduplicate_get_digests_ttl_calls: self.deduplicate_get_digests_ttl_calls,
                                 output_trees_download_config: self.output_trees_download_config.dupe(),
+                                remote_metadata_semaphore: self.remote_metadata_semaphore.dupe(),
                             }) as _
                         } else {
                             Arc::new(NoOpCommandOptionalExecutor {}) as _
@@ -573,6 +578,7 @@ impl HasCommandExecutor for CommandExecutorFactory {
                                 paranoid: self.paranoid.dupe(),
                                 deduplicate_get_digests_ttl_calls: self.deduplicate_get_digests_ttl_calls,
                                 output_trees_download_config: self.output_trees_download_config.dupe(),
+                                remote_metadata_semaphore: self.remote_metadata_semaphore.dupe(),
                             }) as _
                         };
                     let action_cache_checker: Arc<dyn PreparedCommandOptionalExecutor> =
