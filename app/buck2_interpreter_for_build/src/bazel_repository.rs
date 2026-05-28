@@ -564,6 +564,31 @@ fn repository_os_name_value(repo_env: &BTreeMap<String, String>) -> String {
         .unwrap_or_else(|| bazel_host_os_name().to_owned())
 }
 
+fn canonical_bazel_os_name(os_name: &str) -> String {
+    let os_name = os_name
+        .trim()
+        .to_ascii_lowercase()
+        .replace('_', " ")
+        .replace('-', " ");
+    match os_name.as_str() {
+        "darwin" | "macos" | "mac os x" => "mac os x".to_owned(),
+        "win" | "windows" => "windows".to_owned(),
+        "linux" => "linux".to_owned(),
+        other => other.to_owned(),
+    }
+}
+
+fn repository_os_name_matches_host(os_name: &str) -> bool {
+    canonical_bazel_os_name(os_name) == canonical_bazel_os_name(bazel_host_os_name())
+}
+
+fn repository_ctx_should_search_local_path(repo_env: &BTreeMap<String, String>) -> bool {
+    match repo_env.get(BZLMOD_REPOSITORY_OS_NAME_ENV) {
+        Some(os_name) => repository_os_name_matches_host(os_name),
+        None => true,
+    }
+}
+
 fn repository_os_arch_value(repo_env: &BTreeMap<String, String>) -> String {
     repo_env
         .get(BZLMOD_REPOSITORY_OS_ARCH_ENV)
@@ -694,6 +719,48 @@ mod tests {
                 },
             ],
             recorded_inputs.into_inner().unwrap()
+        );
+    }
+
+    #[test]
+    fn test_repository_ctx_should_search_local_path_without_fake_os() {
+        assert!(repository_ctx_should_search_local_path(&BTreeMap::new()));
+    }
+
+    #[test]
+    fn test_repository_ctx_should_search_local_path_when_fake_os_matches_host() {
+        let repo_env = BTreeMap::from([(
+            BZLMOD_REPOSITORY_OS_NAME_ENV.to_owned(),
+            bazel_host_os_name().to_owned(),
+        )]);
+
+        assert!(repository_ctx_should_search_local_path(&repo_env));
+    }
+
+    #[test]
+    fn test_repository_ctx_should_not_search_local_path_when_fake_os_differs() {
+        let different_os = if repository_os_name_matches_host("linux") {
+            "windows"
+        } else {
+            "linux"
+        };
+        let repo_env = BTreeMap::from([(
+            BZLMOD_REPOSITORY_OS_NAME_ENV.to_owned(),
+            different_os.to_owned(),
+        )]);
+
+        assert!(!repository_ctx_should_search_local_path(&repo_env));
+    }
+
+    #[test]
+    fn test_repository_os_name_match_accepts_common_macos_spellings() {
+        assert_eq!(
+            canonical_bazel_os_name("macos"),
+            canonical_bazel_os_name("mac os x")
+        );
+        assert_eq!(
+            canonical_bazel_os_name("darwin"),
+            canonical_bazel_os_name("mac os x")
         );
     }
 
@@ -6630,6 +6697,9 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
         let Some(path) = record_repository_env_var(&repo_env, &recorded_inputs, "PATH") else {
             return Ok(Value::new_none());
         };
+        if !repository_ctx_should_search_local_path(&repo_env) {
+            return Ok(Value::new_none());
+        }
         for dir in env::split_paths(std::ffi::OsStr::new(&path)) {
             if !dir.is_absolute() {
                 continue;
