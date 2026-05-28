@@ -231,6 +231,24 @@ struct BeforeSubcommandOptions {
     #[clap(long = "api-key", value_name = "KEY", global = true)]
     api_key: Option<String>,
 
+    /// Limit the maximum number of concurrent remote cache/executor connections.
+    #[clap(
+        long = "remote_max_connections",
+        alias = "remote-max-connections",
+        value_name = "N",
+        global = true
+    )]
+    remote_max_connections: Option<usize>,
+
+    /// Limit the maximum number of concurrent requests per remote gRPC connection.
+    #[clap(
+        long = "remote_max_concurrency_per_connection",
+        alias = "remote-max-concurrency-per-connection",
+        value_name = "N",
+        global = true
+    )]
+    remote_max_concurrency_per_connection: Option<usize>,
+
     /// Bazel-compatible default remote execution platform property.
     #[clap(
         long = "remote_default_exec_properties",
@@ -324,6 +342,8 @@ impl BeforeSubcommandOptions {
             }),
             buildbuddy_api_key: self.api_key.clone(),
             remote_default_exec_properties,
+            remote_max_connections: self.remote_max_connections,
+            remote_max_concurrency_per_connection: self.remote_max_concurrency_per_connection,
         }
     }
 
@@ -1084,6 +1104,25 @@ mod tests {
         assert_eq!(
             remote_execution.buildbuddy_api_key.as_deref(),
             Some("secret")
+        );
+    }
+
+    #[test]
+    fn remote_connection_limits_are_global_startup_overrides() {
+        let opts = Opt::try_parse_from([
+            "buck2",
+            "--remote_max_connections=12",
+            "build",
+            "--remote_max_concurrency_per_connection=34",
+            "//:target",
+        ])
+        .unwrap();
+
+        let remote_execution = opts.common_opts.remote_execution_startup_config();
+        assert_eq!(remote_execution.remote_max_connections, Some(12));
+        assert_eq!(
+            remote_execution.remote_max_concurrency_per_connection,
+            Some(34)
         );
     }
 

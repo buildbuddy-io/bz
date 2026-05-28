@@ -84,6 +84,8 @@ use tokio::io::AsyncRead;
 use tokio::io::AsyncReadExt;
 use tokio::io::AsyncWriteExt;
 use tokio::io::BufReader;
+use tokio::sync::OwnedSemaphorePermit;
+use tokio::sync::Semaphore;
 use tokio_util::io::StreamReader;
 use tonic::codegen::InterceptedService;
 use tonic::metadata;
@@ -92,6 +94,7 @@ use tonic::metadata::MetadataValue;
 use tonic::service::Interceptor;
 use tonic::transport::Certificate;
 use tonic::transport::Channel;
+use tonic::transport::Endpoint;
 use tonic::transport::Identity;
 use tonic::transport::Uri;
 use tonic::transport::channel::ClientTlsConfig;
@@ -103,6 +106,8 @@ use crate::response::*;
 use crate::stats::CountingConnector;
 
 const DEFAULT_MAX_TOTAL_BATCH_SIZE: usize = 4 * 1000 * 1000;
+const DEFAULT_REMOTE_MAX_CONNECTIONS: usize = 100;
+const DEFAULT_REMOTE_MAX_CONCURRENCY_PER_CONNECTION: usize = 100;
 
 fn tdigest_to(tdigest: TDigest) -> Digest {
     Digest {
@@ -305,6 +310,40 @@ fn reapi_service_address(opts: &Buck2OssReConfiguration) -> Option<String> {
         .or_else(|| opts.cas_address.clone())
 }
 
+fn counting_connector() -> CountingConnector<HttpConnector> {
+    let mut http = HttpConnector::new();
+    http.enforce_http(false);
+    CountingConnector::new(http)
+}
+
+fn endpoint_for_address(
+    opts: &Buck2OssReConfiguration,
+    tls_config: &ClientTlsConfig,
+    address: Option<String>,
+) -> anyhow::Result<(Endpoint, String)> {
+    let address = address.as_ref().context("No address")?;
+    let address = substitute_env_vars(address).context("Invalid address")?;
+    let uri = address.parse().context("Invalid address")?;
+    let uri = prepare_uri(uri, opts.tls).context("Invalid URI")?;
+
+    let mut endpoint = Channel::builder(uri);
+    if opts.tls {
+        endpoint = endpoint.tls_config(tls_config.clone())?;
+    }
+
+    if let Some(keepalive_time_secs) = opts.grpc_keepalive_time_secs {
+        endpoint = endpoint.http2_keep_alive_interval(Duration::from_secs(keepalive_time_secs));
+    }
+    if let Some(keepalive_timeout_secs) = opts.grpc_keepalive_timeout_secs {
+        endpoint = endpoint.keep_alive_timeout(Duration::from_secs(keepalive_timeout_secs));
+    }
+    if let Some(keepalive_while_idle) = opts.grpc_keepalive_while_idle {
+        endpoint = endpoint.keep_alive_while_idle(keepalive_while_idle);
+    }
+
+    Ok((endpoint, address))
+}
+
 impl REClientBuilder {
     pub async fn build_and_connect(opts: &Buck2OssReConfiguration) -> anyhow::Result<REClient> {
         // We just always create this just in case, so that we implicitly validate it if set.
@@ -314,60 +353,43 @@ impl REClientBuilder {
 
         let tls_config = &tls_config;
 
-        let create_channel = |address: Option<String>| async move {
-            let address = address.as_ref().context("No address")?;
-            let address = substitute_env_vars(address).context("Invalid address")?;
-            let uri = address.parse().context("Invalid address")?;
-            let uri = prepare_uri(uri, opts.tls).context("Invalid URI")?;
-
-            let mut endpoint = Channel::builder(uri);
-            if opts.tls {
-                endpoint = endpoint.tls_config(tls_config.clone())?;
-            }
-
-            // Configure gRPC keepalive settings
-            if let Some(keepalive_time_secs) = opts.grpc_keepalive_time_secs {
-                endpoint =
-                    endpoint.http2_keep_alive_interval(Duration::from_secs(keepalive_time_secs));
-            }
-            if let Some(keepalive_timeout_secs) = opts.grpc_keepalive_timeout_secs {
-                endpoint = endpoint.keep_alive_timeout(Duration::from_secs(keepalive_timeout_secs));
-            }
-            if let Some(keepalive_while_idle) = opts.grpc_keepalive_while_idle {
-                endpoint = endpoint.keep_alive_while_idle(keepalive_while_idle);
-            }
-
-            // Since we are creating the HttpConnector ourselves, any TCP
-            // settings (tcp_nodelay, tcp_keepalive, connect_timeout), need to
-            // be set here instead of on the endpoint
-            let mut http = HttpConnector::new();
-            http.enforce_http(false);
-            let connector = CountingConnector::new(http);
-
-            anyhow::Ok(
-                endpoint
-                    .connect_with_connector(connector)
-                    .await
-                    .with_context(|| format!("Error connecting to `{address}`"))?,
-            )
-        };
-
         let reapi_service_address = reapi_service_address(opts);
-        let (cas, execution, action_cache, bytestream, capabilities) = futures::future::join5(
-            create_channel(opts.cas_address.clone()),
-            create_channel(reapi_service_address.clone()),
-            create_channel(opts.action_cache_address.clone()),
-            create_channel(opts.cas_address.clone()),
-            create_channel(reapi_service_address),
-        )
-        .await;
+        let (cas_endpoint, _cas_address) =
+            endpoint_for_address(opts, tls_config, opts.cas_address.clone())
+                .context("Error creating CAS endpoint")?;
+        let (execution_endpoint, _execution_address) =
+            endpoint_for_address(opts, tls_config, reapi_service_address.clone())
+                .context("Error creating Execution endpoint")?;
+        let (action_cache_endpoint, _action_cache_address) =
+            endpoint_for_address(opts, tls_config, opts.action_cache_address.clone())
+                .context("Error creating ActionCache endpoint")?;
+        let (bytestream_endpoint, _bytestream_address) =
+            endpoint_for_address(opts, tls_config, opts.cas_address.clone())
+                .context("Error creating ByteStream endpoint")?;
+        let (capabilities_endpoint, _capabilities_address) =
+            endpoint_for_address(opts, tls_config, reapi_service_address)
+                .context("Error creating Capabilities endpoint")?;
 
         let interceptor = InjectHeadersInterceptor::new(&opts.http_headers)?;
 
-        let mut capabilities_client = CapabilitiesClient::with_interceptor(
-            capabilities.context("Error creating Capabilities client")?,
-            interceptor.dupe(),
+        let max_connections = opts
+            .remote_max_connections
+            .unwrap_or(DEFAULT_REMOTE_MAX_CONNECTIONS);
+        let max_concurrency_per_connection = opts
+            .remote_max_concurrency_per_connection
+            .unwrap_or(DEFAULT_REMOTE_MAX_CONCURRENCY_PER_CONNECTION);
+        let capabilities_channel_pool = GrpcChannelPool::new(
+            capabilities_endpoint,
+            max_connections,
+            max_concurrency_per_connection,
         );
+
+        let (capabilities_channel, _capabilities_permit) = capabilities_channel_pool
+            .channel()
+            .await
+            .context("Error creating Capabilities client")?;
+        let mut capabilities_client =
+            CapabilitiesClient::with_interceptor(capabilities_channel, interceptor.dupe());
 
         if let Some(max_decoding_message_size) = opts.max_decoding_message_size {
             capabilities_client =
@@ -421,24 +443,28 @@ impl REClientBuilder {
         };
 
         let grpc_clients = GRPCClients {
-            cas_client: ContentAddressableStorageClient::with_interceptor(
-                cas.context("Error creating CAS client")?,
-                interceptor.dupe(),
-            )
-            .max_decoding_message_size(max_decoding_msg_size),
-            execution_client: ExecutionClient::with_interceptor(
-                execution.context("Error creating Execution client")?,
-                interceptor.dupe(),
+            interceptor,
+            max_decoding_message_size: max_decoding_msg_size,
+            cas_channel: GrpcChannelPool::new(
+                cas_endpoint,
+                max_connections,
+                max_concurrency_per_connection,
             ),
-            action_cache_client: ActionCacheClient::with_interceptor(
-                action_cache.context("Error creating ActionCache client")?,
-                interceptor.dupe(),
+            execution_channel: GrpcChannelPool::new(
+                execution_endpoint,
+                max_connections,
+                max_concurrency_per_connection,
             ),
-            bytestream_client: ByteStreamClient::with_interceptor(
-                bytestream.context("Error creating Bytestream client")?,
-                interceptor.dupe(),
-            )
-            .max_decoding_message_size(max_decoding_msg_size),
+            action_cache_channel: GrpcChannelPool::new(
+                action_cache_endpoint,
+                max_connections,
+                max_concurrency_per_connection,
+            ),
+            bytestream_channel: GrpcChannelPool::new(
+                bytestream_endpoint,
+                max_connections,
+                max_concurrency_per_connection,
+            ),
         };
 
         Ok(REClient::new(
@@ -553,11 +579,173 @@ impl Interceptor for InjectHeadersInterceptor {
 
 type GrpcService = InterceptedService<Channel, InjectHeadersInterceptor>;
 
+#[derive(Clone)]
+struct GrpcChannelConnection {
+    channel: Channel,
+    semaphore: Arc<Semaphore>,
+}
+
+struct GrpcChannelPoolState {
+    connections: Vec<GrpcChannelConnection>,
+    index_ticker: usize,
+}
+
+struct GrpcChannelPool {
+    endpoint: Endpoint,
+    max_connections: usize,
+    max_concurrency_per_connection: usize,
+    state: Mutex<GrpcChannelPoolState>,
+}
+
+enum SelectedGrpcChannelConnection {
+    Ready(GrpcChannelConnection, OwnedSemaphorePermit),
+    Wait(GrpcChannelConnection),
+}
+
+impl GrpcChannelPool {
+    fn new(
+        endpoint: Endpoint,
+        max_connections: usize,
+        max_concurrency_per_connection: usize,
+    ) -> Self {
+        Self {
+            endpoint,
+            // Match Bazel: 0 means unlimited connections.
+            max_connections,
+            // A zero-sized token bucket would make progress impossible.
+            max_concurrency_per_connection: max_concurrency_per_connection.max(1),
+            state: Mutex::new(GrpcChannelPoolState {
+                connections: Vec::new(),
+                index_ticker: 0,
+            }),
+        }
+    }
+
+    fn make_connection(&self) -> GrpcChannelConnection {
+        let channel = self
+            .endpoint
+            .clone()
+            .connect_with_connector_lazy(counting_connector());
+        GrpcChannelConnection {
+            channel,
+            semaphore: Arc::new(Semaphore::new(self.max_concurrency_per_connection)),
+        }
+    }
+
+    fn next_available_connection(
+        &self,
+        state: &mut GrpcChannelPoolState,
+    ) -> Option<(GrpcChannelConnection, OwnedSemaphorePermit)> {
+        for _ in 0..state.connections.len() {
+            let index = state.index_ticker % state.connections.len();
+            state.index_ticker = state.index_ticker.wrapping_add(1);
+            let connection = &state.connections[index];
+            if let Ok(permit) = connection.semaphore.clone().try_acquire_owned() {
+                return Some((connection.clone(), permit));
+            }
+        }
+        None
+    }
+
+    fn can_create_connection(&self, existing_connections: usize) -> bool {
+        self.max_connections == 0 || existing_connections < self.max_connections
+    }
+
+    fn next_connection(&self) -> SelectedGrpcChannelConnection {
+        let mut state = self.state.lock().unwrap();
+
+        if let Some((connection, permit)) = self.next_available_connection(&mut state) {
+            return SelectedGrpcChannelConnection::Ready(connection, permit);
+        }
+
+        if self.can_create_connection(state.connections.len()) {
+            let connection = self.make_connection();
+            let permit = connection
+                .semaphore
+                .clone()
+                .try_acquire_owned()
+                .expect("new gRPC connection has at least one permit");
+            state.connections.push(connection.clone());
+            return SelectedGrpcChannelConnection::Ready(connection, permit);
+        }
+
+        let index = state.index_ticker % state.connections.len();
+        state.index_ticker = state.index_ticker.wrapping_add(1);
+        SelectedGrpcChannelConnection::Wait(state.connections[index].clone())
+    }
+
+    async fn channel(&self) -> anyhow::Result<(Channel, OwnedSemaphorePermit)> {
+        let (connection, permit) = match self.next_connection() {
+            SelectedGrpcChannelConnection::Ready(connection, permit) => (connection, permit),
+            SelectedGrpcChannelConnection::Wait(connection) => {
+                let permit = connection
+                    .semaphore
+                    .clone()
+                    .acquire_owned()
+                    .await
+                    .context("gRPC channel pool was closed")?;
+                (connection, permit)
+            }
+        };
+        Ok((connection.channel, permit))
+    }
+}
+
 pub struct GRPCClients {
-    cas_client: ContentAddressableStorageClient<GrpcService>,
-    execution_client: ExecutionClient<GrpcService>,
-    action_cache_client: ActionCacheClient<GrpcService>,
-    bytestream_client: ByteStreamClient<GrpcService>,
+    interceptor: InjectHeadersInterceptor,
+    max_decoding_message_size: usize,
+    cas_channel: GrpcChannelPool,
+    execution_channel: GrpcChannelPool,
+    action_cache_channel: GrpcChannelPool,
+    bytestream_channel: GrpcChannelPool,
+}
+
+impl GRPCClients {
+    async fn cas_client(
+        &self,
+    ) -> anyhow::Result<(
+        ContentAddressableStorageClient<GrpcService>,
+        OwnedSemaphorePermit,
+    )> {
+        let (channel, permit) = self.cas_channel.channel().await?;
+        Ok((
+            ContentAddressableStorageClient::with_interceptor(channel, self.interceptor.dupe())
+                .max_decoding_message_size(self.max_decoding_message_size),
+            permit,
+        ))
+    }
+
+    async fn execution_client(
+        &self,
+    ) -> anyhow::Result<(ExecutionClient<GrpcService>, OwnedSemaphorePermit)> {
+        let (channel, permit) = self.execution_channel.channel().await?;
+        Ok((
+            ExecutionClient::with_interceptor(channel, self.interceptor.dupe()),
+            permit,
+        ))
+    }
+
+    async fn action_cache_client(
+        &self,
+    ) -> anyhow::Result<(ActionCacheClient<GrpcService>, OwnedSemaphorePermit)> {
+        let (channel, permit) = self.action_cache_channel.channel().await?;
+        Ok((
+            ActionCacheClient::with_interceptor(channel, self.interceptor.dupe())
+                .max_decoding_message_size(self.max_decoding_message_size),
+            permit,
+        ))
+    }
+
+    async fn bytestream_client(
+        &self,
+    ) -> anyhow::Result<(ByteStreamClient<GrpcService>, OwnedSemaphorePermit)> {
+        let (channel, permit) = self.bytestream_channel.channel().await?;
+        Ok((
+            ByteStreamClient::with_interceptor(channel, self.interceptor.dupe())
+                .max_decoding_message_size(self.max_decoding_message_size),
+            permit,
+        ))
+    }
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -691,7 +879,7 @@ impl REClient {
         metadata: RemoteExecutionMetadata,
         request: ActionResultRequest,
     ) -> anyhow::Result<ActionResultResponse> {
-        let mut client = self.grpc_clients.action_cache_client.clone();
+        let (mut client, _permit) = self.grpc_clients.action_cache_client().await?;
 
         let res = client
             .get_action_result(with_re_metadata(
@@ -716,7 +904,7 @@ impl REClient {
         metadata: RemoteExecutionMetadata,
         request: WriteActionResultRequest,
     ) -> anyhow::Result<WriteActionResultResponse> {
-        let mut client = self.grpc_clients.action_cache_client.clone();
+        let (mut client, _permit) = self.grpc_clients.action_cache_client().await?;
 
         let res = client
             .update_action_result(with_re_metadata(
@@ -746,7 +934,7 @@ impl REClient {
         // TODO(aloiscochard): Map those properly in the request
         // use crate::proto::build::bazel::remote::execution::v2::ExecutionPolicy;
 
-        let mut client = self.grpc_clients.execution_client.clone();
+        let (mut client, permit) = self.grpc_clients.execution_client().await?;
 
         let action_digest = tdigest_to(execute_request.action_digest.clone());
 
@@ -851,6 +1039,7 @@ impl REClient {
         // clone the execute_request into every future we create above.
 
         let stream = stream.map(move |mut r| {
+            let _permit = &permit;
             match &mut r {
                 Ok(ExecuteWithProgressResponse {
                     execute_response: Some(response),
@@ -880,7 +1069,7 @@ impl REClient {
             self.runtime_opts.max_concurrent_uploads_per_action,
             |re_request| async {
                 let metadata = metadata.clone();
-                let mut cas_client = self.grpc_clients.cas_client.clone();
+                let (mut cas_client, _permit) = self.grpc_clients.cas_client().await?;
                 let resp = cas_client
                     .batch_update_blobs(with_re_metadata(
                         re_request,
@@ -892,7 +1081,8 @@ impl REClient {
             },
             |segments| async {
                 let metadata = metadata.clone();
-                let mut bytestream_client = self.grpc_clients.bytestream_client.clone();
+                let (mut bytestream_client, _permit) =
+                    self.grpc_clients.bytestream_client().await?;
                 let requests = futures::stream::iter(segments);
                 let resp = bytestream_client
                     .write(with_re_metadata(
@@ -945,7 +1135,7 @@ impl REClient {
             self.capabilities.max_total_batch_size,
             |re_request| async {
                 let metadata = metadata.clone();
-                let mut client = self.grpc_clients.cas_client.clone();
+                let (mut client, _permit) = self.grpc_clients.cas_client().await?;
                 Ok(client
                     .batch_read_blobs(with_re_metadata(
                         re_request,
@@ -958,7 +1148,7 @@ impl REClient {
             |read_request| {
                 let metadata = metadata.clone();
                 async move {
-                    let mut client = self.grpc_clients.bytestream_client.clone();
+                    let (mut client, permit) = self.grpc_clients.bytestream_client().await?;
                     let response = client
                         .read(with_re_metadata(
                             read_request,
@@ -967,7 +1157,11 @@ impl REClient {
                         ))
                         .await?
                         .into_inner();
-                    Ok(Box::pin(response.into_stream()))
+                    let stream = response.into_stream().map(move |item| {
+                        let _permit = &permit;
+                        item
+                    });
+                    Ok(Box::pin(stream))
                 }
             },
         )
@@ -979,7 +1173,6 @@ impl REClient {
         metadata: RemoteExecutionMetadata,
         request: GetDigestsTtlRequest,
     ) -> anyhow::Result<GetDigestsTtlResponse> {
-        let mut cas_client = self.grpc_clients.cas_client.clone();
         let mut remote_results: HashMap<TDigest, DigestRemoteState> = HashMap::new();
         let mut digests_to_check: Vec<TDigest> = Vec::new();
 
@@ -1005,6 +1198,7 @@ impl REClient {
             // Send a request and notify others of the result
             if !digests_to_check.is_empty() {
                 tracing::debug!(num_digests = digests_to_check.len(), "FindMissingBlobs");
+                let (mut cas_client, _permit) = self.grpc_clients.cas_client().await?;
                 let missing_blobs = cas_client
                     .find_missing_blobs(with_re_metadata(
                         FindMissingBlobsRequest {

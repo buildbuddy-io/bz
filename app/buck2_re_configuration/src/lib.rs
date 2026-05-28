@@ -627,6 +627,10 @@ pub struct Buck2OssReConfiguration {
     pub max_total_batch_size: Option<usize>,
     /// Maximum number of concurrent upload requests for each action.
     pub max_concurrent_uploads_per_action: Option<usize>,
+    /// Maximum number of concurrent remote cache/executor connections.
+    pub remote_max_connections: Option<usize>,
+    /// Maximum number of concurrent requests per remote gRPC connection.
+    pub remote_max_concurrency_per_connection: Option<usize>,
     /// Time that digests are assumed to live in CAS after being touched.
     pub cas_ttl_secs: Option<i64>,
     /// Interval in seconds for HTTP/2 ping frames to detect stale connections.
@@ -699,6 +703,13 @@ impl Buck2OssReConfiguration {
         }
         if let Some(api_key) = &config.buildbuddy_api_key {
             apply_buildbuddy_api_key_header(&mut self.http_headers, api_key);
+        }
+        if config.remote_max_connections.is_some() {
+            self.remote_max_connections = config.remote_max_connections;
+        }
+        if config.remote_max_concurrency_per_connection.is_some() {
+            self.remote_max_concurrency_per_connection =
+                config.remote_max_concurrency_per_connection;
         }
 
         Ok(())
@@ -776,6 +787,14 @@ impl Buck2OssReConfiguration {
             max_concurrent_uploads_per_action: legacy_config.parse(BuckconfigKeyRef {
                 section: BUCK2_RE_CLIENT_CFG_SECTION,
                 property: "max_concurrent_uploads_per_action",
+            })?,
+            remote_max_connections: legacy_config.parse(BuckconfigKeyRef {
+                section: BUCK2_RE_CLIENT_CFG_SECTION,
+                property: "remote_max_connections",
+            })?,
+            remote_max_concurrency_per_connection: legacy_config.parse(BuckconfigKeyRef {
+                section: BUCK2_RE_CLIENT_CFG_SECTION,
+                property: "remote_max_concurrency_per_connection",
             })?,
             cas_ttl_secs: legacy_config.parse(BuckconfigKeyRef {
                 section: BUCK2_RE_CLIENT_CFG_SECTION,
@@ -941,6 +960,21 @@ mod tests {
         })?;
 
         assert!(config.http_headers.is_empty());
+
+        Ok(())
+    }
+
+    #[test]
+    fn remote_connection_limits_are_startup_overrides() -> buck2_error::Result<()> {
+        let mut config = Buck2OssReConfiguration::default();
+        config.apply_remote_execution_startup_config(&RemoteExecutionStartupConfig {
+            remote_max_connections: Some(12),
+            remote_max_concurrency_per_connection: Some(34),
+            ..Default::default()
+        })?;
+
+        assert_eq!(config.remote_max_connections, Some(12));
+        assert_eq!(config.remote_max_concurrency_per_connection, Some(34));
 
         Ok(())
     }

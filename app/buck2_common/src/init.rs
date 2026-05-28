@@ -132,6 +132,8 @@ pub struct RemoteExecutionStartupConfig {
     pub remote_executor: Option<String>,
     pub buildbuddy_api_key: Option<String>,
     pub remote_default_exec_properties: Option<Vec<RemoteDefaultExecProperty>>,
+    pub remote_max_connections: Option<usize>,
+    pub remote_max_concurrency_per_connection: Option<usize>,
 }
 
 impl RemoteExecutionStartupConfig {
@@ -149,6 +151,13 @@ impl RemoteExecutionStartupConfig {
         if overrides.remote_default_exec_properties.is_some() {
             self.remote_default_exec_properties
                 .clone_from(&overrides.remote_default_exec_properties);
+        }
+        if overrides.remote_max_connections.is_some() {
+            self.remote_max_connections = overrides.remote_max_connections;
+        }
+        if overrides.remote_max_concurrency_per_connection.is_some() {
+            self.remote_max_concurrency_per_connection =
+                overrides.remote_max_concurrency_per_connection;
         }
     }
 
