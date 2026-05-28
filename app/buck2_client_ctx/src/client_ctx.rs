@@ -78,6 +78,7 @@ pub struct ClientCommandContext<'a> {
     pub(crate) remote_download_outputs_override: Option<RemoteDownloadOutputsMode>,
     pub(crate) remote_execution_startup_config: RemoteExecutionStartupConfig,
     pub(crate) buildbuddy_bes: bool,
+    rbe_implies_remote_only: bool,
 }
 
 impl<'a> ClientCommandContext<'a> {
@@ -102,6 +103,7 @@ impl<'a> ClientCommandContext<'a> {
         remote_execution_startup_config: RemoteExecutionStartupConfig,
         remote_download_outputs_override: Option<RemoteDownloadOutputsMode>,
         buildbuddy_bes: bool,
+        rbe_implies_remote_only: bool,
     ) -> Self {
         ClientCommandContext {
             init,
@@ -124,7 +126,12 @@ impl<'a> ClientCommandContext<'a> {
             remote_download_outputs_override,
             remote_execution_startup_config,
             buildbuddy_bes,
+            rbe_implies_remote_only,
         }
+    }
+
+    pub fn rbe_implies_remote_only(&self) -> bool {
+        self.rbe_implies_remote_only
     }
 
     /// Check whether the expanded argv (after flagfile expansion) contains a `--` separator.

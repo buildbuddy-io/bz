@@ -281,7 +281,10 @@ impl StreamingCommand for BuildCommand {
                         return_outputs: self.show_output.format().is_some()
                             || self.output_path.is_some(),
                     }),
-                    build_opts: Some(self.build_opts.to_proto()),
+                    build_opts: Some(
+                        self.build_opts
+                            .to_proto_with_remote_only(ctx.rbe_implies_remote_only())?,
+                    ),
                     final_artifact_materializations: self.materializations.to_proto() as i32,
                     final_artifact_uploads: self.upload_final_artifacts.to_proto() as i32,
                     target_universe: self.target_cfg.target_universe,

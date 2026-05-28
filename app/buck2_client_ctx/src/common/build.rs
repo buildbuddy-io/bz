@@ -10,6 +10,7 @@
 
 use buck2_cli_proto::common_build_options::ExecutionStrategy;
 use buck2_core::buck2_env_name;
+use buck2_error::buck2_error;
 use buck2_error::conversion::clap::buck_error_clap_parser;
 use clap::ArgGroup;
 use clap::builder::FalseyValueParser;
@@ -209,6 +210,36 @@ pub struct CommonBuildOptions {
 }
 
 impl CommonBuildOptions {
+    fn execution_strategy(&self, force_remote_only: bool) -> buck2_error::Result<i32> {
+        if force_remote_only {
+            if self.local_only
+                || self.prefer_local
+                || self.prefer_remote
+                || self.unstable_no_execution
+            {
+                return Err(buck2_error!(
+                    buck2_error::ErrorTag::Input,
+                    "--rbe/--bb imply --remote-only and cannot be combined with another build strategy flag"
+                ));
+            }
+            return Ok(ExecutionStrategy::RemoteOnly as i32);
+        }
+
+        Ok(if self.local_only {
+            ExecutionStrategy::LocalOnly as i32
+        } else if self.remote_only {
+            ExecutionStrategy::RemoteOnly as i32
+        } else if self.prefer_local {
+            ExecutionStrategy::HybridPreferLocal as i32
+        } else if self.prefer_remote {
+            ExecutionStrategy::HybridPreferRemote as i32
+        } else if self.unstable_no_execution {
+            ExecutionStrategy::NoExecution as i32
+        } else {
+            ExecutionStrategy::Default as i32
+        })
+    }
+
     fn build_report(&self) -> (bool, String) {
         match &self.build_report {
             None => (false, "".to_owned()),
@@ -218,6 +249,14 @@ impl CommonBuildOptions {
     }
 
     pub fn to_proto(&self) -> buck2_cli_proto::CommonBuildOptions {
+        self.to_proto_with_remote_only(false)
+            .expect("forcing remote-only is the only fallible build option normalization")
+    }
+
+    pub fn to_proto_with_remote_only(
+        &self,
+        force_remote_only: bool,
+    ) -> buck2_error::Result<buck2_cli_proto::CommonBuildOptions> {
         let (unstable_print_build_report, unstable_build_report_filename) = self.build_report();
         let unstable_streaming_build_report_filename =
             self.streaming_build_report.clone().unwrap_or_default();
@@ -250,21 +289,9 @@ impl CommonBuildOptions {
             .map(|s| s.to_owned())
             .collect();
 
-        buck2_cli_proto::CommonBuildOptions {
+        Ok(buck2_cli_proto::CommonBuildOptions {
             concurrency,
-            execution_strategy: if self.local_only {
-                ExecutionStrategy::LocalOnly as i32
-            } else if self.remote_only {
-                ExecutionStrategy::RemoteOnly as i32
-            } else if self.prefer_local {
-                ExecutionStrategy::HybridPreferLocal as i32
-            } else if self.prefer_remote {
-                ExecutionStrategy::HybridPreferRemote as i32
-            } else if self.unstable_no_execution {
-                ExecutionStrategy::NoExecution as i32
-            } else {
-                ExecutionStrategy::Default as i32
-            },
+            execution_strategy: self.execution_strategy(force_remote_only)?,
             unstable_print_build_report,
             unstable_build_report_filename,
             eager_dep_files: self.eager_dep_files,
@@ -284,7 +311,7 @@ impl CommonBuildOptions {
             unstable_streaming_build_report_filename,
             unstable_exclude_action_error_diagnostics,
             unstable_truncate_error_content,
-        }
+        })
     }
 }
 
@@ -343,5 +370,54 @@ impl CommonOutputOptions {
 
     pub fn is_full(&self) -> bool {
         self.show_full_output || self.show_full_simple_output || self.show_full_json_output
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::Parser;
+
+    use super::*;
+
+    #[derive(Parser)]
+    struct TestBuildOptions {
+        #[clap(flatten)]
+        opts: CommonBuildOptions,
+    }
+
+    #[test]
+    fn forced_remote_only_sets_remote_only_strategy() -> buck2_error::Result<()> {
+        let opts = TestBuildOptions::try_parse_from(["buck2"])?.opts;
+        let proto = opts.to_proto_with_remote_only(true)?;
+
+        assert_eq!(
+            proto.execution_strategy,
+            ExecutionStrategy::RemoteOnly as i32
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn forced_remote_only_allows_explicit_remote_only() -> buck2_error::Result<()> {
+        let opts = TestBuildOptions::try_parse_from(["buck2", "--remote-only"])?.opts;
+        let proto = opts.to_proto_with_remote_only(true)?;
+
+        assert_eq!(
+            proto.execution_strategy,
+            ExecutionStrategy::RemoteOnly as i32
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn forced_remote_only_rejects_conflicting_strategy() -> buck2_error::Result<()> {
+        let opts = TestBuildOptions::try_parse_from(["buck2", "--local-only"])?.opts;
+
+        let err = opts.to_proto_with_remote_only(true).unwrap_err();
+        assert!(
+            err.to_string().contains("--rbe/--bb imply --remote-only"),
+            "{err}"
+        );
+        Ok(())
     }
 }

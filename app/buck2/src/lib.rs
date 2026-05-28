@@ -690,6 +690,7 @@ impl CommandKind {
         let remote_execution_startup_config = common_opts.remote_execution_startup_config();
         let remote_download_outputs_override = common_opts.remote_download_outputs_override();
         let buildbuddy_bes = common_opts.buildbuddy_bes();
+        let rbe_implies_remote_only = common_opts.rbe || common_opts.buildbuddy;
 
         let start_in_process_daemon = if common_opts.no_buckd {
             #[cfg(not(client_only))]
@@ -734,6 +735,7 @@ impl CommandKind {
             remote_execution_startup_config,
             remote_download_outputs_override,
             buildbuddy_bes,
+            rbe_implies_remote_only,
         );
         if let Some(recorder) = events_ctx.recorder.as_mut() {
             recorder.update_for_client_ctx(&command_ctx, self.command_name());

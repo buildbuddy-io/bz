@@ -137,7 +137,10 @@ impl StreamingCommand for RunCommand {
                         test_info: build_providers::Action::Skip as i32,
                     }),
                     response_options: None,
-                    build_opts: Some(self.build_opts.to_proto()),
+                    build_opts: Some(
+                        self.build_opts
+                            .to_proto_with_remote_only(ctx.rbe_implies_remote_only())?,
+                    ),
                     final_artifact_materializations: Materializations::Materialize as i32,
                     final_artifact_uploads: Uploads::Never as i32,
                     target_universe: self.target_cfg.target_universe,
