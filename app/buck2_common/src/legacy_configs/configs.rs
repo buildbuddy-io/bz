@@ -594,12 +594,18 @@ impl LegacyBuckConfig {
                 }
             }
             if !bazelrc_options.command_line_build_settings.is_empty() {
+                let bazelrc_command_line_build_settings =
+                    bazelrc_options.command_line_build_settings.join("\n");
                 section_values
                     .entry("command_line_build_settings".to_owned())
+                    .and_modify(|existing| {
+                        let existing_raw_value = existing.raw_value();
+                        *existing = synthetic_config_value(&format!(
+                            "{bazelrc_command_line_build_settings}\n{existing_raw_value}"
+                        ));
+                    })
                     .or_insert_with(|| {
-                        synthetic_config_value(
-                            &bazelrc_options.command_line_build_settings.join("\n"),
-                        )
+                        synthetic_config_value(&bazelrc_command_line_build_settings)
                     });
             }
             section.values = SortedMap::from_iter(section_values);
