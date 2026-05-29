@@ -1472,6 +1472,7 @@ fn parse_bazel_nodep_label(
 }
 
 const BAZEL_PLATFORMS_OPTION: &str = "//command_line_option:platforms";
+const BAZEL_EXTRA_TOOLCHAINS_OPTION: &str = "//command_line_option:extra_toolchains";
 
 fn bazel_transitioned_label(
     data: &buck2_core::configuration::data::ConfigurationDataData,
@@ -1763,13 +1764,16 @@ struct BazelRegisteredToolchain {
     node: TargetNode,
 }
 
-#[derive(Clone, Dupe, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable)]
-#[display("REGISTERED_TOOLCHAINS")]
+#[derive(Clone, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable)]
+#[display("REGISTERED_TOOLCHAINS(extra_toolchains: {})", extra_toolchains.len())]
 #[pagable_typetag(dice::DiceKeyDyn)]
-struct RegisteredBazelToolchainNodesKey;
+struct RegisteredBazelToolchainNodesKey {
+    extra_toolchains: Vec<String>,
+}
 
 async fn compute_registered_bazel_toolchain_nodes(
     ctx: &mut DiceComputations<'_>,
+    extra_toolchains: Vec<String>,
 ) -> buck2_error::Result<Arc<Vec<BazelRegisteredToolchain>>> {
     let root_conf = ctx.get_legacy_root_config_on_dice().await?;
     let registered: Vec<String> = root_conf
@@ -1780,6 +1784,7 @@ async fn compute_registered_bazel_toolchain_nodes(
         })?
         .unwrap_or_default();
     let mut registered = registered;
+    registered.extend(extra_toolchains);
     registered.reverse();
     registered.extend(get_bazel_module_registered_toolchains_on_dice(ctx).await?);
     let mut seen = BTreeSet::new();
@@ -1862,7 +1867,7 @@ impl Key for RegisteredBazelToolchainNodesKey {
         ctx: &mut DiceComputations,
         _cancellation: &CancellationContext,
     ) -> Self::Value {
-        compute_registered_bazel_toolchain_nodes(ctx).await
+        compute_registered_bazel_toolchain_nodes(ctx, self.extra_toolchains.clone()).await
     }
 
     fn equality(x: &Self::Value, y: &Self::Value) -> bool {
@@ -1879,8 +1884,10 @@ impl Key for RegisteredBazelToolchainNodesKey {
 
 async fn registered_bazel_toolchain_nodes(
     ctx: &mut DiceComputations<'_>,
+    extra_toolchains: Vec<String>,
 ) -> buck2_error::Result<Arc<Vec<BazelRegisteredToolchain>>> {
-    ctx.compute(&RegisteredBazelToolchainNodesKey).await?
+    ctx.compute(&RegisteredBazelToolchainNodesKey { extra_toolchains })
+        .await?
 }
 
 #[derive(Clone, Display, Debug, Eq, Hash, PartialEq, Allocative, Pagable)]
@@ -1895,13 +1902,14 @@ struct BazelSingleToolchainResolutionKey {
     toolchain_type: String,
     target_cfg: ConfigurationData,
     exec_cfg: ConfigurationData,
+    extra_toolchains: Vec<String>,
 }
 
 async fn compute_bazel_single_toolchain_resolution(
     ctx: &mut DiceComputations<'_>,
     key: &BazelSingleToolchainResolutionKey,
 ) -> buck2_error::Result<Option<TargetLabel>> {
-    let registered = registered_bazel_toolchain_nodes(ctx).await?;
+    let registered = registered_bazel_toolchain_nodes(ctx, key.extra_toolchains.clone()).await?;
     if registered.is_empty() {
         return Ok(None);
     }
@@ -1958,13 +1966,40 @@ async fn resolve_bazel_single_toolchain(
     toolchain_type: String,
     target_cfg: ConfigurationData,
     exec_cfg: ConfigurationData,
+    extra_toolchains: Vec<String>,
 ) -> buck2_error::Result<Option<TargetLabel>> {
     ctx.compute(&BazelSingleToolchainResolutionKey {
         toolchain_type,
         target_cfg,
         exec_cfg,
+        extra_toolchains,
     })
     .await?
+}
+
+fn bazel_extra_toolchain_patterns_from_cfg(
+    cfg: &ConfigurationData,
+) -> buck2_error::Result<Vec<String>> {
+    if !cfg.is_bound() {
+        return Ok(Vec::new());
+    }
+    let Some(value) = cfg
+        .data()?
+        .build_settings
+        .get(BAZEL_EXTRA_TOOLCHAINS_OPTION)
+    else {
+        return Ok(Vec::new());
+    };
+    Ok(match value {
+        BazelBuildSettingValue::Label(label) => vec![label.target().to_string()],
+        BazelBuildSettingValue::LabelList(labels) => labels
+            .iter()
+            .map(|label| label.target().to_string())
+            .collect(),
+        BazelBuildSettingValue::String(pattern) => vec![pattern.clone()],
+        BazelBuildSettingValue::StringList(patterns) => patterns.clone(),
+        BazelBuildSettingValue::Bool(_) | BazelBuildSettingValue::Int(_) => Vec::new(),
+    })
 }
 
 async fn resolve_bazel_toolchain_type_alias(
@@ -2008,17 +2043,20 @@ pub async fn resolve_bazel_declared_toolchain_deps(
             .and_modify(|(_, mandatory)| *mandatory |= declared.mandatory)
             .or_insert((resolution_key, declared.mandatory));
     }
+    let extra_toolchains = bazel_extra_toolchain_patterns_from_cfg(target_label.cfg())?;
 
     let selected_toolchain_impls: Vec<(String, String, bool, Option<TargetLabel>)> = ctx
         .try_compute_join(
             declared_toolchains.iter(),
             |ctx, (declared, (resolution_key, mandatory))| {
+                let extra_toolchains = extra_toolchains.clone();
                 async move {
                     let toolchain_impl = resolve_bazel_single_toolchain(
                         ctx,
                         resolution_key.clone(),
                         target_label.cfg().dupe(),
                         execution_platform_cfg.cfg().dupe(),
+                        extra_toolchains,
                     )
                     .await?;
                     buck2_error::Ok((

@@ -18,8 +18,10 @@ use buck2_build_api::interpreter::rule_defs::provider::builtin::constraint_value
 use buck2_build_api::interpreter::rule_defs::provider::builtin::execution_platform_registration_info::FrozenExecutionPlatformRegistrationInfo;
 use buck2_common::dice::cells::HasCellResolver;
 use buck2_common::legacy_configs::dice::HasLegacyConfigs;
+use buck2_common::pattern::resolve::ResolveTargetPatterns;
 use buck2_core::configuration::compatibility::MaybeCompatible;
 use buck2_core::configuration::compatibility::ResultMaybeCompatible;
+use buck2_core::configuration::data::BazelBuildSettingValue;
 use buck2_core::configuration::data::ConfigurationData;
 use buck2_core::configuration::pair::ConfigurationNoExec;
 use buck2_core::execution_types::execution::ExecutionPlatform;
@@ -30,6 +32,8 @@ use buck2_core::execution_types::execution::ExecutionPlatformResolutionPartial;
 use buck2_core::execution_types::execution_platforms::ExecutionPlatformFallback;
 use buck2_core::execution_types::execution_platforms::ExecutionPlatforms;
 use buck2_core::execution_types::execution_platforms::ExecutionPlatformsData;
+use buck2_core::pattern::pattern::ParsedPattern;
+use buck2_core::pattern::pattern_type::TargetPatternExtra;
 use buck2_core::provider::label::ProvidersLabel;
 use buck2_core::target::label::label::TargetLabel;
 use buck2_core::target::target_configured_target_label::TargetConfiguredTargetLabel;
@@ -73,6 +77,9 @@ use crate::nodes::LookingUpConfiguredNodeContext;
 use crate::nodes::gather_deps;
 use buck2_core::configuration::pair::Configuration;
 use buck2_node::cfg_constructor::CFG_CONSTRUCTOR_CALCULATION_IMPL;
+
+const BAZEL_EXTRA_EXECUTION_PLATFORMS_OPTION: &str =
+    "//command_line_option:extra_execution_platforms";
 
 #[derive(Debug, buck2_error::Error)]
 #[buck2(input)]
@@ -135,6 +142,101 @@ async fn legacy_execution_platform_for_node(
     } else {
         Ok(legacy_execution_platform(ctx, cfg).await)
     }
+}
+
+async fn parse_bazel_target_pattern(
+    ctx: &mut DiceComputations<'_>,
+    pattern: &str,
+) -> buck2_error::Result<ParsedPattern<TargetPatternExtra>> {
+    let cell_resolver = ctx.get_cell_resolver().await?;
+    let root_cell = cell_resolver.root_cell();
+    let alias_resolver = ctx.get_cell_alias_resolver(root_cell).await?;
+    ParsedPattern::<TargetPatternExtra>::parse_precise(
+        pattern.trim(),
+        root_cell,
+        &cell_resolver,
+        &alias_resolver,
+    )
+    .with_buck_error_context(|| format!("parsing Bazel execution platform pattern `{pattern}`"))
+}
+
+async fn bazel_extra_execution_platform_targets(
+    ctx: &mut DiceComputations<'_>,
+    cfg: &ConfigurationData,
+) -> buck2_error::Result<Vec<TargetLabel>> {
+    if !cfg.is_bound() {
+        return Ok(Vec::new());
+    }
+    let data = cfg.data()?;
+    let Some(value) = data
+        .build_settings
+        .get(BAZEL_EXTRA_EXECUTION_PLATFORMS_OPTION)
+    else {
+        return Ok(Vec::new());
+    };
+
+    let patterns: Vec<String> = match value {
+        BazelBuildSettingValue::Label(label) => return Ok(vec![label.target().dupe()]),
+        BazelBuildSettingValue::LabelList(labels) => {
+            return Ok(labels.iter().map(|label| label.target().dupe()).collect());
+        }
+        BazelBuildSettingValue::String(pattern) => vec![pattern.clone()],
+        BazelBuildSettingValue::StringList(patterns) => patterns.clone(),
+        BazelBuildSettingValue::Bool(_) | BazelBuildSettingValue::Int(_) => {
+            return Ok(Vec::new());
+        }
+    };
+
+    let mut parsed_patterns = Vec::with_capacity(patterns.len());
+    for pattern in patterns {
+        if pattern.trim().is_empty() {
+            continue;
+        }
+        parsed_patterns.push(parse_bazel_target_pattern(ctx, &pattern).await?);
+    }
+    if parsed_patterns.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let resolved = ResolveTargetPatterns::resolve(ctx, &parsed_patterns).await?;
+    let loaded_platform_packages = ctx
+        .try_compute_join(
+            resolved.specs.into_iter().collect::<Vec<_>>(),
+            |ctx, (package_with_modifiers, spec)| {
+                async move {
+                    let result = ctx
+                        .get_interpreter_results(package_with_modifiers.package)
+                        .await?;
+                    buck2_error::Ok((result, spec))
+                }
+                .boxed()
+            },
+        )
+        .await?;
+
+    let mut platforms = Vec::new();
+    for (result, spec) in loaded_platform_packages {
+        let (targets, missing) = result.apply_spec(spec);
+        if let Some(missing) = missing {
+            return Err(missing.into_first_error().into());
+        }
+        platforms.extend(targets.into_values().map(|node| node.label().dupe()));
+    }
+    Ok(platforms)
+}
+
+async fn bazel_execution_platform_from_target(
+    ctx: &mut DiceComputations<'_>,
+    target: &TargetLabel,
+) -> buck2_error::Result<ExecutionPlatform> {
+    let cfg = get_platform_configuration(ctx, target).await?;
+    let data = cfg.data()?.clone();
+    let cfg = ConfigurationData::from_platform(target.to_string(), data, true)?;
+    Ok(ExecutionPlatform::platform(
+        target.dupe(),
+        cfg,
+        ctx.get_fallback_executor_config().clone(),
+    ))
 }
 
 pub async fn find_execution_platform_by_configuration(
@@ -434,6 +536,38 @@ pub(crate) async fn resolve_execution_platform(
     // The non-none case will be handled when we invoke the resolve_execution_platform() on ctx below, the none
     // case can't be handled there because we don't pass the full configuration into it.
     if ctx.get_execution_platforms().await?.is_none() {
+        if node.is_bazel_rule() {
+            let extra_execution_platforms =
+                bazel_extra_execution_platform_targets(ctx, matched_cfg_keys.cfg().cfg()).await?;
+            if !extra_execution_platforms.is_empty() {
+                let constraints = ExecutionPlatformConstraints::new(node, gathered_deps, cfg_ctx)?;
+                let mut skipped = Vec::new();
+                for target in extra_execution_platforms {
+                    let exec_platform = bazel_execution_platform_from_target(ctx, &target).await?;
+                    match check_execution_platform(
+                        ctx,
+                        CellNameForConfigurationResolution(node.label().pkg().cell_name()),
+                        &constraints.exec_compatible_with,
+                        &constraints.exec_deps,
+                        &exec_platform,
+                        &constraints.toolchain_deps,
+                    )
+                    .await?
+                    {
+                        Ok(()) => {
+                            return Ok(ExecutionPlatformResolutionPartial::new(
+                                Some(exec_platform),
+                                skipped,
+                            ));
+                        }
+                        Err(reason) => {
+                            skipped.push((exec_platform.id(), reason));
+                        }
+                    }
+                }
+                return Err(ExecutionPlatformError::NoCompatiblePlatform(Arc::new(skipped)).into());
+            }
+        }
         return Ok(ExecutionPlatformResolutionPartial::new(
             Some(legacy_execution_platform_for_node(ctx, node, matched_cfg_keys.cfg()).await?),
             Vec::new(),
