@@ -264,6 +264,8 @@ pub(crate) enum BazelRepositoryError {
     RepositoryCtxWhichInvalidProgram(String),
     #[error("Program argument of repository_ctx.which may not be empty")]
     RepositoryCtxWhichEmptyProgram,
+    #[error("repository_ctx.which failed to look up `{program}`: {error}")]
+    RepositoryCtxWhichFailed { program: String, error: String },
     #[error("repository_ctx.execute requires at least one argument")]
     RepositoryCtxExecuteEmptyArguments,
     #[error("repository_ctx.execute failed to run `{program}`: {error}")]
@@ -779,6 +781,20 @@ mod tests {
         )]);
 
         assert!(!repository_ctx_should_search_local_path(&repo_env));
+    }
+
+    #[test]
+    fn test_repository_ctx_remote_which_output() {
+        assert_eq!(
+            Some("/usr/bin/chmod".to_owned()),
+            parse_repository_ctx_remote_which_output(b"0\n/usr/bin/chmod\n").unwrap()
+        );
+        assert_eq!(
+            None,
+            parse_repository_ctx_remote_which_output(b"1\n").unwrap()
+        );
+        assert!(parse_repository_ctx_remote_which_output(b"0\n").is_err());
+        assert!(parse_repository_ctx_remote_which_output(b"garbage\n").is_err());
     }
 
     #[test]
@@ -1418,6 +1434,56 @@ struct RepositoryCommandOutput {
 static REPOSITORY_CTX_REMOTE_EXECUTE_COUNTER: AtomicU64 = AtomicU64::new(0);
 static REPOSITORY_CTX_REMOTE_EXECUTE_RUNTIME: OnceLock<Result<tokio::runtime::Runtime, String>> =
     OnceLock::new();
+const REPOSITORY_CTX_REMOTE_WHICH_TIMEOUT: u64 = 60;
+const REPOSITORY_CTX_REMOTE_WHICH_SCRIPT: &str = r#"
+set -f
+program="$1"
+case "$program" in
+  ""|*/*|*\\*)
+    printf '2\n'
+    exit 0
+    ;;
+esac
+old_ifs="$IFS"
+IFS=:
+for dir in $PATH; do
+  IFS="$old_ifs"
+  if [ -n "$dir" ]; then
+    case "$dir" in
+      /*)
+        candidate="$dir/$program"
+        if [ -f "$candidate" ] && [ -x "$candidate" ]; then
+          printf '0\n%s\n' "$candidate"
+          exit 0
+        fi
+        ;;
+    esac
+  fi
+  IFS=:
+done
+printf '1\n'
+exit 0
+"#;
+
+fn parse_repository_ctx_remote_which_output(stdout: &[u8]) -> Result<Option<String>, String> {
+    let stdout = repository_ctx_latin1_output(stdout);
+    let mut lines = stdout.lines();
+    match lines.next() {
+        Some("0") => {
+            let Some(path) = lines.next() else {
+                return Err("remote which reported success without a path".to_owned());
+            };
+            if path.is_empty() {
+                return Err("remote which reported an empty path".to_owned());
+            }
+            Ok(Some(path.to_owned()))
+        }
+        Some("1") => Ok(None),
+        Some("2") => Err("remote which rejected the program name".to_owned()),
+        Some(status) => Err(format!("remote which returned malformed status `{status}`")),
+        None => Err("remote which returned no status".to_owned()),
+    }
+}
 
 fn repository_ctx_remote_execute_runtime() -> Result<&'static tokio::runtime::Runtime, String> {
     REPOSITORY_CTX_REMOTE_EXECUTE_RUNTIME
@@ -1451,6 +1517,35 @@ impl fmt::Debug for BazelRepositoryCommandExecutor {
 }
 
 impl BazelRepositoryCommandExecutor {
+    fn which(
+        &self,
+        program: &str,
+        path: &str,
+        repo_env: &BTreeMap<String, String>,
+        repository_working_dir: &str,
+    ) -> Result<Option<StarlarkRepositoryPath>, String> {
+        match self {
+            Self::Local => {
+                if !repository_ctx_should_search_local_path(repo_env) {
+                    return Ok(None);
+                }
+                Ok(repository_ctx_which_local_path(path, program).map(StarlarkRepositoryPath::new))
+            }
+            Self::Remote(remote) => remote.which(program, path).map(|path| {
+                path.map(|path| {
+                    StarlarkRepositoryPath::new_with_remote(
+                        path,
+                        Some(BazelRepositoryPathRemoteContext {
+                            working_dir: repository_working_dir.to_owned(),
+                            command_executor: self.clone(),
+                        }),
+                        None,
+                    )
+                })
+            }),
+        }
+    }
+
     fn execute(
         &self,
         command: Command,
@@ -1490,6 +1585,92 @@ impl BazelRemoteRepositoryCommandExecutor {
             blocking_executor,
             materializer,
             digest_config,
+        }
+    }
+
+    fn which(self: &Arc<Self>, program: &str, path: &str) -> Result<Option<String>, String> {
+        let executor = self.dupe();
+        let program = program.to_owned();
+        let path = path.to_owned();
+        std::thread::spawn(move || {
+            repository_ctx_remote_execute_runtime()?.block_on(executor.which_async(&program, &path))
+        })
+        .join()
+        .map_err(|_| "remote repository_ctx.which worker thread panicked".to_owned())?
+    }
+
+    async fn which_async(&self, program: &str, path: &str) -> Result<Option<String>, String> {
+        let paths = CommandExecutionPaths::new(
+            Vec::new(),
+            BuckIndexSet::new(),
+            &self.artifact_fs,
+            self.digest_config,
+            None,
+        )
+        .map_err(|error| error.to_string())?;
+
+        let env =
+            sorted_vector_map::SortedVectorMap::from_iter([("PATH".to_owned(), path.to_owned())]);
+        let request = buck2_execute::execute::request::CommandExecutionRequest::new(
+            vec!["/bin/sh".to_owned()],
+            vec![
+                "-c".to_owned(),
+                REPOSITORY_CTX_REMOTE_WHICH_SCRIPT.to_owned(),
+                "buck2-remote-repository-ctx-which".to_owned(),
+                program.to_owned(),
+            ],
+            paths,
+            env,
+        )
+        .with_timeout(Duration::from_secs(REPOSITORY_CTX_REMOTE_WHICH_TIMEOUT))
+        .with_executor_preference(ExecutorPreference::RemoteRequired)
+        .with_prefetch_lossy_stderr(true);
+
+        let prepared_action = self
+            .command_executor
+            .prepare_action(&request, self.digest_config, true)
+            .map_err(|error| error.to_string())?;
+        let target = RepositoryCommandExecutionTarget {
+            repository: "<which>".to_owned(),
+            program: program.to_owned(),
+        };
+        let prepared_command = PreparedCommand {
+            request: &request,
+            target: &target,
+            prepared_action: &prepared_action,
+            digest_config: self.digest_config,
+        };
+        let manager = CommandExecutionManager::new(
+            Box::new(MutexClaimManager::new()),
+            buck2_events::dispatch::get_dispatcher(),
+            NoopLivelinessObserver::create(),
+            Default::default(),
+        );
+        let result = self
+            .command_executor
+            .exec_cmd(
+                manager,
+                &prepared_command,
+                dice_futures::cancellation::CancellationContext::never_cancelled(),
+            )
+            .await;
+
+        let status_string = result.report.status.to_string();
+        let streams = result
+            .report
+            .std_streams
+            .into_bytes()
+            .await
+            .map_err(|error| error.to_string())?;
+        match result.report.status {
+            CommandExecutionStatus::Success { .. } => {
+                parse_repository_ctx_remote_which_output(&streams.stdout)
+            }
+            _ => Err(format!(
+                "{status_string}\nstdout:\n{}\nstderr:\n{}",
+                repository_ctx_latin1_output(&streams.stdout),
+                repository_ctx_latin1_output(&streams.stderr),
+            )),
         }
     }
 
@@ -5813,6 +5994,19 @@ fn repository_path_is_executable(path: &Path) -> bool {
     }
 }
 
+fn repository_ctx_which_local_path(path: &str, program: &str) -> Option<String> {
+    for dir in env::split_paths(std::ffi::OsStr::new(path)) {
+        if !dir.is_absolute() {
+            continue;
+        }
+        let candidate = dir.join(program);
+        if repository_path_is_executable(&candidate) {
+            return Some(candidate.to_string_lossy().into_owned());
+        }
+    }
+    None
+}
+
 #[cfg(unix)]
 fn repository_ctx_create_symlink(target: &Path, link: &Path) -> std::io::Result<()> {
     std::os::unix::fs::symlink(target, link)
@@ -6806,24 +7000,18 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
         let Some(path) = record_repository_env_var(&repo_env, &recorded_inputs, "PATH") else {
             return Ok(Value::new_none());
         };
-        if !repository_ctx_should_search_local_path(&repo_env) {
-            return Ok(Value::new_none());
+        let path = repository_ctx_command_executor(this)
+            .which(program, &path, &repo_env, repository_ctx_working_dir(this))
+            .map_err(|error| {
+                buck2_error::Error::from(BazelRepositoryError::RepositoryCtxWhichFailed {
+                    program: program.to_owned(),
+                    error,
+                })
+            })?;
+        match path {
+            Some(path) => Ok(eval.heap().alloc(path).to_value()),
+            None => Ok(Value::new_none()),
         }
-        for dir in env::split_paths(std::ffi::OsStr::new(&path)) {
-            if !dir.is_absolute() {
-                continue;
-            }
-            let candidate = dir.join(program);
-            if repository_path_is_executable(&candidate) {
-                return Ok(eval
-                    .heap()
-                    .alloc(StarlarkRepositoryPath::new(
-                        candidate.to_string_lossy().into_owned(),
-                    ))
-                    .to_value());
-            }
-        }
-        Ok(Value::new_none())
     }
 
     fn execute<'v>(
