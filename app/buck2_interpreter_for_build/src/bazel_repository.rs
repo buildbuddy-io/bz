@@ -4962,16 +4962,30 @@ fn repository_path_methods(builder: &mut MethodsBuilder) {
 
     #[starlark(attribute)]
     fn exists(this: &StarlarkRepositoryPath) -> starlark::Result<bool> {
+        if let Some(remote_context) = &this.remote_context {
+            return repository_remote_path_exists(remote_context, &this.path);
+        }
         Ok(Path::new(&repository_path_for_read(&this.path)).exists())
     }
 
     #[starlark(attribute)]
     fn is_dir(this: &StarlarkRepositoryPath) -> starlark::Result<bool> {
+        if let Some(remote_context) = &this.remote_context {
+            return repository_remote_path_is_dir(remote_context, &this.path);
+        }
         Ok(Path::new(&repository_path_for_read(&this.path)).is_dir())
     }
 
     #[starlark(attribute)]
     fn realpath(this: &StarlarkRepositoryPath) -> starlark::Result<StarlarkRepositoryPath> {
+        if let Some(remote_context) = &this.remote_context {
+            let path = repository_remote_path_realpath(remote_context, &this.path)?;
+            return Ok(StarlarkRepositoryPath::new_with_remote(
+                path,
+                this.remote_context.clone(),
+                None,
+            ));
+        }
         let read_path = repository_path_for_read(&this.path);
         let path = fs::canonicalize(&read_path).map_err(|error| {
             buck2_error::Error::from(BazelRepositoryError::RepositoryPathRealpath {
@@ -5001,6 +5015,16 @@ fn repository_path_methods(builder: &mut MethodsBuilder) {
                 &this.path,
                 &repository_context.working_dir,
             )?;
+        }
+        if let Some(remote_context) = &this.remote_context {
+            let mut paths = repository_remote_path_readdir(remote_context, &this.path)?
+                .into_iter()
+                .map(|path| {
+                    StarlarkRepositoryPath::new_with_remote(path, this.remote_context.clone(), None)
+                })
+                .collect::<Vec<_>>();
+            paths.sort_by(|left, right| left.path.cmp(&right.path));
+            return Ok(paths);
         }
         let read_path = repository_path_for_read(&this.path);
         let entries = fs::read_dir(&read_path).map_err(|error| {
@@ -5123,6 +5147,124 @@ fn repository_remote_shell_in_context(
             })
             .into()
         })
+}
+
+fn repository_remote_path_status(
+    remote_context: &BazelRepositoryPathRemoteContext,
+    path: &str,
+    script: &str,
+) -> starlark::Result<bool> {
+    let output = repository_remote_shell(remote_context, script, &[path.to_owned()], 60, true)?;
+    if output.return_code != 0 {
+        return Ok(false);
+    }
+    Ok(repository_ctx_latin1_output(&output.stdout).trim() == "true")
+}
+
+fn repository_remote_path_exists(
+    remote_context: &BazelRepositoryPathRemoteContext,
+    path: &str,
+) -> starlark::Result<bool> {
+    repository_remote_path_status(
+        remote_context,
+        path,
+        r#"if [ -e "$1" ] || [ -L "$1" ]; then printf 'true\n'; else printf 'false\n'; fi"#,
+    )
+}
+
+fn repository_remote_path_is_dir(
+    remote_context: &BazelRepositoryPathRemoteContext,
+    path: &str,
+) -> starlark::Result<bool> {
+    repository_remote_path_status(
+        remote_context,
+        path,
+        r#"if [ -d "$1" ]; then printf 'true\n'; else printf 'false\n'; fi"#,
+    )
+}
+
+fn repository_remote_path_realpath(
+    remote_context: &BazelRepositoryPathRemoteContext,
+    path: &str,
+) -> starlark::Result<String> {
+    let output = repository_remote_shell(
+        remote_context,
+        r#"resolved=$(readlink -f "$1" 2>/dev/null || realpath "$1" 2>/dev/null) || exit $?
+printf '%s\n' "$resolved"
+"#,
+        &[path.to_owned()],
+        60,
+        true,
+    )?;
+    if output.return_code != 0 {
+        return Err(
+            buck2_error::Error::from(BazelRepositoryError::RepositoryPathRealpath {
+                path: path.to_owned(),
+                error: repository_ctx_latin1_output(&output.stderr),
+            })
+            .into(),
+        );
+    }
+    Ok(repository_ctx_latin1_output(&output.stdout)
+        .trim_end_matches('\n')
+        .to_owned())
+}
+
+fn repository_remote_path_readdir(
+    remote_context: &BazelRepositoryPathRemoteContext,
+    path: &str,
+) -> starlark::Result<Vec<String>> {
+    let output = repository_remote_shell(
+        remote_context,
+        r#"if [ ! -d "$1" ]; then
+  printf 'not_directory\n'
+  exit 0
+fi
+printf 'ok\n'
+for entry in "$1"/* "$1"/.[!.]* "$1"/..?*; do
+  if [ -e "$entry" ] || [ -L "$entry" ]; then
+    printf '%s\n' "$entry"
+  fi
+done
+"#,
+        &[path.to_owned()],
+        60,
+        true,
+    )?;
+    if output.return_code != 0 {
+        return Err(
+            buck2_error::Error::from(BazelRepositoryError::RepositoryPathReaddir {
+                path: path.to_owned(),
+                error: repository_ctx_latin1_output(&output.stderr),
+            })
+            .into(),
+        );
+    }
+    let stdout = repository_ctx_latin1_output(&output.stdout);
+    let mut lines = stdout.lines();
+    match lines.next() {
+        Some("ok") => Ok(lines.map(ToOwned::to_owned).collect()),
+        Some("not_directory") => Err(buck2_error::buck2_error!(
+            buck2_error::ErrorTag::Input,
+            "can't readdir(), not a directory: {}",
+            path,
+        )
+        .into()),
+        Some(status) => Err(buck2_error::Error::from(
+            BazelRepositoryError::RepositoryPathReaddir {
+                path: path.to_owned(),
+                error: format!("remote readdir returned malformed status `{status}`"),
+            },
+        )
+        .into()),
+        None => Err(
+            buck2_error::Error::from(BazelRepositoryError::RepositoryPathReaddir {
+                path: path.to_owned(),
+                error: "remote readdir returned no status".to_owned(),
+            })
+            .into(),
+        ),
+    }
 }
 
 fn repository_join_normalized(root: &str, path: &str) -> String {
@@ -6916,7 +7058,7 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
                 .into_owned();
             let output = repository_remote_shell(
                 &remote_context,
-                "mkdir -p \"$(dirname \"$2\")\" && rm -rf \"$2\" && cp -aL \"$1\" \"$2\"",
+                "mkdir -p \"$(dirname \"$2\")\" && rm -rf \"$2\" && cp -a \"$1\" \"$2\"",
                 &[target_arg, link.clone()],
                 60,
                 true,
