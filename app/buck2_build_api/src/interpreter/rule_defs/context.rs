@@ -3477,8 +3477,7 @@ fn analysis_context_methods(builder: &mut MethodsBuilder) {
     fn expand_location<'v>(
         this: RefAnalysisContext<'v>,
         #[starlark(require = pos)] input: &str,
-        #[starlark(require = pos, default = UnpackListOrTuple::default())]
-        targets: UnpackListOrTuple<Value<'v>>,
+        #[starlark(default = UnpackListOrTuple::default())] targets: UnpackListOrTuple<Value<'v>>,
         #[starlark(require = named, default = false)] short_paths: bool,
         heap: Heap<'v>,
     ) -> starlark::Result<String> {

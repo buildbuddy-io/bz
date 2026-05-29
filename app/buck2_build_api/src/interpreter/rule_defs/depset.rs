@@ -168,7 +168,7 @@ fn command_line_depset_error(error: starlark::Error) -> buck2_error::Error {
     buck2_error::buck2_error!(buck2_error::ErrorTag::Input, "{}", error)
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Allocative)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Allocative)]
 pub(crate) enum BazelDepsetOrder {
     Default,
     Postorder,
@@ -627,6 +627,25 @@ where
 
     fn to_bool(&self) -> bool {
         !self.is_empty()
+    }
+
+    fn write_hash(&self, hasher: &mut StarlarkHasher) -> starlark::Result<()> {
+        let mut hash_cache = BazelDepsetHashCache::default();
+        "bazel_depset".hash(hasher);
+        self.order.hash(hasher);
+        self.direct.len().hash(hasher);
+        for value in &self.direct {
+            bazel_depset_hash(value.to_value(), &mut hash_cache)?
+                .get()
+                .hash(hasher);
+        }
+        self.transitive.len().hash(hasher);
+        for value in &self.transitive {
+            bazel_depset_hash(value.to_value(), &mut hash_cache)?
+                .get()
+                .hash(hasher);
+        }
+        Ok(())
     }
 
     fn provide(&'v self, demand: &mut Demand<'_, 'v>) {

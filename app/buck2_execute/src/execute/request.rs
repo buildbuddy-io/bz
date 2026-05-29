@@ -53,6 +53,7 @@ use crate::directory::ActionDirectoryMember;
 use crate::directory::ActionImmutableDirectory;
 use crate::directory::ActionSharedDirectory;
 use crate::directory::ExternalSymlinkUploadPath;
+use crate::directory::ResolvedSymlinkUploadPath;
 use crate::execute::environment_inheritance::EnvironmentInheritance;
 use crate::execute::inputs_directory::inputs_directory;
 
@@ -222,6 +223,7 @@ pub struct CommandExecutionPaths {
 
     input_directory: ActionImmutableDirectory,
     external_symlink_upload_paths: Vec<ExternalSymlinkUploadPath>,
+    resolved_symlink_upload_paths: Vec<ResolvedSymlinkUploadPath>,
     output_paths: Vec<(ProjectRelativePathBuf, OutputType)>,
 
     /// Total size of input files.
@@ -244,7 +246,7 @@ impl CommandExecutionPaths {
         digest_config: DigestConfig,
         interner: Option<&DashMapDirectoryInterner<ActionDirectoryMember, TrackedFileDigest>>,
     ) -> buck2_error::Result<Self> {
-        let (mut builder, external_symlink_upload_paths) =
+        let (mut builder, external_symlink_upload_paths, resolved_symlink_upload_paths) =
             inputs_directory(&inputs, digest_config, fs)?;
 
         // RE spec requires outputs to be sorted:
@@ -285,6 +287,7 @@ impl CommandExecutionPaths {
             outputs,
             input_directory,
             external_symlink_upload_paths,
+            resolved_symlink_upload_paths,
             output_paths,
             input_files_bytes,
         })
@@ -330,6 +333,7 @@ impl CommandExecutionPaths {
             outputs,
             input_directory: _,
             external_symlink_upload_paths: _,
+            resolved_symlink_upload_paths: _,
             output_paths: _,
             input_files_bytes: _,
         } = self;
@@ -357,6 +361,10 @@ impl CommandExecutionPaths {
 
     pub fn external_symlink_upload_paths(&self) -> &[ExternalSymlinkUploadPath] {
         &self.external_symlink_upload_paths
+    }
+
+    pub fn resolved_symlink_upload_paths(&self) -> &[ResolvedSymlinkUploadPath] {
+        &self.resolved_symlink_upload_paths
     }
 
     pub fn output_paths(&self) -> &[(ProjectRelativePathBuf, OutputType)] {

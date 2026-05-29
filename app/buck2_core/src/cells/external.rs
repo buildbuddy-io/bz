@@ -559,6 +559,8 @@ pub struct BzlmodRepositoryRuleInvocationSetup {
     pub rule_bzl_cell: Arc<str>,
     pub rule_bzl_path: Arc<str>,
     pub rule_bzl_build_file_cell: Arc<str>,
+    #[serde(default)]
+    pub rule_bzl_build_file_package: Option<Arc<str>>,
     pub rule_name: Arc<str>,
     pub attrs: Arc<Vec<(Arc<str>, Arc<str>)>>,
 }

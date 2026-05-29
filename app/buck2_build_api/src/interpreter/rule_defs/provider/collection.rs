@@ -107,11 +107,15 @@ enum ProviderCollectionError {
     )]
     UnknownFlavors { target: String, flavor: String },
     #[error(
-        "provider collection operation {0} parameter type must be a provider type \
+        "provider collection operation {op} parameter type must be a provider type \
         but not and instance of provider (for example, `RunInfo` or user defined provider type), \
-        got `{1}`"
+        got `{type_name}`: {repr}"
     )]
-    AtTypeNotProvider(GetOp, &'static str),
+    AtTypeNotProvider {
+        op: GetOp,
+        type_name: &'static str,
+        repr: String,
+    },
     #[error(
         "provider collection does not have a key `{0}`, available keys are: {}",
         format_provider_keys_for_error(_1)
@@ -408,7 +412,8 @@ impl<'v, V: ValueLike<'v>> ProviderCollectionGen<V> {
         index: Value<'v>,
         op: GetOp,
     ) -> buck2_error::Result<Either<Value<'v>, Arc<ProviderId>>> {
-        match index.as_provider_callable() {
+        let provider_key = provider_key_from_value(index);
+        match provider_key.and_then(|index| index.as_provider_callable()) {
             Some(callable) => {
                 let provider_id = callable.id()?.dupe();
                 match self.providers.get(&provider_id) {
@@ -416,7 +421,12 @@ impl<'v, V: ValueLike<'v>> ProviderCollectionGen<V> {
                     None => Ok(Either::Right(provider_id)),
                 }
             }
-            None => Err(ProviderCollectionError::AtTypeNotProvider(op, index.get_type()).into()),
+            None => Err(ProviderCollectionError::AtTypeNotProvider {
+                op,
+                type_name: index.get_type(),
+                repr: index.to_repr(),
+            }
+            .into()),
         }
     }
 
@@ -467,6 +477,23 @@ impl<'v> ProviderCollection<'v> {
         }
         Ok(())
     }
+}
+
+fn provider_key_from_value<'v>(value: Value<'v>) -> Option<Value<'v>> {
+    if value.as_provider_callable().is_some() {
+        return Some(value);
+    }
+    if let Some(list) = ListRef::from_value(value) {
+        if list.len() == 1 {
+            return list.iter().next();
+        }
+    }
+    if let Some(tuple) = TupleRef::from_value(value) {
+        if tuple.len() == 1 {
+            return tuple.content().first().copied();
+        }
+    }
+    None
 }
 
 impl FrozenProviderCollection {

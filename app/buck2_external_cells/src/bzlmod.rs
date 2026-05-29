@@ -1738,6 +1738,7 @@ mod tests {
                     rule_bzl_cell: Arc::from("gazelle"),
                     rule_bzl_path: Arc::from("internal/go_repository.bzl"),
                     rule_bzl_build_file_cell: Arc::from("gazelle"),
+                    rule_bzl_build_file_package: None,
                     rule_name: Arc::from("go_repository"),
                     attrs: Arc::new(vec![(
                         Arc::from("importpath"),
@@ -2020,6 +2021,7 @@ mod tests {
                     rule_bzl_cell: Arc::from("root"),
                     rule_bzl_path: Arc::from("repo.bzl"),
                     rule_bzl_build_file_cell: Arc::from("root"),
+                    rule_bzl_build_file_package: None,
                     rule_name: Arc::from("repo_rule"),
                     attrs: Arc::new(Vec::new()),
                 },
@@ -2991,6 +2993,10 @@ fn bzlmod_generated_repo_contents_cache_key(setup: &BzlmodGeneratedCellSetup) ->
             update_bzlmod_repo_contents_cache_key(&mut hasher, &setup.rule_bzl_cell);
             update_bzlmod_repo_contents_cache_key(&mut hasher, &setup.rule_bzl_path);
             update_bzlmod_repo_contents_cache_key(&mut hasher, &setup.rule_bzl_build_file_cell);
+            update_bzlmod_repo_contents_cache_key_opt(
+                &mut hasher,
+                setup.rule_bzl_build_file_package.as_deref(),
+            );
             update_bzlmod_repo_contents_cache_key(&mut hasher, &setup.rule_name);
             update_bzlmod_repo_contents_cache_key(&mut hasher, &setup.attrs.len().to_string());
             for (key, value) in setup.attrs.iter() {
@@ -3440,6 +3446,9 @@ fn bzlmod_hidden_lockfile_path() -> ProjectRelativePathBuf {
     )
 }
 
+const BZLMOD_HIDDEN_LOCKFILE_SCHEMA_FIELD: &str = "buck2HiddenLockfileSchemaVersion";
+const BZLMOD_HIDDEN_LOCKFILE_SCHEMA_VERSION: u64 = 3;
+
 fn bzlmod_workspace_lockfile_path() -> ProjectRelativePathBuf {
     ProjectRelativePathBuf::unchecked_new("MODULE.bazel.lock".to_owned())
 }
@@ -3526,8 +3535,11 @@ impl Key for BzlmodHiddenLockfileJsonKey {
                     return Ok(Arc::new(serde_json::json!({})));
                 };
                 match serde_json::from_str(&contents) {
-                    Ok(lockfile) => Ok(Arc::new(lockfile)),
+                    Ok(lockfile) if bzlmod_hidden_lockfile_schema_matches(&lockfile) => {
+                        Ok(Arc::new(lockfile))
+                    }
                     Err(_) => Ok(Arc::new(serde_json::json!({}))),
+                    _ => Ok(Arc::new(serde_json::json!({}))),
                 }
             })
             .await
@@ -3543,6 +3555,13 @@ impl Key for BzlmodHiddenLockfileJsonKey {
     fn value_serialize() -> impl ValueSerialize<Value = Self::Value> {
         NoValueSerialize::<Self::Value>::new()
     }
+}
+
+fn bzlmod_hidden_lockfile_schema_matches(lockfile: &serde_json::Value) -> bool {
+    lockfile
+        .get(BZLMOD_HIDDEN_LOCKFILE_SCHEMA_FIELD)
+        .and_then(|value| value.as_u64())
+        == Some(BZLMOD_HIDDEN_LOCKFILE_SCHEMA_VERSION)
 }
 
 const BZLMOD_LOCKFILE_GENERAL_EXTENSION: &str = "general";
@@ -3907,6 +3926,7 @@ fn bzlmod_workspace_lockfile_generated_repo_spec_to_setup(
     Ok(BzlmodRepositoryRuleInvocationSetup {
         repo_name: Arc::from(repo_name),
         rule_bzl_build_file_cell: Arc::from(rule_bzl_cell.as_str()),
+        rule_bzl_build_file_package: None,
         rule_bzl_cell: Arc::from(rule_bzl_cell.as_str()),
         rule_bzl_path: Arc::from(rule_bzl_path.as_str()),
         rule_name: Arc::from(rule_name.as_str()),
@@ -4227,8 +4247,15 @@ fn bzlmod_update_hidden_lockfile_json(
     if !lockfile.is_object() {
         lockfile = serde_json::json!({});
     }
+    if !bzlmod_hidden_lockfile_schema_matches(&lockfile) {
+        lockfile = serde_json::json!({});
+    }
     let old_lockfile = lockfile.clone();
     let lockfile_object = lockfile.as_object_mut().expect("checked object");
+    lockfile_object.insert(
+        BZLMOD_HIDDEN_LOCKFILE_SCHEMA_FIELD.to_owned(),
+        serde_json::Value::from(BZLMOD_HIDDEN_LOCKFILE_SCHEMA_VERSION),
+    );
     if let Some(evaluation) = evaluation {
         let module_extensions = lockfile_object
             .entry("moduleExtensions".to_owned())

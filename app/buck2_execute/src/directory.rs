@@ -43,6 +43,7 @@ use buck2_directory::directory::directory_selector::DirectorySelector;
 use buck2_directory::directory::entry::DirectoryEntry;
 use buck2_directory::directory::find::DirectoryFindError;
 use buck2_directory::directory::find::find;
+use buck2_directory::directory::find::find_prefix;
 use buck2_directory::directory::fingerprinted_directory::FingerprintedDirectory;
 use buck2_directory::directory::immutable_directory::ImmutableDirectory;
 use buck2_directory::directory::shared_directory::SharedDirectory;
@@ -113,9 +114,21 @@ pub struct ExternalSymlinkUploadPath {
     pub is_dir: bool,
 }
 
+#[derive(Clone, Debug)]
+pub struct ResolvedSymlinkUploadPath {
+    pub path: ProjectRelativePathBuf,
+    pub source_path: ProjectRelativePathBuf,
+    pub is_dir: bool,
+}
+
 struct ExternalSymlinkUploadSource {
     source_path: PathBuf,
     is_dir: bool,
+}
+
+struct TargetFileSymlinkExecutionEntry {
+    entry: ActionDirectoryEntry<ActionSharedDirectory>,
+    upload_path: Option<ResolvedSymlinkUploadPath>,
 }
 
 pub trait ActionDirectory = Directory<ActionDirectoryMember, TrackedFileDigest>;
@@ -713,7 +726,26 @@ pub fn insert_artifact_lazy_for_execution(
     value: &ArtifactValue,
     digest_config: DigestConfig,
     external_symlink_upload_paths: &mut Vec<ExternalSymlinkUploadPath>,
+    resolved_symlink_upload_paths: &mut Vec<ResolvedSymlinkUploadPath>,
 ) -> buck2_error::Result<()> {
+    if let Some(TargetFileSymlinkExecutionEntry { entry, upload_path }) =
+        target_file_symlink_entry_for_execution(&path, value)?
+    {
+        if let Some((entry, upload_path)) =
+            external_symlink_entry_for_execution(path.clone(), &entry, digest_config)?
+        {
+            builder.insert(path.into(), entry)?;
+            external_symlink_upload_paths.push(upload_path);
+            return Ok(());
+        }
+
+        if let Some(upload_path) = upload_path {
+            resolved_symlink_upload_paths.push(upload_path);
+        }
+        builder.insert(path.into(), entry)?;
+        return Ok(());
+    }
+
     if let Some((entry, upload_path)) =
         external_symlink_entry_for_execution(path.clone(), value.entry(), digest_config)?
     {
@@ -723,6 +755,93 @@ pub fn insert_artifact_lazy_for_execution(
     }
 
     insert_artifact_lazy(builder, path, value)
+}
+
+fn target_file_symlink_entry_for_execution(
+    path: &ProjectRelativePath,
+    value: &ArtifactValue,
+) -> buck2_error::Result<Option<TargetFileSymlinkExecutionEntry>> {
+    let DirectoryEntry::Leaf(ActionDirectoryMember::Symlink(symlink)) = value.entry() else {
+        return Ok(None);
+    };
+    let Some(deps) = value.deps() else {
+        return Ok(None);
+    };
+
+    // Bazel represents symlink-to-artifact outputs with the target file metadata and a resolved
+    // path hint. Its remote Merkle tree therefore stages the target file at the symlink output path
+    // instead of exposing a local execroot symlink whose target may not exist remotely.
+    let mut current_path = symlink_target_path(path, symlink)?;
+    for _ in 0..40 {
+        let Some((entry, remaining_path)) =
+            find_prefix(deps, current_path.as_forward_relative_path())?
+        else {
+            return Ok(None);
+        };
+        let current_entry = entry.map_leaf(|l| l.dupe()).map_dir(|d| d.dupe());
+
+        match current_entry {
+            DirectoryEntry::Leaf(ActionDirectoryMember::Symlink(symlink)) => {
+                let prefix = current_path
+                    .strip_suffix_opt(&remaining_path)
+                    .ok_or_else(|| {
+                        internal_error!(
+                            "Symlink dependency path `{}` did not end with `{}`",
+                            current_path,
+                            remaining_path
+                        )
+                    })?
+                    .to_buf();
+                current_path = symlink_target_path(&prefix, &symlink)?;
+                if !remaining_path.is_empty() {
+                    current_path = current_path.join_normalized(remaining_path.as_relative_path())?;
+                }
+            }
+            DirectoryEntry::Leaf(ActionDirectoryMember::ExternalSymlink(symlink)) => {
+                if remaining_path.is_empty() {
+                    return Ok(Some(TargetFileSymlinkExecutionEntry {
+                        entry: DirectoryEntry::Leaf(ActionDirectoryMember::ExternalSymlink(
+                            symlink,
+                        )),
+                        upload_path: None,
+                    }));
+                }
+                return Ok(Some(TargetFileSymlinkExecutionEntry {
+                    entry: DirectoryEntry::Leaf(ActionDirectoryMember::ExternalSymlink(Arc::new(
+                        ExternalSymlink::new(
+                            symlink.target().to_path_buf(),
+                            symlink.remaining_path().join(&remaining_path),
+                        )?,
+                    ))),
+                    upload_path: None,
+                }));
+            }
+            entry if remaining_path.is_empty() => {
+                let upload_path = Some(ResolvedSymlinkUploadPath {
+                    path: path.to_buf(),
+                    source_path: current_path,
+                    is_dir: matches!(entry, DirectoryEntry::Dir(_)),
+                });
+                return Ok(Some(TargetFileSymlinkExecutionEntry { entry, upload_path }));
+            }
+            _ => return Ok(None),
+        };
+    }
+
+    Err(internal_error!(
+        "Target-file symlink cycle detected while staging `{}` for remote execution",
+        path
+    ))
+}
+
+fn symlink_target_path(
+    link_path: &ProjectRelativePath,
+    symlink: &Symlink,
+) -> buck2_error::Result<ProjectRelativePathBuf> {
+    link_path
+        .parent()
+        .unwrap_or(ProjectRelativePath::empty())
+        .join_normalized(symlink.target())
 }
 
 pub fn merge_artifact_directory_for_execution(
@@ -1322,12 +1441,14 @@ mod tests {
         let input_path = path("external/+llvm+llvm-project/llvm/lib/Support/BLAKE3/blake3.c");
         let mut builder = LazyActionDirectoryBuilder::empty();
         let mut external_symlink_upload_paths = Vec::new();
+        let mut resolved_symlink_upload_paths = Vec::new();
         insert_artifact_lazy_for_execution(
             &mut builder,
             input_path.clone(),
             &value,
             digest_config,
             &mut external_symlink_upload_paths,
+            &mut resolved_symlink_upload_paths,
         )?;
         assert_eq!(external_symlink_upload_paths.len(), 1);
         assert_eq!(external_symlink_upload_paths[0].path, input_path);
@@ -1339,6 +1460,52 @@ mod tests {
             panic!("input should be a file");
         };
         assert!(matches!(member, ActionDirectoryMember::File(_)));
+
+        Ok(())
+    }
+
+    #[test]
+    fn target_file_symlink_input_is_dereferenced_for_execution() -> buck2_error::Result<()> {
+        let digest_config = DigestConfig::testing_default();
+        let target_path = path("buck-out/bin/hash/external/repo/vendor/header.h");
+        let input_path = path("buck-out/bin/hash/external/repo/include/header.h");
+
+        let deps = {
+            let mut builder = ActionDirectoryBuilder::empty();
+            insert_file(&mut builder, target_path.dupe(), file_metadata(b"header"))?;
+            shared(builder)
+        };
+        let value = ArtifactValue::new(
+            ActionDirectoryEntry::Leaf(ActionDirectoryMember::Symlink(Arc::new(Symlink::new(
+                RelativePathBuf::from("../vendor/header.h"),
+            )))),
+            Some(deps),
+        );
+
+        let mut builder = LazyActionDirectoryBuilder::empty();
+        let mut external_symlink_upload_paths = Vec::new();
+        let mut resolved_symlink_upload_paths = Vec::new();
+        insert_artifact_lazy_for_execution(
+            &mut builder,
+            input_path.clone(),
+            &value,
+            digest_config,
+            &mut external_symlink_upload_paths,
+            &mut resolved_symlink_upload_paths,
+        )?;
+
+        let result = finalize_lazy_action_directory(builder)?;
+        let entry = find(result.as_ref(), input_path.as_forward_relative_path())?
+            .expect("input should be present");
+        let DirectoryEntry::Leaf(member) = entry else {
+            panic!("input should be a file");
+        };
+        assert!(matches!(member, ActionDirectoryMember::File(_)));
+        assert!(find(result.as_ref(), target_path.as_forward_relative_path())?.is_none());
+        assert_eq!(resolved_symlink_upload_paths.len(), 1);
+        assert_eq!(resolved_symlink_upload_paths[0].path, input_path);
+        assert_eq!(resolved_symlink_upload_paths[0].source_path, target_path);
+        assert!(!resolved_symlink_upload_paths[0].is_dir);
 
         Ok(())
     }

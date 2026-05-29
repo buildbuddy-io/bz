@@ -16,6 +16,7 @@ use crate::artifact_value::ArtifactValue;
 use crate::digest_config::DigestConfig;
 use crate::directory::ExternalSymlinkUploadPath;
 use crate::directory::LazyActionDirectoryBuilder;
+use crate::directory::ResolvedSymlinkUploadPath;
 
 /// This is like `ArtifactGroupValues`, but without dependency on `Artifact`.
 pub trait ArtifactGroupValuesDyn: Send + Sync + 'static {
@@ -41,9 +42,11 @@ pub trait ArtifactGroupValuesDyn: Send + Sync + 'static {
         artifact_fs: &ArtifactFs,
         digest_config: DigestConfig,
         external_symlink_upload_paths: &mut Vec<ExternalSymlinkUploadPath>,
+        resolved_symlink_upload_paths: &mut Vec<ResolvedSymlinkUploadPath>,
     ) -> buck2_error::Result<()> {
         let _ = digest_config;
         let _ = external_symlink_upload_paths;
+        let _ = resolved_symlink_upload_paths;
         self.add_to_directory(builder, artifact_fs)
     }
 }

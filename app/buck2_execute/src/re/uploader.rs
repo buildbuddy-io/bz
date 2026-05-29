@@ -35,6 +35,7 @@ use buck2_error::conversion::from_any_with_tag;
 use buck2_error::internal_error;
 use buck2_hash::StdBuckHashMap;
 use buck2_hash::StdBuckHashSet;
+use chrono::DateTime;
 use chrono::Duration;
 use chrono::Utc;
 use dupe::Dupe;
@@ -51,6 +52,7 @@ use remote_execution::InlinedBlobWithDigest;
 use remote_execution::NamedDigest;
 use remote_execution::TDigest;
 use remote_execution::UploadRequest;
+use tokio::sync::oneshot;
 
 use crate::digest::CasDigestFromReExt;
 use crate::digest::CasDigestToReExt;
@@ -76,6 +78,141 @@ pub struct UploadStats {
 }
 
 pub struct Uploader {}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+struct UploadDigestKey {
+    hash: String,
+    size_in_bytes: i64,
+}
+
+impl UploadDigestKey {
+    fn new(digest: &TDigest) -> Self {
+        Self {
+            hash: digest.hash.clone(),
+            size_in_bytes: digest.size_in_bytes,
+        }
+    }
+}
+
+type UploadWaiter = Shared<BoxFuture<'static, Result<(), String>>>;
+
+enum UploadClaimState {
+    Own(oneshot::Sender<Result<(), String>>),
+    Wait(UploadWaiter),
+    Uploaded,
+}
+
+#[derive(Default)]
+struct UploadDeduper {
+    in_flight: StdBuckHashMap<UploadDigestKey, UploadWaiter>,
+    uploaded: StdBuckHashMap<UploadDigestKey, DateTime<Utc>>,
+}
+
+impl UploadDeduper {
+    fn claim(&mut self, key: UploadDigestKey) -> UploadClaimState {
+        if self.uploaded.contains_key(&key) {
+            return UploadClaimState::Uploaded;
+        }
+
+        if let Some(waiter) = self.in_flight.get(&key) {
+            return UploadClaimState::Wait(waiter.clone());
+        }
+
+        let (sender, receiver) = oneshot::channel();
+        let waiter = async move {
+            receiver.await.unwrap_or_else(|_| {
+                Err("remote upload was cancelled before completion".to_owned())
+            })
+        }
+        .boxed()
+        .shared();
+        self.in_flight.insert(key, waiter);
+        UploadClaimState::Own(sender)
+    }
+
+    fn prune_uploaded(&mut self, now: DateTime<Utc>) {
+        let cutoff = now - Duration::minutes(30);
+        self.uploaded.retain(|_, uploaded_at| *uploaded_at >= cutoff);
+    }
+}
+
+static UPLOAD_DEDUPER: Lazy<Mutex<UploadDeduper>> =
+    Lazy::new(|| Mutex::new(UploadDeduper::default()));
+
+#[derive(Default)]
+struct UploadClaim {
+    owned: Vec<(UploadDigestKey, oneshot::Sender<Result<(), String>>)>,
+    waiters: Vec<UploadWaiter>,
+}
+
+impl UploadClaim {
+    fn claim_uploads(
+        upload_files: Vec<NamedDigest>,
+        upload_blobs: Vec<InlinedBlobWithDigest>,
+    ) -> (Vec<NamedDigest>, Vec<InlinedBlobWithDigest>, Self) {
+        let now = Utc::now();
+        let mut deduper = UPLOAD_DEDUPER.lock().unwrap();
+        deduper.prune_uploaded(now);
+
+        let mut claim = UploadClaim::default();
+        let mut claimed_files = Vec::new();
+        let mut claimed_blobs = Vec::new();
+
+        for file in upload_files {
+            let key = UploadDigestKey::new(&file.digest);
+            match deduper.claim(key.clone()) {
+                UploadClaimState::Own(sender) => {
+                    claim.owned.push((key, sender));
+                    claimed_files.push(file);
+                }
+                UploadClaimState::Wait(waiter) => claim.waiters.push(waiter),
+                UploadClaimState::Uploaded => {}
+            }
+        }
+
+        for blob in upload_blobs {
+            let key = UploadDigestKey::new(&blob.digest);
+            match deduper.claim(key.clone()) {
+                UploadClaimState::Own(sender) => {
+                    claim.owned.push((key, sender));
+                    claimed_blobs.push(blob);
+                }
+                UploadClaimState::Wait(waiter) => claim.waiters.push(waiter),
+                UploadClaimState::Uploaded => {}
+            }
+        }
+
+        (claimed_files, claimed_blobs, claim)
+    }
+
+    async fn wait_for_other_uploads(&self) -> buck2_error::Result<()> {
+        for waiter in &self.waiters {
+            waiter
+                .clone()
+                .await
+                .map_err(|message| {
+                    buck2_error::buck2_error!(
+                        buck2_error::ErrorTag::ReUnknown,
+                        "Remote upload failed in another concurrent action: {}",
+                        message
+                    )
+                })?;
+        }
+        Ok(())
+    }
+
+    fn complete(&mut self, result: Result<(), String>) {
+        let now = Utc::now();
+        let mut deduper = UPLOAD_DEDUPER.lock().unwrap();
+        for (key, sender) in self.owned.drain(..) {
+            deduper.in_flight.remove(&key);
+            if result.is_ok() {
+                deduper.uploaded.insert(key, now);
+            }
+            let _ = sender.send(result.clone());
+        }
+    }
+}
 
 impl Uploader {
     async fn find_missing<'a>(
@@ -283,6 +420,21 @@ impl Uploader {
                 }
                 (exact_paths, directory_paths)
             });
+            let resolved_symlink_upload_paths = input_paths.map(|input_paths| {
+                let mut exact_paths = StdBuckHashMap::default();
+                let mut directory_paths = Vec::new();
+                for upload_path in input_paths.resolved_symlink_upload_paths() {
+                    if upload_path.is_dir {
+                        directory_paths.push((&upload_path.path, &upload_path.source_path));
+                    } else {
+                        exact_paths.insert(
+                            upload_path.path.as_forward_relative_path(),
+                            &upload_path.source_path,
+                        );
+                    }
+                }
+                (exact_paths, directory_paths)
+            });
             let mut upload_file_paths = Vec::new();
             let mut upload_file_digests = Vec::new();
 
@@ -306,6 +458,26 @@ impl Uploader {
                         DirectoryEntry::Leaf(ActionDirectoryMember::File(..)) => {
                             let input_path = path.get();
                             let input_path = &*input_path;
+                            if let Some(upload_file_path) = resolved_symlink_upload_paths
+                                .as_ref()
+                                .and_then(|(exact_paths, directory_paths)| {
+                                    if let Some(source_path) = exact_paths.get(input_path) {
+                                        return Some(source_path.to_buf());
+                                    }
+                                    for (path, source_path) in directory_paths {
+                                        if let Some(suffix) = input_path
+                                            .strip_prefix_opt(path.as_forward_relative_path())
+                                        {
+                                            return Some(source_path.join(suffix));
+                                        }
+                                    }
+                                    None
+                                })
+                            {
+                                upload_file_paths.push(upload_file_path);
+                                upload_file_digests.push(digest.to_re());
+                                continue;
+                            }
                             if let Some(upload_file_path) = external_symlink_upload_paths
                                 .as_ref()
                                 .and_then(|(exact_paths, directory_paths)| {
@@ -463,6 +635,9 @@ impl Uploader {
                 .buck_error_context("Error materializing paths for upload")?;
         }
 
+        let (upload_files, upload_blobs, mut upload_claim) =
+            UploadClaim::claim_uploads(upload_files, upload_blobs);
+
         // Compute stats of digests we're about to upload so we can report them
         // to the span end event of this stage of execution.
         let stats = {
@@ -496,7 +671,7 @@ impl Uploader {
         };
 
         // Upload
-        if !upload_files.is_empty() || !upload_blobs.is_empty() {
+        let upload_result = if !upload_files.is_empty() || !upload_blobs.is_empty() {
             with_error_handler(
                 "upload",
                 client.get_session_id(),
@@ -515,6 +690,7 @@ impl Uploader {
                     .await,
             )
             .await
+            .map(|_| ())
             .map_err(|e| {
                 if e.tags().contains(&buck2_error::ErrorTag::ReInvalidArgument) {
                     buck2_error::buck2_error!(
@@ -526,8 +702,18 @@ impl Uploader {
                 } else {
                     e
                 }
-            })?;
+            })
+        } else {
+            Ok(())
         };
+        match upload_result {
+            Ok(()) => upload_claim.complete(Ok(())),
+            Err(e) => {
+                upload_claim.complete(Err(format!("{:#}", e)));
+                return Err(e);
+            }
+        }
+        upload_claim.wait_for_other_uploads().await?;
 
         Ok(stats)
     }

@@ -116,6 +116,9 @@ impl TransitionData {
         if key.starts_with("//command_line_option:") {
             return key.to_owned();
         }
+        if let Some(key) = bazel_starlark_label_to_build_setting_key(key) {
+            return key;
+        }
         match self {
             TransitionData::MagicObject(v) if v.is_bazel && key.starts_with("//") => {
                 match v.id.as_ref() {
@@ -156,6 +159,35 @@ impl TransitionData {
             | TransitionData::BazelAttribute(_)
             | TransitionData::Target(_) => None,
         }
+    }
+}
+
+fn bazel_starlark_label_to_build_setting_key(key: &str) -> Option<String> {
+    let key = key.strip_prefix("@@")?;
+    let (repo, target) = key.split_once("//")?;
+    let cell = if repo.is_empty() { "root" } else { repo };
+    Some(format!("{cell}//{target}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bazel_starlark_label_keys_are_normalized_to_internal_build_setting_keys() {
+        assert_eq!(
+            bazel_starlark_label_to_build_setting_key("@@//toolchain:runtime_stage").as_deref(),
+            Some("root//toolchain:runtime_stage")
+        );
+        assert_eq!(
+            bazel_starlark_label_to_build_setting_key("@@rules_cc+//cc/compiler:msvc-cl")
+                .as_deref(),
+            Some("rules_cc+//cc/compiler:msvc-cl")
+        );
+        assert_eq!(
+            bazel_starlark_label_to_build_setting_key("//toolchain:runtime_stage"),
+            None
+        );
     }
 }
 

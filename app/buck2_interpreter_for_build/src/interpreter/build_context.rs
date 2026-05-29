@@ -309,6 +309,8 @@ pub struct BazelRepositoryRuleInvocation {
     pub rule_id: StarlarkRuleType,
     pub name: String,
     pub original_name: String,
+    pub attr_build_file_cell: String,
+    pub attr_build_file_package: Option<String>,
     pub attrs: Vec<(String, String)>,
 }
 

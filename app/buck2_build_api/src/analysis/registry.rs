@@ -69,6 +69,7 @@ use starlark_map::small_map::SmallMap;
 
 use crate::actions::RegisteredAction;
 use crate::actions::UnregisteredAction;
+use crate::actions::impls::solib_symlink::UnregisteredSolibSymlinkAction;
 use crate::actions::registry::ActionsRegistry;
 use crate::actions::registry::RecordedActions;
 use crate::analysis::anon_promises_dyn::AnonPromisesDyn;
@@ -76,6 +77,7 @@ use crate::analysis::anon_targets_registry::ANON_TARGET_REGISTRY_NEW;
 use crate::analysis::anon_targets_registry::AnonTargetsRegistryDyn;
 use crate::analysis::extra_v::AnalysisExtraValue;
 use crate::analysis::extra_v::FrozenAnalysisExtraValue;
+use crate::artifact_groups::ArtifactGroup;
 use crate::artifact_groups::deferred::TransitiveSetIndex;
 use crate::artifact_groups::deferred::TransitiveSetKey;
 use crate::artifact_groups::promise::PromiseArtifact;
@@ -104,8 +106,15 @@ pub struct AnalysisRegistry<'v> {
     bazel_predeclared_outputs: SmallMap<String, DeclaredArtifact<'v>>,
     bazel_shareable_outputs: SmallMap<String, DeclaredArtifact<'v>>,
     bazel_shareable_action_signatures: SmallMap<String, String>,
+    bazel_pending_solib_symlink_actions: Vec<BazelPendingSolibSymlinkAction<'v>>,
     pub short_path_assertions: HashMap<PromiseArtifactId, ForwardRelativePathBuf>,
     pub content_based_path_assertions: HashSet<PromiseArtifactId>,
+}
+
+#[derive(Debug, Trace, Allocative)]
+struct BazelPendingSolibSymlinkAction<'v> {
+    src: DeclaredArtifact<'v>,
+    output: OutputArtifact<'v>,
 }
 
 #[derive(buck2_error::Error, Debug)]
@@ -151,6 +160,7 @@ impl<'v> AnalysisRegistry<'v> {
             bazel_predeclared_outputs: SmallMap::new(),
             bazel_shareable_outputs: SmallMap::new(),
             bazel_shareable_action_signatures: SmallMap::new(),
+            bazel_pending_solib_symlink_actions: Vec::new(),
             short_path_assertions: HashMap::new(),
             content_based_path_assertions: HashSet::new(),
         })
@@ -431,6 +441,47 @@ impl<'v> AnalysisRegistry<'v> {
         }
     }
 
+    pub fn register_bazel_solib_symlink_action(
+        &mut self,
+        src: DeclaredArtifact<'v>,
+        output: OutputArtifact<'v>,
+        signature: String,
+    ) -> buck2_error::Result<()> {
+        if !self.should_register_bazel_shareable_action(&output, signature)? {
+            return Ok(());
+        }
+        self.register_or_defer_bazel_solib_symlink_action(src, output)?;
+        self.flush_bazel_pending_solib_symlink_actions()
+    }
+
+    fn register_or_defer_bazel_solib_symlink_action(
+        &mut self,
+        src: DeclaredArtifact<'v>,
+        output: OutputArtifact<'v>,
+    ) -> buck2_error::Result<()> {
+        match src.dupe().ensure_bound() {
+            Ok(src) => self.register_action_no_flush(
+                BuckIndexSet::from_iter([output]),
+                UnregisteredSolibSymlinkAction::new(ArtifactGroup::Artifact(src.into_artifact())),
+                None,
+                None,
+            ),
+            Err(_) => {
+                self.bazel_pending_solib_symlink_actions
+                    .push(BazelPendingSolibSymlinkAction { src, output });
+                Ok(())
+            }
+        }
+    }
+
+    fn flush_bazel_pending_solib_symlink_actions(&mut self) -> buck2_error::Result<()> {
+        let pending = std::mem::take(&mut self.bazel_pending_solib_symlink_actions);
+        for pending in pending {
+            self.register_or_defer_bazel_solib_symlink_action(pending.src, pending.output)?;
+        }
+        Ok(())
+    }
+
     /// Takes a string or artifact/output artifact and converts it into an output artifact
     ///
     /// This is handy for functions like `ctx.actions.write` where it's nice to just let
@@ -513,7 +564,7 @@ impl<'v> AnalysisRegistry<'v> {
         ))
     }
 
-    pub fn register_action<A: UnregisteredAction + 'static>(
+    fn register_action_no_flush<A: UnregisteredAction + 'static>(
         &mut self,
         outputs: BuckIndexSet<OutputArtifact>,
         action: A,
@@ -526,6 +577,17 @@ impl<'v> AnalysisRegistry<'v> {
         self.analysis_value_storage
             .set_action_data(id, (associated_value, error_handler))?;
         Ok(())
+    }
+
+    pub fn register_action<A: UnregisteredAction + 'static>(
+        &mut self,
+        outputs: BuckIndexSet<OutputArtifact>,
+        action: A,
+        associated_value: Option<Value<'v>>,
+        error_handler: Option<StarlarkCallable<'v>>,
+    ) -> buck2_error::Result<()> {
+        self.register_action_no_flush(outputs, action, associated_value, error_handler)?;
+        self.flush_bazel_pending_solib_symlink_actions()
     }
 
     pub fn create_transitive_set(
@@ -584,11 +646,16 @@ impl<'v> AnalysisRegistry<'v> {
     /// You MUST pass the same module to both the first function and the second one.
     /// It requires both to get the lifetimes to line up.
     pub fn finalize(
-        self,
+        mut self,
         env: &Module<'v>,
     ) -> buck2_error::Result<
         impl FnOnce(&FrozenModule) -> buck2_error::Result<RecordedAnalysisValues> + use<>,
     > {
+        self.flush_bazel_pending_solib_symlink_actions()?;
+        if let Some(pending) = self.bazel_pending_solib_symlink_actions.first() {
+            pending.src.dupe().ensure_bound()?;
+        }
+
         let AnalysisRegistry {
             actions,
             anon_targets: _,
@@ -596,6 +663,7 @@ impl<'v> AnalysisRegistry<'v> {
             bazel_predeclared_outputs: _,
             bazel_shareable_outputs: _,
             bazel_shareable_action_signatures: _,
+            bazel_pending_solib_symlink_actions: _,
             short_path_assertions: _,
             content_based_path_assertions: _,
         } = self;

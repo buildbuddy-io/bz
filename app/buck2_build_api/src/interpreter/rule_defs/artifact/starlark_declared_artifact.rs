@@ -113,6 +113,10 @@ impl<'v> StarlarkDeclaredArtifact<'v> {
         self.artifact.as_output()
     }
 
+    pub fn declared_artifact(&self) -> DeclaredArtifact<'v> {
+        self.artifact.dupe()
+    }
+
     pub fn get_artifact_path(&self) -> ArtifactPath<'_> {
         self.artifact.get_path()
     }

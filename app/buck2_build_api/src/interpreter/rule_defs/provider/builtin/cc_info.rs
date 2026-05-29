@@ -73,7 +73,8 @@ use starlark_map::StarlarkHasher;
 use crate as buck2_build_api;
 use crate::actions::impls::solib_symlink::UnregisteredSolibSymlinkAction;
 use crate::interpreter::rule_defs::artifact::associated::AssociatedArtifacts;
-use crate::interpreter::rule_defs::artifact::starlark_artifact_like::ValueAsInputArtifactLike;
+use crate::interpreter::rule_defs::artifact::starlark_artifact_like::StarlarkInputArtifactLike;
+use crate::interpreter::rule_defs::artifact::starlark_artifact_like::ValueAsInputArtifactLikeUnpack;
 use crate::interpreter::rule_defs::artifact::starlark_declared_artifact::StarlarkDeclaredArtifact;
 use crate::interpreter::rule_defs::cmd_args::StarlarkCmdArgs;
 use crate::interpreter::rule_defs::context::AnalysisActions;
@@ -2906,6 +2907,7 @@ impl<'v> StarlarkValue<'v> for BazelCcInternal {
             "is_tree_artifact".to_owned(),
             "per_file_copts".to_owned(),
             "rule_class".to_owned(),
+            "solib_symlink_action".to_owned(),
             "wrap_link_actions".to_owned(),
         ]
     }
@@ -3006,25 +3008,34 @@ fn bazel_cc_dynamic_library_symlink_name(
 }
 
 fn bazel_cc_library_root_relative_path<'v>(
-    library: &ValueAsInputArtifactLike<'v>,
+    library: &'v dyn StarlarkInputArtifactLike<'v>,
     heap: Heap<'v>,
 ) -> starlark::Result<String> {
     Ok(library
-        .0
         .with_bazel_short_path(&|path| heap.alloc_str(path))?
         .as_str()
         .to_owned())
 }
 
+fn bazel_cc_input_artifact_like<'v>(
+    library: &ValueAsInputArtifactLikeUnpack<'v>,
+) -> &'v dyn StarlarkInputArtifactLike<'v> {
+    match library {
+        ValueAsInputArtifactLikeUnpack::Artifact(artifact) => *artifact,
+        ValueAsInputArtifactLikeUnpack::DeclaredArtifact(artifact) => *artifact,
+        ValueAsInputArtifactLikeUnpack::PromiseArtifact(artifact) => *artifact,
+    }
+}
+
 fn bazel_cc_register_solib_symlink<'v>(
     actions: ValueTyped<'v, AnalysisActions<'v>>,
-    library: ValueAsInputArtifactLike<'v>,
+    library: ValueAsInputArtifactLikeUnpack<'v>,
     path: String,
     eval: &mut Evaluator<'v, '_, '_>,
 ) -> starlark::Result<StarlarkDeclaredArtifact<'v>> {
-    let artifact_group = library.0.get_artifact_group()?;
-    let associated_artifacts = library
-        .0
+    let library_like = bazel_cc_input_artifact_like(&library);
+    let library_path = bazel_cc_library_root_relative_path(library_like, eval.heap())?;
+    let associated_artifacts = library_like
         .get_associated_artifacts()
         .cloned()
         .unwrap_or_else(AssociatedArtifacts::new);
@@ -3041,20 +3052,54 @@ fn bazel_cc_register_solib_symlink<'v>(
         eval.heap(),
     )?;
     let output_artifact = artifact.as_output();
-    let action_signature = format!("SolibSymlink:{artifact_group:?}");
-    if state.should_register_bazel_shareable_action(&output_artifact, action_signature)? {
-        state.register_action(
-            buck_indexset![output_artifact],
-            UnregisteredSolibSymlinkAction::new(artifact_group),
-            None,
-            None,
-        )?;
+    let action_signature = format!("SolibSymlink:{library_path}");
+    match &library {
+        ValueAsInputArtifactLikeUnpack::DeclaredArtifact(declared) => {
+            state.register_bazel_solib_symlink_action(
+                declared.declared_artifact(),
+                output_artifact,
+                action_signature,
+            )?;
+        }
+        _ => {
+            let artifact_group = library_like.get_artifact_group()?;
+            if state.should_register_bazel_shareable_action(&output_artifact, action_signature)? {
+                state.register_action(
+                    buck_indexset![output_artifact],
+                    UnregisteredSolibSymlinkAction::new(artifact_group),
+                    None,
+                    None,
+                )?;
+            }
+        }
     }
     Ok(StarlarkDeclaredArtifact::new(
         eval.call_stack_top_location(),
         artifact,
         associated_artifacts,
     ))
+}
+
+fn bazel_cc_runtime_solib_symlink_path<'v>(
+    artifact: &ValueAsInputArtifactLikeUnpack<'v>,
+    solib_directory: &str,
+    runtime_solib_dir_base: Value<'v>,
+    heap: Heap<'v>,
+) -> starlark::Result<String> {
+    let runtime_solib_dir_base = if runtime_solib_dir_base.is_none() {
+        solib_directory
+    } else {
+        runtime_solib_dir_base.unpack_str().ok_or_else(|| {
+            bazel_cc_error(format!(
+                "Expected `runtime_solib_dir_base` to be a string, got `{}`",
+                runtime_solib_dir_base.get_type()
+            ))
+        })?
+    };
+    let library_path =
+        bazel_cc_library_root_relative_path(bazel_cc_input_artifact_like(artifact), heap)?;
+    let library_basename = library_path.rsplit('/').next().unwrap_or(&library_path);
+    Ok(bazel_cc_join_path(runtime_solib_dir_base, library_basename))
 }
 
 fn bazel_cc_build_variable_from_dict<'v>(variables: Value<'v>, name: &str) -> Option<Value<'v>> {
@@ -3784,13 +3829,16 @@ fn bazel_cc_internal_methods(builder: &mut MethodsBuilder) {
     fn dynamic_library_symlink<'v>(
         #[starlark(this)] _this: &BazelCcInternal,
         actions: ValueTyped<'v, AnalysisActions<'v>>,
-        library: ValueAsInputArtifactLike<'v>,
+        library: ValueAsInputArtifactLikeUnpack<'v>,
         solib_directory: &str,
         preserve_name: bool,
         prefix_consumer: bool,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<StarlarkDeclaredArtifact<'v>> {
-        let library_path = bazel_cc_library_root_relative_path(&library, eval.heap())?;
+        let library_path = bazel_cc_library_root_relative_path(
+            bazel_cc_input_artifact_like(&library),
+            eval.heap(),
+        )?;
         let label = actions
             .as_ref()
             .bazel_owner()
@@ -3808,13 +3856,31 @@ fn bazel_cc_internal_methods(builder: &mut MethodsBuilder) {
     fn dynamic_library_symlink2<'v>(
         #[starlark(this)] _this: &BazelCcInternal,
         actions: ValueTyped<'v, AnalysisActions<'v>>,
-        library: ValueAsInputArtifactLike<'v>,
+        library: ValueAsInputArtifactLikeUnpack<'v>,
         solib_directory: &str,
         path: &str,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<StarlarkDeclaredArtifact<'v>> {
         let path = bazel_cc_join_path(solib_directory, path);
         bazel_cc_register_solib_symlink(actions, library, path, eval)
+    }
+
+    fn solib_symlink_action<'v>(
+        #[starlark(this)] _this: &BazelCcInternal,
+        #[starlark(require = named)] ctx: Value<'v>,
+        #[starlark(require = named)] artifact: ValueAsInputArtifactLikeUnpack<'v>,
+        #[starlark(require = named)] solib_directory: &str,
+        #[starlark(require = named)] runtime_solib_dir_base: Value<'v>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<StarlarkDeclaredArtifact<'v>> {
+        let actions = bazel_cc_action_context_actions(ctx, eval.heap())?;
+        let path = bazel_cc_runtime_solib_symlink_path(
+            &artifact,
+            solib_directory,
+            runtime_solib_dir_base,
+            eval.heap(),
+        )?;
+        bazel_cc_register_solib_symlink(actions, artifact, path, eval)
     }
 
     fn get_link_args<'v>(

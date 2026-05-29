@@ -47,13 +47,13 @@ use buck2_common::legacy_configs::dice::HasLegacyConfigs;
 use buck2_common::legacy_configs::key::BuckconfigKeyRef;
 use buck2_common::legacy_configs::view::LegacyBuckConfigView;
 use buck2_configured::nodes::resolve_bazel_declared_toolchain_deps;
+use buck2_core::cells::external::bzlmod_cell_aliases_for_cell;
+use buck2_core::cells::external::bzlmod_cell_name;
 use buck2_core::deferred::base_deferred_key::BaseDeferredKey;
 use buck2_core::deferred::key::DeferredHolderKey;
 use buck2_core::execution_types::execution::ExecutionPlatformResolution;
 use buck2_core::fs::buck_out_path::BazelOutputRoot;
 use buck2_core::fs::buck_out_path::BuckOutPathKind;
-use buck2_core::cells::external::bzlmod_cell_aliases_for_cell;
-use buck2_core::cells::external::bzlmod_cell_name;
 use buck2_core::package::PackageLabel;
 use buck2_core::package::package_relative_path::PackageRelativePath;
 use buck2_core::package::source_path::SourcePath;
@@ -942,12 +942,53 @@ fn provider_requirements_satisfied<'v>(
     providers: Value<'v>,
     required: &[FrozenValue],
 ) -> buck2_error::Result<bool> {
-    for provider in required {
-        if !providers.is_in(provider.to_value())? {
-            return Ok(false);
+    if required.is_empty() {
+        return Ok(true);
+    }
+
+    let is_provider_group = |value: Value<'v>| {
+        ListRef::from_value(value).is_some() || TupleRef::from_value(value).is_some()
+    };
+    let provider_group_satisfied = |group: Vec<Value<'v>>| -> buck2_error::Result<bool> {
+        for provider in group {
+            if !providers.is_in(provider)? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    };
+
+    if required
+        .iter()
+        .all(|provider| !is_provider_group(provider.to_value()))
+    {
+        return provider_group_satisfied(
+            required
+                .iter()
+                .map(|provider| provider.to_value())
+                .collect::<Vec<_>>(),
+        );
+    }
+
+    for group in required {
+        let group = group.to_value();
+        let group = if let Some(list) = ListRef::from_value(group) {
+            list.iter().collect::<Vec<_>>()
+        } else if let Some(tuple) = TupleRef::from_value(group) {
+            tuple.content().iter().copied().collect::<Vec<_>>()
+        } else {
+            return Err(buck2_error::buck2_error!(
+                buck2_error::ErrorTag::Input,
+                "Bazel provider predicate mixes direct providers and provider groups: `{}`",
+                group.to_repr()
+            ));
+        };
+        if provider_group_satisfied(group)? {
+            return Ok(true);
         }
     }
-    Ok(true)
+
+    Ok(false)
 }
 
 fn bazel_toolchain_mandatory_from_value(value: Value<'_>) -> buck2_error::Result<bool> {
@@ -977,11 +1018,7 @@ fn bazel_toolchain_requirement_from_value(
     })
 }
 
-fn push_bazel_toolchain_key(
-    keys: &mut Vec<String>,
-    seen: &mut StdBuckHashSet<String>,
-    key: &str,
-) {
+fn push_bazel_toolchain_key(keys: &mut Vec<String>, seen: &mut StdBuckHashSet<String>, key: &str) {
     if seen.insert(key.to_owned()) {
         keys.push(key.to_owned());
     }

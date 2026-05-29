@@ -41,13 +41,11 @@ impl<T> FindConflict<T> for PathAccumulator {
     }
 }
 
-#[cfg(test)]
 struct PrefixLookupContainer<T> {
     leaf: T,
     path: buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf,
 }
 
-#[cfg(test)]
 impl<T> FindConflict<T> for PrefixLookupContainer<T> {
     fn new<'b>(path: &'b FileName, remaining: impl Iterator<Item = &'b FileName>, leaf: T) -> Self {
         Self {
@@ -76,8 +74,7 @@ pub fn find<'a, 'b, D: DirectoryRef<'a>>(
         .map_err(move |path| DirectoryFindError::CannotTraverseLeaf { path })
 }
 
-#[cfg(test)] // Dead code.
-pub(crate) fn find_prefix<'a, 'b, D: DirectoryRef<'a>>(
+pub fn find_prefix<'a, 'b, D: DirectoryRef<'a>>(
     dir: D,
     path: impl IntoIterator<Item = &'b FileName>,
 ) -> Result<

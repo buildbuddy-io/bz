@@ -331,6 +331,7 @@ pub(crate) struct BazelCompatBazelrcOptions {
     pub(crate) per_file_copt: Vec<String>,
     pub(crate) macos_minimum_os: Vec<String>,
     pub(crate) host_macos_minimum_os: Vec<String>,
+    pub(crate) repo_env: Vec<String>,
     pub(crate) command_line_build_settings: Vec<String>,
 }
 
@@ -572,6 +573,7 @@ impl LegacyBuckConfig {
                 "host_macos_minimum_os",
                 &bazelrc_options.host_macos_minimum_os,
             ),
+            ("repo_env", &bazelrc_options.repo_env),
         ];
         if bazelrc_option_values
             .iter()

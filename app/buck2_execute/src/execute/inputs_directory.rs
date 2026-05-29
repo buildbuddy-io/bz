@@ -25,6 +25,7 @@ use crate::directory::ActionDirectoryBuilder;
 use crate::directory::ActionDirectoryMember;
 use crate::directory::ExternalSymlinkUploadPath;
 use crate::directory::LazyActionDirectoryBuilder;
+use crate::directory::ResolvedSymlinkUploadPath;
 use crate::directory::finalize_lazy_action_directory;
 use crate::directory::insert_artifact_lazy_for_execution;
 use crate::execute::request::CommandExecutionInput;
@@ -33,9 +34,14 @@ pub fn inputs_directory(
     inputs: &[CommandExecutionInput],
     digest_config: DigestConfig,
     fs: &ArtifactFs,
-) -> buck2_error::Result<(ActionDirectoryBuilder, Vec<ExternalSymlinkUploadPath>)> {
+) -> buck2_error::Result<(
+    ActionDirectoryBuilder,
+    Vec<ExternalSymlinkUploadPath>,
+    Vec<ResolvedSymlinkUploadPath>,
+)> {
     let mut builder = LazyActionDirectoryBuilder::empty();
     let mut external_symlink_upload_paths = Vec::new();
+    let mut resolved_symlink_upload_paths = Vec::new();
     for input in inputs {
         match input {
             CommandExecutionInput::Artifact(group) => {
@@ -44,6 +50,7 @@ pub fn inputs_directory(
                     fs,
                     digest_config,
                     &mut external_symlink_upload_paths,
+                    &mut resolved_symlink_upload_paths,
                 )?;
             }
             CommandExecutionInput::ArtifactPathAlias {
@@ -62,6 +69,7 @@ pub fn inputs_directory(
                     &value,
                     digest_config,
                     &mut external_symlink_upload_paths,
+                    &mut resolved_symlink_upload_paths,
                 )?;
             }
             CommandExecutionInput::EmptyFile(path) => {
@@ -102,6 +110,7 @@ pub fn inputs_directory(
     Ok((
         finalize_lazy_action_directory(builder)?,
         external_symlink_upload_paths,
+        resolved_symlink_upload_paths,
     ))
 }
 

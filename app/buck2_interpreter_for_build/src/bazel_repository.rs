@@ -45,11 +45,13 @@ use buck2_common::legacy_configs::cells::BZLMOD_REPOSITORY_OS_ARCH_ENV;
 use buck2_common::legacy_configs::cells::BZLMOD_REPOSITORY_OS_NAME_ENV;
 use buck2_common::legacy_configs::cells::GetBzlmodRepositoryEnvironment;
 use buck2_common::liveliness_observer::NoopLivelinessObserver;
+use buck2_common::package_listing::listing::PackageListing;
 use buck2_core::bzl::ImportPath;
 use buck2_core::cells::CellAliasResolver;
 use buck2_core::cells::alias::NonEmptyCellAlias;
 use buck2_core::cells::build_file_cell::BuildFileCell;
 use buck2_core::cells::cell_path::CellPath;
+use buck2_core::cells::cell_path_with_allowed_relative_dir::CellPathWithAllowedRelativeDir;
 use buck2_core::cells::external::BAZEL_REPOSITORY_ACCEPT_ENCODING;
 use buck2_core::cells::external::BAZEL_REPOSITORY_ACCEPT_ENCODING_HEADER;
 use buck2_core::cells::external::BAZEL_REPOSITORY_USER_AGENT_HEADER;
@@ -57,8 +59,10 @@ use buck2_core::cells::external::BzlmodModuleExtensionRepoSetup;
 use buck2_core::cells::external::BzlmodRepositoryRuleInvocationSetup;
 use buck2_core::cells::external::bazel_repository_user_agent;
 use buck2_core::cells::external::bzlmod_canonical_repo_name_for_cell;
+use buck2_core::cells::external::bzlmod_cell_aliases_for_cell;
 use buck2_core::cells::external::bzlmod_cell_name;
 use buck2_core::cells::name::CellName;
+use buck2_core::cells::paths::CellRelativePath;
 use buck2_core::cells::paths::CellRelativePathBuf;
 use buck2_core::execution_types::executor_config::CommandExecutorConfig;
 use buck2_core::execution_types::executor_config::Executor;
@@ -68,6 +72,7 @@ use buck2_core::fs::buck_out_path::BuckOutTestPath;
 use buck2_core::fs::project::ProjectRoot;
 use buck2_core::fs::project_rel_path::ProjectRelativePath;
 use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
+use buck2_core::package::PackageLabel;
 use buck2_core::target::label::interner::ConcurrentTargetLabelInterner;
 use buck2_error::BuckErrorContext;
 use buck2_execute::digest_config::DigestConfig;
@@ -95,6 +100,7 @@ use buck2_execute_local::GatherOutputStatus;
 use buck2_execute_local::spawn_command_and_stream_events;
 use buck2_execute_local::status_decoder::DefaultStatusDecoder;
 use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
+use buck2_fs::paths::file_name::FileNameBuf;
 use buck2_fs::paths::forward_rel_path::ForwardRelativePathBuf;
 use buck2_hash::BuckIndexSet;
 use buck2_hash::StdBuckHashMap;
@@ -395,15 +401,38 @@ fn record_repository_rule_invocation<'v>(
     let name = name
         .ok_or_else(|| buck2_error::Error::from(BazelRepositoryError::RepositoryRuleMissingName))?;
     attrs.sort_by(|(left, _), (right, _)| left.cmp(right));
+    let attr_build_file_callsite = repository_rule_attr_build_file_callsite(eval, build_context);
 
     recorder.record(BazelRepositoryRuleInvocation {
         rule_id: rule_id.clone(),
         original_name: name.clone(),
         name,
+        attr_build_file_cell: attr_build_file_callsite.0.as_str().to_owned(),
+        attr_build_file_package: attr_build_file_callsite.1,
         attrs,
     });
 
     Ok(Value::new_none())
+}
+
+fn repository_rule_attr_build_file_callsite(
+    eval: &Evaluator<'_, '_, '_>,
+    build_context: &BuildContext<'_>,
+) -> (CellName, Option<String>) {
+    let Some(location) = eval.call_stack_top_location() else {
+        return (build_context.build_file_cell().name(), None);
+    };
+    let Ok(project_relative_path) = ProjectRelativePath::new(location.filename()) else {
+        return (build_context.build_file_cell().name(), None);
+    };
+    let callsite_path = build_context
+        .cell_info()
+        .cell_resolver()
+        .get_cell_path(project_relative_path);
+    let package = callsite_path
+        .parent()
+        .map(|package| package.path().as_str().to_owned());
+    (callsite_path.cell(), package)
 }
 
 fn repository_rule_attr_expression(value: Value<'_>) -> starlark::Result<String> {
@@ -3232,7 +3261,7 @@ pub async fn bzlmod_repository_rule_cache_info(
         bzlmod_repository_rule_execution_cache_key(ctx.get_fallback_executor_config());
 
     let mut hasher = blake3::Hasher::new();
-    update_repository_rule_cache_key(&mut hasher, "buck2-bzlmod-repository-rule-cache-v7");
+    update_repository_rule_cache_key(&mut hasher, "buck2-bzlmod-repository-rule-cache-v8");
     update_repository_rule_cache_key(&mut hasher, &execution_cache_key);
     update_repository_rule_cache_key(&mut hasher, &repository_os_name_value(&repo_env));
     update_repository_rule_cache_key(&mut hasher, &repository_os_arch_value(&repo_env));
@@ -3241,6 +3270,11 @@ pub async fn bzlmod_repository_rule_cache_info(
     update_repository_rule_cache_key(&mut hasher, &bzl_transitive_digest);
     update_repository_rule_cache_key(&mut hasher, &invocation.name);
     update_repository_rule_cache_key(&mut hasher, &invocation.original_name);
+    update_repository_rule_cache_key(&mut hasher, &invocation.attr_build_file_cell);
+    update_repository_rule_cache_key_opt(
+        &mut hasher,
+        invocation.attr_build_file_package.as_deref(),
+    );
     update_repository_rule_cache_key(&mut hasher, &invocation.attrs.len().to_string());
     for (name, value) in &invocation.attrs {
         update_repository_rule_cache_key(&mut hasher, name);
@@ -3368,6 +3402,11 @@ pub fn bzlmod_repository_rule_invocation_from_setup(
         },
         name: canonical_repo_name.to_owned(),
         original_name: setup.repo_name.to_string(),
+        attr_build_file_cell: setup.rule_bzl_build_file_cell.to_string(),
+        attr_build_file_package: setup
+            .rule_bzl_build_file_package
+            .as_ref()
+            .map(|package| package.to_string()),
         attrs: setup
             .attrs
             .iter()
@@ -3390,7 +3429,11 @@ pub fn bzlmod_repository_rule_invocation_to_setup(
         repo_name: Arc::from(invocation.original_name.as_str()),
         rule_bzl_cell: Arc::from(rule_path.path().cell().as_str()),
         rule_bzl_path: Arc::from(rule_path.path().path().as_str()),
-        rule_bzl_build_file_cell: Arc::from(rule_path.build_file_cell().name().as_str()),
+        rule_bzl_build_file_cell: Arc::from(invocation.attr_build_file_cell.as_str()),
+        rule_bzl_build_file_package: invocation
+            .attr_build_file_package
+            .as_ref()
+            .map(|package| Arc::from(package.as_str())),
         rule_name: Arc::from(invocation.rule_id.name.as_str()),
         attrs: Arc::new(
             invocation
@@ -3658,6 +3701,72 @@ fn bzlmod_current_attr_coercion_context(
     ))
 }
 
+fn bzlmod_repository_rule_attr_coercion_context(
+    invocation: &BazelRepositoryRuleInvocation,
+    eval: &Evaluator<'_, '_, '_>,
+) -> buck2_error::Result<BuildAttrCoercionContext> {
+    let build_context = BuildContext::from_context(eval)?;
+    let cell_resolver = build_context.cell_info().cell_resolver().dupe();
+    let BzlOrBxlPath::Bzl(rule_path) = &invocation.rule_id.path else {
+        return bzlmod_current_attr_coercion_context(eval);
+    };
+    let cell_name = CellName::unchecked_new(&invocation.attr_build_file_cell)
+        .unwrap_or_else(|_| rule_path.build_file_cell().name());
+    let cell_alias_resolver =
+        bzlmod_repository_rule_cell_alias_resolver(&cell_resolver, cell_name)?;
+    if let Some(package) = &invocation.attr_build_file_package {
+        let package = PackageLabel::new(cell_name, CellRelativePath::from_path(package)?)?;
+        return Ok(BuildAttrCoercionContext::new_with_package(
+            cell_resolver,
+            cell_alias_resolver,
+            (
+                package.dupe(),
+                PackageListing::empty(FileNameBuf::unchecked_new("BUILD.bazel")),
+            ),
+            false,
+            Arc::new(ConcurrentTargetLabelInterner::default()),
+            CellPathWithAllowedRelativeDir::backwards_relative_not_supported(
+                package.to_cell_path(),
+            ),
+        ));
+    }
+    Ok(BuildAttrCoercionContext::new_no_package(
+        cell_resolver,
+        cell_name,
+        cell_alias_resolver,
+        Arc::new(ConcurrentTargetLabelInterner::default()),
+    ))
+}
+
+fn bzlmod_repository_rule_cell_alias_resolver(
+    cell_resolver: &buck2_core::cells::CellResolver,
+    cell_name: CellName,
+) -> buck2_error::Result<CellAliasResolver> {
+    if cell_name == cell_resolver.root_cell() {
+        return Ok(cell_resolver.root_cell_cell_alias_resolver().dupe());
+    }
+
+    let mut aliases = StdBuckHashMap::default();
+    for alias in ["root", "prelude", "bazel_tools"] {
+        let alias = NonEmptyCellAlias::new(alias.to_owned())?;
+        let destination = if alias.as_str() == "root" {
+            cell_resolver.root_cell()
+        } else {
+            CellName::unchecked_new(alias.as_str())?
+        };
+        if cell_resolver.get(destination).is_ok() {
+            aliases.insert(alias, destination);
+        }
+    }
+    for (alias, destination) in bzlmod_cell_aliases_for_cell(cell_name.as_str()) {
+        aliases.insert(
+            NonEmptyCellAlias::new(alias)?,
+            CellName::unchecked_new(destination.as_str())?,
+        );
+    }
+    CellAliasResolver::new(cell_name, aliases)
+}
+
 pub(crate) fn alloc_bzlmod_module_extension_context<'v>(
     extension: &FrozenStarlarkModuleExtension,
     extension_usages_json: &str,
@@ -3810,8 +3919,8 @@ pub(crate) fn alloc_bzlmod_repository_context<'v>(
         .iter()
         .cloned()
         .collect::<BTreeMap<String, String>>();
-    let attr_coercion_ctx =
-        bzlmod_current_attr_coercion_context(eval).map_err(starlark::Error::from)?;
+    let attr_coercion_ctx = bzlmod_repository_rule_attr_coercion_context(invocation, eval)
+        .map_err(starlark::Error::from)?;
     let mut attrs = SmallMap::new();
     for (attr_name, attr) in repository_rule.attributes.attributes() {
         let value = match explicit_attrs.remove(attr_name) {
