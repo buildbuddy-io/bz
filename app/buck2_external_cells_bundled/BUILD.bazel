@@ -58,5 +58,8 @@ rust_library(
         "BUCK",
         "Cargo.toml",
         "fuzz/**",
-    ]),
+        "test_data/.buckconfig",
+    ]) + [
+        "test_data/.buckconfig",
+    ],
 )
