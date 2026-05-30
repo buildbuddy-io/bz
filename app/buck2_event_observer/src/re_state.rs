@@ -108,10 +108,6 @@ impl ReState {
             }
         }
 
-        if let Some(session_id) = self.session_id.as_ref() {
-            parts.push(format!("({})", session_id.to_owned()));
-        }
-
         if parts.is_empty() {
             return None;
         }
