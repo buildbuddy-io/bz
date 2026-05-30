@@ -405,6 +405,28 @@ pub struct CommonBuildConfigurationOptions {
     #[clap(long = "platforms", value_name = "PLATFORMS", num_args = 1)]
     pub bazel_platforms: Vec<String>,
 
+    /// Bazel-compatible extra execution platform setting. This accepts Bazel's
+    /// comma-separated label list and populates
+    /// `//command_line_option:extra_execution_platforms`.
+    #[clap(
+        long = "extra_execution_platforms",
+        alias = "extra-execution-platforms",
+        value_name = "PLATFORMS",
+        num_args = 1
+    )]
+    pub bazel_extra_execution_platforms: Vec<String>,
+
+    /// Bazel-compatible extra toolchain setting. This accepts Bazel's
+    /// comma-separated target pattern list and populates
+    /// `//command_line_option:extra_toolchains`.
+    #[clap(
+        long = "extra_toolchains",
+        alias = "extra-toolchains",
+        value_name = "TOOLCHAINS",
+        num_args = 1
+    )]
+    pub bazel_extra_toolchains: Vec<String>,
+
     /// Bazel-compatible Java language setting. This populates
     /// `//command_line_option:java_language_version`.
     #[clap(
@@ -487,6 +509,35 @@ impl CommonBuildConfigurationOptions {
         }
     }
 
+    fn bazel_host_platform_constraints_override(
+        platform: HostPlatformOverride,
+        arch: HostArchOverride,
+    ) -> ConfigOverride {
+        let os_constraint = match platform {
+            HostPlatformOverride::Default => match std::env::consts::OS {
+                "macos" => "osx",
+                "linux" => "linux",
+                "windows" => "windows",
+                os => os,
+            },
+            HostPlatformOverride::Linux => "linux",
+            HostPlatformOverride::MacOs => "osx",
+            HostPlatformOverride::Windows => "windows",
+        };
+        let cpu_constraint = match arch {
+            HostArchOverride::Default => std::env::consts::ARCH,
+            HostArchOverride::AArch64 => "aarch64",
+            HostArchOverride::X86_64 => "x86_64",
+        };
+        ConfigOverride {
+            cell: None,
+            config_override: format!(
+                "bazel.host_platform_constraints=@platforms//cpu:{cpu_constraint}\n@platforms//os:{os_constraint}"
+            ),
+            config_type: ConfigType::Value as i32,
+        }
+    }
+
     fn bazel_command_line_string_build_setting(key: &str, value: &str) -> String {
         Self::bazel_command_line_build_setting_entry("string", key, value)
     }
@@ -498,6 +549,94 @@ impl CommonBuildConfigurationOptions {
             .filter(|value| !value.is_empty())
             .map(|value| Self::bazel_command_line_build_setting_entry("list", key, value))
             .collect()
+    }
+
+    fn bazel_cpu_from_host(platform: HostPlatformOverride, arch: HostArchOverride) -> &'static str {
+        let os = match platform {
+            HostPlatformOverride::Default => std::env::consts::OS,
+            HostPlatformOverride::Linux => "linux",
+            HostPlatformOverride::MacOs => "macos",
+            HostPlatformOverride::Windows => "windows",
+        };
+        let arch = match arch {
+            HostArchOverride::Default => std::env::consts::ARCH,
+            HostArchOverride::AArch64 => "aarch64",
+            HostArchOverride::X86_64 => "x86_64",
+        };
+
+        // Match Bazel's AutoCpuConverter legacy names. Bazel intentionally
+        // auto-detects only for the local machine; these aliases are explicit
+        // cross-machine settings, so they must populate cpu/host_cpu.
+        match (os, arch) {
+            ("macos", "x86_64") => "darwin_x86_64",
+            ("macos", "aarch64") => "darwin_arm64",
+            ("freebsd", _) => "freebsd",
+            ("openbsd", _) => "openbsd",
+            ("windows", "x86_64") => "x64_windows",
+            ("windows", "aarch64") => "arm64_windows",
+            ("linux", "x86" | "i386" | "i486" | "i586" | "i686" | "i786") => "piii",
+            ("linux", "x86_64") => "k8",
+            ("linux", "power" | "powerpc" | "powerpc64" | "powerpc64le") => "ppc",
+            ("linux", "arm" | "armv7" | "armv7l") => "arm",
+            ("linux", "aarch64") => "aarch64",
+            ("linux", "s390x") => "s390x",
+            ("linux", "mips64") => "mips64",
+            ("linux", "riscv64") => "riscv64",
+            _ => "unknown",
+        }
+    }
+
+    fn bazel_cpu_override_index(&self, matches: BuckArgMatches<'_>) -> Option<usize> {
+        let names = [
+            "fake_host",
+            "fake_arch",
+            "linux",
+            "linux_arm",
+            "mac",
+            "mac_intel",
+        ];
+        names
+            .iter()
+            .filter_map(|name| {
+                matches
+                    .inner
+                    .indices_of(name)
+                    .and_then(|indices| indices.into_iter().last())
+            })
+            .max()
+    }
+
+    fn bazel_cpu_override_settings(
+        &self,
+        matches: BuckArgMatches<'_>,
+    ) -> Option<(usize, Vec<String>)> {
+        let index = self.bazel_cpu_override_index(matches)?;
+        let cpu =
+            Self::bazel_cpu_from_host(self.host_platform_override(), self.host_arch_override());
+        Some((
+            index,
+            vec![
+                Self::bazel_command_line_string_build_setting("//command_line_option:cpu", cpu),
+                Self::bazel_command_line_string_build_setting(
+                    "//command_line_option:host_cpu",
+                    cpu,
+                ),
+            ],
+        ))
+    }
+
+    fn bazel_host_platform_constraints(
+        &self,
+        matches: BuckArgMatches<'_>,
+    ) -> Option<(usize, ConfigOverride)> {
+        let index = self.bazel_cpu_override_index(matches)?;
+        Some((
+            index,
+            Self::bazel_host_platform_constraints_override(
+                self.host_platform_override(),
+                self.host_arch_override(),
+            ),
+        ))
     }
 
     fn parse_bazel_command_line_build_settings_override(raw_arg: &str) -> Option<Vec<String>> {
@@ -612,6 +751,10 @@ impl CommonBuildConfigurationOptions {
             }),
         );
 
+        if let Some(settings) = self.bazel_cpu_override_settings(matches) {
+            bazel_command_line_build_setting_args.push(settings);
+        }
+
         bazel_command_line_build_setting_args.extend(
             with_indices(&self.bazel_host_cpu, "bazel_host_cpu", matches)?.map(|(index, cpu)| {
                 (
@@ -638,6 +781,44 @@ impl CommonBuildConfigurationOptions {
                     }
                 },
             ),
+        );
+
+        bazel_command_line_build_setting_args.extend(
+            with_indices(
+                &self.bazel_extra_execution_platforms,
+                "bazel_extra_execution_platforms",
+                matches,
+            )?
+            .filter_map(|(index, platforms)| {
+                let settings = Self::bazel_command_line_list_build_setting(
+                    "//command_line_option:extra_execution_platforms",
+                    platforms,
+                );
+                if settings.is_empty() {
+                    None
+                } else {
+                    Some((index, settings))
+                }
+            }),
+        );
+
+        bazel_command_line_build_setting_args.extend(
+            with_indices(
+                &self.bazel_extra_toolchains,
+                "bazel_extra_toolchains",
+                matches,
+            )?
+            .filter_map(|(index, toolchains)| {
+                let settings = Self::bazel_command_line_list_build_setting(
+                    "//command_line_option:extra_toolchains",
+                    toolchains,
+                );
+                if settings.is_empty() {
+                    None
+                } else {
+                    Some((index, settings))
+                }
+            }),
         );
 
         bazel_command_line_build_setting_args.extend(
@@ -731,6 +912,9 @@ impl CommonBuildConfigurationOptions {
         let mut ordered_merged_configs: Vec<(usize, ConfigOverride)> = config_file_args;
         ordered_merged_configs.extend(config_values_args);
         ordered_merged_configs.extend(bazel_command_line_build_setting_arg);
+        if let Some(host_platform_constraints) = self.bazel_host_platform_constraints(matches) {
+            ordered_merged_configs.push(host_platform_constraints);
+        }
         ordered_merged_configs.sort_by(|(lhs_index, _), (rhs_index, _)| lhs_index.cmp(rhs_index));
 
         Ok(ordered_merged_configs.into_map(|(_, config_arg)| config_arg))
@@ -771,6 +955,8 @@ impl CommonBuildConfigurationOptions {
             bazel_cpu: vec![],
             bazel_host_cpu: vec![],
             bazel_platforms: vec![],
+            bazel_extra_execution_platforms: vec![],
+            bazel_extra_toolchains: vec![],
             bazel_java_language_version: vec![],
             bazel_java_runtime_version: vec![],
             bazel_tool_java_language_version: vec![],
@@ -796,6 +982,8 @@ impl CommonBuildConfigurationOptions {
             bazel_cpu: vec![],
             bazel_host_cpu: vec![],
             bazel_platforms: vec![],
+            bazel_extra_execution_platforms: vec![],
+            bazel_extra_toolchains: vec![],
             bazel_java_language_version: vec![],
             bazel_java_runtime_version: vec![],
             bazel_tool_java_language_version: vec![],
@@ -1170,7 +1358,15 @@ mod tests {
             .config
             .config_overrides(matches, &immediate_ctx, &cwd)?;
 
-        assert!(overrides.is_empty());
+        let override_values = overrides
+            .iter()
+            .map(|override_| override_.config_override.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(override_values.len(), 2);
+        assert!(override_values.contains(&"bazel.command_line_build_settings=string\t//command_line_option:cpu\tk8\nstring\t//command_line_option:host_cpu\tk8"));
+        assert!(override_values.contains(
+            &"bazel.host_platform_constraints=@platforms//cpu:x86_64\n@platforms//os:linux"
+        ));
         Ok(())
     }
 
@@ -1232,11 +1428,69 @@ mod tests {
             .config
             .config_overrides(matches, &immediate_ctx, &cwd)?;
 
-        assert_eq!(overrides.len(), 1);
-        assert_eq!(
-            overrides[0].config_override,
-            "bazel.command_line_build_settings=string\t//command_line_option:java_runtime_version\tlocal_jdk"
-        );
+        let override_values = overrides
+            .iter()
+            .map(|override_| override_.config_override.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(override_values.len(), 2);
+        assert!(override_values.contains(&"bazel.command_line_build_settings=string\t//command_line_option:cpu\tk8\nstring\t//command_line_option:host_cpu\tk8\nstring\t//command_line_option:java_runtime_version\tlocal_jdk"));
+        assert!(override_values.contains(
+            &"bazel.host_platform_constraints=@platforms//cpu:x86_64\n@platforms//os:linux"
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn test_os_and_arch_aliases_set_bazel_cpu_defaults() -> buck2_error::Result<()> {
+        let clap = TestConfigOpts::command()
+            .try_get_matches_from(["test", "--os=linux", "--arch=aarch64"])
+            .unwrap();
+        let opts = TestConfigOpts::from_arg_matches(&clap).unwrap();
+        let argv = ExpandedArgvBuilder::new().build();
+        let matches = BuckArgMatches::from_clap(&clap, &argv);
+        let cwd = test_cwd();
+        let immediate_ctx = ImmediateConfigContext::new(&cwd);
+
+        let overrides = opts
+            .config
+            .config_overrides(matches, &immediate_ctx, &cwd)?;
+
+        let override_values = overrides
+            .iter()
+            .map(|override_| override_.config_override.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(override_values.len(), 2);
+        assert!(override_values.contains(&"bazel.command_line_build_settings=string\t//command_line_option:cpu\taarch64\nstring\t//command_line_option:host_cpu\taarch64"));
+        assert!(override_values.contains(
+            &"bazel.host_platform_constraints=@platforms//cpu:aarch64\n@platforms//os:linux"
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn test_explicit_cpu_after_linux_alias_wins() -> buck2_error::Result<()> {
+        let clap = TestConfigOpts::command()
+            .try_get_matches_from(["test", "--linux", "--cpu=custom"])
+            .unwrap();
+        let opts = TestConfigOpts::from_arg_matches(&clap).unwrap();
+        let argv = ExpandedArgvBuilder::new().build();
+        let matches = BuckArgMatches::from_clap(&clap, &argv);
+        let cwd = test_cwd();
+        let immediate_ctx = ImmediateConfigContext::new(&cwd);
+
+        let overrides = opts
+            .config
+            .config_overrides(matches, &immediate_ctx, &cwd)?;
+
+        let override_values = overrides
+            .iter()
+            .map(|override_| override_.config_override.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(override_values.len(), 2);
+        assert!(override_values.contains(&"bazel.command_line_build_settings=string\t//command_line_option:cpu\tk8\nstring\t//command_line_option:host_cpu\tk8\nstring\t//command_line_option:cpu\tcustom"));
+        assert!(override_values.contains(
+            &"bazel.host_platform_constraints=@platforms//cpu:x86_64\n@platforms//os:linux"
+        ));
         Ok(())
     }
 
@@ -1387,6 +1641,8 @@ mod tests {
                 "-c",
                 "foo.bar=baz",
                 "--platforms=//platforms:linux,@platforms//cpu:x86_64",
+                "--extra_execution_platforms=@toolchains//platforms:linux_x86_64",
+                "--extra_toolchains=@toolchains//cc:linux_x86_64",
                 "--host_cpu",
                 "k8",
             ])
@@ -1407,7 +1663,7 @@ mod tests {
         assert_eq!(overrides[0].config_override, "foo.bar=baz");
         assert_eq!(
             overrides[1].config_override,
-            "bazel.command_line_build_settings=string\t//command_line_option:cpu\tk8\nlist\t//command_line_option:platforms\t//platforms:linux\nlist\t//command_line_option:platforms\t@platforms//cpu:x86_64\nstring\t//command_line_option:host_cpu\tk8"
+            "bazel.command_line_build_settings=string\t//command_line_option:cpu\tk8\nlist\t//command_line_option:platforms\t//platforms:linux\nlist\t//command_line_option:platforms\t@platforms//cpu:x86_64\nlist\t//command_line_option:extra_execution_platforms\t@toolchains//platforms:linux_x86_64\nlist\t//command_line_option:extra_toolchains\t@toolchains//cc:linux_x86_64\nstring\t//command_line_option:host_cpu\tk8"
         );
         Ok(())
     }

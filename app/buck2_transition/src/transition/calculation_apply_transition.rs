@@ -138,7 +138,7 @@ fn bazel_command_line_option_default(key: &str) -> Option<BazelBuildSettingValue
             BazelBuildSettingValue::String(String::new())
         }
         "java_runtime_version" => BazelBuildSettingValue::String("local_jdk".to_owned()),
-        "tool_java_runtime_version" => BazelBuildSettingValue::String("remotejdk_11".to_owned()),
+        "tool_java_runtime_version" => BazelBuildSettingValue::String("remotejdk_25".to_owned()),
         "ios_multi_cpus" | "macos_cpus" | "tvos_cpus" | "visionos_cpus" | "watchos_cpus" => {
             BazelBuildSettingValue::StringList(Vec::new())
         }
@@ -995,7 +995,7 @@ mod tests {
         );
         assert_eq!(
             bazel_command_line_option_default("//command_line_option:tool_java_runtime_version"),
-            Some(BazelBuildSettingValue::String("remotejdk_11".to_owned()))
+            Some(BazelBuildSettingValue::String("remotejdk_25".to_owned()))
         );
         assert_eq!(
             bazel_command_line_option_default("//command_line_option:java_language_version"),

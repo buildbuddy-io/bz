@@ -374,7 +374,7 @@ impl BuckConfigBasedCells {
                 || apply_bazel_project_defaults)
         {
             let bazelrc_options = if apply_bazel_project_defaults {
-                get_bazelrc_options(cell_path, file_ops).await?
+                get_bazelrc_options(cell_path, file_ops, &[]).await?
             } else {
                 BazelCompatBazelrcOptions::default()
             };
@@ -550,7 +550,7 @@ impl BuckConfigBasedCells {
             .await?;
         let root_config = if apply_bazel_compat_defaults && bazel_compat_project_root {
             let bazelrc_options = buckconfig_load_stage("reading bazelrc options", async {
-                get_bazelrc_options(&root_path, &mut file_ops).await
+                get_bazelrc_options(&root_path, &mut file_ops, &processed_config_args).await
             })
             .await?;
             let root_config =
@@ -776,7 +776,7 @@ impl BuckConfigBasedCells {
             should_apply_bazel_compat_defaults(cell_path, file_ops).await?;
         if apply_bazel_project_defaults {
             let bazelrc_options = if apply_bazel_project_defaults {
-                get_bazelrc_options(cell_path, file_ops).await?
+                get_bazelrc_options(cell_path, file_ops, external_data.args.as_ref()).await?
             } else {
                 BazelCompatBazelrcOptions::default()
             };
@@ -1362,7 +1362,39 @@ fn bazelrc_add_options(
     changed
 }
 
-fn bazelrc_options_from_records(records: &[BazelrcRecord]) -> BazelCompatBazelrcOptions {
+fn bazelrc_host_config_from_host_platform_constraints(value: &str) -> Option<&'static str> {
+    for constraint in value.lines().map(str::trim) {
+        match constraint.strip_prefix("@platforms//os:") {
+            Some("linux") => return Some("linux"),
+            Some("osx" | "macos") => return Some("macos"),
+            Some("windows") => return Some("windows"),
+            _ => {}
+        }
+    }
+    None
+}
+
+fn bazelrc_host_config_from_config_args(
+    config_args: &[ResolvedLegacyConfigArg],
+) -> Option<&'static str> {
+    config_args.iter().rev().find_map(|arg| match arg {
+        ResolvedLegacyConfigArg::Flag(flag)
+            if flag.cell.is_none()
+                && flag.section == "bazel"
+                && flag.key == BAZEL_HOST_PLATFORM_CONSTRAINTS =>
+        {
+            flag.value
+                .as_deref()
+                .and_then(bazelrc_host_config_from_host_platform_constraints)
+        }
+        _ => None,
+    })
+}
+
+fn bazelrc_options_from_records(
+    records: &[BazelrcRecord],
+    host_config_override: Option<&'static str>,
+) -> BazelCompatBazelrcOptions {
     let mut enable_platform_specific_config = false;
     for record in records {
         let (command, config) = record
@@ -1388,7 +1420,7 @@ fn bazelrc_options_from_records(records: &[BazelrcRecord]) -> BazelCompatBazelrc
 
     let mut active_configs = BTreeSet::new();
     if enable_platform_specific_config {
-        let host_config = bazelrc_host_config();
+        let host_config = host_config_override.unwrap_or_else(bazelrc_host_config);
         if !host_config.is_empty() {
             active_configs.insert(host_config.to_owned());
         }
@@ -1424,6 +1456,7 @@ fn bazelrc_options_from_records(records: &[BazelrcRecord]) -> BazelCompatBazelrc
 async fn get_bazelrc_options(
     cell_path: &CellRootPath,
     file_ops: &mut dyn ConfigParserFileOps,
+    config_args: &[ResolvedLegacyConfigArg],
 ) -> buck2_error::Result<BazelCompatBazelrcOptions> {
     let root_bazelrc = ConfigPath::Project(
         cell_path
@@ -1441,7 +1474,10 @@ async fn get_bazelrc_options(
         &mut records,
     )
     .await?;
-    Ok(bazelrc_options_from_records(&records))
+    Ok(bazelrc_options_from_records(
+        &records,
+        bazelrc_host_config_from_config_args(config_args),
+    ))
 }
 
 #[derive(Default, Clone, Debug, PartialEq, Eq, Allocative, Pagable)]
@@ -1516,6 +1552,7 @@ impl BazelModuleCellAliases {
     }
 
     fn register_external_cell_origins(&self) -> buck2_error::Result<()> {
+        register_bzlmod_cell_canonical_repo_name_for_cell("bazel_tools", "bazel_tools");
         for module in &self.external_modules {
             register_bzlmod_cell_canonical_repo_name_for_cell(
                 module.cell_name(),
@@ -2037,6 +2074,7 @@ struct BzlmodRepoSpecValue {
 pub const BZLMOD_ALLOWED_YANKED_VERSIONS_ENV: &str = "BZLMOD_ALLOW_YANKED_VERSIONS";
 pub const BZLMOD_REPOSITORY_OS_NAME_ENV: &str = "BUCK2_REPOSITORY_OS_NAME";
 pub const BZLMOD_REPOSITORY_OS_ARCH_ENV: &str = "BUCK2_REPOSITORY_OS_ARCH";
+const BAZEL_HOST_PLATFORM_CONSTRAINTS: &str = "host_platform_constraints";
 const BZLMOD_HIDDEN_LOCKFILE_SCHEMA_FIELD: &str = "buck2HiddenLockfileSchemaVersion";
 const BZLMOD_HIDDEN_LOCKFILE_SCHEMA_VERSION: u64 = 3;
 
@@ -2579,26 +2617,34 @@ impl SetBzlmodRepositoryEnvironment for DiceTransactionUpdater {
         &mut self,
         vars: BTreeMap<String, String>,
     ) -> buck2_error::Result<()> {
-        let changed_vars = self
+        let provided_vars = vars.keys().cloned().collect::<BTreeSet<_>>();
+        let mut changed_vars = vars
+            .into_iter()
+            .map(|(name, value)| {
+                (
+                    BzlmodRepositoryEnvironmentVariableKey { name },
+                    Ok(Arc::new(BzlmodRepositoryEnvironmentVariableValue {
+                        value: Some(value),
+                    })),
+                )
+            })
+            .collect::<Vec<_>>();
+        changed_vars.extend(
+            self
             .existing_key_values_of_type_for_introspection::<
                 BzlmodRepositoryEnvironmentVariableKey,
             >()
             .into_iter()
-            .filter_map(move |(key, old)| {
-                let fresh = Ok(Arc::new(BzlmodRepositoryEnvironmentVariableValue {
-                    value: vars.get(&key.name).cloned(),
-                }));
-                if old
-                    .as_ref()
-                    .is_some_and(|old| {
-                        BzlmodRepositoryEnvironmentVariableKey::equality(old, &fresh)
-                    })
-                {
-                    None
-                } else {
-                    Some((key, fresh))
-                }
-            });
+            .filter(|(key, _old)| !provided_vars.contains(&key.name))
+            .map(|(key, _old)| {
+                (
+                    key,
+                    Ok(Arc::new(BzlmodRepositoryEnvironmentVariableValue {
+                        value: None,
+                    })),
+                )
+            }),
+        );
         Ok(self.changed_to(changed_vars)?)
     }
 }
@@ -3344,6 +3390,7 @@ impl Key for BzlmodResolutionKey {
                 )
             })
             .collect::<BTreeMap<_, _>>();
+        let host_platform_setup = bzlmod_host_platform_setup_from_config(ctx).await?;
         let BcrResolution {
             external_modules,
             root_aliases,
@@ -3356,6 +3403,7 @@ impl Key for BzlmodResolutionKey {
             &root.single_version_overrides,
             &root.local_path_overrides,
             &extension_usages_json_by_id,
+            &host_platform_setup,
         )?;
         let mut aliases = root.aliases.clone();
         aliases.external_modules = external_modules;
@@ -4017,7 +4065,9 @@ async fn bzlmod_http_client() -> buck2_error::Result<HttpClient> {
     let mut builder = HttpClientBuilder::oss().await?;
     builder
         .with_max_redirects(10)
+        .with_http2(false)
         .with_connect_timeout(Some(Duration::from_secs(60)))
+        .with_response_header_timeout(Some(Duration::from_secs(60)))
         .with_read_timeout(Some(Duration::from_secs(60)))
         .with_write_timeout(Some(Duration::from_secs(60)))
         .with_max_concurrent_requests(Some(8));
@@ -4180,6 +4230,7 @@ fn resolve_bcr_modules_from_dep_graph(
     single_version_overrides: &BTreeMap<String, BzlmodSingleVersionOverride>,
     local_path_overrides: &BTreeMap<String, BzlmodLocalPathOverride>,
     extension_usages_json_by_id: &BTreeMap<BzlmodExtensionId, String>,
+    host_platform_setup: &BzlmodHostPlatformSetup,
 ) -> buck2_error::Result<BcrResolution> {
     let root_module = &dep_graph.root_module;
     let discovered = &dep_graph.discovered;
@@ -4267,6 +4318,7 @@ fn resolve_bcr_modules_from_dep_graph(
         &dep_graph.canonical_repo_names_by_cell,
         &dep_graph.extension_unique_names,
         extension_usages_json_by_id,
+        host_platform_setup,
     )?;
     resolved.extend(generated_resolution.external_modules);
     let registered_toolchains = resolve_bzlmod_registered_toolchains(
@@ -4490,6 +4542,36 @@ struct GeneratedBzlmodReposResolution {
     external_modules: Vec<BazelCompatExternalModule>,
 }
 
+fn bzlmod_host_platform_setup_from_constraints(raw: Option<&str>) -> BzlmodHostPlatformSetup {
+    let mut setup = BzlmodHostPlatformSetup::default();
+    for constraint in raw.into_iter().flat_map(str::lines).map(str::trim) {
+        if let Some(cpu) = constraint.strip_prefix("@platforms//cpu:") {
+            setup.cpu_constraint = Some(Arc::from(cpu));
+        } else if let Some(os) = constraint.strip_prefix("@platforms//os:") {
+            setup.os_constraint = Some(Arc::from(os));
+        }
+    }
+    setup
+}
+
+async fn bzlmod_host_platform_setup_from_config(
+    ctx: &mut DiceComputations<'_>,
+) -> buck2_error::Result<BzlmodHostPlatformSetup> {
+    let root_cell = ctx.get_cell_resolver().await?.root_cell();
+    let constraints = ctx
+        .get_legacy_config_property(
+            root_cell,
+            BuckconfigKeyRef {
+                section: "bazel",
+                property: BAZEL_HOST_PLATFORM_CONSTRAINTS,
+            },
+        )
+        .await?;
+    Ok(bzlmod_host_platform_setup_from_constraints(
+        constraints.as_deref(),
+    ))
+}
+
 fn resolve_generated_bzlmod_repos(
     root_module: &RootBzlmodModule,
     discovered: &BTreeMap<(String, String), DiscoveredBcrModule>,
@@ -4499,6 +4581,7 @@ fn resolve_generated_bzlmod_repos(
     canonical_repo_names_by_cell: &BTreeMap<String, String>,
     extension_unique_names: &BTreeMap<BzlmodExtensionId, String>,
     extension_usages_json_by_id: &BTreeMap<BzlmodExtensionId, String>,
+    host_platform_setup: &BzlmodHostPlatformSetup,
 ) -> buck2_error::Result<GeneratedBzlmodReposResolution> {
     let mut generated = Vec::new();
     let mut generated_repo_declaring_cells = Vec::new();
@@ -4588,31 +4671,45 @@ fn resolve_generated_bzlmod_repos(
         }
 
         if module.dep.name == "platforms" {
-            for import in
-                bzlmod_extension_imports_from_usages(&module.extension_usages, "host_platform")
+            for usage in module
+                .extension_usages
+                .iter()
+                .filter(|usage| usage.extension_name == "host_platform")
             {
-                if import.repo_name != "host_platform" {
-                    continue;
-                }
-                let canonical_repo_name = format!(
-                    "{}+host_platform+{}",
-                    parent_canonical_repo_name, import.repo_name
-                );
-                let generator_json = serde_json::to_string(
-                    &BzlmodGeneratedCellGenerator::HostPlatform(BzlmodHostPlatformSetup::default()),
-                )
-                .buck_error_context(
-                    "Error serializing generated host_platform repo configuration",
-                )?;
-                add_generated_bzlmod_repo(
-                    &mut generated,
-                    &mut generated_repo_declaring_cells,
-                    cell_aliases_by_cell,
+                let resolved_extension = bzlmod_resolve_extension(
                     &parent_cell_name,
-                    &import.alias,
-                    &canonical_repo_name,
-                    generator_json,
-                );
+                    usage,
+                    cell_aliases_by_cell,
+                    extension_unique_names,
+                )?;
+                for import in &usage.imports {
+                    if import.repo_name != "host_platform" {
+                        continue;
+                    }
+                    let canonical_repo_name = format!(
+                        "{}+host_platform+{}",
+                        parent_canonical_repo_name, import.repo_name
+                    );
+                    let generator_json = serde_json::to_string(
+                        &BzlmodGeneratedCellGenerator::HostPlatform(host_platform_setup.dupe()),
+                    )
+                    .buck_error_context(
+                        "Error serializing generated host_platform repo configuration",
+                    )?;
+                    let generated_cell_name = add_generated_bzlmod_repo(
+                        &mut generated,
+                        &mut generated_repo_declaring_cells,
+                        cell_aliases_by_cell,
+                        &parent_cell_name,
+                        &import.alias,
+                        &canonical_repo_name,
+                        generator_json,
+                    );
+                    extension_generated_repo_groups
+                        .entry(resolved_extension.unique_name.clone())
+                        .or_default()
+                        .push((import.repo_name.clone(), generated_cell_name));
+                }
             }
         }
 
@@ -9338,6 +9435,7 @@ mod tests {
     use crate::external_cells::EXTERNAL_CELLS_IMPL;
     use crate::external_cells::ExternalCellsImpl;
     use crate::file_ops::delegate::FileOpsDelegate;
+    use crate::legacy_configs::args::ResolvedConfigFlag;
     use crate::legacy_configs::cells::BuckConfigBasedCells;
     use crate::legacy_configs::configs::testing::TestConfigParserFileOps;
     use crate::legacy_configs::configs::tests::assert_config_value;
@@ -9411,6 +9509,16 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn test_bzlmod_host_platform_setup_from_constraints() {
+        let setup = super::bzlmod_host_platform_setup_from_constraints(Some(
+            "@platforms//cpu:x86_64\n@platforms//os:linux",
+        ));
+
+        assert_eq!(setup.cpu_constraint.as_deref(), Some("x86_64"));
+        assert_eq!(setup.os_constraint.as_deref(), Some("linux"));
+    }
+
     #[tokio::test]
     async fn test_bazelrc_workspace_import_normalizes_path() -> buck2_error::Result<()> {
         let mut file_ops = TestConfigParserFileOps::new(&[
@@ -9422,7 +9530,7 @@ mod tests {
         ])?;
 
         let options =
-            super::get_bazelrc_options(CellRootPath::testing_new(""), &mut file_ops).await?;
+            super::get_bazelrc_options(CellRootPath::testing_new(""), &mut file_ops, &[]).await?;
 
         assert_eq!(options.copt, vec!["-DFROM_IMPORTED"]);
         Ok(())
@@ -9436,7 +9544,7 @@ mod tests {
         )])?;
 
         let options =
-            super::get_bazelrc_options(CellRootPath::testing_new(""), &mut file_ops).await?;
+            super::get_bazelrc_options(CellRootPath::testing_new(""), &mut file_ops, &[]).await?;
 
         assert_eq!(
             options.command_line_build_settings,
@@ -9459,12 +9567,41 @@ mod tests {
         )])?;
 
         let options =
-            super::get_bazelrc_options(CellRootPath::testing_new(""), &mut file_ops).await?;
+            super::get_bazelrc_options(CellRootPath::testing_new(""), &mut file_ops, &[]).await?;
 
         assert_eq!(
             options.repo_env,
             vec!["BAZEL_DO_NOT_DETECT_CPP_TOOLCHAIN=1", "INHERITED", "=UNSET",]
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_bazelrc_platform_specific_config_uses_configured_host_platform()
+    -> buck2_error::Result<()> {
+        let mut file_ops = TestConfigParserFileOps::new(&[(
+            ".bazelrc",
+            indoc!(
+                r#"
+                common --enable_platform_specific_config=true
+                common:linux --cxxopt=-DLINUX
+                common:macos --macos_minimum_os=12.0
+                "#
+            ),
+        )])?;
+        let config_args = vec![super::ResolvedLegacyConfigArg::Flag(ResolvedConfigFlag {
+            section: "bazel".to_owned(),
+            key: super::BAZEL_HOST_PLATFORM_CONSTRAINTS.to_owned(),
+            value: Some("@platforms//cpu:x86_64\n@platforms//os:linux".to_owned()),
+            cell: None,
+        })];
+
+        let options =
+            super::get_bazelrc_options(CellRootPath::testing_new(""), &mut file_ops, &config_args)
+                .await?;
+
+        assert_eq!(options.cxxopt, vec!["-DLINUX"]);
+        assert!(options.macos_minimum_os.is_empty());
         Ok(())
     }
 
@@ -9477,7 +9614,7 @@ mod tests {
         )])?;
 
         let options =
-            super::get_bazelrc_options(CellRootPath::testing_new(""), &mut file_ops).await?;
+            super::get_bazelrc_options(CellRootPath::testing_new(""), &mut file_ops, &[]).await?;
 
         assert_eq!(options.copt, vec!["-DLOCAL"]);
         Ok(())
@@ -9491,7 +9628,8 @@ mod tests {
         )])
         .unwrap();
 
-        let result = super::get_bazelrc_options(CellRootPath::testing_new(""), &mut file_ops).await;
+        let result =
+            super::get_bazelrc_options(CellRootPath::testing_new(""), &mut file_ops, &[]).await;
 
         assert!(result.is_err());
     }

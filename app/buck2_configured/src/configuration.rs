@@ -228,7 +228,7 @@ fn bazel_command_line_option_default(setting: &str) -> Option<&'static str> {
         "strict_proto_deps" => Some("error"),
         "strict_public_imports" => Some("off"),
         "strip" => Some("sometimes"),
-        "tool_java_runtime_version" => Some("remotejdk_11"),
+        "tool_java_runtime_version" => Some("remotejdk_25"),
         _ => None,
     }
 }

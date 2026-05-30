@@ -1669,6 +1669,33 @@ async fn resolve_constraint_value_alias(
     resolve_bazel_alias(ctx, constraint_value).await
 }
 
+async fn resolve_registered_bazel_toolchain_node(
+    ctx: &mut DiceComputations<'_>,
+    node: TargetNode,
+) -> buck2_error::Result<Option<TargetNode>> {
+    if bazel_rule_kind_is(&node, "toolchain") {
+        return Ok(Some(node));
+    }
+    if !bazel_rule_kind_is(&node, "alias") {
+        return Ok(None);
+    }
+
+    let Some(actual) = node
+        .attr_or_none("actual", AttrInspectOptions::All)
+        .and_then(|attr| attr_target_label(&attr.value).map(|label| label.dupe()))
+    else {
+        return Ok(None);
+    };
+
+    let actual = resolve_bazel_alias(ctx, &actual).await?;
+    let actual_node = ctx.get_target_node(&actual).await?;
+    if bazel_rule_kind_is(&actual_node, "toolchain") {
+        Ok(Some(actual_node))
+    } else {
+        Ok(None)
+    }
+}
+
 async fn platform_contains_constraint_values(
     ctx: &mut DiceComputations<'_>,
     platform_cfg: &ConfigurationData,
@@ -1837,9 +1864,9 @@ async fn compute_registered_bazel_toolchain_nodes(
             return Err(missing.into_first_error().into());
         }
         for node in targets.into_values() {
-            if !bazel_rule_kind_is(&node, "toolchain") {
+            let Some(node) = resolve_registered_bazel_toolchain_node(ctx, node).await? else {
                 continue;
-            }
+            };
             let Some(toolchain_type) = node
                 .attr_or_none("toolchain_type", AttrInspectOptions::All)
                 .and_then(|attr| attr_target_label(&attr.value).map(|label| label.dupe()))
