@@ -752,10 +752,31 @@ fn write_cc_autoconf_toolchains_repo(
     write_generated_module_file(dest, "local_config_cc_toolchains")?;
     let template =
         cc_toolchains_build_template(project_fs, dest_rel, &setup.parent_canonical_repo_name)?;
-    let build = template.replace("%{name}", host_cc_cpu_value());
+    let build = local_config_cc_toolchains_build_file(&template);
     fs_util::write(dest.join(ForwardRelativePath::new("BUILD.bazel")?), build)
         .categorize_internal()?;
     Ok(())
+}
+
+fn actual_host_constraints_bzl() -> String {
+    let mut constraints = Vec::new();
+    if let Some(cpu) = host_platform_cpu_constraint() {
+        constraints.push(format!("    \"@platforms//cpu:{cpu}\","));
+    }
+    if let Some(os) = host_platform_os_constraint() {
+        constraints.push(format!("    \"@platforms//os:{os}\","));
+    }
+    format!("HOST_CONSTRAINTS = [\n{}\n]\n", constraints.join("\n"))
+}
+
+fn local_config_cc_toolchains_build_file(template: &str) -> String {
+    template
+        .replacen(
+            "load(\"@platforms//host:constraints.bzl\", \"HOST_CONSTRAINTS\")\n",
+            &actual_host_constraints_bzl(),
+            1,
+        )
+        .replace("%{name}", host_cc_cpu_value())
 }
 
 fn write_cc_autoconf_repo(
@@ -2004,6 +2025,31 @@ mod tests {
     }
 
     #[test]
+    fn local_config_cc_toolchains_use_actual_host_constraints() {
+        let build = local_config_cc_toolchains_build_file(
+            r#"load("@platforms//host:constraints.bzl", "HOST_CONSTRAINTS")
+
+toolchain(
+    name = "cc-toolchain-%{name}",
+    exec_compatible_with = HOST_CONSTRAINTS,
+    target_compatible_with = HOST_CONSTRAINTS,
+)
+"#,
+        );
+
+        assert!(!build.contains("load(\"@platforms//host:constraints.bzl\""));
+        assert!(build.contains(&format!(
+            "\"@platforms//cpu:{}\"",
+            host_platform_cpu_constraint().unwrap()
+        )));
+        assert!(build.contains(&format!(
+            "\"@platforms//os:{}\"",
+            host_platform_os_constraint().unwrap()
+        )));
+        assert!(build.contains(&format!("cc-toolchain-{}", host_cc_cpu_value())));
+    }
+
+    #[test]
     fn bzlmod_repo_contents_cache_alias_is_published_atomically() -> buck2_error::Result<()> {
         let project_root = ProjectRootTemp::new()?;
         let cache_repo_a =
@@ -3118,7 +3164,7 @@ fn bzlmod_generated_repository_rule_materialization_stamp_content(
 
 fn bzlmod_generated_repo_contents_cache_key(setup: &BzlmodGeneratedCellSetup) -> String {
     let mut hasher = blake3::Hasher::new();
-    update_bzlmod_repo_contents_cache_key(&mut hasher, "buck2-bzlmod-generated-materialization-v6");
+    update_bzlmod_repo_contents_cache_key(&mut hasher, "buck2-bzlmod-generated-materialization-v7");
     update_bzlmod_repo_contents_cache_key(&mut hasher, std::env::consts::OS);
     update_bzlmod_repo_contents_cache_key(&mut hasher, std::env::consts::ARCH);
     update_bzlmod_repo_contents_cache_key(&mut hasher, &setup.canonical_repo_name);

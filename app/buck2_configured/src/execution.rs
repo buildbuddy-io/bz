@@ -253,6 +253,20 @@ pub async fn find_execution_platform_by_configuration(
                 }
             }
             if search_bazel_host_platform {
+                let extra_platform = async {
+                    for target in bazel_extra_execution_platform_targets(ctx, cfg).await? {
+                        let platform = bazel_execution_platform_from_target(ctx, &target).await?;
+                        if platform.cfg() == exec_cfg {
+                            return buck2_error::Ok(Some(platform));
+                        }
+                    }
+                    buck2_error::Ok(None)
+                }
+                .boxed()
+                .await?;
+                if let Some(extra_platform) = extra_platform {
+                    return Ok(extra_platform);
+                }
                 let host = bazel_host_execution_platform(ctx).await?;
                 if host.cfg() == exec_cfg {
                     return Ok(host);
@@ -358,6 +372,45 @@ impl ExecutionPlatformConstraints {
         })
         .await?
     }
+}
+
+async fn resolve_bazel_extra_execution_platforms(
+    ctx: &mut DiceComputations<'_>,
+    node_cell: CellNameForConfigurationResolution,
+    cfg: &ConfigurationData,
+    constraints: &ExecutionPlatformConstraints,
+) -> buck2_error::Result<Option<ExecutionPlatformResolutionPartial>> {
+    let extra_execution_platforms = bazel_extra_execution_platform_targets(ctx, cfg).await?;
+    if extra_execution_platforms.is_empty() {
+        return Ok(None);
+    }
+
+    let mut skipped = Vec::new();
+    for target in extra_execution_platforms {
+        let exec_platform = bazel_execution_platform_from_target(ctx, &target).await?;
+        match check_execution_platform(
+            ctx,
+            node_cell,
+            &constraints.exec_compatible_with,
+            &constraints.exec_deps,
+            &exec_platform,
+            &constraints.toolchain_deps,
+        )
+        .await?
+        {
+            Ok(()) => {
+                return Ok(Some(ExecutionPlatformResolutionPartial::new(
+                    Some(exec_platform),
+                    skipped,
+                )));
+            }
+            Err(reason) => {
+                skipped.push((exec_platform.id(), reason));
+            }
+        }
+    }
+
+    Ok(None)
 }
 
 #[derive(Clone, Display, Debug, Dupe, Eq, Hash, PartialEq, Allocative, Pagable)]
@@ -529,6 +582,20 @@ pub(crate) async fn resolve_execution_platform(
     gathered_deps: &GatheredDeps,
     cfg_ctx: &(dyn AttrConfigurationContext + Sync),
 ) -> buck2_error::Result<ExecutionPlatformResolutionPartial> {
+    let constraints = ExecutionPlatformConstraints::new(node, gathered_deps, cfg_ctx)?;
+    let node_cell = CellNameForConfigurationResolution(node.label().pkg().cell_name());
+    if node.is_bazel_rule()
+        && let Some(extra_platform) = resolve_bazel_extra_execution_platforms(
+            ctx,
+            node_cell,
+            matched_cfg_keys.cfg().cfg(),
+            &constraints,
+        )
+        .await?
+    {
+        return Ok(extra_platform);
+    }
+
     // If no execution platforms are configured, we fall back to the legacy execution
     // platform behavior. We currently only support legacy execution platforms. That behavior is that there is a
     // single executor config (the fallback config) and the execution platform is in the same
@@ -536,51 +603,14 @@ pub(crate) async fn resolve_execution_platform(
     // The non-none case will be handled when we invoke the resolve_execution_platform() on ctx below, the none
     // case can't be handled there because we don't pass the full configuration into it.
     if ctx.get_execution_platforms().await?.is_none() {
-        if node.is_bazel_rule() {
-            let extra_execution_platforms =
-                bazel_extra_execution_platform_targets(ctx, matched_cfg_keys.cfg().cfg()).await?;
-            if !extra_execution_platforms.is_empty() {
-                let constraints = ExecutionPlatformConstraints::new(node, gathered_deps, cfg_ctx)?;
-                let mut skipped = Vec::new();
-                for target in extra_execution_platforms {
-                    let exec_platform = bazel_execution_platform_from_target(ctx, &target).await?;
-                    match check_execution_platform(
-                        ctx,
-                        CellNameForConfigurationResolution(node.label().pkg().cell_name()),
-                        &constraints.exec_compatible_with,
-                        &constraints.exec_deps,
-                        &exec_platform,
-                        &constraints.toolchain_deps,
-                    )
-                    .await?
-                    {
-                        Ok(()) => {
-                            return Ok(ExecutionPlatformResolutionPartial::new(
-                                Some(exec_platform),
-                                skipped,
-                            ));
-                        }
-                        Err(reason) => {
-                            skipped.push((exec_platform.id(), reason));
-                        }
-                    }
-                }
-                return Err(ExecutionPlatformError::NoCompatiblePlatform(Arc::new(skipped)).into());
-            }
-        }
         return Ok(ExecutionPlatformResolutionPartial::new(
             Some(legacy_execution_platform_for_node(ctx, node, matched_cfg_keys.cfg()).await?),
             Vec::new(),
         ));
     };
 
-    let constraints = ExecutionPlatformConstraints::new(node, gathered_deps, cfg_ctx)?;
     constraints
-        .one_for_cell(
-            ctx,
-            CellNameForConfigurationResolution(node.label().pkg().cell_name()),
-            node.is_bazel_rule(),
-        )
+        .one_for_cell(ctx, node_cell, node.is_bazel_rule())
         .await
 }
 

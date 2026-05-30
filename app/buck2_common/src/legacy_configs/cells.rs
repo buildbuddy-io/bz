@@ -1224,11 +1224,14 @@ fn bazelrc_native_command_line_string_option(name: &str) -> bool {
 }
 
 fn bazelrc_native_command_line_list_option(name: &str) -> bool {
-    matches!(name, "javacopt" | "host_javacopt" | "platforms")
+    matches!(
+        name,
+        "javacopt" | "host_javacopt" | "platforms" | "extra_execution_platforms" | "extra_toolchains"
+    )
 }
 
 fn bazelrc_native_command_line_comma_separated_list_option(name: &str) -> bool {
-    matches!(name, "platforms")
+    matches!(name, "platforms" | "extra_execution_platforms" | "extra_toolchains")
 }
 
 fn bazelrc_command_line_list_build_setting_entries(
@@ -9540,7 +9543,7 @@ mod tests {
     async fn test_bazelrc_bazel_native_configuration_flags() -> buck2_error::Result<()> {
         let mut file_ops = TestConfigParserFileOps::new(&[(
             ".bazelrc",
-            "build --cpu=k8 --host_cpu=k8 --platforms=//platforms:linux,@platforms//cpu:x86_64 --javacopt=-Akey=a,b\n",
+            "build --cpu=k8 --host_cpu=k8 --platforms=//platforms:linux,@platforms//cpu:x86_64 --extra_execution_platforms=@toolchains//platforms:linux_x86_64 --extra_toolchains=@toolchains//cc:linux_x86_64 --javacopt=-Akey=a,b\n",
         )])?;
 
         let options =
@@ -9553,6 +9556,8 @@ mod tests {
                 "string\t//command_line_option:host_cpu\tk8",
                 "list\t//command_line_option:platforms\t//platforms:linux",
                 "list\t//command_line_option:platforms\t@platforms//cpu:x86_64",
+                "list\t//command_line_option:extra_execution_platforms\t@toolchains//platforms:linux_x86_64",
+                "list\t//command_line_option:extra_toolchains\t@toolchains//cc:linux_x86_64",
                 "list\t//command_line_option:javacopt\t-Akey=a,b",
             ]
         );

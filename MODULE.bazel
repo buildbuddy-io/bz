@@ -10,6 +10,7 @@ bazel_dep(name = "rules_cc", version = "0.2.17")
 bazel_dep(name = "rules_java", version = "9.1.0")
 bazel_dep(name = "rules_python", version = "1.7.0")
 bazel_dep(name = "rules_shell", version = "0.6.1")
+bazel_dep(name = "toolchains_buildbuddy", version = "0.0.4")
 
 RUST_EDITION = "2024"
 RUST_VERSION = "nightly/2026-01-18"
@@ -24,6 +25,14 @@ rust.toolchain(
 )
 use_repo(rust, "rust_toolchains")
 register_toolchains("@rust_toolchains//:all")
+
+buildbuddy = use_extension("@toolchains_buildbuddy//:extensions.bzl", "buildbuddy")
+buildbuddy.platform(buildbuddy_container_image = "UBUNTU24_04_IMAGE")
+use_repo(buildbuddy, "buildbuddy_toolchain")
+register_toolchains(
+    "@toolchains_buildbuddy//toolchains/cc:ubuntu_gcc_x86_64",
+    "@toolchains_buildbuddy//toolchains/cc:ubuntu_gcc_arm64",
+)
 
 rust_host_tools = use_extension("@rules_rust//rust:extensions.bzl", "rust_host_tools")
 rust_host_tools.host_tools(

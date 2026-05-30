@@ -1,1 +1,7 @@
 build --@rules_rust//rust/toolchain/channel=nightly
+build --enable_platform_specific_config
+
+build:linux --repo_env=BAZEL_DO_NOT_DETECT_CPP_TOOLCHAIN=1
+build:linux --platforms=@toolchains_buildbuddy//platforms:linux_x86_64
+build:linux --extra_execution_platforms=@toolchains_buildbuddy//platforms:linux_x86_64
+build:linux --extra_toolchains=@toolchains_buildbuddy//toolchains/cc:ubuntu_gcc_x86_64
