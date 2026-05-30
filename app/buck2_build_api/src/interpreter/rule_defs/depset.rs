@@ -10,6 +10,8 @@
 use std::fmt;
 use std::hash::Hash;
 use std::marker::PhantomData;
+use std::sync::atomic::AtomicU32;
+use std::sync::atomic::Ordering;
 use std::sync::OnceLock;
 
 use allocative::Allocative;
@@ -219,12 +221,21 @@ pub struct BazelDepsetGen<'v, V: ValueLike<'v>> {
     order: BazelDepsetOrder,
     #[freeze(identity)]
     element_type: Option<String>,
+    #[freeze(identity)]
+    hash: StarlarkHashValue,
     to_list_cache: BazelDepsetToListCache,
     artifact_inputs_cache: BazelDepsetArtifactInputsCache,
     _marker: PhantomData<&'v ()>,
 }
 
 starlark_complex_value!(pub BazelDepset<'v>);
+
+static NEXT_BAZEL_DEPSET_HASH: AtomicU32 = AtomicU32::new(1);
+
+fn next_bazel_depset_hash() -> StarlarkHashValue {
+    let id = NEXT_BAZEL_DEPSET_HASH.fetch_add(1, Ordering::Relaxed);
+    StarlarkHashValue::new(&id)
+}
 
 impl<'v, V: ValueLike<'v>> BazelDepsetGen<'v, V> {
     fn order(&self) -> BazelDepsetOrder {
@@ -630,21 +641,7 @@ where
     }
 
     fn write_hash(&self, hasher: &mut StarlarkHasher) -> starlark::Result<()> {
-        let mut hash_cache = BazelDepsetHashCache::default();
-        "bazel_depset".hash(hasher);
-        self.order.hash(hasher);
-        self.direct.len().hash(hasher);
-        for value in &self.direct {
-            bazel_depset_hash(value.to_value(), &mut hash_cache)?
-                .get()
-                .hash(hasher);
-        }
-        self.transitive.len().hash(hasher);
-        for value in &self.transitive {
-            bazel_depset_hash(value.to_value(), &mut hash_cache)?
-                .get()
-                .hash(hasher);
-        }
+        self.hash.get().hash(hasher);
         Ok(())
     }
 
@@ -688,8 +685,8 @@ fn bazel_depset_hash_uncached<'v>(
     value: Value<'v>,
     cache: &mut BazelDepsetHashCache<'v>,
 ) -> starlark::Result<StarlarkHashValue> {
-    if let Ok(hash) = value.get_hashed() {
-        return Ok(hash.hash());
+    if BazelDepset::from_value(value).is_some() {
+        return Ok(bazel_depset_identity_hash_value(value));
     }
 
     let mut hasher = StarlarkHasher::new();
@@ -760,12 +757,20 @@ fn bazel_depset_write_hash<'v>(
         return Ok(());
     }
 
+    if let Ok(hash) = value.get_hashed() {
+        hash.hash().get().hash(hasher);
+        return Ok(());
+    }
+
     "bazel_depset_identity".hash(hasher);
     bazel_depset_identity_hash_value(value).get().hash(hasher);
     Ok(())
 }
 
 fn bazel_depset_identity_hash_value<'v>(value: Value<'v>) -> StarlarkHashValue {
+    if let Some(depset) = BazelDepset::from_value(value) {
+        return depset.hash;
+    }
     StarlarkHashValue::new(&value.identity())
 }
 
@@ -830,6 +835,7 @@ pub(crate) fn bazel_depset_from_direct<'v>(
         transitive: Vec::new().into_boxed_slice(),
         order: BazelDepsetOrder::Default,
         element_type,
+        hash: next_bazel_depset_hash(),
         to_list_cache: BazelDepsetToListCache::default(),
         artifact_inputs_cache: BazelDepsetArtifactInputsCache::default(),
         _marker: PhantomData,
@@ -936,6 +942,7 @@ pub(crate) fn bazel_depset_empty_frozen(heap: &FrozenHeap) -> FrozenValue {
         transitive: Vec::new().into_boxed_slice(),
         order: BazelDepsetOrder::Default,
         element_type: None,
+        hash: next_bazel_depset_hash(),
         to_list_cache: BazelDepsetToListCache::default(),
         artifact_inputs_cache: BazelDepsetArtifactInputsCache::default(),
         _marker: PhantomData,
@@ -951,6 +958,7 @@ pub(crate) fn bazel_depset_from_frozen_values(
         transitive: Vec::new().into_boxed_slice(),
         order: BazelDepsetOrder::Default,
         element_type: None,
+        hash: next_bazel_depset_hash(),
         to_list_cache: BazelDepsetToListCache::default(),
         artifact_inputs_cache: BazelDepsetArtifactInputsCache::default(),
         _marker: PhantomData,
