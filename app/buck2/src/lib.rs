@@ -84,7 +84,7 @@ pub mod panic;
 pub mod process_context;
 
 const BUILDBUDDY_REMOTE_ENDPOINT: &str = "remote.buildbuddy.dev";
-const BUILDBUDDY_DEFAULT_RBE_CONTAINER_IMAGE: &str = "docker://gcr.io/flame-public/rbe-ubuntu20-04@sha256:09261f2019e9baa7482f7742cdee8e9972a3971b08af27363a61816b2968f622";
+const BUILDBUDDY_DEFAULT_RBE_CONTAINER_IMAGE: &str = "docker://gcr.io/flame-public/rbe-ubuntu24-04@sha256:f7db0d4791247f032fdb4451b7c3ba90e567923a341cc6dc43abfc283436791a";
 
 fn parse_remote_default_exec_property(
     value: &str,
@@ -215,6 +215,16 @@ struct BeforeSubcommandOptions {
     )]
     remote_executor: Option<String>,
 
+    /// URI of a Remote Asset API endpoint for repository downloads.
+    #[clap(
+        long = "experimental_remote_downloader",
+        alias = "remote_downloader",
+        alias = "remote-downloader",
+        value_name = "ENDPOINT",
+        global = true
+    )]
+    remote_downloader: Option<String>,
+
     /// Use BuildBuddy as the remote execution and remote cache endpoint.
     #[clap(long = "rbe", global = true)]
     rbe: bool,
@@ -338,6 +348,9 @@ impl BeforeSubcommandOptions {
                     .then(|| BUILDBUDDY_REMOTE_ENDPOINT.to_owned())
             }),
             remote_executor: self.remote_executor.clone().or_else(|| {
+                (self.rbe || self.buildbuddy).then(|| BUILDBUDDY_REMOTE_ENDPOINT.to_owned())
+            }),
+            remote_downloader: self.remote_downloader.clone().or_else(|| {
                 (self.rbe || self.buildbuddy).then(|| BUILDBUDDY_REMOTE_ENDPOINT.to_owned())
             }),
             buildbuddy_api_key: self.api_key.clone(),
@@ -902,6 +915,10 @@ mod tests {
             Some(BUILDBUDDY_REMOTE_ENDPOINT)
         );
         assert_eq!(
+            remote_execution.remote_downloader.as_deref(),
+            Some(BUILDBUDDY_REMOTE_ENDPOINT)
+        );
+        assert_eq!(
             remote_execution.remote_default_exec_properties.as_deref(),
             Some(
                 [
@@ -939,6 +956,10 @@ mod tests {
         assert_eq!(
             remote_execution.remote_executor.as_deref(),
             Some("grpc://executor.example.com")
+        );
+        assert_eq!(
+            remote_execution.remote_downloader.as_deref(),
+            Some(BUILDBUDDY_REMOTE_ENDPOINT)
         );
     }
 
@@ -1042,6 +1063,10 @@ mod tests {
             remote_execution.remote_executor.as_deref(),
             Some(BUILDBUDDY_REMOTE_ENDPOINT)
         );
+        assert_eq!(
+            remote_execution.remote_downloader.as_deref(),
+            Some(BUILDBUDDY_REMOTE_ENDPOINT)
+        );
     }
 
     #[test]
@@ -1056,6 +1081,10 @@ mod tests {
         );
         assert_eq!(
             remote_execution.remote_executor.as_deref(),
+            Some(BUILDBUDDY_REMOTE_ENDPOINT)
+        );
+        assert_eq!(
+            remote_execution.remote_downloader.as_deref(),
             Some(BUILDBUDDY_REMOTE_ENDPOINT)
         );
     }
@@ -1080,6 +1109,27 @@ mod tests {
         assert_eq!(
             remote_execution.remote_executor.as_deref(),
             Some("grpc://executor.example.com")
+        );
+        assert_eq!(
+            remote_execution.remote_downloader.as_deref(),
+            Some(BUILDBUDDY_REMOTE_ENDPOINT)
+        );
+    }
+
+    #[test]
+    fn remote_downloader_flag_is_global_startup_override() {
+        let opts = Opt::try_parse_from([
+            "buck2",
+            "--experimental_remote_downloader=grpc://downloader.example.com",
+            "build",
+            "//:target",
+        ])
+        .unwrap();
+
+        let remote_execution = opts.common_opts.remote_execution_startup_config();
+        assert_eq!(
+            remote_execution.remote_downloader.as_deref(),
+            Some("grpc://downloader.example.com")
         );
     }
 

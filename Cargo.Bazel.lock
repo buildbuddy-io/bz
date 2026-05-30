@@ -2291,6 +2291,7 @@ version = "0.1.0"
 dependencies = [
  "allocative",
  "async-trait",
+ "base64",
  "blake3",
  "buck2_build_api",
  "buck2_common",
@@ -2313,9 +2314,14 @@ dependencies = [
  "dupe",
  "hex",
  "pagable",
+ "prost",
+ "prost-types",
+ "re_grpc_proto",
  "serde",
  "serde_json",
  "tokio",
+ "tonic",
+ "tonic-prost",
 ]
 
 [[package]]
@@ -2632,7 +2638,10 @@ dependencies = [
  "maplit",
  "once_cell",
  "pagable",
+ "prost",
+ "prost-types",
  "quick-xml 0.37.5",
+ "re_grpc_proto",
  "serde",
  "serde_json",
  "sha1",
@@ -2645,6 +2654,8 @@ dependencies = [
  "tokio",
  "tokio-util 0.7.18",
  "toml",
+ "tonic",
+ "tonic-prost",
  "tracing",
  "twox-hash 1.6.3",
 ]

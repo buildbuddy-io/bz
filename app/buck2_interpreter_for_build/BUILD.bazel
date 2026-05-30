@@ -54,6 +54,7 @@ rust_library(
         "//gazebo/dupe:dupe",
         "//gazebo/gazebo:gazebo",
         "//pagable:pagable",
+        "//remote_execution/oss/re_grpc_proto:re_grpc_proto",
         "//shed/buck2_hash:buck2_hash",
         "//starlark-rust/starlark:starlark",
         "//starlark-rust/starlark_map:starlark_map",

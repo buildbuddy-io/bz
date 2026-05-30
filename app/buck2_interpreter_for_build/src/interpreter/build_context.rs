@@ -28,6 +28,7 @@ use starlark::any::ProvidesStaticType;
 use starlark::eval::Evaluator;
 
 use crate::bazel_repository::BazelRepositoryCommandExecutor;
+use crate::bazel_repository::BazelRepositoryRemoteDownloaderConfig;
 use crate::interpreter::buckconfig::BuckConfigsViewForStarlark;
 use crate::interpreter::buckconfig::LegacyBuckConfigsForStarlark;
 use crate::interpreter::bzl_eval_ctx::BzlEvalCtx;
@@ -354,6 +355,7 @@ pub(crate) struct BazelRepositoryContextForStarlark {
     pub(crate) recorded_inputs: Arc<Mutex<Vec<BazelRepositoryRecordedInput>>>,
     pub(crate) working_dir: String,
     pub(crate) command_executor: BazelRepositoryCommandExecutor,
+    pub(crate) remote_downloader: Option<BazelRepositoryRemoteDownloaderConfig>,
 }
 
 #[derive(Debug, Default, Eq, PartialEq, allocative::Allocative)]

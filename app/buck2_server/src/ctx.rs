@@ -1292,6 +1292,13 @@ impl DiceCommandUpdater<'_, '_> {
         })?;
 
         set_fallback_executor_config(&mut data.data, self.executor_config.dupe());
+        data.data.set(
+            self.cmd_ctx
+                .base_context
+                .daemon
+                .remote_execution_startup_config
+                .clone(),
+        );
         // This client is only used in places that do not use the RE use case specified in the executor config.
         // They currently use either a usecase specified in actions (cas_artifact), or a global default (buck2.default_remote_execution_use_case).
         // We should not override the cas_artifact usecase or else the ttl may not match the action declaration.

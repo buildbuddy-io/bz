@@ -543,6 +543,8 @@ impl<'c, 'd: 'c> DiceCalculationDelegate<'c, 'd> {
         let buckconfig = self.get_legacy_buck_config_for_starlark().await?;
         let root_buckconfig = self.ctx.get_legacy_root_config_on_dice().await?;
         let command_executor = self.bazel_repository_command_executor().await?;
+        let remote_downloader =
+            crate::bazel_repository::bazel_repository_remote_downloader_config(self.ctx);
 
         let configs = &self.configs;
         let ctx = &mut *self.ctx;
@@ -559,6 +561,7 @@ impl<'c, 'd: 'c> DiceCalculationDelegate<'c, 'd> {
             module_ctx_working_dir,
             repo_env,
             command_executor,
+            remote_downloader,
             &mut buckconfigs,
             provider,
             cancellation,
@@ -608,6 +611,8 @@ impl<'c, 'd: 'c> DiceCalculationDelegate<'c, 'd> {
         let buckconfig = self.get_legacy_buck_config_for_starlark().await?;
         let root_buckconfig = self.ctx.get_legacy_root_config_on_dice().await?;
         let command_executor = self.bazel_repository_command_executor().await?;
+        let remote_downloader =
+            crate::bazel_repository::bazel_repository_remote_downloader_config(self.ctx);
 
         let configs = &self.configs;
         let ctx = &mut *self.ctx;
@@ -623,6 +628,7 @@ impl<'c, 'd: 'c> DiceCalculationDelegate<'c, 'd> {
             repository_ctx_working_dir,
             repo_env,
             command_executor,
+            remote_downloader,
             &mut buckconfigs,
             provider,
             cancellation,

@@ -9,6 +9,7 @@
  */
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use allocative::Allocative;
 use buck2_error::BuckErrorContext;
@@ -60,6 +61,7 @@ pub struct HttpClient {
     max_redirects: Option<usize>,
     supports_vpnless: bool,
     http2: bool,
+    response_header_timeout: Option<Duration>,
     stats: HttpNetworkStats,
     // tokio::sync::Semaphore doesn't impl Allocative
     #[allocative(skip)]
@@ -181,7 +183,18 @@ impl HttpClient {
             None => None,
         };
 
-        let mut resp = self.inner.request(request).await.map_err(|e| {
+        let response = self.inner.request(request);
+        let response =
+            match self.response_header_timeout {
+                Some(timeout) => tokio::time::timeout(timeout, response).await.map_err(|_| {
+                    HttpError::Timeout {
+                        uri: uri.clone(),
+                        duration: timeout.as_secs(),
+                    }
+                })?,
+                None => response.await,
+            };
+        let mut resp = response.map_err(|e| {
             if is_hyper_error_due_to_timeout(&e) {
                 HttpError::Timeout {
                     uri,

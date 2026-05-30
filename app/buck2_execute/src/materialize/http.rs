@@ -55,6 +55,8 @@ use tokio_util::io::StreamReader;
 
 use crate::digest_config::DigestConfig;
 
+const HTTP_DOWNLOAD_READ_IDLE_TIMEOUT: Duration = Duration::from_secs(20);
+
 #[derive(Debug, Clone, Dupe, Allocative, Pagable)]
 pub enum Checksum {
     None,
@@ -530,11 +532,19 @@ async fn copy_and_hash_from_reader(
     let mut read_buffer = vec![0u8; 64 * 1024];
 
     loop {
-        let bytes_read = reader
-            .read(&mut read_buffer)
-            .await
-            .with_buck_error_context(|| format!("read({url})"))
-            .map_err(HttpDownloadError::IoError)?;
+        let bytes_read = tokio::time::timeout(
+            HTTP_DOWNLOAD_READ_IDLE_TIMEOUT,
+            reader.read(&mut read_buffer),
+        )
+        .await
+        .map_err(|_| {
+            HttpDownloadError::Client(HttpError::Client(buck2_http::HttpError::Timeout {
+                uri: url.to_owned(),
+                duration: HTTP_DOWNLOAD_READ_IDLE_TIMEOUT.as_secs(),
+            }))
+        })?
+        .with_buck_error_context(|| format!("read({url})"))
+        .map_err(HttpDownloadError::IoError)?;
         if bytes_read == 0 {
             break;
         }

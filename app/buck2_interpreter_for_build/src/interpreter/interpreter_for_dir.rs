@@ -982,6 +982,7 @@ impl InterpreterForDir {
         module_ctx_working_dir: &str,
         repo_env: std::sync::Arc<std::collections::BTreeMap<String, String>>,
         command_executor: crate::bazel_repository::BazelRepositoryCommandExecutor,
+        remote_downloader: Option<crate::bazel_repository::BazelRepositoryRemoteDownloaderConfig>,
         buckconfigs: &mut dyn BuckConfigsViewForStarlark,
         eval_provider: StarlarkEvaluatorProvider,
         cancellation: &CancellationContext,
@@ -1018,6 +1019,7 @@ impl InterpreterForDir {
                     recorded_inputs: recorded_inputs.clone(),
                     working_dir: module_ctx_working_dir.to_owned(),
                     command_executor: command_executor.clone(),
+                    remote_downloader: remote_downloader.clone(),
                 },
             );
 
@@ -1127,6 +1129,7 @@ impl InterpreterForDir {
         repository_ctx_working_dir: &str,
         repo_env: std::sync::Arc<std::collections::BTreeMap<String, String>>,
         command_executor: crate::bazel_repository::BazelRepositoryCommandExecutor,
+        remote_downloader: Option<crate::bazel_repository::BazelRepositoryRemoteDownloaderConfig>,
         buckconfigs: &mut dyn BuckConfigsViewForStarlark,
         eval_provider: StarlarkEvaluatorProvider,
         cancellation: &CancellationContext,
@@ -1162,6 +1165,7 @@ impl InterpreterForDir {
                     recorded_inputs: recorded_inputs.clone(),
                     working_dir: repository_ctx_working_dir.to_owned(),
                     command_executor: command_executor.clone(),
+                    remote_downloader: remote_downloader.clone(),
                 },
             );
 

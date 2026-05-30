@@ -130,6 +130,7 @@ pub struct RemoteDefaultExecProperty {
 pub struct RemoteExecutionStartupConfig {
     pub remote_cache: Option<String>,
     pub remote_executor: Option<String>,
+    pub remote_downloader: Option<String>,
     pub buildbuddy_api_key: Option<String>,
     pub remote_default_exec_properties: Option<Vec<RemoteDefaultExecProperty>>,
     pub remote_max_connections: Option<usize>,
@@ -143,6 +144,10 @@ impl RemoteExecutionStartupConfig {
         }
         if overrides.remote_executor.is_some() {
             self.remote_executor.clone_from(&overrides.remote_executor);
+        }
+        if overrides.remote_downloader.is_some() {
+            self.remote_downloader
+                .clone_from(&overrides.remote_downloader);
         }
         if overrides.buildbuddy_api_key.is_some() {
             self.buildbuddy_api_key

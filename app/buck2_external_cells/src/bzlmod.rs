@@ -12,6 +12,7 @@ use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::fs;
+use std::future::Future;
 use std::io::ErrorKind;
 use std::io::Read;
 use std::path::Path;
@@ -22,6 +23,8 @@ use std::sync::Mutex;
 use std::sync::OnceLock;
 use std::sync::atomic::AtomicU64;
 use std::time::Duration;
+use std::time::SystemTime;
+use std::time::UNIX_EPOCH;
 
 use buck2_build_api::actions::artifact::get_artifact_fs::GetArtifactFs;
 use buck2_common::bzlmod_archive::archive_kind_from_type_or_url;
@@ -40,6 +43,9 @@ use buck2_common::file_ops::metadata::RawDirEntry;
 use buck2_common::file_ops::metadata::RawPathMetadata;
 use buck2_common::file_ops::metadata::RawPathMetadataForNoWatchFs;
 use buck2_common::file_ops::metadata::RawSymlink;
+use buck2_common::file_ops::metadata::TrackedFileDigest;
+use buck2_common::init::BUILDBUDDY_API_KEY_HEADER;
+use buck2_common::init::RemoteExecutionStartupConfig;
 use buck2_common::io::IoProvider;
 use buck2_common::io::NoWatchFsMetadataCache;
 use buck2_common::io::fs::FsIoProvider;
@@ -130,8 +136,17 @@ use dice::ValueSerialize;
 use dupe::Dupe;
 use pagable::Pagable;
 use pagable::pagable_typetag;
+use prost::Message;
+use re_grpc_proto::build::bazel::remote::execution::v2::Digest as RemoteExecutionDigest;
+use re_grpc_proto::google::bytestream::ReadRequest;
+use re_grpc_proto::google::bytestream::byte_stream_client::ByteStreamClient;
+use re_grpc_proto::google::rpc::Status as RemoteAssetStatus;
 use serde::Deserialize;
 use serde::Serialize;
+use tokio::io::AsyncWriteExt;
+use tonic::metadata::MetadataValue;
+use tonic::transport::ClientTlsConfig;
+use tonic::transport::Endpoint;
 
 static BZLMOD_MATERIALIZATION_LOCKS: OnceLock<
     Mutex<BTreeMap<String, Arc<tokio::sync::Mutex<()>>>>,
@@ -142,6 +157,8 @@ static BZLMOD_MODULE_EXTENSION_REPO_MAPPING_REGISTRATIONS: OnceLock<
 > = OnceLock::new();
 static BZLMOD_DOWNLOAD_HTTP_CLIENT: LazyLock<tokio::sync::OnceCell<HttpClient>> =
     LazyLock::new(tokio::sync::OnceCell::new);
+static BZLMOD_DOWNLOAD_SEMAPHORE: LazyLock<tokio::sync::Semaphore> =
+    LazyLock::new(|| tokio::sync::Semaphore::new(BZLMOD_DOWNLOAD_MAX_PARALLEL_DOWNLOADS));
 static BZLMOD_GENERATED_CACHE_ENTRY_COUNTER: AtomicU64 = AtomicU64::new(0);
 static BZLMOD_CACHE_ALIAS_COUNTER: AtomicU64 = AtomicU64::new(0);
 static BZLMOD_GENERATED_MATERIALIZATION_VALUE_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -151,8 +168,12 @@ const BZLMOD_DOWNLOAD_MAX_REDIRECTS: usize = 40;
 const BZLMOD_DOWNLOAD_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const BZLMOD_DOWNLOAD_READ_TIMEOUT: Duration = Duration::from_secs(20);
 const BZLMOD_DOWNLOAD_WRITE_TIMEOUT: Duration = Duration::from_secs(20);
+const BZLMOD_DOWNLOAD_RESPONSE_HEADER_TIMEOUT: Duration = Duration::from_secs(30);
+const BZLMOD_REPOSITORY_MATERIALIZATION_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 const BZLMOD_GENERATED_RECORDED_INPUTS_SUFFIX: &str = ".recorded_inputs.json";
 const BZLMOD_GENERATED_LATEST_ENTRY: &str = "latest";
+
+type BzlmodProgressState = Arc<Mutex<String>>;
 
 #[derive(buck2_error::Error, Debug)]
 #[buck2(tag = Tier0)]
@@ -169,6 +190,27 @@ enum BzlmodError {
     MissingBazelFeaturesGlobalsDict { path: String, dict: &'static str },
     #[error("Could not download bzlmod archive from any URL {urls:?}: {error}")]
     DownloadFailed { urls: Vec<String>, error: String },
+    #[error("Invalid remote downloader endpoint `{endpoint}`: {error}")]
+    InvalidRemoteDownloaderEndpoint { endpoint: String, error: String },
+    #[error("Remote downloader failed for URLs {urls:?}: {error}")]
+    RemoteDownloaderFailed { urls: Vec<String>, error: String },
+    #[error("Remote downloader did not return a CAS blob digest for URLs {urls:?}")]
+    RemoteDownloaderMissingDigest { urls: Vec<String> },
+    #[error("Remote downloader returned non-OK status for URLs {urls:?}: code {code}: {message}")]
+    RemoteDownloaderStatus {
+        urls: Vec<String>,
+        code: i32,
+        message: String,
+    },
+    #[error(
+        "Timed out materializing bzlmod repository `{repo}` at `{path}` after {timeout_secs}s; last progress: {progress}"
+    )]
+    RepositoryMaterializationTimedOut {
+        repo: String,
+        path: String,
+        timeout_secs: u64,
+        progress: String,
+    },
     #[error(
         "bzlmod module extension repo `{repo_name}` from `{parent_canonical_repo_name}` extension `{extension_bzl_file}%{extension_name}` cannot be materialized until module_extension evaluation is wired to repository_rule execution"
     )]
@@ -228,6 +270,148 @@ fn bzlmod_materialization_lock(path: &ProjectRelativePath) -> Arc<tokio::sync::M
         .entry(path.as_str().to_owned())
         .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
         .dupe()
+}
+
+fn bzlmod_report_progress(progress_state: &BzlmodProgressState, progress: impl Into<String>) {
+    let progress = progress.into();
+    *progress_state
+        .lock()
+        .expect("bzlmod progress state poisoned") = progress.clone();
+    buck2_events::dispatch::instant_event(buck2_data::BzlmodProgress { progress });
+}
+
+fn bzlmod_current_progress(progress_state: &BzlmodProgressState) -> String {
+    progress_state
+        .lock()
+        .expect("bzlmod progress state poisoned")
+        .clone()
+}
+
+async fn bzlmod_progress_step<T>(
+    progress_state: &BzlmodProgressState,
+    progress: impl Into<String>,
+    fut: impl Future<Output = T>,
+) -> T {
+    bzlmod_report_progress(progress_state, progress);
+    fut.await
+}
+
+#[derive(Clone)]
+struct BzlmodRemoteDownloaderConfig {
+    endpoint: String,
+    api_key: Option<String>,
+}
+
+#[derive(Clone)]
+struct ParsedRemoteAssetEndpoint {
+    uri: String,
+    tls: bool,
+}
+
+impl ParsedRemoteAssetEndpoint {
+    fn parse(endpoint: &str) -> buck2_error::Result<Self> {
+        let endpoint = endpoint.trim();
+        if endpoint.is_empty() {
+            return Err(BzlmodError::InvalidRemoteDownloaderEndpoint {
+                endpoint: endpoint.to_owned(),
+                error: "empty endpoint".to_owned(),
+            }
+            .into());
+        }
+        if let Some(rest) = endpoint.strip_prefix("grpc://") {
+            return Ok(Self {
+                uri: format!("http://{rest}"),
+                tls: false,
+            });
+        }
+        if let Some(rest) = endpoint.strip_prefix("grpcs://") {
+            return Ok(Self {
+                uri: format!("https://{rest}"),
+                tls: true,
+            });
+        }
+        if endpoint.starts_with("http://") {
+            return Ok(Self {
+                uri: endpoint.to_owned(),
+                tls: false,
+            });
+        }
+        if endpoint.starts_with("https://") {
+            return Ok(Self {
+                uri: endpoint.to_owned(),
+                tls: true,
+            });
+        }
+        Ok(Self {
+            uri: format!("https://{endpoint}"),
+            tls: true,
+        })
+    }
+}
+
+#[derive(Clone, PartialEq, Message)]
+struct RemoteAssetQualifier {
+    #[prost(string, tag = "1")]
+    name: String,
+    #[prost(string, tag = "2")]
+    value: String,
+}
+
+#[derive(Clone, PartialEq, Message)]
+struct FetchBlobRequest {
+    #[prost(string, tag = "1")]
+    instance_name: String,
+    #[prost(message, optional, tag = "2")]
+    timeout: Option<prost_types::Duration>,
+    #[prost(message, optional, tag = "3")]
+    oldest_content_accepted: Option<prost_types::Timestamp>,
+    #[prost(string, repeated, tag = "4")]
+    uris: Vec<String>,
+    #[prost(message, repeated, tag = "5")]
+    qualifiers: Vec<RemoteAssetQualifier>,
+    #[prost(enumeration = "RemoteExecutionDigestFunction", tag = "6")]
+    digest_function: i32,
+}
+
+#[derive(Clone, PartialEq, Message)]
+struct FetchBlobResponse {
+    #[prost(message, optional, tag = "1")]
+    status: Option<RemoteAssetStatus>,
+    #[prost(string, tag = "2")]
+    uri: String,
+    #[prost(message, repeated, tag = "3")]
+    qualifiers: Vec<RemoteAssetQualifier>,
+    #[prost(message, optional, tag = "4")]
+    expires_at: Option<prost_types::Timestamp>,
+    #[prost(message, optional, tag = "5")]
+    blob_digest: Option<RemoteExecutionDigest>,
+    #[prost(enumeration = "RemoteExecutionDigestFunction", tag = "6")]
+    digest_function: i32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, prost::Enumeration)]
+#[repr(i32)]
+enum RemoteExecutionDigestFunction {
+    Unknown = 0,
+    Sha256 = 1,
+}
+
+fn bzlmod_remote_downloader_config(
+    ctx: &DiceComputations<'_>,
+) -> Option<BzlmodRemoteDownloaderConfig> {
+    let startup_config = ctx
+        .per_transaction_data()
+        .data
+        .get::<RemoteExecutionStartupConfig>()
+        .ok()?;
+    let endpoint = startup_config
+        .remote_downloader
+        .as_ref()
+        .filter(|endpoint| !endpoint.trim().is_empty())?;
+    Some(BzlmodRemoteDownloaderConfig {
+        endpoint: endpoint.clone(),
+        api_key: startup_config.buildbuddy_api_key.clone(),
+    })
 }
 
 fn bzlmod_generated_repo_kind(setup: &BzlmodGeneratedCellSetup) -> &'static str {
@@ -2922,7 +3106,7 @@ fn bzlmod_generated_repository_rule_materialization_stamp_content(
     let mut hasher = blake3::Hasher::new();
     update_bzlmod_repo_contents_cache_key(
         &mut hasher,
-        "buck2-bzlmod-generated-repository-rule-materialization-v2",
+        "buck2-bzlmod-generated-repository-rule-materialization-v3",
     );
     update_bzlmod_repo_contents_cache_key(
         &mut hasher,
@@ -2934,7 +3118,7 @@ fn bzlmod_generated_repository_rule_materialization_stamp_content(
 
 fn bzlmod_generated_repo_contents_cache_key(setup: &BzlmodGeneratedCellSetup) -> String {
     let mut hasher = blake3::Hasher::new();
-    update_bzlmod_repo_contents_cache_key(&mut hasher, "buck2-bzlmod-generated-materialization-v5");
+    update_bzlmod_repo_contents_cache_key(&mut hasher, "buck2-bzlmod-generated-materialization-v6");
     update_bzlmod_repo_contents_cache_key(&mut hasher, std::env::consts::OS);
     update_bzlmod_repo_contents_cache_key(&mut hasher, std::env::consts::ARCH);
     update_bzlmod_repo_contents_cache_key(&mut hasher, &setup.canonical_repo_name);
@@ -3213,7 +3397,7 @@ async fn bzlmod_generated_materialization_value(
 
 fn bzlmod_module_extension_evaluation_cache_key(setup: &BzlmodModuleExtensionRepoSetup) -> String {
     let mut hasher = blake3::Hasher::new();
-    update_bzlmod_repo_contents_cache_key(&mut hasher, "buck2-bzlmod-module-extension-v3");
+    update_bzlmod_repo_contents_cache_key(&mut hasher, "buck2-bzlmod-module-extension-v4");
     update_bzlmod_repo_contents_cache_key(&mut hasher, &setup.parent_canonical_repo_name);
     update_bzlmod_repo_contents_cache_key(&mut hasher, &setup.parent_is_root.to_string());
     update_bzlmod_repo_contents_cache_key(&mut hasher, &setup.extension_bzl_file);
@@ -3447,7 +3631,7 @@ fn bzlmod_hidden_lockfile_path() -> ProjectRelativePathBuf {
 }
 
 const BZLMOD_HIDDEN_LOCKFILE_SCHEMA_FIELD: &str = "buck2HiddenLockfileSchemaVersion";
-const BZLMOD_HIDDEN_LOCKFILE_SCHEMA_VERSION: u64 = 3;
+const BZLMOD_HIDDEN_LOCKFILE_SCHEMA_VERSION: u64 = 4;
 
 fn bzlmod_workspace_lockfile_path() -> ProjectRelativePathBuf {
     ProjectRelativePathBuf::unchecked_new("MODULE.bazel.lock".to_owned())
@@ -4802,16 +4986,22 @@ async fn download_impl(
     cache_tmp: &ProjectRelativePath,
     cache_alias: &ProjectRelativePath,
     cancellations: &CancellationContext,
+    progress_state: &BzlmodProgressState,
 ) -> buck2_error::Result<()> {
-    if prepare_bzlmod_external_cell_root_if_cache_exists(
-        ctx,
-        cache_repo,
-        cache_alias,
-        dest,
-        cancellations,
+    if bzlmod_progress_step(
+        progress_state,
+        "checking repository contents cache",
+        prepare_bzlmod_external_cell_root_if_cache_exists(
+            ctx,
+            cache_repo,
+            cache_alias,
+            dest,
+            cancellations,
+        ),
     )
     .await?
     {
+        bzlmod_report_progress(progress_state, "using repository contents cache");
         return Ok(());
     }
 
@@ -4843,32 +5033,39 @@ async fn download_impl(
         })
         .collect();
 
-    io.execute_io(
-        Box::new(
-            buck2_execute::execute::clean_output_paths::CleanOutputPaths {
-                paths: vec![
-                    stamp,
-                    dest.to_owned(),
-                    archive.clone(),
-                    temp.clone(),
-                    patch_dir.clone(),
-                    overlay_dir.clone(),
-                    cache_tmp.to_owned(),
-                ],
-            },
+    bzlmod_progress_step(
+        progress_state,
+        "cleaning repository materialization paths",
+        io.execute_io(
+            Box::new(
+                buck2_execute::execute::clean_output_paths::CleanOutputPaths {
+                    paths: vec![
+                        stamp,
+                        dest.to_owned(),
+                        archive.clone(),
+                        temp.clone(),
+                        patch_dir.clone(),
+                        overlay_dir.clone(),
+                        cache_tmp.to_owned(),
+                    ],
+                },
+            ),
+            cancellations,
         ),
-        cancellations,
     )
     .await?;
 
     let io_provider = ctx.global_data().get_io_provider();
     let project_root = io_provider.project_root();
     let digest_config = ctx.global_data().get_digest_config();
+    let remote_downloader = bzlmod_remote_downloader_config(ctx);
+    bzlmod_report_progress(progress_state, "initializing repository download client");
     let client = shared_bzlmod_download_http_client().await?;
     let bazel_download_headers = bazel_repository_download_headers(std::iter::empty());
     let archive_checksum = checksum_from_integrity(&setup.integrity)?;
     let archive_urls = bzlmod_cell_setup_urls(setup);
-    http_download_any_with_headers(
+    bzlmod_download_any_with_headers(
+        remote_downloader.as_ref(),
         &client,
         project_root,
         digest_config.dupe(),
@@ -4877,15 +5074,25 @@ async fn download_impl(
         &archive_checksum,
         false,
         &bazel_download_headers,
+        Some(progress_state),
+        "module archive",
     )
     .await?;
 
+    let patch_count = setup
+        .patches
+        .iter()
+        .filter(|patch| patch.path.is_none())
+        .count();
+    let mut patch_idx = 0;
     for (patch, output) in setup.patches.iter().zip(&patch_files) {
         if patch.path.is_some() {
             continue;
         }
+        patch_idx += 1;
         let checksum = checksum_from_integrity(&patch.integrity)?;
-        http_download_with_headers(
+        bzlmod_download_with_headers(
+            remote_downloader.as_ref(),
             &client,
             project_root,
             digest_config.dupe(),
@@ -4894,13 +5101,17 @@ async fn download_impl(
             &checksum,
             false,
             &bazel_download_headers,
+            Some(progress_state),
+            &format!("patch {patch_idx}/{patch_count}"),
         )
         .await?;
     }
 
-    for (overlay, output) in setup.overlays.iter().zip(&overlay_files) {
+    let overlay_count = setup.overlays.len();
+    for (overlay_idx, (overlay, output)) in setup.overlays.iter().zip(&overlay_files).enumerate() {
         let checksum = checksum_from_integrity(&overlay.integrity)?;
-        http_download_with_headers(
+        bzlmod_download_with_headers(
+            remote_downloader.as_ref(),
             &client,
             project_root,
             digest_config.dupe(),
@@ -4909,23 +5120,29 @@ async fn download_impl(
             &checksum,
             false,
             &bazel_download_headers,
+            Some(progress_state),
+            &format!("overlay {}/{}", overlay_idx + 1, overlay_count),
         )
         .await?;
     }
 
-    io.execute_io(
-        Box::new(BzlmodExtractIoRequest {
-            setup: setup.dupe(),
-            archive,
-            patch_files,
-            overlay_files,
-            temp,
-            cache_repo: cache_repo.to_owned(),
-            cache_tmp: cache_tmp.to_owned(),
-            cache_alias: cache_alias.to_owned(),
-            dest: dest.to_owned(),
-        }),
-        cancellations,
+    bzlmod_progress_step(
+        progress_state,
+        "extracting and publishing module archive",
+        io.execute_io(
+            Box::new(BzlmodExtractIoRequest {
+                setup: setup.dupe(),
+                archive,
+                patch_files,
+                overlay_files,
+                temp,
+                cache_repo: cache_repo.to_owned(),
+                cache_tmp: cache_tmp.to_owned(),
+                cache_alias: cache_alias.to_owned(),
+                dest: dest.to_owned(),
+            }),
+            cancellations,
+        ),
     )
     .await?;
 
@@ -4973,7 +5190,8 @@ async fn prepare_bzlmod_external_cell_root_from_source(
         .await
 }
 
-async fn http_download_any_with_headers(
+async fn bzlmod_download_any_with_headers(
+    remote_downloader: Option<&BzlmodRemoteDownloaderConfig>,
     client: &HttpClient,
     fs: &ProjectRoot,
     digest_config: buck2_execute::digest_config::DigestConfig,
@@ -4982,10 +5200,28 @@ async fn http_download_any_with_headers(
     checksum: &Checksum,
     executable: bool,
     headers: &[(String, String)],
+    progress_state: Option<&BzlmodProgressState>,
+    progress_subject: &str,
 ) -> buck2_error::Result<()> {
+    if let Some(remote_downloader) = remote_downloader {
+        return remote_asset_download_any_with_headers(
+            remote_downloader,
+            fs,
+            digest_config,
+            path,
+            urls,
+            checksum,
+            executable,
+            headers,
+            progress_state,
+            progress_subject,
+        )
+        .await;
+    }
+
     let mut last_error = None;
-    for url in urls {
-        match http_download_with_headers(
+    for (idx, url) in urls.iter().enumerate() {
+        match bzlmod_http_download_with_headers(
             client,
             fs,
             digest_config.dupe(),
@@ -4994,6 +5230,8 @@ async fn http_download_any_with_headers(
             checksum,
             executable,
             headers,
+            progress_state,
+            &format!("{progress_subject} from URL {}/{}", idx + 1, urls.len()),
         )
         .await
         {
@@ -5010,14 +5248,398 @@ async fn http_download_any_with_headers(
     .into())
 }
 
+async fn bzlmod_download_with_headers(
+    remote_downloader: Option<&BzlmodRemoteDownloaderConfig>,
+    client: &HttpClient,
+    fs: &ProjectRoot,
+    digest_config: buck2_execute::digest_config::DigestConfig,
+    path: &ProjectRelativePath,
+    url: &str,
+    checksum: &Checksum,
+    executable: bool,
+    headers: &[(String, String)],
+    progress_state: Option<&BzlmodProgressState>,
+    progress_subject: &str,
+) -> buck2_error::Result<()> {
+    if let Some(remote_downloader) = remote_downloader {
+        return remote_asset_download_any_with_headers(
+            remote_downloader,
+            fs,
+            digest_config,
+            path,
+            &[url.to_owned()],
+            checksum,
+            executable,
+            headers,
+            progress_state,
+            progress_subject,
+        )
+        .await;
+    }
+
+    bzlmod_http_download_with_headers(
+        client,
+        fs,
+        digest_config,
+        path,
+        url,
+        checksum,
+        executable,
+        headers,
+        progress_state,
+        progress_subject,
+    )
+    .await
+}
+
+async fn bzlmod_http_download_with_headers(
+    client: &HttpClient,
+    fs: &ProjectRoot,
+    digest_config: buck2_execute::digest_config::DigestConfig,
+    path: &ProjectRelativePath,
+    url: &str,
+    checksum: &Checksum,
+    executable: bool,
+    headers: &[(String, String)],
+    progress_state: Option<&BzlmodProgressState>,
+    progress_subject: &str,
+) -> buck2_error::Result<()> {
+    if let Some(progress_state) = progress_state {
+        bzlmod_report_progress(
+            progress_state,
+            format!("waiting for download slot for {progress_subject}"),
+        );
+    }
+    let _permit = BZLMOD_DOWNLOAD_SEMAPHORE
+        .acquire()
+        .await
+        .expect("bzlmod download semaphore should not be closed");
+    if let Some(progress_state) = progress_state {
+        bzlmod_report_progress(progress_state, format!("downloading {progress_subject}"));
+    }
+    http_download_with_headers(
+        client,
+        fs,
+        digest_config,
+        path,
+        url,
+        checksum,
+        executable,
+        headers,
+    )
+    .await?;
+    Ok(())
+}
+
+async fn remote_asset_download_any_with_headers(
+    config: &BzlmodRemoteDownloaderConfig,
+    fs: &ProjectRoot,
+    digest_config: buck2_execute::digest_config::DigestConfig,
+    path: &ProjectRelativePath,
+    urls: &[String],
+    checksum: &Checksum,
+    executable: bool,
+    headers: &[(String, String)],
+    progress_state: Option<&BzlmodProgressState>,
+    progress_subject: &str,
+) -> buck2_error::Result<()> {
+    if let Some(progress_state) = progress_state {
+        bzlmod_report_progress(
+            progress_state,
+            format!("waiting for remote downloader slot for {progress_subject}"),
+        );
+    }
+    let _permit = BZLMOD_DOWNLOAD_SEMAPHORE
+        .acquire()
+        .await
+        .expect("bzlmod download semaphore should not be closed");
+    if let Some(progress_state) = progress_state {
+        bzlmod_report_progress(
+            progress_state,
+            format!(
+                "fetching {progress_subject} with remote downloader from {} URL{}",
+                urls.len(),
+                if urls.len() == 1 { "" } else { "s" }
+            ),
+        );
+    }
+
+    let digest = remote_asset_fetch_blob(config, urls, checksum, headers).await?;
+    if let Some(progress_state) = progress_state {
+        bzlmod_report_progress(
+            progress_state,
+            format!("downloading {progress_subject} from remote CAS"),
+        );
+    }
+    remote_asset_download_blob(config, fs, digest_config, path, &digest).await?;
+    if executable {
+        fs.set_executable(path)?;
+    }
+    Ok(())
+}
+
+async fn remote_asset_fetch_blob(
+    config: &BzlmodRemoteDownloaderConfig,
+    urls: &[String],
+    checksum: &Checksum,
+    headers: &[(String, String)],
+) -> buck2_error::Result<RemoteExecutionDigest> {
+    let endpoint = ParsedRemoteAssetEndpoint::parse(&config.endpoint)?;
+    let mut endpoint_builder = Endpoint::from_shared(endpoint.uri.clone()).map_err(|error| {
+        BzlmodError::InvalidRemoteDownloaderEndpoint {
+            endpoint: config.endpoint.clone(),
+            error: error.to_string(),
+        }
+    })?;
+    if endpoint.tls {
+        endpoint_builder = endpoint_builder
+            .tls_config(ClientTlsConfig::new().with_native_roots())
+            .map_err(|error| BzlmodError::InvalidRemoteDownloaderEndpoint {
+                endpoint: config.endpoint.clone(),
+                error: error.to_string(),
+            })?;
+    }
+    let channel =
+        endpoint_builder
+            .connect()
+            .await
+            .map_err(|error| BzlmodError::RemoteDownloaderFailed {
+                urls: urls.to_owned(),
+                error: error.to_string(),
+            })?;
+    let mut client = tonic::client::Grpc::new(channel);
+
+    let mut qualifiers = Vec::new();
+    if let Some(integrity) = checksum_to_subresource_integrity(checksum)? {
+        qualifiers.push(RemoteAssetQualifier {
+            name: "checksum.sri".to_owned(),
+            value: integrity,
+        });
+    }
+    for (name, value) in headers {
+        qualifiers.push(RemoteAssetQualifier {
+            name: format!("http_header:{name}"),
+            value: value.clone(),
+        });
+    }
+
+    let request = FetchBlobRequest {
+        instance_name: String::new(),
+        timeout: Some(prost_types::Duration {
+            seconds: BZLMOD_REPOSITORY_MATERIALIZATION_TIMEOUT.as_secs() as i64,
+            nanos: 0,
+        }),
+        oldest_content_accepted: remote_asset_oldest_content_accepted(checksum)?,
+        uris: urls.to_owned(),
+        qualifiers,
+        digest_function: RemoteExecutionDigestFunction::Sha256 as i32,
+    };
+    let mut request = tonic::Request::new(request);
+    add_remote_asset_metadata(request.metadata_mut(), config)?;
+
+    let path = tonic::codegen::http::uri::PathAndQuery::from_static(
+        "/build.bazel.remote.asset.v1.Fetch/FetchBlob",
+    );
+    let codec = tonic_prost::ProstCodec::<FetchBlobRequest, FetchBlobResponse>::default();
+    client
+        .ready()
+        .await
+        .map_err(|error| BzlmodError::RemoteDownloaderFailed {
+            urls: urls.to_owned(),
+            error: error.to_string(),
+        })?;
+    let response = client
+        .unary(request, path, codec)
+        .await
+        .map_err(|error| BzlmodError::RemoteDownloaderFailed {
+            urls: urls.to_owned(),
+            error: error.to_string(),
+        })?
+        .into_inner();
+
+    if let Some(status) = &response.status
+        && status.code != 0
+    {
+        return Err(BzlmodError::RemoteDownloaderStatus {
+            urls: urls.to_owned(),
+            code: status.code,
+            message: status.message.clone(),
+        }
+        .into());
+    }
+    response.blob_digest.ok_or_else(|| {
+        BzlmodError::RemoteDownloaderMissingDigest {
+            urls: urls.to_owned(),
+        }
+        .into()
+    })
+}
+
+fn remote_asset_oldest_content_accepted(
+    checksum: &Checksum,
+) -> buck2_error::Result<Option<prost_types::Timestamp>> {
+    if !matches!(checksum, Checksum::None) {
+        return Ok(None);
+    }
+
+    // Match Bazel's GrpcRemoteDownloader: checksumless downloads are mutable, so never accept
+    // cached Remote Asset content. The hour offset allows for clock skew.
+    let timestamp = SystemTime::now()
+        .checked_add(Duration::from_secs(60 * 60))
+        .ok_or_else(|| {
+            buck2_error::buck2_error!(
+                buck2_error::ErrorTag::Tier0,
+                "system time overflow computing remote downloader cache cutoff"
+            )
+        })?
+        .duration_since(UNIX_EPOCH)
+        .buck_error_context(
+            "system time is before Unix epoch computing remote downloader cache cutoff",
+        )?;
+    Ok(Some(prost_types::Timestamp {
+        seconds: timestamp.as_secs() as i64,
+        nanos: timestamp.subsec_nanos() as i32,
+    }))
+}
+
+async fn remote_asset_download_blob(
+    config: &BzlmodRemoteDownloaderConfig,
+    fs: &ProjectRoot,
+    digest_config: buck2_execute::digest_config::DigestConfig,
+    path: &ProjectRelativePath,
+    digest: &RemoteExecutionDigest,
+) -> buck2_error::Result<TrackedFileDigest> {
+    let endpoint = ParsedRemoteAssetEndpoint::parse(&config.endpoint)?;
+    let mut endpoint_builder = Endpoint::from_shared(endpoint.uri.clone()).map_err(|error| {
+        BzlmodError::InvalidRemoteDownloaderEndpoint {
+            endpoint: config.endpoint.clone(),
+            error: error.to_string(),
+        }
+    })?;
+    if endpoint.tls {
+        endpoint_builder = endpoint_builder
+            .tls_config(ClientTlsConfig::new().with_native_roots())
+            .map_err(|error| BzlmodError::InvalidRemoteDownloaderEndpoint {
+                endpoint: config.endpoint.clone(),
+                error: error.to_string(),
+            })?;
+    }
+    let channel =
+        endpoint_builder
+            .connect()
+            .await
+            .map_err(|error| BzlmodError::RemoteDownloaderFailed {
+                urls: Vec::new(),
+                error: error.to_string(),
+            })?;
+    let mut client = ByteStreamClient::new(channel);
+    let mut request = tonic::Request::new(ReadRequest {
+        resource_name: bytestream_download_resource_name("", digest),
+        read_offset: 0,
+        read_limit: 0,
+    });
+    add_remote_asset_metadata(request.metadata_mut(), config)?;
+    let mut stream = client
+        .read(request)
+        .await
+        .map_err(|error| BzlmodError::RemoteDownloaderFailed {
+            urls: Vec::new(),
+            error: error.to_string(),
+        })?
+        .into_inner();
+
+    let abs_path = fs.resolve(path);
+    if let Some(dir) = abs_path.parent() {
+        fs_util::create_dir_all(dir)?;
+    }
+    let mut file = tokio::fs::File::create(abs_path.as_path())
+        .await
+        .with_buck_error_context(|| format!("create({abs_path})"))?;
+    while let Some(response) =
+        stream
+            .message()
+            .await
+            .map_err(|error| BzlmodError::RemoteDownloaderFailed {
+                urls: Vec::new(),
+                error: error.to_string(),
+            })?
+    {
+        file.write_all(&response.data)
+            .await
+            .with_buck_error_context(|| format!("write({abs_path})"))?;
+    }
+    file.flush()
+        .await
+        .with_buck_error_context(|| format!("flush({abs_path})"))?;
+
+    let file_digest_config = FileDigestConfig::build(digest_config.cas_digest_config());
+    let file_digest = FileDigest::from_file(&abs_path, file_digest_config)?;
+    Ok(TrackedFileDigest::new(
+        file_digest,
+        digest_config.cas_digest_config(),
+    ))
+}
+
+fn add_remote_asset_metadata(
+    metadata: &mut tonic::metadata::MetadataMap,
+    config: &BzlmodRemoteDownloaderConfig,
+) -> buck2_error::Result<()> {
+    if let Some(api_key) = config
+        .api_key
+        .as_ref()
+        .filter(|api_key| !api_key.trim().is_empty())
+    {
+        metadata.insert(
+            BUILDBUDDY_API_KEY_HEADER,
+            MetadataValue::try_from(api_key.as_str()).map_err(|error| {
+                buck2_error::buck2_error!(
+                    buck2_error::ErrorTag::Input,
+                    "invalid `{BUILDBUDDY_API_KEY_HEADER}` metadata value: {error}"
+                )
+            })?,
+        );
+    }
+    Ok(())
+}
+
+fn bytestream_download_resource_name(
+    instance_name: &str,
+    digest: &RemoteExecutionDigest,
+) -> String {
+    let blob = format!("blobs/{}/{}", digest.hash, digest.size_bytes);
+    if instance_name.is_empty() {
+        blob
+    } else {
+        format!("{instance_name}/{blob}")
+    }
+}
+
+fn checksum_to_subresource_integrity(checksum: &Checksum) -> buck2_error::Result<Option<String>> {
+    let Some((algorithm, hex_digest)) = (match checksum {
+        Checksum::None => None,
+        Checksum::Sha1(sha1) => Some(("sha1", sha1.as_ref())),
+        Checksum::Sha256(sha256) => Some(("sha256", sha256.as_ref())),
+        Checksum::Sha384(sha384) => Some(("sha384", sha384.as_ref())),
+        Checksum::Sha512(sha512) => Some(("sha512", sha512.as_ref())),
+        Checksum::Both { sha256, .. } => Some(("sha256", sha256.as_ref())),
+    }) else {
+        return Ok(None);
+    };
+    let bytes = hex::decode(hex_digest)?;
+    use base64::Engine;
+    let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
+    Ok(Some(format!("{algorithm}-{encoded}")))
+}
+
 async fn bzlmod_download_http_client() -> buck2_error::Result<HttpClient> {
     let mut builder = HttpClientBuilder::oss().await?;
     builder
         .with_max_redirects(BZLMOD_DOWNLOAD_MAX_REDIRECTS)
+        .with_http2(false)
         .with_connect_timeout(Some(BZLMOD_DOWNLOAD_CONNECT_TIMEOUT))
+        .with_response_header_timeout(Some(BZLMOD_DOWNLOAD_RESPONSE_HEADER_TIMEOUT))
         .with_read_timeout(Some(BZLMOD_DOWNLOAD_READ_TIMEOUT))
-        .with_write_timeout(Some(BZLMOD_DOWNLOAD_WRITE_TIMEOUT))
-        .with_max_concurrent_requests(Some(BZLMOD_DOWNLOAD_MAX_PARALLEL_DOWNLOADS));
+        .with_write_timeout(Some(BZLMOD_DOWNLOAD_WRITE_TIMEOUT));
     Ok(builder.build())
 }
 
@@ -5116,6 +5738,7 @@ async fn download_and_materialize(
     let repo = setup.canonical_repo_name.to_string();
     let path_str = path.to_string();
     let kind = "module archive".to_owned();
+    let progress_state = Arc::new(Mutex::new("starting".to_owned()));
     span_async_simple(
         buck2_data::BzlmodRepoStart {
             repo: repo.clone(),
@@ -5123,32 +5746,66 @@ async fn download_and_materialize(
             kind: kind.clone(),
             progress: "starting".to_owned(),
         },
-        async {
-            let lock = bzlmod_materialization_lock(path);
-            let _guard = lock.lock().await;
-            let cache_key = bzlmod_repo_contents_cache_key(setup);
-            let cache_repo = bzlmod_repo_contents_cache_path(&cache_key, "repo");
-            let cache_tmp = bzlmod_repo_contents_cache_path(
-                &cache_key,
-                &format!("repo.tmp.{}", std::process::id()),
-            );
-            let cache_alias = bzlmod_repo_contents_cache_alias_path(&setup.canonical_repo_name);
-            let cache_lock = bzlmod_materialization_lock(&cache_repo);
-            let _cache_guard = cache_lock.lock().await;
+        {
+            let progress_state = progress_state.dupe();
+            let timeout_repo = repo.clone();
+            let timeout_path = path_str.clone();
+            async move {
+                let materialization_progress = progress_state.dupe();
+                let materialization = async {
+                    bzlmod_report_progress(
+                        &materialization_progress,
+                        "waiting for materialization lock",
+                    );
+                    let lock = bzlmod_materialization_lock(path);
+                    let _guard = lock.lock().await;
+                    let cache_key = bzlmod_repo_contents_cache_key(setup);
+                    let cache_repo = bzlmod_repo_contents_cache_path(&cache_key, "repo");
+                    let cache_tmp = bzlmod_repo_contents_cache_path(
+                        &cache_key,
+                        &format!("repo.tmp.{}", std::process::id()),
+                    );
+                    let cache_alias =
+                        bzlmod_repo_contents_cache_alias_path(&setup.canonical_repo_name);
+                    bzlmod_report_progress(
+                        &materialization_progress,
+                        "waiting for repository contents cache lock",
+                    );
+                    let cache_lock = bzlmod_materialization_lock(&cache_repo);
+                    let _cache_guard = cache_lock.lock().await;
 
-            cancellations
-                .critical_section(|| {
-                    download_impl(
-                        ctx,
-                        setup,
-                        path,
-                        &cache_repo,
-                        &cache_tmp,
-                        &cache_alias,
-                        cancellations,
-                    )
-                })
+                    cancellations
+                        .critical_section(|| {
+                            download_impl(
+                                ctx,
+                                setup,
+                                path,
+                                &cache_repo,
+                                &cache_tmp,
+                                &cache_alias,
+                                cancellations,
+                                &materialization_progress,
+                            )
+                        })
+                        .await
+                };
+
+                match tokio::time::timeout(
+                    BZLMOD_REPOSITORY_MATERIALIZATION_TIMEOUT,
+                    materialization,
+                )
                 .await
+                {
+                    Ok(result) => result,
+                    Err(_) => Err(BzlmodError::RepositoryMaterializationTimedOut {
+                        repo: timeout_repo,
+                        path: timeout_path,
+                        timeout_secs: BZLMOD_REPOSITORY_MATERIALIZATION_TIMEOUT.as_secs(),
+                        progress: bzlmod_current_progress(&progress_state),
+                    }
+                    .into()),
+                }
+            }
         },
         buck2_data::BzlmodRepoEnd {
             repo,
@@ -5827,10 +6484,12 @@ async fn materialize_generated_contents(
             let io_provider = ctx.global_data().get_io_provider();
             let project_root = io_provider.project_root();
             let digest_config = ctx.global_data().get_digest_config();
+            let remote_downloader = bzlmod_remote_downloader_config(ctx);
             let client = shared_bzlmod_download_http_client().await?;
             let bazel_download_headers = bazel_repository_download_headers(std::iter::empty());
             let archive_checksum = Checksum::new(None, Some(&*http_archive.sha256))?;
-            http_download_with_headers(
+            bzlmod_download_with_headers(
+                remote_downloader.as_ref(),
                 &client,
                 project_root,
                 digest_config.dupe(),
@@ -5839,6 +6498,8 @@ async fn materialize_generated_contents(
                 &archive_checksum,
                 false,
                 &bazel_download_headers,
+                None,
+                "http_archive",
             )
             .await?;
             ctx.get_blocking_executor()
@@ -5944,18 +6605,20 @@ async fn bzlmod_generated_effective_setup(
         generator,
     } = setup;
     match generator {
-        BzlmodGeneratedCellGenerator::HostPlatform(_) => {
-            let arch = bzlmod_bazel_current_arch_name(ctx).await?;
-            let os = bzlmod_bazel_current_os_name(ctx).await?;
-            let cpu_constraint =
-                translate_host_platform_cpu_constraint(&arch).map(Arc::<str>::from);
-            let os_constraint = translate_host_platform_os_constraint(&os).map(Arc::<str>::from);
+        BzlmodGeneratedCellGenerator::HostPlatform(mut host_platform) => {
+            if host_platform.cpu_constraint.is_none() {
+                let arch = bzlmod_bazel_current_arch_name(ctx).await?;
+                host_platform.cpu_constraint =
+                    translate_host_platform_cpu_constraint(&arch).map(Arc::<str>::from);
+            }
+            if host_platform.os_constraint.is_none() {
+                let os = bzlmod_bazel_current_os_name(ctx).await?;
+                host_platform.os_constraint =
+                    translate_host_platform_os_constraint(&os).map(Arc::<str>::from);
+            }
             Ok(BzlmodGeneratedCellSetup {
                 canonical_repo_name,
-                generator: BzlmodGeneratedCellGenerator::HostPlatform(BzlmodHostPlatformSetup {
-                    cpu_constraint,
-                    os_constraint,
-                }),
+                generator: BzlmodGeneratedCellGenerator::HostPlatform(host_platform),
             })
         }
         generator => Ok(BzlmodGeneratedCellSetup {

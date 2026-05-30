@@ -27,6 +27,7 @@ use std::sync::OnceLock;
 use std::sync::atomic::AtomicU64;
 use std::time::Duration;
 use std::time::SystemTime;
+use std::time::UNIX_EPOCH;
 
 use allocative::Allocative;
 use async_compression::tokio::bufread::GzipDecoder;
@@ -41,6 +42,8 @@ use buck2_common::file_ops::dice::DiceFileComputations;
 use buck2_common::file_ops::error::FileReadErrorContext;
 use buck2_common::file_ops::metadata::FileDigestConfig;
 use buck2_common::file_ops::metadata::RawPathMetadata;
+use buck2_common::init::BUILDBUDDY_API_KEY_HEADER;
+use buck2_common::init::RemoteExecutionStartupConfig;
 use buck2_common::legacy_configs::cells::BZLMOD_REPOSITORY_OS_ARCH_ENV;
 use buck2_common::legacy_configs::cells::BZLMOD_REPOSITORY_OS_NAME_ENV;
 use buck2_common::legacy_configs::cells::GetBzlmodRepositoryEnvironment;
@@ -128,6 +131,11 @@ use futures::TryStreamExt;
 use itertools::Itertools;
 use pagable::Pagable;
 use pagable::pagable_typetag;
+use prost::Message;
+use re_grpc_proto::build::bazel::remote::execution::v2::Digest as RemoteExecutionDigest;
+use re_grpc_proto::google::bytestream::ReadRequest;
+use re_grpc_proto::google::bytestream::byte_stream_client::ByteStreamClient;
+use re_grpc_proto::google::rpc::Status as RemoteAssetStatus;
 use serde::Deserialize;
 use serde::Serialize;
 use sha1::Sha1;
@@ -184,7 +192,11 @@ use starlark_map::small_map::SmallMap;
 use tar::Archive;
 use tokio::io::AsyncRead;
 use tokio::io::AsyncReadExt;
+use tokio::io::AsyncWriteExt;
 use tokio_util::io::StreamReader;
+use tonic::metadata::MetadataValue;
+use tonic::transport::ClientTlsConfig;
+use tonic::transport::Endpoint;
 
 use crate::attrs::AttributeCoerceExt;
 use crate::attrs::coerce::ctx::BuildAttrCoercionContext;
@@ -625,6 +637,31 @@ fn repository_os_arch_value(repo_env: &BTreeMap<String, String>) -> String {
         .get(BZLMOD_REPOSITORY_OS_ARCH_ENV)
         .cloned()
         .unwrap_or_else(|| env::consts::ARCH.to_owned())
+}
+
+fn repository_host_execution_env(
+    repo_env: &Arc<BTreeMap<String, String>>,
+) -> Arc<BTreeMap<String, String>> {
+    if !repo_env.contains_key(BZLMOD_REPOSITORY_OS_NAME_ENV)
+        && !repo_env.contains_key(BZLMOD_REPOSITORY_OS_ARCH_ENV)
+    {
+        return repo_env.clone();
+    }
+    let mut repo_env = (**repo_env).clone();
+    repo_env.remove(BZLMOD_REPOSITORY_OS_NAME_ENV);
+    repo_env.remove(BZLMOD_REPOSITORY_OS_ARCH_ENV);
+    Arc::new(repo_env)
+}
+
+fn repository_rule_execution_env(
+    repo_env: &Arc<BTreeMap<String, String>>,
+    remotable: bool,
+) -> Arc<BTreeMap<String, String>> {
+    if remotable {
+        repo_env.clone()
+    } else {
+        repository_host_execution_env(repo_env)
+    }
 }
 
 fn repository_os_name(
@@ -1507,6 +1544,30 @@ pub(crate) enum BazelRepositoryCommandExecutor {
     Remote(Arc<BazelRemoteRepositoryCommandExecutor>),
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct BazelRepositoryRemoteDownloaderConfig {
+    endpoint: String,
+    api_key: Option<String>,
+}
+
+pub(crate) fn bazel_repository_remote_downloader_config(
+    ctx: &DiceComputations<'_>,
+) -> Option<BazelRepositoryRemoteDownloaderConfig> {
+    let startup_config = ctx
+        .per_transaction_data()
+        .data
+        .get::<RemoteExecutionStartupConfig>()
+        .ok()?;
+    let endpoint = startup_config
+        .remote_downloader
+        .as_ref()
+        .filter(|endpoint| !endpoint.trim().is_empty())?;
+    Some(BazelRepositoryRemoteDownloaderConfig {
+        endpoint: endpoint.clone(),
+        api_key: startup_config.buildbuddy_api_key.clone(),
+    })
+}
+
 impl fmt::Debug for BazelRepositoryCommandExecutor {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -1705,16 +1766,9 @@ impl BazelRemoteRepositoryCommandExecutor {
         timeout: i32,
         quiet: bool,
     ) -> Result<RepositoryCommandOutput, String> {
-        let repository_working_dir_abs = Path::new(repository_working_dir);
-        let repository_working_dir_rel = self
-            .project_relative_from_abs_path(repository_working_dir_abs)
-            .ok_or_else(|| {
-                format!(
-                    "remote repository_ctx.execute requires repository working dir `{}` to be under project root `{}`",
-                    repository_working_dir_abs.display(),
-                    self.project_root.root()
-                )
-            })?;
+        let (repository_working_dir_rel, repository_working_dir_abs) =
+            self.repository_working_dir_paths(repository_working_dir)?;
+        let repository_working_dir_abs = repository_working_dir_abs.as_path();
 
         let program = command.get_program().to_string_lossy().into_owned();
         let args = command
@@ -1729,6 +1783,8 @@ impl BazelRemoteRepositoryCommandExecutor {
             .to_path_buf();
         let mut inputs = Vec::new();
         self.add_disk_input(&mut inputs, repository_working_dir_abs)
+            .await?;
+        self.add_disk_symlink_target_inputs(&mut inputs, repository_working_dir_abs)
             .await?;
         for value in std::iter::once(program.as_str()).chain(args.iter().map(String::as_str)) {
             self.add_disk_inputs_for_command_value(&mut inputs, value, repository_working_dir_abs)
@@ -1789,6 +1845,12 @@ impl BazelRemoteRepositoryCommandExecutor {
             .iter()
             .map(|arg| self.remote_arg(arg, repository_working_dir_abs, &remote_working_dir))
             .collect::<Vec<_>>();
+        let local_project_root = self
+            .project_root
+            .root()
+            .as_path()
+            .to_string_lossy()
+            .into_owned();
         let script = r#"
 set +e
 input_root="$1"
@@ -1796,13 +1858,35 @@ input_root="$1"
 	remote_working_dir="$3"
 	output_tar="$4"
 	exit_code_file="$5"
-	shift 5
+	local_project_root="$6"
+	shift 6
 	exec_root="$PWD"
+	rewrite_project_symlinks() {
+	  root="$1"
+	  from="$2"
+	  to="$3"
+	  if [ ! -d "$root" ]; then
+	    return 0
+	  fi
+	  while IFS= read -r -d '' link; do
+	    target="$(readlink "$link")" || continue
+	    case "$target" in
+	      "$from")
+	        rm "$link" && ln -s "$to" "$link"
+	        ;;
+	      "$from"/*)
+	        suffix="${target#"$from"/}"
+	        rm "$link" && ln -s "$to/$suffix" "$link"
+	        ;;
+	    esac
+	  done < <(find "$root" -type l -print0)
+	}
 	rm -rf "$work_root"
 	mkdir -p "$work_root"
 	if [ -d "$input_root" ]; then
 	  cp -a "$input_root"/. "$work_root"/
 	fi
+	rewrite_project_symlinks "$work_root" "$local_project_root" "$exec_root"
 	mkdir -p "$remote_working_dir"
 	cd "$remote_working_dir"
 	rewritten_args=()
@@ -1819,6 +1903,7 @@ input_root="$1"
 	if [ "$exit_code_rc" -ne 0 ]; then
 	  exit "$exit_code_rc"
 	fi
+	rewrite_project_symlinks "$work_root" "$exec_root" "$local_project_root"
 	tar -cf "$output_tar" -C "$work_root" .
 	tar_rc=$?
 	if [ "$tar_rc" -ne 0 ]; then
@@ -1836,6 +1921,7 @@ input_root="$1"
             remote_working_dir,
             output_project_path.as_str().to_owned(),
             exit_code_project_path.as_str().to_owned(),
+            local_project_root,
             remote_program,
         ];
         request_args.extend(remote_args);
@@ -2057,6 +2143,68 @@ input_root="$1"
         Ok(())
     }
 
+    async fn add_disk_symlink_target_inputs(
+        &self,
+        inputs: &mut Vec<CommandExecutionInput>,
+        repository_working_dir: &Path,
+    ) -> Result<(), String> {
+        let mut dirs = vec![repository_working_dir.to_path_buf()];
+        let mut seen_dirs = BTreeSet::new();
+        let mut seen_targets = BTreeSet::new();
+
+        while let Some(dir) = dirs.pop() {
+            if !seen_dirs.insert(dir.clone()) {
+                continue;
+            }
+            let entries = match fs::read_dir(&dir) {
+                Ok(entries) => entries,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(error) => {
+                    return Err(format!(
+                        "reading remote repository input directory `{}`: {}",
+                        dir.display(),
+                        error
+                    ));
+                }
+            };
+            for entry in entries {
+                let entry = entry.map_err(|error| error.to_string())?;
+                let path = entry.path();
+                let metadata = fs::symlink_metadata(&path).map_err(|error| {
+                    format!(
+                        "reading remote repository input metadata `{}`: {}",
+                        path.display(),
+                        error
+                    )
+                })?;
+                if metadata.file_type().is_symlink() {
+                    let target = fs::read_link(&path).map_err(|error| {
+                        format!(
+                            "reading remote repository input symlink `{}`: {}",
+                            path.display(),
+                            error
+                        )
+                    })?;
+                    let target = if target.is_absolute() {
+                        target
+                    } else {
+                        path.parent().unwrap_or(Path::new("")).join(target)
+                    };
+                    if target.starts_with(self.project_root.root().as_path())
+                        && !target.starts_with(repository_working_dir)
+                        && seen_targets.insert(target.clone())
+                    {
+                        self.add_disk_input(inputs, &target).await?;
+                    }
+                } else if metadata.is_dir() {
+                    dirs.push(path);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     fn project_path_from_command_value(&self, value: &str) -> Option<PathBuf> {
         let path = Path::new(value);
         if path.is_absolute() {
@@ -2139,6 +2287,31 @@ input_root="$1"
         let suffix = path.strip_prefix(self.project_root.root().as_path()).ok()?;
         let suffix = suffix.to_string_lossy();
         Some(ProjectRelativePathBuf::unchecked_new(suffix.into_owned()))
+    }
+
+    fn repository_working_dir_paths(
+        &self,
+        repository_working_dir: &str,
+    ) -> Result<(ProjectRelativePathBuf, PathBuf), String> {
+        let path = Path::new(repository_working_dir);
+        if path.is_absolute() {
+            let rel = self.project_relative_from_abs_path(path).ok_or_else(|| {
+                format!(
+                    "remote repository_ctx.execute requires repository working dir `{}` to be under project root `{}`",
+                    path.display(),
+                    self.project_root.root()
+                )
+            })?;
+            return Ok((rel, path.to_path_buf()));
+        }
+
+        let rel = ProjectRelativePath::new(repository_working_dir)
+            .map_err(|error| {
+                format!("invalid repository working dir `{repository_working_dir}`: {error}")
+            })?
+            .to_buf();
+        let abs = self.project_root.resolve(&rel).as_path().to_path_buf();
+        Ok((rel, abs))
     }
 
     fn unpack_remote_repository_tree(
@@ -2573,7 +2746,7 @@ pub async fn evaluate_bzlmod_module_extension_repo(
     let extension_module = ctx
         .get_loaded_module(StarlarkModulePath::LoadFile(&extension_path))
         .await?;
-    let repo_env = ctx.get_bzlmod_repository_environment().await?;
+    let repo_env = repository_host_execution_env(&ctx.get_bzlmod_repository_environment().await?);
     let mut materialized_path_label_deps = BTreeSet::new();
     loop {
         let mut interpreter = ctx
@@ -3437,12 +3610,18 @@ pub async fn bzlmod_repository_rule_cache_info(
     let repository_rule =
         repository_rule_from_loaded_module(rule_path, &invocation.rule_id.name, rule_value)?;
     let bzl_transitive_digest = bzlmod_bzl_transitive_digest(ctx, rule_path.clone()).await?;
-    let repo_env = ctx.get_bzlmod_repository_environment().await?;
-    let execution_cache_key =
-        bzlmod_repository_rule_execution_cache_key(ctx.get_fallback_executor_config());
+    let repo_env = repository_rule_execution_env(
+        &ctx.get_bzlmod_repository_environment().await?,
+        repository_rule.remotable,
+    );
+    let execution_cache_key = if repository_rule.remotable {
+        bzlmod_repository_rule_execution_cache_key(ctx.get_fallback_executor_config())
+    } else {
+        "local".to_owned()
+    };
 
     let mut hasher = blake3::Hasher::new();
-    update_repository_rule_cache_key(&mut hasher, "buck2-bzlmod-repository-rule-cache-v8");
+    update_repository_rule_cache_key(&mut hasher, "buck2-bzlmod-repository-rule-cache-v9");
     update_repository_rule_cache_key(&mut hasher, &execution_cache_key);
     update_repository_rule_cache_key(&mut hasher, &repository_os_name_value(&repo_env));
     update_repository_rule_cache_key(&mut hasher, &repository_os_arch_value(&repo_env));
@@ -4066,18 +4245,17 @@ pub(crate) fn alloc_bzlmod_module_extension_context<'v>(
     }
     let modules = eval.heap().alloc(AllocList(modules));
 
-    let command_executor = BuildContext::from_context(eval)?
-        .bazel_repository_context
-        .as_ref()
-        .map(|context| context.command_executor.clone())
-        .unwrap_or(BazelRepositoryCommandExecutor::Local);
     let module_ctx = StarlarkModuleExtensionContext::new(
         modules,
         working_dir.to_owned(),
         config.root_module_has_non_dev_dependency,
         repo_env,
         recorded_inputs,
-        command_executor,
+        BazelRepositoryCommandExecutor::Local,
+        BuildContext::from_context(eval)?
+            .bazel_repository_context
+            .as_ref()
+            .and_then(|context| context.remote_downloader.clone()),
     );
     for name in &extension.environ {
         record_repository_env_var(&module_ctx.repo_env, &module_ctx.recorded_inputs, name);
@@ -4145,11 +4323,16 @@ pub(crate) fn alloc_bzlmod_repository_context<'v>(
         attrs,
         name: invocation.name.clone(),
     };
-    let command_executor = BuildContext::from_context(eval)?
-        .bazel_repository_context
-        .as_ref()
-        .map(|context| context.command_executor.clone())
-        .unwrap_or(BazelRepositoryCommandExecutor::Local);
+    let repo_env = repository_rule_execution_env(&repo_env, repository_rule.remotable);
+    let command_executor = if repository_rule.remotable {
+        BuildContext::from_context(eval)?
+            .bazel_repository_context
+            .as_ref()
+            .map(|context| context.command_executor.clone())
+            .unwrap_or(BazelRepositoryCommandExecutor::Local)
+    } else {
+        BazelRepositoryCommandExecutor::Local
+    };
     let repository_ctx = StarlarkRepositoryContext::new(
         invocation.name.clone(),
         invocation.original_name.clone(),
@@ -4159,6 +4342,10 @@ pub(crate) fn alloc_bzlmod_repository_context<'v>(
         repo_env,
         recorded_inputs,
         command_executor,
+        BuildContext::from_context(eval)?
+            .bazel_repository_context
+            .as_ref()
+            .and_then(|context| context.remote_downloader.clone()),
     );
     for name in &repository_rule.environ {
         record_repository_env_var(
@@ -5488,6 +5675,9 @@ pub(crate) struct StarlarkRepositoryContext<'v> {
     #[trace(unsafe_ignore)]
     #[allocative(skip)]
     command_executor: BazelRepositoryCommandExecutor,
+    #[trace(unsafe_ignore)]
+    #[allocative(skip)]
+    remote_downloader: Option<BazelRepositoryRemoteDownloaderConfig>,
     _marker: std::marker::PhantomData<&'v ()>,
 }
 
@@ -5501,6 +5691,7 @@ impl<'v> StarlarkRepositoryContext<'v> {
         repo_env: Arc<BTreeMap<String, String>>,
         recorded_inputs: Arc<Mutex<Vec<BazelRepositoryRecordedInput>>>,
         command_executor: BazelRepositoryCommandExecutor,
+        remote_downloader: Option<BazelRepositoryRemoteDownloaderConfig>,
     ) -> Self {
         Self {
             name,
@@ -5513,6 +5704,7 @@ impl<'v> StarlarkRepositoryContext<'v> {
             path_label_deps: Mutex::new(Vec::new()),
             recorded_inputs,
             command_executor,
+            remote_downloader,
             _marker: std::marker::PhantomData,
         }
     }
@@ -5609,6 +5801,7 @@ impl<'v> Freeze for StarlarkRepositoryContext<'v> {
             ),
             recorded_inputs: self.recorded_inputs,
             command_executor: self.command_executor,
+            remote_downloader: self.remote_downloader,
         })
     }
 }
@@ -5630,6 +5823,8 @@ pub(crate) struct FrozenStarlarkRepositoryContext {
     recorded_inputs: Arc<Mutex<Vec<BazelRepositoryRecordedInput>>>,
     #[allocative(skip)]
     command_executor: BazelRepositoryCommandExecutor,
+    #[allocative(skip)]
+    remote_downloader: Option<BazelRepositoryRemoteDownloaderConfig>,
 }
 
 impl Display for FrozenStarlarkRepositoryContext {
@@ -5951,6 +6146,15 @@ fn repository_ctx_command_executor<'v>(
     match this.unpack() {
         either::Either::Left(ctx) => ctx.command_executor.clone(),
         either::Either::Right(ctx) => ctx.command_executor.clone(),
+    }
+}
+
+fn repository_ctx_remote_downloader<'v>(
+    this: ValueTypedComplex<'v, StarlarkRepositoryContext<'v>>,
+) -> Option<BazelRepositoryRemoteDownloaderConfig> {
+    match this.unpack() {
+        either::Either::Left(ctx) => ctx.remote_downloader.clone(),
+        either::Either::Right(ctx) => ctx.remote_downloader.clone(),
     }
 }
 
@@ -6554,6 +6758,7 @@ fn repository_ctx_download_to_path(
     canonical_id: &str,
     headers: &[(String, String)],
     auth_headers: &[ModuleCtxDownloadAuthHeader],
+    remote_downloader: Option<&BazelRepositoryRemoteDownloaderConfig>,
 ) -> starlark::Result<(ModuleCtxDownloadResult, bool)> {
     let expected_checksum = match module_ctx_expected_checksum(sha256, integrity) {
         Ok(expected_checksum) => expected_checksum,
@@ -6581,6 +6786,7 @@ fn repository_ctx_download_to_path(
         executable,
         headers,
         auth_headers,
+        remote_downloader,
     ) {
         Ok(checksums) => checksums,
         Err(error) => {
@@ -7235,6 +7441,9 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
             })
         })?;
         command.current_dir(working_directory);
+        buck2_events::dispatch::instant_event(buck2_data::BzlmodProgress {
+            progress: format!("running `{program}`"),
+        });
         let output = repository_ctx_command_executor(this)
             .execute(command, &repository_working_dir, timeout, quiet)
             .map_err(|error| {
@@ -7283,6 +7492,7 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
         let download_headers = module_ctx_download_headers_from_entries(&headers)?;
 
         let urls = module_ctx_urls_from_value(url, eval.heap())?;
+        let remote_downloader = repository_ctx_remote_downloader(this);
         let output_path = repository_ctx_output_abs_path_from_value_relative_to(
             output,
             eval,
@@ -7298,6 +7508,7 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
             canonical_id,
             &download_headers,
             &auth_headers,
+            remote_downloader.as_ref(),
         )?;
         Ok(module_ctx_pending_download(block, result, eval))
     }
@@ -7344,6 +7555,7 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
         let download_headers = module_ctx_download_headers_from_entries(&headers)?;
         let rename_files = repository_ctx_rename_files_from_entries(&rename_files)?;
         let urls = module_ctx_urls_from_value(url, eval.heap())?;
+        let remote_downloader = repository_ctx_remote_downloader(this);
         let archive_url = urls
             .first()
             .cloned()
@@ -7358,6 +7570,7 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
             canonical_id,
             &download_headers,
             &auth_headers,
+            remote_downloader.as_ref(),
         )?;
         if !success {
             return Ok(module_ctx_pending_download(block, result, eval));
@@ -7402,6 +7615,9 @@ pub(crate) struct StarlarkModuleExtensionContext<'v> {
     #[trace(unsafe_ignore)]
     #[allocative(skip)]
     command_executor: BazelRepositoryCommandExecutor,
+    #[trace(unsafe_ignore)]
+    #[allocative(skip)]
+    remote_downloader: Option<BazelRepositoryRemoteDownloaderConfig>,
 }
 
 #[allow(dead_code)]
@@ -7413,6 +7629,7 @@ impl<'v> StarlarkModuleExtensionContext<'v> {
         repo_env: Arc<BTreeMap<String, String>>,
         recorded_inputs: Arc<Mutex<Vec<BazelRepositoryRecordedInput>>>,
         command_executor: BazelRepositoryCommandExecutor,
+        remote_downloader: Option<BazelRepositoryRemoteDownloaderConfig>,
     ) -> Self {
         Self {
             modules,
@@ -7422,6 +7639,7 @@ impl<'v> StarlarkModuleExtensionContext<'v> {
             path_label_deps: Mutex::new(Vec::new()),
             recorded_inputs,
             command_executor,
+            remote_downloader,
         }
     }
 
@@ -7508,6 +7726,7 @@ impl<'v> Freeze for StarlarkModuleExtensionContext<'v> {
             ),
             recorded_inputs: self.recorded_inputs,
             command_executor: self.command_executor,
+            remote_downloader: self.remote_downloader,
         })
     }
 }
@@ -7526,6 +7745,8 @@ pub(crate) struct FrozenStarlarkModuleExtensionContext {
     recorded_inputs: Arc<Mutex<Vec<BazelRepositoryRecordedInput>>>,
     #[allocative(skip)]
     command_executor: BazelRepositoryCommandExecutor,
+    #[allocative(skip)]
+    remote_downloader: Option<BazelRepositoryRemoteDownloaderConfig>,
 }
 
 impl Display for FrozenStarlarkModuleExtensionContext {
@@ -7975,6 +8196,7 @@ fn module_ctx_download_retry_delay(attempt: usize) -> Duration {
 const MODULE_CTX_HTTP_MAX_PARALLEL_DOWNLOADS: usize = 8;
 const MODULE_CTX_HTTP_MAX_REDIRECTS: usize = 40;
 const MODULE_CTX_HTTP_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+const MODULE_CTX_HTTP_RESPONSE_HEADER_TIMEOUT: Duration = Duration::from_secs(30);
 const MODULE_CTX_HTTP_READ_TIMEOUT: Duration = Duration::from_secs(20);
 const MODULE_CTX_HTTP_WRITE_TIMEOUT: Duration = Duration::from_secs(20);
 
@@ -7989,6 +8211,99 @@ fn module_ctx_http_download_semaphore() -> &'static tokio::sync::Semaphore {
             ))
         })
         .as_ref()
+}
+
+#[derive(Clone)]
+struct RepositoryRemoteAssetEndpoint {
+    uri: String,
+    tls: bool,
+}
+
+impl RepositoryRemoteAssetEndpoint {
+    fn parse(endpoint: &str) -> buck2_error::Result<Self> {
+        let endpoint = endpoint.trim();
+        if endpoint.is_empty() {
+            return Err(buck2_error::buck2_error!(
+                buck2_error::ErrorTag::Input,
+                "invalid remote downloader endpoint: empty endpoint"
+            ));
+        }
+        if let Some(rest) = endpoint.strip_prefix("grpc://") {
+            return Ok(Self {
+                uri: format!("http://{rest}"),
+                tls: false,
+            });
+        }
+        if let Some(rest) = endpoint.strip_prefix("grpcs://") {
+            return Ok(Self {
+                uri: format!("https://{rest}"),
+                tls: true,
+            });
+        }
+        if endpoint.starts_with("http://") {
+            return Ok(Self {
+                uri: endpoint.to_owned(),
+                tls: false,
+            });
+        }
+        if endpoint.starts_with("https://") {
+            return Ok(Self {
+                uri: endpoint.to_owned(),
+                tls: true,
+            });
+        }
+        Ok(Self {
+            uri: format!("https://{endpoint}"),
+            tls: true,
+        })
+    }
+}
+
+#[derive(Clone, PartialEq, Message)]
+struct RepositoryRemoteAssetQualifier {
+    #[prost(string, tag = "1")]
+    name: String,
+    #[prost(string, tag = "2")]
+    value: String,
+}
+
+#[derive(Clone, PartialEq, Message)]
+struct RepositoryFetchBlobRequest {
+    #[prost(string, tag = "1")]
+    instance_name: String,
+    #[prost(message, optional, tag = "2")]
+    timeout: Option<prost_types::Duration>,
+    #[prost(message, optional, tag = "3")]
+    oldest_content_accepted: Option<prost_types::Timestamp>,
+    #[prost(string, repeated, tag = "4")]
+    uris: Vec<String>,
+    #[prost(message, repeated, tag = "5")]
+    qualifiers: Vec<RepositoryRemoteAssetQualifier>,
+    #[prost(enumeration = "RepositoryRemoteExecutionDigestFunction", tag = "6")]
+    digest_function: i32,
+}
+
+#[derive(Clone, PartialEq, Message)]
+struct RepositoryFetchBlobResponse {
+    #[prost(message, optional, tag = "1")]
+    status: Option<RemoteAssetStatus>,
+    #[prost(string, tag = "2")]
+    uri: String,
+    #[prost(message, repeated, tag = "3")]
+    qualifiers: Vec<RepositoryRemoteAssetQualifier>,
+    #[prost(message, optional, tag = "4")]
+    expires_at: Option<prost_types::Timestamp>,
+    #[prost(message, optional, tag = "5")]
+    blob_digest: Option<RemoteExecutionDigest>,
+    #[prost(enumeration = "RepositoryRemoteExecutionDigestFunction", tag = "6")]
+    digest_function: i32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, prost::Enumeration)]
+#[repr(i32)]
+enum RepositoryRemoteExecutionDigestFunction {
+    Unknown = 0,
+    Sha256 = 1,
 }
 
 #[derive(Debug)]
@@ -8114,6 +8429,7 @@ async fn module_ctx_download_url_to_path(
     let reader = StreamReader::new(body.map_err(std::io::Error::other));
     if gunzip {
         module_ctx_download_copy_response(
+            url,
             &tmp_destination,
             GzipDecoder::new(reader),
             &mut file,
@@ -8121,7 +8437,8 @@ async fn module_ctx_download_url_to_path(
         )
         .await?;
     } else {
-        module_ctx_download_copy_response(&tmp_destination, reader, &mut file, &mut hasher).await?;
+        module_ctx_download_copy_response(url, &tmp_destination, reader, &mut file, &mut hasher)
+            .await?;
     }
 
     file.flush().map_err(|error| {
@@ -8160,6 +8477,352 @@ async fn module_ctx_download_url_to_path(
         .map_err(ModuleCtxDownloadAttemptError::Fatal)
 }
 
+async fn module_ctx_remote_asset_download_url_to_path(
+    config: &BazelRepositoryRemoteDownloaderConfig,
+    url: &str,
+    destination: &Path,
+    expected_checksum: Option<&ModuleCtxChecksum>,
+    executable: bool,
+    headers: &[(String, String)],
+    auth_headers: &[ModuleCtxDownloadAuthHeader],
+) -> Result<(Option<String>, String), ModuleCtxDownloadAttemptError> {
+    let request_headers = module_ctx_download_request_headers_for_url(url, headers, auth_headers);
+    let digest = module_ctx_remote_asset_fetch_blob(
+        config,
+        &[url.to_owned()],
+        expected_checksum,
+        &request_headers,
+    )
+    .await?;
+    module_ctx_remote_asset_download_blob(
+        config,
+        url,
+        destination,
+        expected_checksum,
+        executable,
+        &digest,
+    )
+    .await
+}
+
+async fn module_ctx_remote_asset_fetch_blob(
+    config: &BazelRepositoryRemoteDownloaderConfig,
+    urls: &[String],
+    expected_checksum: Option<&ModuleCtxChecksum>,
+    headers: &[(&str, &str)],
+) -> Result<RemoteExecutionDigest, ModuleCtxDownloadAttemptError> {
+    let endpoint = RepositoryRemoteAssetEndpoint::parse(&config.endpoint)
+        .map_err(ModuleCtxDownloadAttemptError::Fatal)?;
+    let mut endpoint_builder = Endpoint::from_shared(endpoint.uri.clone()).map_err(|error| {
+        ModuleCtxDownloadAttemptError::Fatal(buck2_error::buck2_error!(
+            buck2_error::ErrorTag::Input,
+            "invalid remote downloader endpoint `{}`: {}",
+            config.endpoint,
+            error
+        ))
+    })?;
+    if endpoint.tls {
+        endpoint_builder = endpoint_builder
+            .tls_config(ClientTlsConfig::new().with_native_roots())
+            .map_err(|error| {
+                ModuleCtxDownloadAttemptError::Fatal(buck2_error::buck2_error!(
+                    buck2_error::ErrorTag::Input,
+                    "invalid remote downloader endpoint `{}`: {}",
+                    config.endpoint,
+                    error
+                ))
+            })?;
+    }
+    let channel = endpoint_builder
+        .connect()
+        .await
+        .map_err(|error| ModuleCtxDownloadAttemptError::Retryable(error.to_string()))?;
+    let mut client = tonic::client::Grpc::new(channel);
+
+    let mut qualifiers = Vec::new();
+    if let Some(checksum) = expected_checksum {
+        qualifiers.push(RepositoryRemoteAssetQualifier {
+            name: "checksum.sri".to_owned(),
+            value: module_ctx_checksum_to_subresource_integrity(checksum)
+                .map_err(ModuleCtxDownloadAttemptError::Fatal)?,
+        });
+    }
+    for (name, value) in headers {
+        qualifiers.push(RepositoryRemoteAssetQualifier {
+            name: format!("http_header:{name}"),
+            value: (*value).to_owned(),
+        });
+    }
+
+    let oldest_content_accepted =
+        module_ctx_remote_asset_oldest_content_accepted(expected_checksum)
+            .map_err(ModuleCtxDownloadAttemptError::Fatal)?;
+
+    let request = RepositoryFetchBlobRequest {
+        instance_name: String::new(),
+        timeout: Some(prost_types::Duration {
+            seconds: 10 * 60,
+            nanos: 0,
+        }),
+        oldest_content_accepted,
+        uris: urls.to_owned(),
+        qualifiers,
+        digest_function: RepositoryRemoteExecutionDigestFunction::Sha256 as i32,
+    };
+    let mut request = tonic::Request::new(request);
+    module_ctx_add_remote_asset_metadata(request.metadata_mut(), config)
+        .map_err(ModuleCtxDownloadAttemptError::Fatal)?;
+
+    let path = tonic::codegen::http::uri::PathAndQuery::from_static(
+        "/build.bazel.remote.asset.v1.Fetch/FetchBlob",
+    );
+    let codec =
+        tonic_prost::ProstCodec::<RepositoryFetchBlobRequest, RepositoryFetchBlobResponse>::default(
+        );
+    client
+        .ready()
+        .await
+        .map_err(|error| ModuleCtxDownloadAttemptError::Retryable(error.to_string()))?;
+    let response = client
+        .unary(request, path, codec)
+        .await
+        .map_err(|error| ModuleCtxDownloadAttemptError::Retryable(error.to_string()))?
+        .into_inner();
+
+    if let Some(status) = &response.status
+        && status.code != 0
+    {
+        return Err(ModuleCtxDownloadAttemptError::NonRetryable(format!(
+            "remote downloader returned non-OK status for URLs {:?}: code {}: {}",
+            urls, status.code, status.message
+        )));
+    }
+    response.blob_digest.ok_or_else(|| {
+        ModuleCtxDownloadAttemptError::Retryable(format!(
+            "remote downloader did not return a CAS blob digest for URLs {:?}",
+            urls
+        ))
+    })
+}
+
+fn module_ctx_remote_asset_oldest_content_accepted(
+    expected_checksum: Option<&ModuleCtxChecksum>,
+) -> buck2_error::Result<Option<prost_types::Timestamp>> {
+    if expected_checksum.is_some() {
+        return Ok(None);
+    }
+
+    // Match Bazel's GrpcRemoteDownloader: checksumless downloads are mutable, so never accept
+    // cached Remote Asset content. The hour offset allows for clock skew.
+    let timestamp = SystemTime::now()
+        .checked_add(Duration::from_secs(60 * 60))
+        .ok_or_else(|| {
+            buck2_error::buck2_error!(
+                buck2_error::ErrorTag::Tier0,
+                "system time overflow computing remote downloader cache cutoff"
+            )
+        })?
+        .duration_since(UNIX_EPOCH)
+        .buck_error_context(
+            "system time is before Unix epoch computing remote downloader cache cutoff",
+        )?;
+    Ok(Some(prost_types::Timestamp {
+        seconds: timestamp.as_secs() as i64,
+        nanos: timestamp.subsec_nanos() as i32,
+    }))
+}
+
+async fn module_ctx_remote_asset_download_blob(
+    config: &BazelRepositoryRemoteDownloaderConfig,
+    url: &str,
+    destination: &Path,
+    expected_checksum: Option<&ModuleCtxChecksum>,
+    executable: bool,
+    digest: &RemoteExecutionDigest,
+) -> Result<(Option<String>, String), ModuleCtxDownloadAttemptError> {
+    let endpoint = RepositoryRemoteAssetEndpoint::parse(&config.endpoint)
+        .map_err(ModuleCtxDownloadAttemptError::Fatal)?;
+    let mut endpoint_builder = Endpoint::from_shared(endpoint.uri.clone()).map_err(|error| {
+        ModuleCtxDownloadAttemptError::Fatal(buck2_error::buck2_error!(
+            buck2_error::ErrorTag::Input,
+            "invalid remote downloader endpoint `{}`: {}",
+            config.endpoint,
+            error
+        ))
+    })?;
+    if endpoint.tls {
+        endpoint_builder = endpoint_builder
+            .tls_config(ClientTlsConfig::new().with_native_roots())
+            .map_err(|error| {
+                ModuleCtxDownloadAttemptError::Fatal(buck2_error::buck2_error!(
+                    buck2_error::ErrorTag::Input,
+                    "invalid remote downloader endpoint `{}`: {}",
+                    config.endpoint,
+                    error
+                ))
+            })?;
+    }
+    let channel = endpoint_builder
+        .connect()
+        .await
+        .map_err(|error| ModuleCtxDownloadAttemptError::Retryable(error.to_string()))?;
+    let mut client = ByteStreamClient::new(channel);
+    let mut request = tonic::Request::new(ReadRequest {
+        resource_name: module_ctx_bytestream_download_resource_name("", digest),
+        read_offset: 0,
+        read_limit: 0,
+    });
+    module_ctx_add_remote_asset_metadata(request.metadata_mut(), config)
+        .map_err(ModuleCtxDownloadAttemptError::Fatal)?;
+    let mut stream = client
+        .read(request)
+        .await
+        .map_err(|error| ModuleCtxDownloadAttemptError::Retryable(error.to_string()))?
+        .into_inner();
+
+    let tmp_destination = module_ctx_prepare_download_tmp(destination)
+        .map_err(ModuleCtxDownloadAttemptError::Fatal)?;
+    let mut file = tokio::fs::File::create(&tmp_destination)
+        .await
+        .map_err(|error| {
+            ModuleCtxDownloadAttemptError::Fatal(module_ctx_download_write_error(
+                &tmp_destination,
+                error,
+            ))
+        })?;
+    let checksum_kind = expected_checksum
+        .map(|checksum| checksum.kind)
+        .unwrap_or(ModuleCtxChecksumKind::Sha256);
+    let mut hasher = ModuleCtxChecksumHasher::new(checksum_kind);
+
+    while let Some(response) = stream
+        .message()
+        .await
+        .map_err(|error| ModuleCtxDownloadAttemptError::Retryable(error.to_string()))?
+    {
+        hasher.update(&response.data);
+        file.write_all(&response.data).await.map_err(|error| {
+            module_ctx_remove_partial_download(&tmp_destination);
+            ModuleCtxDownloadAttemptError::Fatal(module_ctx_download_write_error(
+                &tmp_destination,
+                error,
+            ))
+        })?;
+    }
+    file.flush().await.map_err(|error| {
+        module_ctx_remove_partial_download(&tmp_destination);
+        ModuleCtxDownloadAttemptError::Fatal(module_ctx_download_write_error(
+            &tmp_destination,
+            error,
+        ))
+    })?;
+    drop(file);
+
+    if module_ctx_remote_asset_blob_should_gunzip(url, &tmp_destination)
+        .map_err(ModuleCtxDownloadAttemptError::Fatal)?
+    {
+        let decoded_tmp_destination = module_ctx_prepare_download_tmp(destination)
+            .map_err(ModuleCtxDownloadAttemptError::Fatal)?;
+        let source = tokio::fs::File::open(&tmp_destination)
+            .await
+            .map_err(|error| {
+                ModuleCtxDownloadAttemptError::Fatal(module_ctx_download_write_error(
+                    &tmp_destination,
+                    error,
+                ))
+            })?;
+        let reader = GzipDecoder::new(tokio::io::BufReader::new(source));
+        let mut decoded_file = fs::File::create(&decoded_tmp_destination).map_err(|error| {
+            ModuleCtxDownloadAttemptError::Fatal(module_ctx_download_write_error(
+                &decoded_tmp_destination,
+                error,
+            ))
+        })?;
+        let mut decoded_hasher = ModuleCtxChecksumHasher::new(checksum_kind);
+        module_ctx_download_copy_response(
+            url,
+            &decoded_tmp_destination,
+            reader,
+            &mut decoded_file,
+            &mut decoded_hasher,
+        )
+        .await?;
+        decoded_file.flush().map_err(|error| {
+            module_ctx_remove_partial_download(&decoded_tmp_destination);
+            ModuleCtxDownloadAttemptError::Fatal(module_ctx_download_write_error(
+                &decoded_tmp_destination,
+                error,
+            ))
+        })?;
+        drop(decoded_file);
+        module_ctx_remove_partial_download(&tmp_destination);
+        return module_ctx_remote_asset_finish_download_tmp(
+            &decoded_tmp_destination,
+            destination,
+            executable,
+            expected_checksum,
+            decoded_hasher.finalize_hex(),
+        );
+    }
+
+    let got = hasher.finalize_hex();
+    module_ctx_remote_asset_finish_download_tmp(
+        &tmp_destination,
+        destination,
+        executable,
+        expected_checksum,
+        got,
+    )
+}
+
+fn module_ctx_remote_asset_finish_download_tmp(
+    tmp_destination: &Path,
+    destination: &Path,
+    executable: bool,
+    expected_checksum: Option<&ModuleCtxChecksum>,
+    got: String,
+) -> Result<(Option<String>, String), ModuleCtxDownloadAttemptError> {
+    let checksum = if let Some(expected_checksum) = expected_checksum {
+        if expected_checksum.hex != got {
+            module_ctx_remove_partial_download(&tmp_destination);
+            return Err(ModuleCtxDownloadAttemptError::NonRetryable(
+                BazelRepositoryError::ModuleCtxDownloadChecksumMismatch {
+                    path: destination.to_string_lossy().into_owned(),
+                    expected: expected_checksum.hex.clone(),
+                    got,
+                }
+                .to_string(),
+            ));
+        }
+        expected_checksum.clone()
+    } else {
+        ModuleCtxChecksum {
+            kind: ModuleCtxChecksumKind::Sha256,
+            hex: got,
+        }
+    };
+
+    module_ctx_publish_download_tmp(&tmp_destination, destination, executable)
+        .map_err(ModuleCtxDownloadAttemptError::Fatal)?;
+    module_ctx_download_result_checksums_verified(&checksum)
+        .map_err(ModuleCtxDownloadAttemptError::Fatal)
+}
+
+fn module_ctx_remote_asset_blob_should_gunzip(url: &str, path: &Path) -> buck2_error::Result<bool> {
+    if module_ctx_download_url_has_gzipped_extension(url) {
+        return Ok(false);
+    }
+
+    let mut file = fs::File::open(path).with_buck_error_context(|| {
+        format!("error opening remote-downloaded blob `{}`", path.display())
+    })?;
+    let mut magic = [0u8; 2];
+    let bytes_read = file.read(&mut magic).with_buck_error_context(|| {
+        format!("error reading remote-downloaded blob `{}`", path.display())
+    })?;
+    Ok(bytes_read == magic.len() && magic == [0x1f, 0x8b])
+}
+
 fn module_ctx_download_request_headers_for_url<'a>(
     url: &str,
     headers: &'a [(String, String)],
@@ -8183,6 +8846,7 @@ fn module_ctx_download_request_headers_for_url<'a>(
 }
 
 async fn module_ctx_download_copy_response(
+    url: &str,
     destination: &Path,
     mut reader: impl AsyncRead + Unpin,
     file: &mut fs::File,
@@ -8190,10 +8854,20 @@ async fn module_ctx_download_copy_response(
 ) -> Result<(), ModuleCtxDownloadAttemptError> {
     let mut read_buffer = vec![0u8; 64 * 1024];
     loop {
-        let bytes_read = reader.read(&mut read_buffer).await.map_err(|error| {
-            module_ctx_remove_partial_download(destination);
-            ModuleCtxDownloadAttemptError::Retryable(error.to_string())
-        })?;
+        let bytes_read =
+            tokio::time::timeout(MODULE_CTX_HTTP_READ_TIMEOUT, reader.read(&mut read_buffer))
+                .await
+                .map_err(|_| {
+                    module_ctx_remove_partial_download(destination);
+                    ModuleCtxDownloadAttemptError::Retryable(format!(
+                        "timed out reading {url} after {} seconds",
+                        MODULE_CTX_HTTP_READ_TIMEOUT.as_secs()
+                    ))
+                })?
+                .map_err(|error| {
+                    module_ctx_remove_partial_download(destination);
+                    ModuleCtxDownloadAttemptError::Retryable(error.to_string())
+                })?;
         if bytes_read == 0 {
             break;
         }
@@ -8261,13 +8935,16 @@ async fn module_ctx_download_to_path_uncached(
     executable: bool,
     headers: &[(String, String)],
     auth_headers: &[ModuleCtxDownloadAuthHeader],
+    remote_downloader: Option<&BazelRepositoryRemoteDownloaderConfig>,
 ) -> buck2_error::Result<(Option<String>, String)> {
     const MAX_ATTEMPTS: usize = 8;
 
     let client = buck2_http::HttpClientBuilder::oss()
         .await?
         .with_max_redirects(MODULE_CTX_HTTP_MAX_REDIRECTS)
+        .with_http2(false)
         .with_connect_timeout(Some(MODULE_CTX_HTTP_CONNECT_TIMEOUT))
+        .with_response_header_timeout(Some(MODULE_CTX_HTTP_RESPONSE_HEADER_TIMEOUT))
         .with_read_timeout(Some(MODULE_CTX_HTTP_READ_TIMEOUT))
         .with_write_timeout(Some(MODULE_CTX_HTTP_WRITE_TIMEOUT))
         .build();
@@ -8284,16 +8961,29 @@ async fn module_ctx_download_to_path_uncached(
                         error
                     )
                 })?;
-            let result = module_ctx_download_url_to_path(
-                &client,
-                url,
-                destination,
-                expected_checksum,
-                executable,
-                headers,
-                auth_headers,
-            )
-            .await;
+            let result = if let Some(remote_downloader) = remote_downloader {
+                module_ctx_remote_asset_download_url_to_path(
+                    remote_downloader,
+                    url,
+                    destination,
+                    expected_checksum,
+                    executable,
+                    headers,
+                    auth_headers,
+                )
+                .await
+            } else {
+                module_ctx_download_url_to_path(
+                    &client,
+                    url,
+                    destination,
+                    expected_checksum,
+                    executable,
+                    headers,
+                    auth_headers,
+                )
+                .await
+            };
             drop(_permit);
 
             match result {
@@ -8328,12 +9018,14 @@ fn module_ctx_download_to_path_uncached_blocking(
     executable: bool,
     headers: &[(String, String)],
     auth_headers: &[ModuleCtxDownloadAuthHeader],
+    remote_downloader: Option<&BazelRepositoryRemoteDownloaderConfig>,
 ) -> buck2_error::Result<(Option<String>, String)> {
     let urls = urls.to_owned();
     let destination = destination.to_owned();
     let expected_checksum = expected_checksum.cloned();
     let headers = headers.to_owned();
     let auth_headers = auth_headers.to_owned();
+    let remote_downloader = remote_downloader.cloned();
     std::thread::spawn(move || {
         tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -8353,6 +9045,7 @@ fn module_ctx_download_to_path_uncached_blocking(
                     executable,
                     &headers,
                     &auth_headers,
+                    remote_downloader.as_ref(),
                 )
                 .await
             })
@@ -8616,6 +9309,7 @@ fn module_ctx_download_to_path_blocking(
     executable: bool,
     headers: &[(String, String)],
     auth_headers: &[ModuleCtxDownloadAuthHeader],
+    remote_downloader: Option<&BazelRepositoryRemoteDownloaderConfig>,
 ) -> buck2_error::Result<(Option<String>, String)> {
     if let Some(expected_checksum) = expected_checksum {
         if destination.is_file()
@@ -8668,6 +9362,7 @@ fn module_ctx_download_to_path_blocking(
                                 executable,
                                 headers,
                                 auth_headers,
+                                remote_downloader,
                             ),
                             buck2_data::DiceStateUpdateStageEnd {},
                         )
@@ -8698,6 +9393,7 @@ fn module_ctx_download_to_path_blocking(
                     executable,
                     headers,
                     auth_headers,
+                    remote_downloader,
                 ),
                 buck2_data::DiceStateUpdateStageEnd {},
             )
@@ -8804,6 +9500,51 @@ fn module_ctx_checksum_from_integrity(
         }
     }
     Err(BazelRepositoryError::ModuleCtxDownloadUnsupportedIntegrity(integrity.to_owned()).into())
+}
+
+fn module_ctx_checksum_to_subresource_integrity(
+    checksum: &ModuleCtxChecksum,
+) -> buck2_error::Result<String> {
+    let bytes = hex::decode(&checksum.hex)?;
+    Ok(format!(
+        "{}{}",
+        checksum.kind.integrity_prefix(),
+        BASE64_STANDARD.encode(bytes)
+    ))
+}
+
+fn module_ctx_add_remote_asset_metadata(
+    metadata: &mut tonic::metadata::MetadataMap,
+    config: &BazelRepositoryRemoteDownloaderConfig,
+) -> buck2_error::Result<()> {
+    if let Some(api_key) = config
+        .api_key
+        .as_ref()
+        .filter(|api_key| !api_key.trim().is_empty())
+    {
+        metadata.insert(
+            BUILDBUDDY_API_KEY_HEADER,
+            MetadataValue::try_from(api_key.as_str()).map_err(|error| {
+                buck2_error::buck2_error!(
+                    buck2_error::ErrorTag::Input,
+                    "invalid `{BUILDBUDDY_API_KEY_HEADER}` metadata value: {error}"
+                )
+            })?,
+        );
+    }
+    Ok(())
+}
+
+fn module_ctx_bytestream_download_resource_name(
+    instance_name: &str,
+    digest: &RemoteExecutionDigest,
+) -> String {
+    let blob = format!("blobs/{}/{}", digest.hash, digest.size_bytes);
+    if instance_name.is_empty() {
+        blob
+    } else {
+        format!("{instance_name}/{blob}")
+    }
 }
 
 fn module_ctx_checksum_hex(kind: ModuleCtxChecksumKind, bytes: &[u8]) -> String {
@@ -9103,6 +9844,15 @@ fn module_ctx_command_executor<'v>(
     }
 }
 
+fn module_ctx_remote_downloader<'v>(
+    this: ValueTypedComplex<'v, StarlarkModuleExtensionContext<'v>>,
+) -> Option<BazelRepositoryRemoteDownloaderConfig> {
+    match this.unpack() {
+        either::Either::Left(ctx) => ctx.remote_downloader.clone(),
+        either::Either::Right(ctx) => ctx.remote_downloader.clone(),
+    }
+}
+
 #[starlark_module]
 fn module_extension_context_methods(builder: &mut MethodsBuilder) {
     fn is_dev_dependency<'v>(
@@ -9275,6 +10025,9 @@ fn module_extension_context_methods(builder: &mut MethodsBuilder) {
             })
         })?;
         command.current_dir(working_directory);
+        buck2_events::dispatch::instant_event(buck2_data::BzlmodProgress {
+            progress: format!("running `{program}`"),
+        });
         let output = module_ctx_command_executor(this)
             .execute(command, &repository_working_dir, timeout, quiet)
             .map_err(|error| {
@@ -9362,6 +10115,7 @@ fn module_extension_context_methods(builder: &mut MethodsBuilder) {
             }
         };
 
+        let remote_downloader = module_ctx_remote_downloader(this);
         let (got_sha256, got_integrity) = match module_ctx_download_to_path_blocking(
             &urls,
             &write_path,
@@ -9370,6 +10124,7 @@ fn module_extension_context_methods(builder: &mut MethodsBuilder) {
             executable,
             &download_headers,
             &auth_headers,
+            remote_downloader.as_ref(),
         ) {
             Ok(checksums) => checksums,
             Err(error) => {

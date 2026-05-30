@@ -67,6 +67,7 @@ pub struct HttpClientBuilder {
     supports_vpnless: bool,
     http2: bool,
     timeout_config: Option<TimeoutConfig>,
+    response_header_timeout: Option<Duration>,
     max_concurrent_requests: Option<usize>,
 }
 
@@ -106,6 +107,7 @@ impl HttpClientBuilder {
             supports_vpnless: false,
             http2: true,
             timeout_config: None,
+            response_header_timeout: None,
             max_concurrent_requests: None,
         })
     }
@@ -213,6 +215,14 @@ impl HttpClientBuilder {
         self
     }
 
+    pub fn with_response_header_timeout(
+        &mut self,
+        response_header_timeout: Option<Duration>,
+    ) -> &mut Self {
+        self.response_header_timeout = response_header_timeout;
+        self
+    }
+
     pub fn supports_vpnless(&self) -> bool {
         self.supports_vpnless
     }
@@ -303,6 +313,7 @@ impl HttpClientBuilder {
             max_redirects: self.max_redirects,
             supports_vpnless: self.supports_vpnless,
             http2: self.http2,
+            response_header_timeout: self.response_header_timeout,
             stats: HttpNetworkStats::new(),
             concurrent_requests_budget: self
                 .max_concurrent_requests
