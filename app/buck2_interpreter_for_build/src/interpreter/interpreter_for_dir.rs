@@ -1048,6 +1048,10 @@ impl InterpreterForDir {
                                 crate::bazel_repository::take_module_ctx_recorded_inputs(
                                     module_ctx,
                                 )?;
+                            result.path_label_deps =
+                                crate::bazel_repository::take_module_ctx_path_label_deps(
+                                    module_ctx,
+                                )?;
                             result.reproducible = value
                                 .downcast_ref::<crate::bazel_repository::StarlarkModuleExtensionMetadata>(
                                 )
@@ -1197,6 +1201,10 @@ impl InterpreterForDir {
                                 )?,
                                 recorded_inputs:
                                     crate::bazel_repository::take_repository_ctx_recorded_inputs(
+                                        repository_ctx,
+                                    )?,
+                                path_label_deps:
+                                    crate::bazel_repository::take_repository_ctx_path_label_deps(
                                         repository_ctx,
                                     )?,
                                 reproducible: value

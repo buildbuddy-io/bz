@@ -3152,7 +3152,7 @@ fn bzlmod_generated_repository_rule_materialization_stamp_content(
     let mut hasher = blake3::Hasher::new();
     update_bzlmod_repo_contents_cache_key(
         &mut hasher,
-        "buck2-bzlmod-generated-repository-rule-materialization-v3",
+        "buck2-bzlmod-generated-repository-rule-materialization-v4",
     );
     update_bzlmod_repo_contents_cache_key(
         &mut hasher,
@@ -3677,7 +3677,7 @@ fn bzlmod_hidden_lockfile_path() -> ProjectRelativePathBuf {
 }
 
 const BZLMOD_HIDDEN_LOCKFILE_SCHEMA_FIELD: &str = "buck2HiddenLockfileSchemaVersion";
-const BZLMOD_HIDDEN_LOCKFILE_SCHEMA_VERSION: u64 = 4;
+const BZLMOD_HIDDEN_LOCKFILE_SCHEMA_VERSION: u64 = 5;
 
 fn bzlmod_workspace_lockfile_path() -> ProjectRelativePathBuf {
     ProjectRelativePathBuf::unchecked_new("MODULE.bazel.lock".to_owned())
@@ -4017,6 +4017,7 @@ fn bzlmod_hidden_lockfile_extension_evaluation_to_result(
     Ok(Arc::new(BazelModuleExtensionEvaluationResult {
         repository_rule_invocations,
         recorded_inputs: evaluation.recorded_inputs,
+        path_label_deps: Vec::new(),
         reproducible,
     }))
 }
@@ -4035,6 +4036,7 @@ fn bzlmod_workspace_lockfile_extension_evaluation_to_result(
     Ok(Arc::new(BazelModuleExtensionEvaluationResult {
         repository_rule_invocations,
         recorded_inputs: Vec::new(),
+        path_label_deps: Vec::new(),
         reproducible,
     }))
 }

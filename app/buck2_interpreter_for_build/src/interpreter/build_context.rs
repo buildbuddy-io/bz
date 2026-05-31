@@ -29,6 +29,7 @@ use starlark::eval::Evaluator;
 
 use crate::bazel_repository::BazelRepositoryCommandExecutor;
 use crate::bazel_repository::BazelRepositoryRemoteDownloaderConfig;
+use crate::bazel_repository::RepositoryPathLabelDep;
 use crate::interpreter::buckconfig::BuckConfigsViewForStarlark;
 use crate::interpreter::buckconfig::LegacyBuckConfigsForStarlark;
 use crate::interpreter::bzl_eval_ctx::BzlEvalCtx;
@@ -362,6 +363,7 @@ pub(crate) struct BazelRepositoryContextForStarlark {
 pub struct BazelModuleExtensionEvaluationResult {
     pub repository_rule_invocations: Vec<BazelRepositoryRuleInvocation>,
     pub recorded_inputs: Vec<BazelRepositoryRecordedInput>,
+    pub path_label_deps: Vec<RepositoryPathLabelDep>,
     pub reproducible: bool,
 }
 
@@ -379,6 +381,7 @@ impl BazelRepositoryRuleRecorder {
         BazelModuleExtensionEvaluationResult {
             repository_rule_invocations: std::mem::take(&mut *self.invocations.borrow_mut()),
             recorded_inputs: Vec::new(),
+            path_label_deps: Vec::new(),
             reproducible: false,
         }
     }

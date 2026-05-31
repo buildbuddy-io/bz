@@ -639,56 +639,39 @@ fn repository_os_arch_value(repo_env: &BTreeMap<String, String>) -> String {
         .unwrap_or_else(|| env::consts::ARCH.to_owned())
 }
 
-fn repository_host_execution_env(
-    repo_env: &Arc<BTreeMap<String, String>>,
-) -> Arc<BTreeMap<String, String>> {
-    if !repo_env.contains_key(BZLMOD_REPOSITORY_OS_NAME_ENV)
-        && !repo_env.contains_key(BZLMOD_REPOSITORY_OS_ARCH_ENV)
-    {
-        return repo_env.clone();
-    }
-    let mut repo_env = (**repo_env).clone();
-    repo_env.remove(BZLMOD_REPOSITORY_OS_NAME_ENV);
-    repo_env.remove(BZLMOD_REPOSITORY_OS_ARCH_ENV);
-    Arc::new(repo_env)
+fn repository_rule_should_use_remote_command_executor(
+    repo_env: &BTreeMap<String, String>,
+    remotable: bool,
+) -> bool {
+    remotable || !repository_ctx_should_search_local_path(repo_env)
 }
 
-fn repository_rule_execution_env(
-    repo_env: &Arc<BTreeMap<String, String>>,
+fn repository_rule_command_executor(
+    repo_env: &BTreeMap<String, String>,
     remotable: bool,
-) -> Arc<BTreeMap<String, String>> {
-    if remotable {
-        repo_env.clone()
-    } else {
-        repository_host_execution_env(repo_env)
+    eval: &Evaluator<'_, '_, '_>,
+) -> starlark::Result<BazelRepositoryCommandExecutor> {
+    if repository_rule_should_use_remote_command_executor(repo_env, remotable) {
+        return Ok(BuildContext::from_context(eval)?
+            .bazel_repository_context
+            .as_ref()
+            .map(|context| context.command_executor.clone())
+            .unwrap_or(BazelRepositoryCommandExecutor::Local));
     }
+    Ok(BazelRepositoryCommandExecutor::Local)
 }
 
 fn repository_os_name(
     repo_env: &BTreeMap<String, String>,
-    recorded_inputs: &Mutex<Vec<BazelRepositoryRecordedInput>>,
+    _recorded_inputs: &Mutex<Vec<BazelRepositoryRecordedInput>>,
 ) -> String {
-    record_repository_input(
-        recorded_inputs,
-        BazelRepositoryRecordedInput::EnvVar {
-            name: BZLMOD_REPOSITORY_OS_NAME_ENV.to_owned(),
-            value: repo_env.get(BZLMOD_REPOSITORY_OS_NAME_ENV).cloned(),
-        },
-    );
     repository_os_name_value(repo_env)
 }
 
 fn repository_os_arch(
     repo_env: &BTreeMap<String, String>,
-    recorded_inputs: &Mutex<Vec<BazelRepositoryRecordedInput>>,
+    _recorded_inputs: &Mutex<Vec<BazelRepositoryRecordedInput>>,
 ) -> String {
-    record_repository_input(
-        recorded_inputs,
-        BazelRepositoryRecordedInput::EnvVar {
-            name: BZLMOD_REPOSITORY_OS_ARCH_ENV.to_owned(),
-            value: repo_env.get(BZLMOD_REPOSITORY_OS_ARCH_ENV).cloned(),
-        },
-    );
     repository_os_arch_value(repo_env)
 }
 
@@ -733,7 +716,7 @@ mod tests {
     }
 
     #[test]
-    fn test_repository_os_uses_fake_values_and_records_inputs() {
+    fn test_repository_os_uses_fake_values_without_recording_inputs() {
         let repo_env = BTreeMap::from([
             (BZLMOD_REPOSITORY_OS_NAME_ENV.to_owned(), "linux".to_owned()),
             (
@@ -746,23 +729,11 @@ mod tests {
         assert_eq!("linux", repository_os_name(&repo_env, &recorded_inputs));
         assert_eq!("x86_64", repository_os_arch(&repo_env, &recorded_inputs));
 
-        assert_eq!(
-            vec![
-                BazelRepositoryRecordedInput::EnvVar {
-                    name: BZLMOD_REPOSITORY_OS_NAME_ENV.to_owned(),
-                    value: Some("linux".to_owned()),
-                },
-                BazelRepositoryRecordedInput::EnvVar {
-                    name: BZLMOD_REPOSITORY_OS_ARCH_ENV.to_owned(),
-                    value: Some("x86_64".to_owned()),
-                },
-            ],
-            recorded_inputs.into_inner().unwrap()
-        );
+        assert!(recorded_inputs.into_inner().unwrap().is_empty());
     }
 
     #[test]
-    fn test_repository_os_defaults_to_host_and_records_missing_inputs() {
+    fn test_repository_os_defaults_to_host_without_recording_inputs() {
         let repo_env = BTreeMap::new();
         let recorded_inputs = Mutex::new(Vec::new());
 
@@ -775,19 +746,7 @@ mod tests {
             repository_os_arch(&repo_env, &recorded_inputs)
         );
 
-        assert_eq!(
-            vec![
-                BazelRepositoryRecordedInput::EnvVar {
-                    name: BZLMOD_REPOSITORY_OS_NAME_ENV.to_owned(),
-                    value: None,
-                },
-                BazelRepositoryRecordedInput::EnvVar {
-                    name: BZLMOD_REPOSITORY_OS_ARCH_ENV.to_owned(),
-                    value: None,
-                },
-            ],
-            recorded_inputs.into_inner().unwrap()
-        );
+        assert!(recorded_inputs.into_inner().unwrap().is_empty());
     }
 
     #[test]
@@ -1446,6 +1405,7 @@ pub enum BazelModuleExtensionEvaluation {
 pub struct BazelRepositoryRuleEvaluationResult {
     pub files: Vec<BazelRepositoryGeneratedFile>,
     pub recorded_inputs: Vec<BazelRepositoryRecordedInput>,
+    pub path_label_deps: Vec<RepositoryPathLabelDep>,
     pub reproducible: bool,
 }
 
@@ -2746,7 +2706,7 @@ pub async fn evaluate_bzlmod_module_extension_repo(
     let extension_module = ctx
         .get_loaded_module(StarlarkModulePath::LoadFile(&extension_path))
         .await?;
-    let repo_env = repository_host_execution_env(&ctx.get_bzlmod_repository_environment().await?);
+    let repo_env = ctx.get_bzlmod_repository_environment().await?;
     let mut materialized_path_label_deps = BTreeSet::new();
     loop {
         let mut interpreter = ctx
@@ -2764,7 +2724,22 @@ pub async fn evaluate_bzlmod_module_extension_repo(
             )
             .await?
         {
-            BazelModuleExtensionEvaluation::Success(result) => return Ok(result),
+            BazelModuleExtensionEvaluation::Success(result) => {
+                let new_label_deps = result
+                    .path_label_deps
+                    .iter()
+                    .filter_map(|dep| {
+                        materialized_path_label_deps
+                            .insert(dep.clone())
+                            .then(|| dep.clone())
+                    })
+                    .collect::<Vec<_>>();
+                if new_label_deps.is_empty() {
+                    return Ok(result);
+                }
+                materialize_repository_rule_path_label_deps(ctx, &new_label_deps).await?;
+                repository_ctx_clean_working_dir(module_ctx_working_dir)?;
+            }
             BazelModuleExtensionEvaluation::NeedsPathLabelDeps { label_deps, error } => {
                 let new_label_deps = label_deps
                     .into_iter()
@@ -2881,7 +2856,22 @@ pub async fn evaluate_bzlmod_repository_rule_with_recorded_inputs(
             evaluation.await?
         };
         match evaluation {
-            BazelRepositoryRuleEvaluation::Success(result) => return Ok(result),
+            BazelRepositoryRuleEvaluation::Success(result) => {
+                let new_label_deps = result
+                    .path_label_deps
+                    .iter()
+                    .filter_map(|dep| {
+                        materialized_path_label_deps
+                            .insert(dep.clone())
+                            .then(|| dep.clone())
+                    })
+                    .collect::<Vec<_>>();
+                if new_label_deps.is_empty() {
+                    return Ok(result);
+                }
+                materialize_repository_rule_path_label_deps(ctx, &new_label_deps).await?;
+                repository_ctx_clean_working_dir(repository_ctx_working_dir)?;
+            }
             BazelRepositoryRuleEvaluation::NeedsPathLabelDeps { label_deps, error } => {
                 let new_label_deps = label_deps
                     .into_iter()
@@ -3610,18 +3600,17 @@ pub async fn bzlmod_repository_rule_cache_info(
     let repository_rule =
         repository_rule_from_loaded_module(rule_path, &invocation.rule_id.name, rule_value)?;
     let bzl_transitive_digest = bzlmod_bzl_transitive_digest(ctx, rule_path.clone()).await?;
-    let repo_env = repository_rule_execution_env(
-        &ctx.get_bzlmod_repository_environment().await?,
-        repository_rule.remotable,
-    );
-    let execution_cache_key = if repository_rule.remotable {
+    let repo_env = ctx.get_bzlmod_repository_environment().await?;
+    let execution_cache_key =
+        if repository_rule_should_use_remote_command_executor(&repo_env, repository_rule.remotable)
+        {
         bzlmod_repository_rule_execution_cache_key(ctx.get_fallback_executor_config())
     } else {
         "local".to_owned()
     };
 
     let mut hasher = blake3::Hasher::new();
-    update_repository_rule_cache_key(&mut hasher, "buck2-bzlmod-repository-rule-cache-v9");
+    update_repository_rule_cache_key(&mut hasher, "buck2-bzlmod-repository-rule-cache-v10");
     update_repository_rule_cache_key(&mut hasher, &execution_cache_key);
     update_repository_rule_cache_key(&mut hasher, &repository_os_name_value(&repo_env));
     update_repository_rule_cache_key(&mut hasher, &repository_os_arch_value(&repo_env));
@@ -4249,9 +4238,17 @@ pub(crate) fn alloc_bzlmod_module_extension_context<'v>(
         modules,
         working_dir.to_owned(),
         config.root_module_has_non_dev_dependency,
-        repo_env,
+        repo_env.clone(),
         recorded_inputs,
-        BazelRepositoryCommandExecutor::Local,
+        if repository_ctx_should_search_local_path(&repo_env) {
+            BazelRepositoryCommandExecutor::Local
+        } else {
+            BuildContext::from_context(eval)?
+                .bazel_repository_context
+                .as_ref()
+                .map(|context| context.command_executor.clone())
+                .unwrap_or(BazelRepositoryCommandExecutor::Local)
+        },
         BuildContext::from_context(eval)?
             .bazel_repository_context
             .as_ref()
@@ -4323,16 +4320,8 @@ pub(crate) fn alloc_bzlmod_repository_context<'v>(
         attrs,
         name: invocation.name.clone(),
     };
-    let repo_env = repository_rule_execution_env(&repo_env, repository_rule.remotable);
-    let command_executor = if repository_rule.remotable {
-        BuildContext::from_context(eval)?
-            .bazel_repository_context
-            .as_ref()
-            .map(|context| context.command_executor.clone())
-            .unwrap_or(BazelRepositoryCommandExecutor::Local)
-    } else {
-        BazelRepositoryCommandExecutor::Local
-    };
+    let command_executor =
+        repository_rule_command_executor(&repo_env, repository_rule.remotable, eval)?;
     let repository_ctx = StarlarkRepositoryContext::new(
         invocation.name.clone(),
         invocation.original_name.clone(),
@@ -5275,13 +5264,16 @@ fn repository_path_and_dep_from_value_relative_to(
         ));
     }
     if let Some(path) = value.unpack_str() {
-        if let Some(relative_root) = relative_root
+        let path = if let Some(relative_root) = relative_root
             && !Path::new(path).is_absolute()
             && !path.starts_with("buck-out/")
         {
-            return Ok((repository_join_normalized(relative_root, path), None));
-        }
-        return Ok((path.to_owned(), None));
+            repository_join_normalized(relative_root, path)
+        } else {
+            path.to_owned()
+        };
+        let dep = repository_ctx_external_input_dep(Path::new(&path));
+        return Ok((path, dep));
     }
     Err(
         buck2_error::Error::from(BazelRepositoryError::ModuleCtxPathUnsupportedValue(
