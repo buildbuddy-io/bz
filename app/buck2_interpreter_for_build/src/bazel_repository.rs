@@ -873,6 +873,51 @@ mod tests {
     }
 
     #[test]
+    fn test_repository_ctx_rewrites_embedded_project_paths_for_remote_execution() {
+        let project_root = Path::new("/Users/siggi/Code/buildbuddy");
+        let repository_working_dir = Path::new(
+            "/Users/siggi/Code/buildbuddy/buck-out/v2/cache/bzlmod_generated_scratch/repo/repository_ctx",
+        );
+        let command =
+            "patch -p0 < /Users/siggi/Code/buildbuddy/buildpatches/protobuf.js_inquire.patch";
+
+        assert_eq!(
+            repository_ctx_embedded_project_paths(command, project_root),
+            vec![PathBuf::from(
+                "/Users/siggi/Code/buildbuddy/buildpatches/protobuf.js_inquire.patch"
+            )],
+        );
+        assert_eq!(
+            repository_ctx_rewrite_embedded_project_paths(
+                command,
+                project_root,
+                repository_working_dir,
+            )
+            .as_deref(),
+            Some("patch -p0 < __BUCK2_REMOTE_EXEC_ROOT__/buildpatches/protobuf.js_inquire.patch"),
+        );
+    }
+
+    #[test]
+    fn test_repository_ctx_rewrites_embedded_repository_working_dir_first() {
+        let project_root = Path::new("/Users/siggi/Code/buildbuddy");
+        let repository_working_dir = Path::new(
+            "/Users/siggi/Code/buildbuddy/buck-out/v2/cache/bzlmod_generated_scratch/repo/repository_ctx",
+        );
+        let command = "cat /Users/siggi/Code/buildbuddy/buck-out/v2/cache/bzlmod_generated_scratch/repo/repository_ctx/package.json";
+
+        assert_eq!(
+            repository_ctx_rewrite_embedded_project_paths(
+                command,
+                project_root,
+                repository_working_dir,
+            )
+            .as_deref(),
+            Some("cat __BUCK2_REMOTE_EXEC_ROOT__/__buck2_repository_ctx_work/package.json"),
+        );
+    }
+
+    #[test]
     fn test_repository_ctx_external_repo_root_project_path() {
         assert_eq!(
             Some(ProjectRelativePathBuf::unchecked_new(
@@ -1554,6 +1599,49 @@ fn repository_ctx_remote_execute_block_in_place<T>(
     }
 }
 
+fn repository_ctx_remote_execute_on_thread<T>(
+    timeout: Duration,
+    timeout_result: impl FnOnce() -> Result<T, String>,
+    f: impl FnOnce() -> Result<T, String> + Send + 'static,
+) -> Result<T, String>
+where
+    T: Send + 'static,
+{
+    repository_ctx_remote_execute_block_in_place(|| {
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        let handle = std::thread::Builder::new()
+            .name("buck2-remote-repository-ctx-call".to_owned())
+            .spawn(move || {
+                let result = f();
+                let _ = sender.send(result);
+            })
+            .map_err(|error| {
+                format!("remote repository_ctx.execute failed to spawn worker thread: {error}")
+            })?;
+        match receiver.recv_timeout(timeout) {
+            Ok(result) => {
+                handle.join().map_err(|_| {
+                    "remote repository_ctx.execute worker thread panicked".to_owned()
+                })?;
+                result
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                drop(handle);
+                timeout_result()
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                handle.join().map_err(|_| {
+                    "remote repository_ctx.execute worker thread panicked".to_owned()
+                })?;
+                Err(
+                    "remote repository_ctx.execute worker thread exited without a result"
+                        .to_owned(),
+                )
+            }
+        }
+    })
+}
+
 #[derive(Clone)]
 pub(crate) enum BazelRepositoryCommandExecutor {
     Local,
@@ -1669,19 +1757,18 @@ impl BazelRemoteRepositoryCommandExecutor {
         let executor = self.dupe();
         let program = program.to_owned();
         let path = path.to_owned();
-        repository_ctx_remote_execute_block_in_place(|| {
-            std::thread::Builder::new()
-                .name("buck2-remote-repository-ctx-call".to_owned())
-                .spawn(move || {
-                    repository_ctx_remote_execute_runtime()?
-                        .block_on(executor.which_async(&program, &path))
-                })
-                .map_err(|error| {
-                    format!("remote repository_ctx.which failed to spawn worker thread: {error}")
-                })?
-                .join()
-                .map_err(|_| "remote repository_ctx.which worker thread panicked".to_owned())?
-        })
+        repository_ctx_remote_execute_on_thread(
+            Duration::from_secs(REPOSITORY_CTX_REMOTE_WHICH_TIMEOUT),
+            || {
+                Err(format!(
+                    "remote repository_ctx.which timed out after {REPOSITORY_CTX_REMOTE_WHICH_TIMEOUT} seconds"
+                ))
+            },
+            move || {
+                repository_ctx_remote_execute_runtime()?
+                    .block_on(executor.which_async(&program, &path))
+            },
+        )
     }
 
     async fn which_async(&self, program: &str, path: &str) -> Result<Option<String>, String> {
@@ -1771,23 +1858,24 @@ impl BazelRemoteRepositoryCommandExecutor {
         }
         let executor = self.dupe();
         let repository_working_dir = repository_working_dir.to_owned();
-        repository_ctx_remote_execute_block_in_place(|| {
-            std::thread::Builder::new()
-                .name("buck2-remote-repository-ctx-call".to_owned())
-                .spawn(move || {
-                    repository_ctx_remote_execute_runtime()?.block_on(executor.execute_async(
-                        command,
-                        &repository_working_dir,
-                        timeout,
-                        quiet,
-                    ))
+        repository_ctx_remote_execute_on_thread(
+            Duration::from_secs(timeout as u64),
+            || {
+                Ok(RepositoryCommandOutput {
+                    stdout: Vec::new(),
+                    stderr: format!("Command timed out after {timeout} seconds").into_bytes(),
+                    return_code: 256,
                 })
-                .map_err(|error| {
-                    format!("remote repository_ctx.execute failed to spawn worker thread: {error}")
-                })?
-                .join()
-                .map_err(|_| "remote repository_ctx.execute worker thread panicked".to_owned())?
-        })
+            },
+            move || {
+                repository_ctx_remote_execute_runtime()?.block_on(executor.execute_async(
+                    command,
+                    &repository_working_dir,
+                    timeout,
+                    quiet,
+                ))
+            },
+        )
     }
 
     async fn execute_async(
@@ -2158,18 +2246,10 @@ input_root="$1"
         value: &str,
         repository_working_dir: &Path,
     ) -> Result<(), String> {
-        if let Some(path) = self.project_path_from_command_value(value)
-            && !path.starts_with(repository_working_dir)
-        {
-            self.add_disk_input(inputs, &path).await?;
-        }
-        if let Some((key, value)) = value.split_once('=')
-            && !key.contains('/')
-            && !key.contains('\\')
-            && let Some(path) = self.project_path_from_command_value(value)
-            && !path.starts_with(repository_working_dir)
-        {
-            self.add_disk_input(inputs, &path).await?;
+        for path in self.project_paths_from_command_value(value) {
+            if !path.starts_with(repository_working_dir) {
+                self.add_disk_input(inputs, &path).await?;
+            }
         }
         Ok(())
     }
@@ -2236,7 +2316,26 @@ input_root="$1"
         Ok(())
     }
 
-    fn project_path_from_command_value(&self, value: &str) -> Option<PathBuf> {
+    fn project_paths_from_command_value(&self, value: &str) -> Vec<PathBuf> {
+        let mut paths = Vec::new();
+        if let Some(path) = self.project_path_from_plain_command_value(value) {
+            paths.push(path);
+        }
+        if let Some((key, value)) = value.split_once('=')
+            && !key.contains('/')
+            && !key.contains('\\')
+            && let Some(path) = self.project_path_from_plain_command_value(value)
+        {
+            paths.push(path);
+        }
+        paths.extend(repository_ctx_embedded_project_paths(
+            value,
+            self.project_root.root().as_path(),
+        ));
+        paths
+    }
+
+    fn project_path_from_plain_command_value(&self, value: &str) -> Option<PathBuf> {
         let path = Path::new(value);
         if path.is_absolute() {
             if path.starts_with(self.project_root.root().as_path()) {
@@ -2293,6 +2392,13 @@ input_root="$1"
         }
 
         self.remote_command_path(value, repository_working_dir)
+            .or_else(|| {
+                repository_ctx_rewrite_embedded_project_paths(
+                    value,
+                    self.project_root.root().as_path(),
+                    repository_working_dir,
+                )
+            })
             .unwrap_or_else(|| value.to_owned())
     }
 
@@ -2404,6 +2510,57 @@ fn remote_path_in_exec_root(path: &str) -> String {
     } else {
         format!("{REMOTE_EXEC_ROOT_MARKER}/{path}")
     }
+}
+
+fn repository_ctx_embedded_project_paths(value: &str, project_root: &Path) -> Vec<PathBuf> {
+    let project_root = project_root.to_string_lossy();
+    if project_root.is_empty() {
+        return Vec::new();
+    }
+    value
+        .match_indices(project_root.as_ref())
+        .map(|(start, _)| {
+            let end = repository_ctx_embedded_path_end(value, start);
+            PathBuf::from(&value[start..end])
+        })
+        .collect()
+}
+
+fn repository_ctx_rewrite_embedded_project_paths(
+    value: &str,
+    project_root: &Path,
+    repository_working_dir: &Path,
+) -> Option<String> {
+    let mut rewritten = value.to_owned();
+    let repository_working_dir = repository_working_dir.to_string_lossy();
+    if !repository_working_dir.is_empty() && rewritten.contains(repository_working_dir.as_ref()) {
+        rewritten = rewritten.replace(
+            repository_working_dir.as_ref(),
+            &remote_path_in_exec_root(&remote_repo_path(Path::new(""))),
+        );
+    }
+    let project_root = project_root.to_string_lossy();
+    if !project_root.is_empty() && rewritten.contains(project_root.as_ref()) {
+        rewritten = rewritten.replace(project_root.as_ref(), REMOTE_EXEC_ROOT_MARKER);
+    }
+    (rewritten != value).then_some(rewritten)
+}
+
+fn repository_ctx_embedded_path_end(value: &str, start: usize) -> usize {
+    value[start..]
+        .char_indices()
+        .find_map(|(offset, ch)| {
+            (offset != 0 && repository_ctx_embedded_path_delimiter(ch)).then_some(start + offset)
+        })
+        .unwrap_or(value.len())
+}
+
+fn repository_ctx_embedded_path_delimiter(ch: char) -> bool {
+    ch.is_whitespace()
+        || matches!(
+            ch,
+            '"' | '\'' | '`' | '<' | '>' | '|' | '&' | ';' | '(' | ')' | '[' | ']' | '{' | '}'
+        )
 }
 
 fn repository_ctx_remote_temp_env_key(key: &str) -> bool {
