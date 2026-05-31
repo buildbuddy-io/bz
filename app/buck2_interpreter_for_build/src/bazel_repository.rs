@@ -794,6 +794,35 @@ mod tests {
     }
 
     #[test]
+    fn test_repository_ctx_command_progress_unwraps_env() {
+        let args = vec![
+            "-i".to_owned(),
+            "TMPDIR=/tmp".to_owned(),
+            "/repo/buck-out/gazelle".to_owned(),
+            "-go_repository_mode".to_owned(),
+        ];
+
+        assert_eq!(
+            "running `/repo/buck-out/gazelle`",
+            repository_ctx_command_progress("env", &args)
+        );
+        assert_eq!(
+            "running `/repo/buck-out/gazelle`",
+            repository_ctx_command_progress("/usr/bin/env", &args)
+        );
+    }
+
+    #[test]
+    fn test_repository_ctx_command_progress_keeps_plain_program() {
+        let args = vec!["-c".to_owned()];
+
+        assert_eq!(
+            "running `/usr/bin/gcc`",
+            repository_ctx_command_progress("/usr/bin/gcc", &args)
+        );
+    }
+
+    #[test]
     fn test_repository_os_name_match_accepts_common_macos_spellings() {
         assert_eq!(
             canonical_bazel_os_name("macos"),
@@ -1498,6 +1527,17 @@ fn repository_ctx_remote_execute_runtime() -> Result<&'static tokio::runtime::Ru
         .map_err(|error| error.clone())
 }
 
+fn repository_ctx_remote_execute_block_in_place<T>(
+    f: impl FnOnce() -> Result<T, String>,
+) -> Result<T, String> {
+    match tokio::runtime::Handle::try_current() {
+        Ok(handle) if handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread => {
+            tokio::task::block_in_place(f)
+        }
+        _ => f(),
+    }
+}
+
 #[derive(Clone)]
 pub(crate) enum BazelRepositoryCommandExecutor {
     Local,
@@ -1613,11 +1653,19 @@ impl BazelRemoteRepositoryCommandExecutor {
         let executor = self.dupe();
         let program = program.to_owned();
         let path = path.to_owned();
-        std::thread::spawn(move || {
-            repository_ctx_remote_execute_runtime()?.block_on(executor.which_async(&program, &path))
+        repository_ctx_remote_execute_block_in_place(|| {
+            std::thread::Builder::new()
+                .name("buck2-remote-repository-ctx-call".to_owned())
+                .spawn(move || {
+                    repository_ctx_remote_execute_runtime()?
+                        .block_on(executor.which_async(&program, &path))
+                })
+                .map_err(|error| {
+                    format!("remote repository_ctx.which failed to spawn worker thread: {error}")
+                })?
+                .join()
+                .map_err(|_| "remote repository_ctx.which worker thread panicked".to_owned())?
         })
-        .join()
-        .map_err(|_| "remote repository_ctx.which worker thread panicked".to_owned())?
     }
 
     async fn which_async(&self, program: &str, path: &str) -> Result<Option<String>, String> {
@@ -1707,16 +1755,23 @@ impl BazelRemoteRepositoryCommandExecutor {
         }
         let executor = self.dupe();
         let repository_working_dir = repository_working_dir.to_owned();
-        std::thread::spawn(move || {
-            repository_ctx_remote_execute_runtime()?.block_on(executor.execute_async(
-                command,
-                &repository_working_dir,
-                timeout,
-                quiet,
-            ))
+        repository_ctx_remote_execute_block_in_place(|| {
+            std::thread::Builder::new()
+                .name("buck2-remote-repository-ctx-call".to_owned())
+                .spawn(move || {
+                    repository_ctx_remote_execute_runtime()?.block_on(executor.execute_async(
+                        command,
+                        &repository_working_dir,
+                        timeout,
+                        quiet,
+                    ))
+                })
+                .map_err(|error| {
+                    format!("remote repository_ctx.execute failed to spawn worker thread: {error}")
+                })?
+                .join()
+                .map_err(|_| "remote repository_ctx.execute worker thread panicked".to_owned())?
         })
-        .join()
-        .map_err(|_| "remote repository_ctx.execute worker thread panicked".to_owned())?
     }
 
     async fn execute_async(
@@ -6378,6 +6433,62 @@ fn repository_ctx_command_arg(
     Ok(value.to_string())
 }
 
+fn repository_ctx_command_progress(program: &str, args: &[String]) -> String {
+    let display_program = repository_ctx_unwrapped_env_command(program, args).unwrap_or(program);
+    format!("running `{display_program}`")
+}
+
+fn repository_ctx_unwrapped_env_command<'a>(
+    program: &'a str,
+    args: &'a [String],
+) -> Option<&'a str> {
+    if !repository_ctx_program_is_env(program) {
+        return None;
+    }
+
+    let mut index = 0;
+    while index < args.len() {
+        let arg = args[index].as_str();
+        match arg {
+            "-i" | "-" | "--ignore-environment" => {
+                index += 1;
+            }
+            "--" => {
+                index += 1;
+                break;
+            }
+            "-u" | "--unset" => {
+                index += 2;
+            }
+            _ if repository_ctx_env_assignment(arg) => {
+                index += 1;
+            }
+            _ => break,
+        }
+    }
+
+    args.get(index)
+        .map(String::as_str)
+        .filter(|arg| !arg.is_empty())
+}
+
+fn repository_ctx_program_is_env(program: &str) -> bool {
+    Path::new(program)
+        .file_name()
+        .and_then(|name| name.to_str())
+        == Some("env")
+}
+
+fn repository_ctx_env_assignment(arg: &str) -> bool {
+    let Some((key, _value)) = arg.split_once('=') else {
+        return false;
+    };
+    !key.is_empty()
+        && key
+            .bytes()
+            .all(|byte| byte == b'_' || byte.is_ascii_alphanumeric())
+}
+
 fn repository_ctx_command_path_object(path: &str, working_dir: &str) -> String {
     if let Some(path) = repository_ctx_command_external_path(path, working_dir) {
         return path;
@@ -7402,6 +7513,7 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
                 .iter()
                 .map(|(key, value)| (key.as_str(), value.as_str())),
         );
+        let progress = repository_ctx_command_progress(&program, &arguments);
         command.args(arguments);
         for (key, value) in environment {
             match value {
@@ -7433,9 +7545,7 @@ fn repository_context_methods(builder: &mut MethodsBuilder) {
             })
         })?;
         command.current_dir(working_directory);
-        buck2_events::dispatch::instant_event(buck2_data::BzlmodProgress {
-            progress: format!("running `{program}`"),
-        });
+        buck2_events::dispatch::instant_event(buck2_data::BzlmodProgress { progress });
         let output = repository_ctx_command_executor(this)
             .execute(command, &repository_working_dir, timeout, quiet)
             .map_err(|error| {
@@ -9988,6 +10098,7 @@ fn module_extension_context_methods(builder: &mut MethodsBuilder) {
                 .iter()
                 .map(|(key, value)| (key.as_str(), value.as_str())),
         );
+        let progress = repository_ctx_command_progress(&program, &arguments);
         command.args(arguments);
         for (key, value) in environment {
             match value {
@@ -10017,9 +10128,7 @@ fn module_extension_context_methods(builder: &mut MethodsBuilder) {
             })
         })?;
         command.current_dir(working_directory);
-        buck2_events::dispatch::instant_event(buck2_data::BzlmodProgress {
-            progress: format!("running `{program}`"),
-        });
+        buck2_events::dispatch::instant_event(buck2_data::BzlmodProgress { progress });
         let output = module_ctx_command_executor(this)
             .execute(command, &repository_working_dir, timeout, quiet)
             .map_err(|error| {
