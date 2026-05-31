@@ -1070,6 +1070,22 @@ mod tests {
     }
 
     #[test]
+    fn test_repository_path_get_child_normalizes_relative_paths() {
+        assert_eq!(
+            repository_path_get_child("repo/root", ["./.bazelignore"]),
+            "repo/root/.bazelignore"
+        );
+        assert_eq!(
+            repository_path_get_child("repo/root", ["a/./b", "../c"]),
+            "repo/root/a/c"
+        );
+        assert_eq!(
+            repository_path_get_child("repo/root", ["/tmp/./file"]),
+            "/tmp/file"
+        );
+    }
+
+    #[test]
     fn test_repository_ctx_output_path_rejects_escapes() {
         let working_dir = "buck-out/v2/external_cells/bzlmod_generated/repo.repository_ctx";
 
@@ -3659,13 +3675,13 @@ pub async fn bzlmod_repository_rule_cache_info(
     let execution_cache_key =
         if repository_rule_should_use_remote_command_executor(&repo_env, repository_rule.remotable)
         {
-        bzlmod_repository_rule_execution_cache_key(ctx.get_fallback_executor_config())
-    } else {
-        "local".to_owned()
-    };
+            bzlmod_repository_rule_execution_cache_key(ctx.get_fallback_executor_config())
+        } else {
+            "local".to_owned()
+        };
 
     let mut hasher = blake3::Hasher::new();
-    update_repository_rule_cache_key(&mut hasher, "buck2-bzlmod-repository-rule-cache-v10");
+    update_repository_rule_cache_key(&mut hasher, "buck2-bzlmod-repository-rule-cache-v11");
     update_repository_rule_cache_key(&mut hasher, &execution_cache_key);
     update_repository_rule_cache_key(&mut hasher, &repository_os_name_value(&repo_env));
     update_repository_rule_cache_key(&mut hasher, &repository_os_arch_value(&repo_env));
@@ -5172,7 +5188,7 @@ fn repository_path_methods(builder: &mut MethodsBuilder) {
         heap: Heap<'v>,
     ) -> starlark::Result<StarlarkRepositoryPath> {
         args.no_named_args()?;
-        let mut path = PathBuf::from(&this.path);
+        let mut children = Vec::new();
         for child in args.positions(heap)? {
             let Some(child) = child.unpack_str() else {
                 return Err(buck2_error::Error::from(
@@ -5182,10 +5198,10 @@ fn repository_path_methods(builder: &mut MethodsBuilder) {
                 )
                 .into());
             };
-            path.push(child);
+            children.push(child);
         }
         Ok(StarlarkRepositoryPath::new_with_remote(
-            path.to_string_lossy().into_owned(),
+            repository_path_get_child(&this.path, children),
             this.remote_context.clone(),
             None,
         ))
@@ -5516,6 +5532,17 @@ fn repository_join_normalized(root: &str, path: &str) -> String {
         }
     }
     joined.to_string_lossy().into_owned()
+}
+
+fn repository_path_get_child<'a>(
+    path: &str,
+    children: impl IntoIterator<Item = &'a str>,
+) -> String {
+    let mut path = path.to_owned();
+    for child in children {
+        path = repository_join_normalized(&path, child);
+    }
+    path
 }
 
 fn repository_path_for_read(path: &str) -> String {
