@@ -135,12 +135,13 @@ pub fn print(builder: &mut GlobalsBuilder) {
     /// Print some values to the output.
     fn print(
         #[starlark(args)] args: UnpackTuple<Value>,
+        #[starlark(require = named, default = " ")] sep: &str,
         eval: &mut Evaluator,
     ) -> starlark::Result<NoneType> {
         // In practice most users should want to put the print somewhere else, but this does for now
         // Unfortunately, we can't use PrintWrapper because strings to_str() and Display are different.
         eval.print_handler
-            .println(&args.items.iter().map(|x| x.to_str()).join(" "))?;
+            .println(&args.items.iter().map(|x| x.to_str()).join(sep))?;
         Ok(NoneType)
     }
 }

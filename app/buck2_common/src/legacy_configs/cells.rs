@@ -8854,7 +8854,7 @@ mod tests {
     fn test_bzlmod_module_accepts_starlark_intrinsic_constants() -> buck2_error::Result<()> {
         let evaluated = eval_bzlmod_module(indoc!(
             r#"
-            print("loading module")
+            print("loading", "module", sep = " ")
             module(name = "demo")
             bazel_dep(name = "visible", version = "1.0", dev_dependency = False)
             bazel_dep(name = "hidden", version = "1.0", repo_name = None)
