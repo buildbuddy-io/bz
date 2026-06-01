@@ -8,10 +8,13 @@
  * above-listed licenses.
  */
 
+use std::cell::Cell;
+use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::collections::VecDeque;
+use std::fmt;
 use std::fs;
 use std::future::Future;
 use std::io::ErrorKind;
@@ -96,6 +99,40 @@ use serde::Deserialize;
 use serde::Serialize;
 use sha2::Digest;
 use sha2::Sha256;
+use starlark::any::ProvidesStaticType;
+use starlark::environment::Globals;
+use starlark::environment::GlobalsBuilder;
+use starlark::environment::Module;
+use starlark::eval::Arguments;
+use starlark::eval::Evaluator;
+use starlark::starlark_module;
+use starlark::starlark_simple_value;
+use starlark::syntax::AstModule;
+use starlark::syntax::Dialect;
+use starlark::syntax::DialectTypes;
+use starlark::values::Heap;
+use starlark::values::NoSerialize;
+use starlark::values::StarlarkValue;
+use starlark::values::Value;
+use starlark::values::list::ListRef;
+use starlark::values::none::NoneOr;
+use starlark::values::none::NoneType;
+use starlark::values::starlark_value;
+use starlark::values::tuple::TupleRef;
+use starlark::values::tuple::UnpackTuple;
+use starlark_map::small_map::SmallMap;
+use starlark_syntax::syntax::ast::ArgumentP;
+use starlark_syntax::syntax::ast::AssignTargetP;
+use starlark_syntax::syntax::ast::AstAssignTarget;
+use starlark_syntax::syntax::ast::AstExpr;
+use starlark_syntax::syntax::ast::AstLiteral;
+use starlark_syntax::syntax::ast::AstNoPayload;
+use starlark_syntax::syntax::ast::AstStmt;
+use starlark_syntax::syntax::ast::CallArgsP;
+use starlark_syntax::syntax::ast::ClauseP;
+use starlark_syntax::syntax::ast::ExprP;
+use starlark_syntax::syntax::ast::ForClauseP;
+use starlark_syntax::syntax::ast::StmtP;
 
 use crate::bzlmod_integrity::parse_bzlmod_integrity;
 use crate::dice::cells::HasCellResolver;
@@ -1226,12 +1263,19 @@ fn bazelrc_native_command_line_string_option(name: &str) -> bool {
 fn bazelrc_native_command_line_list_option(name: &str) -> bool {
     matches!(
         name,
-        "javacopt" | "host_javacopt" | "platforms" | "extra_execution_platforms" | "extra_toolchains"
+        "javacopt"
+            | "host_javacopt"
+            | "platforms"
+            | "extra_execution_platforms"
+            | "extra_toolchains"
     )
 }
 
 fn bazelrc_native_command_line_comma_separated_list_option(name: &str) -> bool {
-    matches!(name, "platforms" | "extra_execution_platforms" | "extra_toolchains")
+    matches!(
+        name,
+        "platforms" | "extra_execution_platforms" | "extra_toolchains"
+    )
 }
 
 fn bazelrc_command_line_list_build_setting_entries(
@@ -2144,6 +2188,7 @@ struct BzlmodLocalPathOverride {
     module_name: String,
     path: String,
     module_text: String,
+    included_module_texts: BTreeMap<String, String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Allocative, Pagable)]
@@ -2157,159 +2202,1568 @@ struct BzlmodRootResolutionInput {
     local_path_overrides: BTreeMap<String, BzlmodLocalPathOverride>,
 }
 
+#[derive(Clone, Debug)]
+struct BzlmodCompiledModuleFile {
+    module_file: String,
+    module_text: String,
+    ast: AstModule,
+    includes: Vec<String>,
+}
+
+#[derive(Clone, Debug)]
+struct BzlmodEvaluatedModuleFile {
+    name: String,
+    version: String,
+    repo_name: String,
+    aliases: Vec<String>,
+    deps: Vec<BazelDep>,
+    archive_overrides: BTreeMap<String, BzlmodArchiveOverride>,
+    single_version_overrides: BTreeMap<String, BzlmodSingleVersionOverride>,
+    local_path_overrides: BTreeMap<String, BzlmodLocalPathOverride>,
+    extension_usages: Vec<BzlmodExtensionUsage>,
+    use_repo_rule_invocations: Vec<BzlmodUseRepoRuleInvocation>,
+    registered_toolchains: Vec<String>,
+}
+
+#[derive(Debug)]
+struct BzlmodModuleEvalOptions {
+    is_root: bool,
+    allow_include: bool,
+    ignore_dev_dependency: bool,
+    default_name: String,
+    default_version: String,
+    default_repo_name: String,
+    cell_project_path: Option<ProjectRelativePathBuf>,
+    included_modules: BTreeMap<String, Arc<BzlmodCompiledModuleFile>>,
+}
+
+#[derive(Debug, ProvidesStaticType)]
+struct BzlmodModuleEvalContext {
+    current_module_file: RefCell<String>,
+    is_root: bool,
+    allow_include: bool,
+    ignore_dev_dependency: bool,
+    cell_project_path: Option<ProjectRelativePathBuf>,
+    included_modules: BTreeMap<String, Arc<BzlmodCompiledModuleFile>>,
+    module_called: Cell<bool>,
+    non_module_called: Cell<bool>,
+    name: RefCell<String>,
+    version: RefCell<String>,
+    repo_name: RefCell<String>,
+    aliases: RefCell<Vec<String>>,
+    deps: RefCell<Vec<BazelDep>>,
+    archive_overrides: RefCell<BTreeMap<String, BzlmodArchiveOverride>>,
+    single_version_overrides: RefCell<BTreeMap<String, BzlmodSingleVersionOverride>>,
+    local_path_overrides: RefCell<BTreeMap<String, BzlmodLocalPathOverride>>,
+    extension_usages: RefCell<Vec<BzlmodExtensionUsage>>,
+    use_repo_rule_invocations: RefCell<Vec<BzlmodUseRepoRuleInvocation>>,
+    registered_toolchains: RefCell<Vec<String>>,
+}
+
+impl BzlmodModuleEvalContext {
+    fn new(module_file: String, options: BzlmodModuleEvalOptions) -> Self {
+        Self {
+            current_module_file: RefCell::new(module_file),
+            is_root: options.is_root,
+            allow_include: options.allow_include,
+            ignore_dev_dependency: options.ignore_dev_dependency,
+            cell_project_path: options.cell_project_path,
+            included_modules: options.included_modules,
+            module_called: Cell::new(false),
+            non_module_called: Cell::new(false),
+            name: RefCell::new(options.default_name),
+            version: RefCell::new(options.default_version),
+            repo_name: RefCell::new(options.default_repo_name),
+            aliases: RefCell::new(Vec::new()),
+            deps: RefCell::new(Vec::new()),
+            archive_overrides: RefCell::new(BTreeMap::new()),
+            single_version_overrides: RefCell::new(BTreeMap::new()),
+            local_path_overrides: RefCell::new(BTreeMap::new()),
+            extension_usages: RefCell::new(Vec::new()),
+            use_repo_rule_invocations: RefCell::new(Vec::new()),
+            registered_toolchains: RefCell::new(Vec::new()),
+        }
+    }
+
+    fn set_non_module_called(&self) {
+        self.non_module_called.set(true);
+    }
+
+    fn current_module_file(&self) -> String {
+        self.current_module_file.borrow().clone()
+    }
+
+    fn should_ignore_dev_dependency(&self, dev_dependency: bool) -> bool {
+        self.ignore_dev_dependency && dev_dependency
+    }
+
+    fn set_extension_proxy_name(
+        &self,
+        usage_id: Option<usize>,
+        proxy_name: &str,
+    ) -> starlark::Result<()> {
+        let Some(usage_id) = usage_id else {
+            return Ok(());
+        };
+        let mut usages = self.extension_usages.borrow_mut();
+        let Some(usage) = usages.get_mut(usage_id) else {
+            return Err(bzlmod_starlark_error(format!(
+                "internal error: unknown bzlmod extension usage id `{usage_id}`"
+            )));
+        };
+        usage.proxy_name = proxy_name.to_owned();
+        Ok(())
+    }
+
+    fn include(&self, include_label: &str) -> starlark::Result<()> {
+        if !self.allow_include {
+            return Err(bzlmod_starlark_error(
+                "trying to call `include()` from a registry module",
+            ));
+        }
+        let Some(compiled) = self.included_modules.get(include_label) else {
+            return Err(bzlmod_starlark_error(format!(
+                "internal error: included file `{include_label}` was not precompiled"
+            )));
+        };
+        let previous_module_file = self
+            .current_module_file
+            .replace(compiled.module_file.clone());
+        let result = Module::with_temp_heap(|module| {
+            let globals = bzlmod_module_globals();
+            let mut eval = Evaluator::new(&module);
+            eval.extra = Some(self);
+            eval.eval_module(compiled.ast.clone(), &globals)?;
+            starlark::Result::Ok(())
+        });
+        self.current_module_file.replace(previous_module_file);
+        result
+    }
+
+    fn into_result(self) -> BzlmodEvaluatedModuleFile {
+        BzlmodEvaluatedModuleFile {
+            name: self.name.into_inner(),
+            version: self.version.into_inner(),
+            repo_name: self.repo_name.into_inner(),
+            aliases: self.aliases.into_inner(),
+            deps: self.deps.into_inner(),
+            archive_overrides: self.archive_overrides.into_inner(),
+            single_version_overrides: self.single_version_overrides.into_inner(),
+            local_path_overrides: self.local_path_overrides.into_inner(),
+            extension_usages: self.extension_usages.into_inner(),
+            use_repo_rule_invocations: self.use_repo_rule_invocations.into_inner(),
+            registered_toolchains: self.registered_toolchains.into_inner(),
+        }
+    }
+}
+
+fn bzlmod_module_dialect() -> Dialect {
+    Dialect {
+        enable_def: false,
+        enable_lambda: false,
+        enable_load: false,
+        enable_keyword_only_arguments: true,
+        enable_types: DialectTypes::Disable,
+        enable_load_reexport: false,
+        enable_top_level_stmt: false,
+        enable_f_strings: buck2_core::is_open_source(),
+        ..Dialect::Standard
+    }
+}
+
+fn compile_bzlmod_module_file(
+    module_file: String,
+    module_text: String,
+) -> buck2_error::Result<BzlmodCompiledModuleFile> {
+    let ast = AstModule::parse(&module_file, module_text.clone(), &bzlmod_module_dialect())
+        .map_err(|error| buck2_error!(buck2_error::ErrorTag::Input, "{}", error))
+        .with_buck_error_context(|| format!("Error parsing `{module_file}` as MODULE.bazel"))?;
+    let includes = bzlmod_module_includes_from_ast(&module_file, &ast)?;
+    Ok(BzlmodCompiledModuleFile {
+        module_file,
+        module_text,
+        ast,
+        includes,
+    })
+}
+
+fn eval_bzlmod_module_file(
+    compiled: &BzlmodCompiledModuleFile,
+    options: BzlmodModuleEvalOptions,
+) -> buck2_error::Result<BzlmodEvaluatedModuleFile> {
+    let context = BzlmodModuleEvalContext::new(compiled.module_file.clone(), options);
+    Module::with_temp_heap(|module| {
+        let globals = bzlmod_module_globals();
+        let mut eval = Evaluator::new(&module);
+        eval.extra = Some(&context);
+        eval.eval_module(compiled.ast.clone(), &globals)?;
+        starlark::Result::Ok(())
+    })
+    .map_err(|error| buck2_error!(buck2_error::ErrorTag::Input, "{}", error))
+    .with_buck_error_context(|| {
+        format!(
+            "Error evaluating `{}` as MODULE.bazel",
+            compiled.module_file
+        )
+    })?;
+    Ok(context.into_result())
+}
+
+fn bzlmod_module_includes_from_ast(
+    module_file: &str,
+    ast: &AstModule,
+) -> buck2_error::Result<Vec<String>> {
+    let mut includes = Vec::new();
+    let mut include_was_assigned = false;
+    bzlmod_validate_stmt_for_includes(
+        module_file,
+        ast.statement(),
+        &mut include_was_assigned,
+        &mut includes,
+    )?;
+    Ok(includes)
+}
+
+fn bzlmod_validate_stmt_for_includes(
+    module_file: &str,
+    stmt: &AstStmt,
+    include_was_assigned: &mut bool,
+    includes: &mut Vec<String>,
+) -> buck2_error::Result<()> {
+    match &stmt.node {
+        StmtP::Statements(stmts) => {
+            for stmt in stmts {
+                bzlmod_validate_stmt_for_includes(
+                    module_file,
+                    stmt,
+                    include_was_assigned,
+                    includes,
+                )?;
+            }
+        }
+        StmtP::Expression(expr) => {
+            if !*include_was_assigned
+                && let ExprP::Call(function, args) = &expr.node
+                && bzlmod_expr_is_identifier(function, "include")
+            {
+                includes.push(bzlmod_include_arg(module_file, args)?);
+                return Ok(());
+            }
+            bzlmod_validate_expr_for_module_file(module_file, expr, *include_was_assigned)?;
+        }
+        StmtP::Assign(assign) => {
+            bzlmod_validate_expr_for_module_file(module_file, &assign.rhs, *include_was_assigned)?;
+            if !*include_was_assigned && bzlmod_assign_target_is_identifier(&assign.lhs, "include")
+            {
+                *include_was_assigned = true;
+            } else {
+                bzlmod_validate_assign_target_for_include(
+                    module_file,
+                    &assign.lhs,
+                    *include_was_assigned,
+                )?;
+            }
+        }
+        StmtP::AssignModify(target, _op, expr) => {
+            bzlmod_validate_assign_target_for_include(module_file, target, *include_was_assigned)?;
+            bzlmod_validate_expr_for_module_file(module_file, expr, *include_was_assigned)?;
+        }
+        StmtP::If(..) | StmtP::IfElse(..) => {
+            return Err(buck2_error!(
+                buck2_error::ErrorTag::Input,
+                "Invalid MODULE.bazel syntax in `{}`: `if` statements are not allowed",
+                module_file
+            ));
+        }
+        StmtP::For(..) => {
+            return Err(buck2_error!(
+                buck2_error::ErrorTag::Input,
+                "Invalid MODULE.bazel syntax in `{}`: `for` statements are not allowed",
+                module_file
+            ));
+        }
+        StmtP::Def(..) => {
+            return Err(buck2_error!(
+                buck2_error::ErrorTag::Input,
+                "Invalid MODULE.bazel syntax in `{}`: functions may not be defined",
+                module_file
+            ));
+        }
+        StmtP::Return(..) => {
+            return Err(buck2_error!(
+                buck2_error::ErrorTag::Input,
+                "Invalid MODULE.bazel syntax in `{}`: return statements are not allowed",
+                module_file
+            ));
+        }
+        StmtP::Load(_) => {
+            return Err(buck2_error!(
+                buck2_error::ErrorTag::Input,
+                "Invalid MODULE.bazel syntax in `{}`: `load` statements may not be used",
+                module_file
+            ));
+        }
+        StmtP::Break | StmtP::Continue | StmtP::Pass => {}
+    }
+    Ok(())
+}
+
+fn bzlmod_validate_expr_for_module_file(
+    module_file: &str,
+    expr: &AstExpr,
+    include_was_assigned: bool,
+) -> buck2_error::Result<()> {
+    match &expr.node {
+        ExprP::Identifier(ident) if !include_was_assigned && ident.ident == "include" => {
+            return Err(buck2_error!(
+                buck2_error::ErrorTag::Input,
+                "Invalid MODULE.bazel syntax in `{}`: the `include` directive must be called directly at the top level",
+                module_file
+            ));
+        }
+        ExprP::Call(function, args) => {
+            bzlmod_validate_call_args(module_file, args)?;
+            bzlmod_validate_expr_for_module_file(module_file, function, include_was_assigned)?;
+            for arg in &args.args {
+                bzlmod_validate_expr_for_module_file(
+                    module_file,
+                    arg.node.expr(),
+                    include_was_assigned,
+                )?;
+            }
+        }
+        ExprP::Tuple(items) | ExprP::List(items) => {
+            for item in items {
+                bzlmod_validate_expr_for_module_file(module_file, item, include_was_assigned)?;
+            }
+        }
+        ExprP::Dot(base, _)
+        | ExprP::Not(base)
+        | ExprP::Minus(base)
+        | ExprP::Plus(base)
+        | ExprP::BitNot(base) => {
+            bzlmod_validate_expr_for_module_file(module_file, base, include_was_assigned)?;
+        }
+        ExprP::FString(fstring) => {
+            for expr in &fstring.node.expressions {
+                bzlmod_validate_expr_for_module_file(module_file, expr, include_was_assigned)?;
+            }
+        }
+        ExprP::Index(index) => {
+            bzlmod_validate_expr_for_module_file(module_file, &index.0, include_was_assigned)?;
+            bzlmod_validate_expr_for_module_file(module_file, &index.1, include_was_assigned)?;
+        }
+        ExprP::Index2(index) => {
+            bzlmod_validate_expr_for_module_file(module_file, &index.0, include_was_assigned)?;
+            bzlmod_validate_expr_for_module_file(module_file, &index.1, include_was_assigned)?;
+            bzlmod_validate_expr_for_module_file(module_file, &index.2, include_was_assigned)?;
+        }
+        ExprP::Slice(base, start, stop, stride) => {
+            bzlmod_validate_expr_for_module_file(module_file, base, include_was_assigned)?;
+            for expr in [start, stop, stride].into_iter().flatten() {
+                bzlmod_validate_expr_for_module_file(module_file, expr, include_was_assigned)?;
+            }
+        }
+        ExprP::Op(left, _op, right) => {
+            bzlmod_validate_expr_for_module_file(module_file, left, include_was_assigned)?;
+            bzlmod_validate_expr_for_module_file(module_file, right, include_was_assigned)?;
+        }
+        ExprP::If(exprs) => {
+            bzlmod_validate_expr_for_module_file(module_file, &exprs.0, include_was_assigned)?;
+            bzlmod_validate_expr_for_module_file(module_file, &exprs.1, include_was_assigned)?;
+            bzlmod_validate_expr_for_module_file(module_file, &exprs.2, include_was_assigned)?;
+        }
+        ExprP::Dict(items) => {
+            for (key, value) in items {
+                bzlmod_validate_expr_for_module_file(module_file, key, include_was_assigned)?;
+                bzlmod_validate_expr_for_module_file(module_file, value, include_was_assigned)?;
+            }
+        }
+        ExprP::ListComprehension(body, clause, clauses) => {
+            bzlmod_validate_expr_for_module_file(module_file, body, include_was_assigned)?;
+            bzlmod_validate_for_clause_for_module_file(module_file, clause, include_was_assigned)?;
+            for clause in clauses {
+                bzlmod_validate_clause_for_module_file(module_file, clause, include_was_assigned)?;
+            }
+        }
+        ExprP::DictComprehension(body, clause, clauses) => {
+            bzlmod_validate_expr_for_module_file(module_file, &body.0, include_was_assigned)?;
+            bzlmod_validate_expr_for_module_file(module_file, &body.1, include_was_assigned)?;
+            bzlmod_validate_for_clause_for_module_file(module_file, clause, include_was_assigned)?;
+            for clause in clauses {
+                bzlmod_validate_clause_for_module_file(module_file, clause, include_was_assigned)?;
+            }
+        }
+        ExprP::Lambda(_) => {
+            return Err(buck2_error!(
+                buck2_error::ErrorTag::Input,
+                "Invalid MODULE.bazel syntax in `{}`: functions may not be defined",
+                module_file
+            ));
+        }
+        ExprP::Identifier(_) | ExprP::Literal(_) => {}
+    }
+    Ok(())
+}
+
+fn bzlmod_validate_for_clause_for_module_file(
+    module_file: &str,
+    clause: &ForClauseP<AstNoPayload>,
+    include_was_assigned: bool,
+) -> buck2_error::Result<()> {
+    bzlmod_validate_assign_target_for_include(module_file, &clause.var, include_was_assigned)?;
+    bzlmod_validate_expr_for_module_file(module_file, &clause.over, include_was_assigned)
+}
+
+fn bzlmod_validate_clause_for_module_file(
+    module_file: &str,
+    clause: &ClauseP<AstNoPayload>,
+    include_was_assigned: bool,
+) -> buck2_error::Result<()> {
+    match clause {
+        ClauseP::For(clause) => {
+            bzlmod_validate_for_clause_for_module_file(module_file, clause, include_was_assigned)
+        }
+        ClauseP::If(expr) => {
+            bzlmod_validate_expr_for_module_file(module_file, expr, include_was_assigned)
+        }
+    }
+}
+
+fn bzlmod_validate_assign_target_for_include(
+    module_file: &str,
+    target: &AstAssignTarget,
+    include_was_assigned: bool,
+) -> buck2_error::Result<()> {
+    if include_was_assigned {
+        return Ok(());
+    }
+    match &target.node {
+        AssignTargetP::Tuple(items) => {
+            for item in items {
+                bzlmod_validate_assign_target_for_include(module_file, item, include_was_assigned)?;
+            }
+        }
+        AssignTargetP::Index(index) => {
+            bzlmod_validate_expr_for_module_file(module_file, &index.0, include_was_assigned)?;
+            bzlmod_validate_expr_for_module_file(module_file, &index.1, include_was_assigned)?;
+        }
+        AssignTargetP::Dot(base, _) => {
+            bzlmod_validate_expr_for_module_file(module_file, base, include_was_assigned)?;
+        }
+        AssignTargetP::Identifier(ident) if ident.ident == "include" => {
+            return Err(buck2_error!(
+                buck2_error::ErrorTag::Input,
+                "Invalid MODULE.bazel syntax in `{}`: the `include` directive must be called directly at the top level",
+                module_file
+            ));
+        }
+        AssignTargetP::Identifier(_) => {}
+    }
+    Ok(())
+}
+
+fn bzlmod_validate_call_args(
+    module_file: &str,
+    args: &CallArgsP<AstNoPayload>,
+) -> buck2_error::Result<()> {
+    for arg in &args.args {
+        match &arg.node {
+            ArgumentP::Args(_) => {
+                return Err(buck2_error!(
+                    buck2_error::ErrorTag::Input,
+                    "Invalid MODULE.bazel syntax in `{}`: *args arguments are not allowed",
+                    module_file
+                ));
+            }
+            ArgumentP::KwArgs(value) if !matches!(value.node, ExprP::Dict(_)) => {
+                return Err(buck2_error!(
+                    buck2_error::ErrorTag::Input,
+                    "Invalid MODULE.bazel syntax in `{}`: **kwargs arguments must be a literal dict",
+                    module_file
+                ));
+            }
+            ArgumentP::KwArgs(_) | ArgumentP::Named(_, _) | ArgumentP::Positional(_) => {}
+        }
+    }
+    Ok(())
+}
+
+fn bzlmod_include_arg(
+    module_file: &str,
+    args: &CallArgsP<AstNoPayload>,
+) -> buck2_error::Result<String> {
+    let [arg] = args.args.as_slice() else {
+        return Err(buck2_error!(
+            buck2_error::ErrorTag::Input,
+            "Invalid MODULE.bazel syntax in `{}`: include() must be called with exactly one positional string literal",
+            module_file
+        ));
+    };
+    let ArgumentP::Positional(expr) = &arg.node else {
+        return Err(buck2_error!(
+            buck2_error::ErrorTag::Input,
+            "Invalid MODULE.bazel syntax in `{}`: include() must be called with exactly one positional string literal",
+            module_file
+        ));
+    };
+    let ExprP::Literal(AstLiteral::String(label)) = &expr.node else {
+        return Err(buck2_error!(
+            buck2_error::ErrorTag::Input,
+            "Invalid MODULE.bazel syntax in `{}`: include() must be called with exactly one positional string literal",
+            module_file
+        ));
+    };
+    bzlmod_include_label_to_path(module_file, &label.node)?;
+    Ok(label.node.clone())
+}
+
+fn bzlmod_expr_is_identifier(expr: &AstExpr, name: &str) -> bool {
+    matches!(&expr.node, ExprP::Identifier(ident) if ident.ident == name)
+}
+
+fn bzlmod_assign_target_is_identifier(target: &AstAssignTarget, name: &str) -> bool {
+    matches!(&target.node, AssignTargetP::Identifier(ident) if ident.ident == name)
+}
+
+fn bzlmod_include_label_to_path(module_file: &str, label: &str) -> buck2_error::Result<String> {
+    if !label.starts_with("//") {
+        return Err(buck2_error!(
+            buck2_error::ErrorTag::Input,
+            "bad include label `{}` in `{}`: include() must be called with repo-relative labels starting with `//`",
+            label,
+            module_file
+        ));
+    }
+    let path = module_include_to_path(module_file, label).ok_or_else(|| {
+        buck2_error!(
+            buck2_error::ErrorTag::Input,
+            "bad include label `{}` in `{}`: invalid repo-relative label",
+            label,
+            module_file
+        )
+    })?;
+    let basename = path.rsplit('/').next().unwrap_or(path.as_str());
+    if !basename.ends_with(".MODULE.bazel") {
+        return Err(buck2_error!(
+            buck2_error::ErrorTag::Input,
+            "bad include label `{}` in `{}`: the file to be included must have a name ending in `.MODULE.bazel`",
+            label,
+            module_file
+        ));
+    }
+    if basename.starts_with('.') {
+        return Err(buck2_error!(
+            buck2_error::ErrorTag::Input,
+            "bad include label `{}` in `{}`: the name of the file to be included must not start with `.`",
+            label,
+            module_file
+        ));
+    }
+    Ok(path)
+}
+
+fn bzlmod_module_globals() -> Globals {
+    GlobalsBuilder::new()
+        .with(bzlmod_module_globals_builder)
+        .build()
+}
+
+fn bzlmod_starlark_error(message: impl fmt::Display) -> starlark::Error {
+    buck2_error!(buck2_error::ErrorTag::Input, "{}", message).into()
+}
+
+fn bzlmod_eval_context<'v, 'a, 'e>(
+    eval: &Evaluator<'v, 'a, 'e>,
+) -> starlark::Result<&'a BzlmodModuleEvalContext> {
+    eval.extra
+        .ok_or_else(|| bzlmod_starlark_error("internal error: missing bzlmod evaluation context"))?
+        .downcast_ref::<BzlmodModuleEvalContext>()
+        .ok_or_else(|| {
+            bzlmod_starlark_error("internal error: wrong bzlmod evaluation context type")
+        })
+}
+
+fn bzlmod_value_to_string(value: Value<'_>, what: &str) -> starlark::Result<String> {
+    value.unpack_str().map(str::to_owned).ok_or_else(|| {
+        bzlmod_starlark_error(format!(
+            "{what} must be a string, got `{}` of type `{}`",
+            value.to_repr(),
+            value.get_type()
+        ))
+    })
+}
+
+fn bzlmod_value_to_bool(value: Value<'_>, what: &str) -> starlark::Result<bool> {
+    value.unpack_bool().ok_or_else(|| {
+        bzlmod_starlark_error(format!(
+            "{what} must be a bool, got `{}` of type `{}`",
+            value.to_repr(),
+            value.get_type()
+        ))
+    })
+}
+
+fn bzlmod_value_to_i32(value: Value<'_>, what: &str) -> starlark::Result<i32> {
+    value.unpack_i32().ok_or_else(|| {
+        bzlmod_starlark_error(format!(
+            "{what} must be an int, got `{}` of type `{}`",
+            value.to_repr(),
+            value.get_type()
+        ))
+    })
+}
+
+fn bzlmod_value_to_string_list(value: Value<'_>, what: &str) -> starlark::Result<Vec<String>> {
+    if value.is_none() {
+        return Ok(Vec::new());
+    }
+    if let Some(list) = ListRef::from_value(value) {
+        return list
+            .iter()
+            .map(|value| bzlmod_value_to_string(value, what))
+            .collect();
+    }
+    if let Some(tuple) = TupleRef::from_value(value) {
+        return tuple
+            .iter()
+            .map(|value| bzlmod_value_to_string(value, what))
+            .collect();
+    }
+    Err(bzlmod_starlark_error(format!(
+        "{what} must be a list or tuple of strings, got `{}` of type `{}`",
+        value.to_repr(),
+        value.get_type()
+    )))
+}
+
+fn bzlmod_kwarg<'v>(kwargs: &SmallMap<String, Value<'v>>, name: &str) -> Option<Value<'v>> {
+    kwargs
+        .iter()
+        .find_map(|(key, value)| (key == name).then_some(*value))
+}
+
+fn bzlmod_kwarg_string(
+    kwargs: &SmallMap<String, Value<'_>>,
+    name: &str,
+    what: &str,
+) -> starlark::Result<Option<String>> {
+    bzlmod_kwarg(kwargs, name)
+        .map(|value| bzlmod_value_to_string(value, what))
+        .transpose()
+}
+
+fn bzlmod_kwarg_string_list(
+    kwargs: &SmallMap<String, Value<'_>>,
+    name: &str,
+    what: &str,
+) -> starlark::Result<Vec<String>> {
+    bzlmod_kwarg(kwargs, name)
+        .map(|value| bzlmod_value_to_string_list(value, what))
+        .transpose()
+        .map(Option::unwrap_or_default)
+}
+
+fn bzlmod_kwarg_u32(
+    kwargs: &SmallMap<String, Value<'_>>,
+    name: &str,
+    what: &str,
+) -> starlark::Result<Option<u32>> {
+    bzlmod_kwarg(kwargs, name)
+        .map(|value| {
+            let value = bzlmod_value_to_i32(value, what)?;
+            u32::try_from(value).map_err(|_| {
+                bzlmod_starlark_error(format!("{what} must be non-negative, got `{value}`"))
+            })
+        })
+        .transpose()
+}
+
+fn bzlmod_override_patch_paths_from_value(
+    current_module_file: &str,
+    value: Value<'_>,
+    what: &str,
+) -> starlark::Result<Vec<BzlmodRootPatch>> {
+    bzlmod_value_to_string_list(value, what)?
+        .into_iter()
+        .map(|label| {
+            let path = module_include_to_path(current_module_file, &label).ok_or_else(|| {
+                bzlmod_starlark_error(format!(
+                    "{what} patch must be a root-module label, got `{label}`"
+                ))
+            })?;
+            Ok(BzlmodRootPatch {
+                path,
+                content: Arc::from(""),
+            })
+        })
+        .collect()
+}
+
+fn bzlmod_patch_paths_from_kwargs(
+    current_module_file: &str,
+    kwargs: &SmallMap<String, Value<'_>>,
+    what: &str,
+) -> starlark::Result<Vec<BzlmodRootPatch>> {
+    bzlmod_kwarg(kwargs, "patches")
+        .map(|value| bzlmod_override_patch_paths_from_value(current_module_file, value, what))
+        .transpose()
+        .map(Option::unwrap_or_default)
+}
+
+fn bzlmod_no_positional_args<'v>(
+    args: &Arguments<'v, '_>,
+    eval: &mut Evaluator<'v, '_, '_>,
+) -> starlark::Result<()> {
+    args.no_positional_args(eval.heap())
+}
+
+fn bzlmod_repository_rule_attr_expression_from_value(value: Value<'_>) -> starlark::Result<String> {
+    if let Some(string) = value.unpack_str() {
+        return bzlmod_repository_rule_string_attr_expression(string).map_err(Into::into);
+    }
+    if let Some(list) = ListRef::from_value(value) {
+        let values = list
+            .iter()
+            .map(|value| {
+                let string = bzlmod_value_to_string(value, "use_repo_rule string-list attribute")?;
+                bzlmod_repository_rule_string_attr_expression(&string).map_err(Into::into)
+            })
+            .collect::<starlark::Result<Vec<_>>>()?;
+        return Ok(format!("[{}]", values.join(", ")));
+    }
+    if let Some(tuple) = TupleRef::from_value(value) {
+        let values = tuple
+            .iter()
+            .map(|value| {
+                let string = bzlmod_value_to_string(value, "use_repo_rule string-list attribute")?;
+                bzlmod_repository_rule_string_attr_expression(&string).map_err(Into::into)
+            })
+            .collect::<starlark::Result<Vec<_>>>()?;
+        return Ok(format!("[{}]", values.join(", ")));
+    }
+    Ok(value.to_repr())
+}
+
+#[derive(Debug, Clone, ProvidesStaticType, NoSerialize, Allocative)]
+struct BzlmodExtensionProxy {
+    usage_id: Option<usize>,
+}
+
+impl fmt::Display for BzlmodExtensionProxy {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("<module_extension_proxy>")
+    }
+}
+
+starlark_simple_value!(BzlmodExtensionProxy);
+
+#[starlark_value(type = "module_extension_proxy")]
+impl<'v> StarlarkValue<'v> for BzlmodExtensionProxy {
+    fn export_as(
+        &self,
+        variable_name: &str,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<()> {
+        bzlmod_eval_context(eval)?.set_extension_proxy_name(self.usage_id, variable_name)
+    }
+
+    fn get_attr(&self, attribute: &str, heap: Heap<'v>) -> Option<Value<'v>> {
+        Some(heap.alloc(BzlmodExtensionTagCallable {
+            usage_id: self.usage_id,
+            tag_name: attribute.to_owned(),
+        }))
+    }
+}
+
+#[derive(Debug, Clone, ProvidesStaticType, NoSerialize, Allocative)]
+struct BzlmodExtensionTagCallable {
+    usage_id: Option<usize>,
+    tag_name: String,
+}
+
+impl fmt::Display for BzlmodExtensionTagCallable {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "<module_extension_tag {}>", self.tag_name)
+    }
+}
+
+starlark_simple_value!(BzlmodExtensionTagCallable);
+
+#[starlark_value(type = "module_extension_tag")]
+impl<'v> StarlarkValue<'v> for BzlmodExtensionTagCallable {
+    fn invoke(
+        &self,
+        _me: Value<'v>,
+        args: &Arguments<'v, '_>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<Value<'v>> {
+        bzlmod_no_positional_args(args, eval)?;
+        let Some(usage_id) = self.usage_id else {
+            return Ok(Value::new_none());
+        };
+        let kwargs = args.names_map()?;
+        let context = bzlmod_eval_context(eval)?;
+        let mut usages = context.extension_usages.borrow_mut();
+        let Some(usage) = usages.get_mut(usage_id) else {
+            return Err(bzlmod_starlark_error(format!(
+                "internal error: unknown bzlmod extension usage id `{usage_id}`"
+            )));
+        };
+        usage.tags.push(BzlmodExtensionTag {
+            tag_name: self.tag_name.clone(),
+            bindings: Vec::new(),
+            kwargs: kwargs
+                .iter()
+                .map(|(name, value)| (name.as_str().to_owned(), value.to_repr()))
+                .collect(),
+        });
+        Ok(Value::new_none())
+    }
+}
+
+#[derive(Debug, Clone, ProvidesStaticType, NoSerialize, Allocative)]
+struct BzlmodUseRepoRuleCallable {
+    rule_bzl_file: String,
+    rule_name: String,
+}
+
+impl fmt::Display for BzlmodUseRepoRuleCallable {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "<repo_rule {}%{}>", self.rule_bzl_file, self.rule_name)
+    }
+}
+
+starlark_simple_value!(BzlmodUseRepoRuleCallable);
+
+#[starlark_value(type = "repo_rule")]
+impl<'v> StarlarkValue<'v> for BzlmodUseRepoRuleCallable {
+    fn invoke(
+        &self,
+        _me: Value<'v>,
+        args: &Arguments<'v, '_>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<Value<'v>> {
+        bzlmod_no_positional_args(args, eval)?;
+        let kwargs = args.names_map()?;
+        let dev_dependency = kwargs
+            .iter()
+            .find_map(|(name, value)| {
+                (name.as_str() == "dev_dependency")
+                    .then_some(bzlmod_value_to_bool(*value, "use_repo_rule dev_dependency"))
+            })
+            .transpose()?
+            .unwrap_or(false);
+        let context = bzlmod_eval_context(eval)?;
+        if context.should_ignore_dev_dependency(dev_dependency) {
+            return Ok(Value::new_none());
+        }
+        let repo_name = kwargs
+            .iter()
+            .find_map(|(name, value)| {
+                (name.as_str() == "name")
+                    .then_some(bzlmod_value_to_string(*value, "use_repo_rule name"))
+            })
+            .transpose()?
+            .ok_or_else(|| {
+                bzlmod_starlark_error("use_repo_rule invocation must have a string `name`")
+            })?;
+        let mut attrs = kwargs
+            .iter()
+            .filter(|(name, _)| !matches!(name.as_str(), "name" | "dev_dependency" | "visibility"))
+            .map(|(name, value)| {
+                Ok((
+                    name.as_str().to_owned(),
+                    bzlmod_repository_rule_attr_expression_from_value(*value)?,
+                ))
+            })
+            .collect::<starlark::Result<Vec<_>>>()?;
+        attrs.sort_by(|left, right| left.0.cmp(&right.0));
+        context
+            .use_repo_rule_invocations
+            .borrow_mut()
+            .push(BzlmodUseRepoRuleInvocation {
+                rule_bzl_file: self.rule_bzl_file.clone(),
+                rule_name: self.rule_name.clone(),
+                repo_name,
+                attrs,
+            });
+        Ok(Value::new_none())
+    }
+}
+
+#[starlark_module]
+fn bzlmod_module_globals_builder(builder: &mut GlobalsBuilder) {
+    fn module<'v>(
+        #[starlark(require = named, default = String::new())] name: String,
+        #[starlark(require = named, default = String::new())] version: String,
+        #[starlark(require = named, default = -1)] compatibility_level: i32,
+        #[starlark(require = named, default = String::new())] repo_name: String,
+        #[starlark(require = named, default = NoneOr::None)] bazel_compatibility: NoneOr<Value<'v>>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<NoneType> {
+        let context = bzlmod_eval_context(eval)?;
+        if context.module_called.get() {
+            return Err(bzlmod_starlark_error(
+                "the module() directive can only be called once",
+            ));
+        }
+        if context.non_module_called.get() {
+            return Err(bzlmod_starlark_error(
+                "if module() is called, it must be called before any other functions",
+            ));
+        }
+        if compatibility_level != -1 {
+            // Bazel warns that this is a no-op. Buck2 does not currently surface this warning path.
+        }
+        if let NoneOr::Other(bazel_compatibility) = bazel_compatibility {
+            let _ = bzlmod_value_to_string_list(bazel_compatibility, "module bazel_compatibility")?;
+        }
+        context.module_called.set(true);
+        let module_name = if name.is_empty() {
+            context.name.borrow().clone()
+        } else {
+            if !is_valid_bzlmod_module_name(&name) {
+                return Err(bzlmod_starlark_error(format!(
+                    "invalid module name `{name}` in module()"
+                )));
+            }
+            name
+        };
+        parse_bzlmod_version(&version)
+            .map_err(Into::<starlark::Error>::into)
+            .map_err(|error| {
+                bzlmod_starlark_error(format!("Invalid version in module(): {error}"))
+            })?;
+        let module_repo_name = if repo_name.is_empty() {
+            module_name.clone()
+        } else {
+            repo_name
+        };
+        *context.name.borrow_mut() = module_name.clone();
+        *context.version.borrow_mut() = version;
+        *context.repo_name.borrow_mut() = module_repo_name.clone();
+        let mut aliases = context.aliases.borrow_mut();
+        aliases.push(module_name);
+        aliases.push(module_repo_name);
+        Ok(NoneType)
+    }
+
+    fn bazel_dep(
+        #[starlark(require = named)] name: String,
+        #[starlark(require = named, default = String::new())] version: String,
+        #[starlark(require = named, default = -1)] max_compatibility_level: i32,
+        #[starlark(require = named, default = NoneOr::Other(String::new()))] repo_name: NoneOr<
+            String,
+        >,
+        #[starlark(require = named, default = false)] dev_dependency: bool,
+        eval: &mut Evaluator<'_, '_, '_>,
+    ) -> starlark::Result<NoneType> {
+        let context = bzlmod_eval_context(eval)?;
+        context.set_non_module_called();
+        if !is_valid_bzlmod_module_name(&name) {
+            return Err(bzlmod_starlark_error(format!(
+                "invalid module name `{name}` in bazel_dep()"
+            )));
+        }
+        parse_bzlmod_version(&version)
+            .map_err(Into::<starlark::Error>::into)
+            .map_err(|error| {
+                bzlmod_starlark_error(format!("Invalid version in bazel_dep(): {error}"))
+            })?;
+        if max_compatibility_level != -1 {
+            // Bazel warns that this is a no-op. Buck2 does not currently surface this warning path.
+        }
+        if context.should_ignore_dev_dependency(dev_dependency) {
+            return Ok(NoneType);
+        }
+        let apparent_name = match repo_name {
+            NoneOr::None => None,
+            NoneOr::Other(repo_name) if repo_name.is_empty() => Some(name.clone()),
+            NoneOr::Other(repo_name) => Some(repo_name),
+        };
+        context.deps.borrow_mut().push(BazelDep {
+            name,
+            version,
+            apparent_name,
+        });
+        Ok(NoneType)
+    }
+
+    fn register_toolchains(
+        #[starlark(args)] args: UnpackTuple<String>,
+        #[starlark(require = named, default = false)] dev_dependency: bool,
+        eval: &mut Evaluator<'_, '_, '_>,
+    ) -> starlark::Result<NoneType> {
+        let context = bzlmod_eval_context(eval)?;
+        context.set_non_module_called();
+        if !context.should_ignore_dev_dependency(dev_dependency) {
+            context
+                .registered_toolchains
+                .borrow_mut()
+                .extend(args.items);
+        }
+        Ok(NoneType)
+    }
+
+    fn register_execution_platforms(
+        #[starlark(args)] _args: UnpackTuple<String>,
+        #[starlark(require = named, default = false)] dev_dependency: bool,
+        eval: &mut Evaluator<'_, '_, '_>,
+    ) -> starlark::Result<NoneType> {
+        let context = bzlmod_eval_context(eval)?;
+        context.set_non_module_called();
+        let _ = dev_dependency;
+        Ok(NoneType)
+    }
+
+    fn use_extension(
+        extension_bzl_file: String,
+        extension_name: String,
+        #[starlark(require = named, default = false)] dev_dependency: bool,
+        #[starlark(require = named, default = false)] isolate: bool,
+        eval: &mut Evaluator<'_, '_, '_>,
+    ) -> starlark::Result<BzlmodExtensionProxy> {
+        let context = bzlmod_eval_context(eval)?;
+        context.set_non_module_called();
+        let _ = isolate;
+        if context.should_ignore_dev_dependency(dev_dependency) {
+            return Ok(BzlmodExtensionProxy { usage_id: None });
+        }
+        let mut usages = context.extension_usages.borrow_mut();
+        let usage_id = usages.len();
+        usages.push(BzlmodExtensionUsage {
+            proxy_name: String::new(),
+            extension_bzl_file,
+            extension_name,
+            dev_dependency,
+            imports: Vec::new(),
+            repo_overrides: Vec::new(),
+            tags: Vec::new(),
+        });
+        Ok(BzlmodExtensionProxy {
+            usage_id: Some(usage_id),
+        })
+    }
+
+    fn use_repo<'v>(
+        extension_proxy: Value<'v>,
+        #[starlark(args)] args: UnpackTuple<String>,
+        #[starlark(kwargs)] kwargs: SmallMap<String, Value<'v>>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<NoneType> {
+        let context = bzlmod_eval_context(eval)?;
+        context.set_non_module_called();
+        let Some(proxy) = BzlmodExtensionProxy::from_value(extension_proxy) else {
+            return Err(bzlmod_starlark_error(format!(
+                "use_repo() expected a module extension proxy, got `{}` of type `{}`",
+                extension_proxy.to_repr(),
+                extension_proxy.get_type()
+            )));
+        };
+        let Some(usage_id) = proxy.usage_id else {
+            return Ok(NoneType);
+        };
+        let module_name = context.name.borrow().clone();
+        let module_version = context.version.borrow().clone();
+        let mut imports = args
+            .items
+            .into_iter()
+            .map(|repo_name| BzlmodUseRepoImport {
+                alias: repo_name.clone(),
+                repo_name,
+            })
+            .collect::<Vec<_>>();
+        for (alias, value) in kwargs.iter() {
+            imports.push(BzlmodUseRepoImport {
+                alias: alias.clone(),
+                repo_name: bzlmod_value_to_string(*value, "use_repo repo name")?
+                    .replace("{name}", &module_name)
+                    .replace("{version}", &module_version),
+            });
+        }
+        let mut usages = context.extension_usages.borrow_mut();
+        let Some(usage) = usages.get_mut(usage_id) else {
+            return Err(bzlmod_starlark_error(format!(
+                "internal error: unknown bzlmod extension usage id `{usage_id}`"
+            )));
+        };
+        usage.imports.extend(imports);
+        Ok(NoneType)
+    }
+
+    fn override_repo<'v>(
+        extension_proxy: Value<'v>,
+        #[starlark(args)] args: UnpackTuple<String>,
+        #[starlark(kwargs)] kwargs: SmallMap<String, Value<'v>>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<NoneType> {
+        bzlmod_extension_repo_overrides_from_eval(extension_proxy, args, kwargs, true, eval)
+    }
+
+    fn inject_repo<'v>(
+        extension_proxy: Value<'v>,
+        #[starlark(args)] args: UnpackTuple<String>,
+        #[starlark(kwargs)] kwargs: SmallMap<String, Value<'v>>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<NoneType> {
+        bzlmod_extension_repo_overrides_from_eval(extension_proxy, args, kwargs, false, eval)
+    }
+
+    fn use_repo_rule(
+        rule_bzl_file: String,
+        rule_name: String,
+        eval: &mut Evaluator<'_, '_, '_>,
+    ) -> starlark::Result<BzlmodUseRepoRuleCallable> {
+        let context = bzlmod_eval_context(eval)?;
+        context.set_non_module_called();
+        Ok(BzlmodUseRepoRuleCallable {
+            rule_bzl_file,
+            rule_name,
+        })
+    }
+
+    fn include(label: String, eval: &mut Evaluator<'_, '_, '_>) -> starlark::Result<NoneType> {
+        let context = bzlmod_eval_context(eval)?;
+        context.set_non_module_called();
+        context.include(&label)?;
+        Ok(NoneType)
+    }
+
+    fn single_version_override<'v>(
+        #[starlark(require = named)] module_name: String,
+        #[starlark(require = named, default = String::new())] version: String,
+        #[starlark(require = named, default = String::new())] registry: String,
+        #[starlark(require = named, default = NoneOr::None)] patches: NoneOr<Value<'v>>,
+        #[starlark(require = named, default = NoneOr::None)] patch_cmds: NoneOr<Value<'v>>,
+        #[starlark(require = named, default = -1)] patch_strip: i32,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<NoneType> {
+        let context = bzlmod_eval_context(eval)?;
+        context.set_non_module_called();
+        if !context.is_root {
+            return Ok(NoneType);
+        }
+        if !registry.is_empty() {
+            return Err(bzlmod_starlark_error(format!(
+                "single_version_override for module `{module_name}` uses unsupported `registry`. Bazel uses `registry` to fetch the module from a non-default registry."
+            )));
+        }
+        let patch_cmds = match patch_cmds {
+            NoneOr::None => Vec::new(),
+            NoneOr::Other(patch_cmds) => {
+                bzlmod_value_to_string_list(patch_cmds, "single_version_override patch_cmds")?
+            }
+        };
+        if !patch_cmds.is_empty() {
+            return Err(bzlmod_starlark_error(format!(
+                "single_version_override for module `{module_name}` uses unsupported `patch_cmds`. Bazel runs `patch_cmds` after applying patch files."
+            )));
+        }
+        let current_module_file = context.current_module_file();
+        let patches = match patches {
+            NoneOr::None => Vec::new(),
+            NoneOr::Other(patches) => bzlmod_override_patch_paths_from_value(
+                &current_module_file,
+                patches,
+                "single_version_override",
+            )?,
+        };
+        let patch_strip = match patch_strip {
+            -1 => None,
+            value => Some(u32::try_from(value).map_err(|_| {
+                bzlmod_starlark_error(format!(
+                    "single_version_override for module `{module_name}` has negative patch_strip `{value}`"
+                ))
+            })?),
+        };
+        context.single_version_overrides.borrow_mut().insert(
+            module_name,
+            BzlmodSingleVersionOverride {
+                version: (!version.is_empty()).then_some(version),
+                patches,
+                patch_strip,
+            },
+        );
+        Ok(NoneType)
+    }
+
+    fn multiple_version_override<'v>(
+        #[starlark(require = named)] module_name: String,
+        #[starlark(require = named, default = NoneOr::None)] versions: NoneOr<Value<'v>>,
+        #[starlark(require = named, default = String::new())] registry: String,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<NoneType> {
+        let context = bzlmod_eval_context(eval)?;
+        context.set_non_module_called();
+        let versions = match versions {
+            NoneOr::None => Vec::new(),
+            NoneOr::Other(versions) => {
+                bzlmod_value_to_string_list(versions, "multiple_version_override versions")?
+            }
+        };
+        let _ = registry;
+        Err(bzlmod_starlark_error(format!(
+            "multiple_version_override is not implemented in Buck2 bzlmod resolution yet. Bazel allows multiple selected versions of the same module; refusing to silently collapse that graph: module `{}` versions {:?}",
+            module_name, versions
+        )))
+    }
+
+    fn archive_override<'v>(
+        #[starlark(require = named)] module_name: String,
+        #[starlark(kwargs)] kwargs: SmallMap<String, Value<'v>>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<NoneType> {
+        let context = bzlmod_eval_context(eval)?;
+        context.set_non_module_called();
+        if !context.is_root {
+            return Ok(NoneType);
+        }
+        let mut urls = Vec::new();
+        if let Some(url) = bzlmod_kwarg_string(&kwargs, "url", "archive_override url")? {
+            urls.push(url);
+        }
+        urls.extend(bzlmod_kwarg_string_list(
+            &kwargs,
+            "urls",
+            "archive_override urls",
+        )?);
+        if urls.is_empty() {
+            return Err(bzlmod_starlark_error(format!(
+                "archive_override for module `{module_name}` must have `url` or non-empty `urls`"
+            )));
+        }
+        let current_module_file = context.current_module_file();
+        context.archive_overrides.borrow_mut().insert(
+            module_name.clone(),
+            BzlmodArchiveOverride {
+                module_name,
+                urls,
+                integrity: bzlmod_kwarg_string(&kwargs, "integrity", "archive_override integrity")?
+                    .unwrap_or_default(),
+                strip_prefix: bzlmod_kwarg_string(
+                    &kwargs,
+                    "strip_prefix",
+                    "archive_override strip_prefix",
+                )?,
+                archive_type: bzlmod_kwarg_string(&kwargs, "type", "archive_override type")?.or(
+                    bzlmod_kwarg_string(&kwargs, "archive_type", "archive_override archive_type")?,
+                ),
+                patches: bzlmod_patch_paths_from_kwargs(
+                    &current_module_file,
+                    &kwargs,
+                    "archive_override",
+                )?,
+                patch_strip: bzlmod_kwarg_u32(
+                    &kwargs,
+                    "patch_strip",
+                    "archive_override patch_strip",
+                )?,
+            },
+        );
+        Ok(NoneType)
+    }
+
+    fn git_override<'v>(
+        #[starlark(require = named)] module_name: String,
+        #[starlark(kwargs)] kwargs: SmallMap<String, Value<'v>>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> starlark::Result<NoneType> {
+        let context = bzlmod_eval_context(eval)?;
+        context.set_non_module_called();
+        let _ = kwargs;
+        Err(bzlmod_starlark_error(format!(
+            "git_override is not implemented in Buck2 bzlmod resolution yet: module `{module_name}`"
+        )))
+    }
+
+    fn local_path_override(
+        #[starlark(require = named)] module_name: String,
+        #[starlark(require = named)] path: String,
+        eval: &mut Evaluator<'_, '_, '_>,
+    ) -> starlark::Result<NoneType> {
+        let context = bzlmod_eval_context(eval)?;
+        context.set_non_module_called();
+        if !context.is_root {
+            return Ok(NoneType);
+        }
+        let cell_project_path = context.cell_project_path.as_ref().ok_or_else(|| {
+            bzlmod_starlark_error("internal error: local_path_override missing root cell path")
+        })?;
+        let path = cell_project_path
+            .join_normalized(RelativePath::new(&path))
+            .map_err(Into::<starlark::Error>::into)?;
+        context.local_path_overrides.borrow_mut().insert(
+            module_name.clone(),
+            BzlmodLocalPathOverride {
+                module_name,
+                path: path.as_str().to_owned(),
+                module_text: String::new(),
+                included_module_texts: BTreeMap::new(),
+            },
+        );
+        Ok(NoneType)
+    }
+
+    fn flag_alias(
+        #[starlark(require = named)] name: String,
+        #[starlark(require = named)] starlark_flag: String,
+        eval: &mut Evaluator<'_, '_, '_>,
+    ) -> starlark::Result<NoneType> {
+        let context = bzlmod_eval_context(eval)?;
+        context.set_non_module_called();
+        let _ = (name, starlark_flag);
+        Ok(NoneType)
+    }
+}
+
+fn bzlmod_extension_repo_overrides_from_eval<'v>(
+    extension_proxy: Value<'v>,
+    args: UnpackTuple<String>,
+    kwargs: SmallMap<String, Value<'v>>,
+    must_exist: bool,
+    eval: &mut Evaluator<'v, '_, '_>,
+) -> starlark::Result<NoneType> {
+    let context = bzlmod_eval_context(eval)?;
+    context.set_non_module_called();
+    let Some(proxy) = BzlmodExtensionProxy::from_value(extension_proxy) else {
+        return Err(bzlmod_starlark_error(format!(
+            "repo override expected a module extension proxy, got `{}` of type `{}`",
+            extension_proxy.to_repr(),
+            extension_proxy.get_type()
+        )));
+    };
+    let Some(usage_id) = proxy.usage_id else {
+        return Ok(NoneType);
+    };
+    let mut overrides = args
+        .items
+        .into_iter()
+        .map(|repo_name| BzlmodRepoOverride {
+            overriding_repo_name: repo_name.clone(),
+            repo_name,
+            must_exist,
+        })
+        .collect::<Vec<_>>();
+    for (repo_name, overriding_repo_name) in kwargs.iter() {
+        overrides.push(BzlmodRepoOverride {
+            repo_name: repo_name.clone(),
+            overriding_repo_name: bzlmod_value_to_string(*overriding_repo_name, "repo override")?,
+            must_exist,
+        });
+    }
+    let mut usages = context.extension_usages.borrow_mut();
+    let Some(usage) = usages.get_mut(usage_id) else {
+        return Err(bzlmod_starlark_error(format!(
+            "internal error: unknown bzlmod extension usage id `{usage_id}`"
+        )));
+    };
+    usage.repo_overrides.extend(overrides);
+    usage.repo_overrides.sort_by(|left, right| {
+        (
+            &left.repo_name,
+            &left.overriding_repo_name,
+            &left.must_exist,
+        )
+            .cmp(&(
+                &right.repo_name,
+                &right.overriding_repo_name,
+                &right.must_exist,
+            ))
+    });
+    usage.repo_overrides.dedup_by(|left, right| {
+        left.repo_name == right.repo_name
+            && left.overriding_repo_name == right.overriding_repo_name
+            && left.must_exist == right.must_exist
+    });
+    Ok(NoneType)
+}
+
+async fn read_bzlmod_compiled_module_file_set(
+    module_root: &ProjectRelativePath,
+    root_module_file: &str,
+    missing_root_ok: bool,
+    file_ops: &mut dyn ConfigParserFileOps,
+) -> buck2_error::Result<(
+    Arc<BzlmodCompiledModuleFile>,
+    BTreeMap<String, Arc<BzlmodCompiledModuleFile>>,
+)> {
+    let root_file = ForwardRelativePath::new(root_module_file)?;
+    let root_path = ConfigPath::Project(module_root.join(root_file));
+    let root_lines = file_ops.read_file_lines_if_exists(&root_path).await?;
+    let root_text = match root_lines {
+        Some(lines) => lines.join("\n"),
+        None if missing_root_ok => String::new(),
+        None => {
+            return Err(buck2_error!(
+                buck2_error::ErrorTag::Input,
+                "`{}` does not exist",
+                root_path
+            ));
+        }
+    };
+    let root = Arc::new(compile_bzlmod_module_file(
+        root_module_file.to_owned(),
+        root_text,
+    )?);
+    let mut included_modules = BTreeMap::<String, Arc<BzlmodCompiledModuleFile>>::new();
+    let mut stack = root
+        .includes
+        .iter()
+        .map(|label| (root.module_file.clone(), label.clone()))
+        .collect::<Vec<_>>();
+    while let Some((including_module_file, label)) = stack.pop() {
+        if included_modules.contains_key(&label) {
+            continue;
+        }
+        let include_file = bzlmod_include_label_to_path(&including_module_file, &label)?;
+        let include_path =
+            ConfigPath::Project(module_root.join(ForwardRelativePath::new(&include_file)?));
+        let Some(lines) = file_ops.read_file_lines_if_exists(&include_path).await? else {
+            return Err(buck2_error!(
+                buck2_error::ErrorTag::Input,
+                "included MODULE.bazel file `{}` does not exist",
+                label
+            ));
+        };
+        let compiled = Arc::new(compile_bzlmod_module_file(include_file, lines.join("\n"))?);
+        stack.extend(
+            compiled
+                .includes
+                .iter()
+                .map(|label| (compiled.module_file.clone(), label.clone())),
+        );
+        included_modules.insert(label, compiled);
+    }
+    Ok((root, included_modules))
+}
+
+async fn read_bzlmod_root_patch_contents(
+    cell_path: &CellRootPath,
+    file_ops: &mut dyn ConfigParserFileOps,
+    patches: &mut [BzlmodRootPatch],
+) -> buck2_error::Result<()> {
+    for patch in patches {
+        let path = cell_path
+            .as_project_relative_path()
+            .join(ForwardRelativePath::new(&patch.path)?);
+        let config_path = ConfigPath::Project(path);
+        let Some(lines) = file_ops.read_file_lines_if_exists(&config_path).await? else {
+            return Err(buck2_error!(
+                buck2_error::ErrorTag::Input,
+                "bzlmod override patch `{}` does not exist",
+                patch.path
+            ));
+        };
+        patch.content = if lines.is_empty() {
+            Arc::from("")
+        } else {
+            Arc::from(format!("{}\n", lines.join("\n")))
+        };
+    }
+    Ok(())
+}
+
 async fn read_bazel_module_resolution_inputs(
     cell_path: &CellRootPath,
     file_ops: &mut dyn ConfigParserFileOps,
 ) -> buck2_error::Result<BzlmodRootResolutionInput> {
-    let mut aliases = BazelModuleCellAliases::default();
-    let mut root_deps = Vec::new();
-    let mut archive_overrides = BTreeMap::new();
-    let mut single_version_overrides = BTreeMap::new();
-    let mut local_path_overrides = BTreeMap::new();
-    let mut root_module_lines = Vec::new();
-    let mut seen = BTreeSet::new();
-    let mut stack = vec!["MODULE.bazel".to_owned()];
-
-    buckconfig_load_stage("reading MODULE.bazel files", async {
-        while let Some(module_file) = stack.pop() {
-            if !seen.insert(module_file.clone()) {
-                continue;
-            }
-
-            let file = ForwardRelativePath::new(&module_file)?;
-            let path = ConfigPath::Project(cell_path.as_project_relative_path().join(file));
-            let Some(lines) = file_ops.read_file_lines_if_exists(&path).await? else {
-                continue;
-            };
-            validate_bzlmod_module_lines(&module_file, &lines)?;
-            let constants = bzlmod_module_constants_from_lines(&lines);
-            root_module_lines.extend(lines.iter().cloned());
-
-            for call in collect_bzl_calls(&lines, "module(") {
-                for arg in ["name", "repo_name"] {
-                    if bzl_arg_is_none(&call, arg) {
-                        continue;
-                    }
-                    if let Some(alias) = bzl_string_arg(&call, arg) {
-                        aliases.root_aliases.push(BazelCompatCellAlias {
-                            alias,
-                            cell_name: "root".to_owned(),
-                        });
-                    }
-                }
-            }
-
-            for call in collect_bzl_calls(&lines, "bazel_dep(") {
-                let Some(name) = bzl_string_arg(&call, "name") else {
-                    continue;
-                };
-                let version = bzl_string_arg(&call, "version").unwrap_or_default();
-                let apparent_name = bzl_repo_name_arg(&call, &name);
-                root_deps.push(BazelDep {
-                    name,
-                    version,
-                    apparent_name,
-                });
-            }
-
-            for call in collect_bzl_calls(&lines, "archive_override(") {
-                let mut archive_override =
-                    bzlmod_archive_override_from_call(&module_file, &call, &constants)?;
-                read_bzlmod_root_patch_contents(cell_path, file_ops, &mut archive_override.patches)
-                    .await?;
-                archive_overrides.insert(archive_override.module_name.clone(), archive_override);
-            }
-
-            for call in collect_bzl_calls(&lines, "single_version_override(") {
-                let Some((module_name, mut single_version_override)) =
-                    bzlmod_single_version_override_from_call(&module_file, &call, &constants)?
-                else {
-                    continue;
-                };
-                read_bzlmod_root_patch_contents(
-                    cell_path,
-                    file_ops,
-                    &mut single_version_override.patches,
-                )
-                .await?;
-                single_version_overrides.insert(module_name, single_version_override);
-            }
-
-            for call in collect_bzl_calls(&lines, "multiple_version_override(") {
-                return Err(buck2_error!(
-                    buck2_error::ErrorTag::Input,
-                    "multiple_version_override is not implemented in Buck2 bzlmod resolution yet. Bazel allows multiple selected versions of the same module; refusing to silently collapse that graph: {}",
-                    call
-                ));
-            }
-
-            for call in collect_bzl_calls(&lines, "git_override(") {
-                return Err(buck2_error!(
-                    buck2_error::ErrorTag::Input,
-                    "git_override is not implemented in Buck2 bzlmod resolution yet: {}",
-                    call
-                ));
-            }
-
-            for call in collect_bzl_calls(&lines, "local_path_override(") {
-                let mut local_path_override = bzlmod_local_path_override_from_call(cell_path, &call)?;
-                let module_file = ProjectRelativePath::new(&local_path_override.path)?
-                    .join(ForwardRelativePath::new("MODULE.bazel")?);
-                let module_path = ConfigPath::Project(module_file);
-                let Some(module_lines) = file_ops.read_file_lines_if_exists(&module_path).await?
-                else {
-                    return Err(buck2_error!(
-                        buck2_error::ErrorTag::Input,
-                        "local_path_override for module `{}` points to `{}`, but `{}/MODULE.bazel` does not exist",
-                        local_path_override.module_name,
-                        local_path_override.path,
-                        local_path_override.path
-                    ));
-                };
-                local_path_override.module_text = module_lines.join("\n");
-                local_path_overrides
-                    .insert(local_path_override.module_name.clone(), local_path_override);
-            }
-
-            aliases
-                .registered_toolchains
-                .extend(bzlmod_registered_toolchains_from_lines(&lines, false));
-
-            for call in collect_bzl_calls(&lines, "include(") {
-                if let Some(label) = bzl_first_string_arg(&call) {
-                    if let Some(include_file) = module_include_to_path(&module_file, &label) {
-                        stack.push(include_file);
-                    }
-                }
-            }
-        }
-        Ok(())
-    })
+    let (compiled_root, included_modules) = buckconfig_load_stage(
+        "reading MODULE.bazel files",
+        read_bzlmod_compiled_module_file_set(
+            cell_path.as_project_relative_path(),
+            BAZEL_MODULE_FILE,
+            true,
+            file_ops,
+        ),
+    )
     .await?;
+    let mut evaluated = eval_bzlmod_module_file(
+        &compiled_root,
+        BzlmodModuleEvalOptions {
+            is_root: true,
+            allow_include: true,
+            ignore_dev_dependency: false,
+            default_name: "root".to_owned(),
+            default_version: String::new(),
+            default_repo_name: "root".to_owned(),
+            cell_project_path: Some(cell_path.as_project_relative_path().to_buf()),
+            included_modules,
+        },
+    )?;
+
+    for archive_override in evaluated.archive_overrides.values_mut() {
+        read_bzlmod_root_patch_contents(cell_path, file_ops, &mut archive_override.patches).await?;
+    }
+    for single_version_override in evaluated.single_version_overrides.values_mut() {
+        read_bzlmod_root_patch_contents(cell_path, file_ops, &mut single_version_override.patches)
+            .await?;
+    }
+    for local_path_override in evaluated.local_path_overrides.values_mut() {
+        let module_root = ProjectRelativePath::new(&local_path_override.path)?;
+        let (compiled_local_root, included_local_modules) = read_bzlmod_compiled_module_file_set(
+            module_root,
+            BAZEL_MODULE_FILE,
+            false,
+            file_ops,
+        )
+        .await
+        .with_buck_error_context(|| {
+            format!(
+                "Error reading local_path_override MODULE.bazel files for module `{}` from `{}`",
+                local_path_override.module_name, local_path_override.path
+            )
+        })?;
+        local_path_override.module_text = compiled_local_root.module_text.clone();
+        local_path_override.included_module_texts = included_local_modules
+            .into_iter()
+            .map(|(label, compiled)| (label, compiled.module_text.clone()))
+            .collect();
+    }
 
     let mut builtin_bazel_tools_module = builtin_bazel_tools_module()?;
+    let mut aliases = BazelModuleCellAliases::default();
+    for alias in &evaluated.aliases {
+        aliases.root_aliases.push(BazelCompatCellAlias {
+            alias: alias.clone(),
+            cell_name: "root".to_owned(),
+        });
+    }
+    aliases.registered_toolchains = evaluated.registered_toolchains.clone();
+    let mut root_deps = evaluated.deps.clone();
     apply_bzlmod_dep_overrides(
         &mut root_deps,
-        &archive_overrides,
-        &single_version_overrides,
-        &local_path_overrides,
+        &evaluated.archive_overrides,
+        &evaluated.single_version_overrides,
+        &evaluated.local_path_overrides,
     );
     apply_bzlmod_dep_overrides(
         &mut builtin_bazel_tools_module.deps,
-        &archive_overrides,
-        &single_version_overrides,
-        &local_path_overrides,
+        &evaluated.archive_overrides,
+        &evaluated.single_version_overrides,
+        &evaluated.local_path_overrides,
     );
 
-    let root_module = bzlmod_root_module_from_lines(&root_module_lines)?;
+    let root_module = RootBzlmodModule {
+        name: evaluated.name,
+        version: evaluated.version,
+        repo_name: evaluated.repo_name,
+        canonical_repo_name: String::new(),
+        lockfile_extension_generated_repos: BTreeMap::new(),
+        lockfile_extension_facts: BTreeSet::new(),
+        constants: Vec::new(),
+        extension_usages: evaluated.extension_usages,
+        use_repo_rule_invocations: evaluated.use_repo_rule_invocations,
+        registered_toolchains: evaluated.registered_toolchains,
+    };
     Ok(BzlmodRootResolutionInput {
         aliases,
         root_deps,
         root_module,
         builtin_bazel_tools_module,
-        archive_overrides,
-        single_version_overrides,
-        local_path_overrides,
+        archive_overrides: evaluated.archive_overrides,
+        single_version_overrides: evaluated.single_version_overrides,
+        local_path_overrides: evaluated.local_path_overrides,
     })
 }
 
@@ -6064,72 +7518,74 @@ fn parse_discovered_bzlmod_module(
     source_json: BcrSourceJson,
     module_text: String,
 ) -> buck2_error::Result<DiscoveredBcrModule> {
-    let module_lines = module_text.lines().map(str::to_owned).collect::<Vec<_>>();
-    validate_bzlmod_module_lines(&dep.name, &module_lines)?;
-    let constants = bzlmod_module_constants_from_lines(&module_lines);
-    let extension_usages = bzlmod_extension_usages_from_lines(&module_lines, &constants, true);
-    let use_repo_rule_invocations =
-        bzlmod_use_repo_rule_invocations_from_lines(&module_lines, &constants, true)?;
-
-    Ok(DiscoveredBcrModule {
-        dep,
-        source_json,
-        module_aliases: bzlmod_module_aliases(&module_lines),
-        use_repo_aliases: bzlmod_use_repo_aliases_from_usages(&extension_usages),
-        extension_usages,
-        use_repo_rule_invocations,
-        constants,
-        registered_toolchains: bzlmod_registered_toolchains_from_lines(&module_lines, true),
-        deps: bzlmod_deps_from_lines(&module_lines, true),
-    })
+    let compiled =
+        compile_bzlmod_module_file(format!("{}@{}", dep.name, dep.version), module_text)?;
+    if !compiled.includes.is_empty() {
+        return Err(buck2_error!(
+            buck2_error::ErrorTag::Input,
+            "registry module `{}@{}` uses include(), but Bazel only allows include() in the root module and non-registry overrides",
+            dep.name,
+            dep.version
+        ));
+    }
+    let evaluated = eval_bzlmod_module_file(
+        &compiled,
+        BzlmodModuleEvalOptions {
+            is_root: false,
+            allow_include: false,
+            ignore_dev_dependency: true,
+            default_name: dep.name.clone(),
+            default_version: dep.version.clone(),
+            default_repo_name: dep.name.clone(),
+            cell_project_path: None,
+            included_modules: BTreeMap::new(),
+        },
+    )?;
+    discovered_bzlmod_module_from_eval(dep, source_json, evaluated)
 }
 
 async fn fetch_local_bzlmod_module(
     dep: BazelDep,
     local_path_override: BzlmodLocalPathOverride,
 ) -> buck2_error::Result<DiscoveredBcrModule> {
-    let module_lines = local_path_override
-        .module_text
-        .lines()
-        .map(str::to_owned)
-        .collect::<Vec<_>>();
-    validate_bzlmod_module_lines(&local_path_override.module_name, &module_lines)?;
-    let constants = bzlmod_module_constants_from_lines(&module_lines);
-    let extension_usages = bzlmod_extension_usages_from_lines(&module_lines, &constants, true);
-    let use_repo_rule_invocations =
-        bzlmod_use_repo_rule_invocations_from_lines(&module_lines, &constants, true)?;
-
-    Ok(DiscoveredBcrModule {
-        dep,
-        source_json: empty_bcr_source_json(),
-        module_aliases: bzlmod_module_aliases(&module_lines),
-        use_repo_aliases: bzlmod_use_repo_aliases_from_usages(&extension_usages),
-        extension_usages,
-        use_repo_rule_invocations,
-        constants,
-        registered_toolchains: bzlmod_registered_toolchains_from_lines(&module_lines, true),
-        deps: bzlmod_deps_from_lines(&module_lines, true),
-    })
+    let compiled = compile_bzlmod_module_file(
+        BAZEL_MODULE_FILE.to_owned(),
+        local_path_override.module_text,
+    )?;
+    let included_modules = local_path_override
+        .included_module_texts
+        .into_iter()
+        .map(|(label, module_text)| {
+            let module_file = bzlmod_include_label_to_path(BAZEL_MODULE_FILE, &label)?;
+            let compiled = compile_bzlmod_module_file(module_file, module_text)?;
+            buck2_error::Ok((label, Arc::new(compiled)))
+        })
+        .collect::<buck2_error::Result<BTreeMap<_, _>>>()?;
+    let evaluated = eval_bzlmod_module_file(
+        &compiled,
+        BzlmodModuleEvalOptions {
+            is_root: false,
+            allow_include: true,
+            ignore_dev_dependency: true,
+            default_name: dep.name.clone(),
+            default_version: dep.version.clone(),
+            default_repo_name: dep.name.clone(),
+            cell_project_path: None,
+            included_modules,
+        },
+    )?;
+    discovered_bzlmod_module_from_eval(dep, empty_bcr_source_json(), evaluated)
 }
 
 fn builtin_bazel_tools_module() -> buck2_error::Result<DiscoveredBcrModule> {
-    let module_lines = BAZEL_TOOLS_MODULE_TOOLS
-        .lines()
-        .map(str::to_owned)
-        .collect::<Vec<_>>();
-    validate_bzlmod_module_lines("bazel_tools", &module_lines)?;
-    let constants = bzlmod_module_constants_from_lines(&module_lines);
-    let extension_usages = bzlmod_extension_usages_from_lines(&module_lines, &constants, true);
-    let use_repo_rule_invocations =
-        bzlmod_use_repo_rule_invocations_from_lines(&module_lines, &constants, true)?;
-
-    Ok(DiscoveredBcrModule {
-        dep: BazelDep {
-            name: "bazel_tools".to_owned(),
-            version: String::new(),
-            apparent_name: Some("bazel_tools".to_owned()),
-        },
-        source_json: BcrSourceJson {
+    let dep = BazelDep {
+        name: "bazel_tools".to_owned(),
+        version: String::new(),
+        apparent_name: Some("bazel_tools".to_owned()),
+    };
+    parse_discovered_bzlmod_module(
+        dep,
+        BcrSourceJson {
             url: String::new(),
             urls: None,
             integrity: String::new(),
@@ -6139,13 +7595,26 @@ fn builtin_bazel_tools_module() -> buck2_error::Result<DiscoveredBcrModule> {
             overlay: None,
             patch_strip: None,
         },
-        module_aliases: bzlmod_module_aliases(&module_lines),
+        BAZEL_TOOLS_MODULE_TOOLS.to_owned(),
+    )
+}
+
+fn discovered_bzlmod_module_from_eval(
+    dep: BazelDep,
+    source_json: BcrSourceJson,
+    evaluated: BzlmodEvaluatedModuleFile,
+) -> buck2_error::Result<DiscoveredBcrModule> {
+    let extension_usages = evaluated.extension_usages;
+    Ok(DiscoveredBcrModule {
+        dep,
+        source_json,
+        module_aliases: evaluated.aliases,
         use_repo_aliases: bzlmod_use_repo_aliases_from_usages(&extension_usages),
         extension_usages,
-        use_repo_rule_invocations,
-        constants,
-        registered_toolchains: bzlmod_registered_toolchains_from_lines(&module_lines, true),
-        deps: bzlmod_deps_from_lines(&module_lines, true),
+        use_repo_rule_invocations: evaluated.use_repo_rule_invocations,
+        constants: Vec::new(),
+        registered_toolchains: evaluated.registered_toolchains,
+        deps: evaluated.deps,
     })
 }
 
@@ -6631,363 +8100,12 @@ fn sanitize_bzlmod_temp_name(name: &str) -> String {
         .collect()
 }
 
-fn bzlmod_deps_from_lines(lines: &[String], ignore_dev_deps: bool) -> Vec<BazelDep> {
-    let mut deps = Vec::new();
-    for call in collect_bzl_calls(lines, "bazel_dep(") {
-        if ignore_dev_deps && bzl_bool_arg(&call, "dev_dependency") {
-            continue;
-        }
-        let Some(name) = bzl_string_arg(&call, "name") else {
-            continue;
-        };
-        let version = bzl_string_arg(&call, "version").unwrap_or_default();
-        let apparent_name = bzl_repo_name_arg(&call, &name);
-        deps.push(BazelDep {
-            name,
-            version,
-            apparent_name,
-        });
-    }
-    deps
-}
-
-fn bzlmod_module_aliases(lines: &[String]) -> Vec<String> {
-    let mut aliases = Vec::new();
-    for call in collect_bzl_calls(lines, "module(") {
-        for arg in ["name", "repo_name"] {
-            if bzl_arg_is_none(&call, arg) {
-                continue;
-            }
-            if let Some(alias) = bzl_string_arg(&call, arg) {
-                aliases.push(alias);
-            }
-        }
-    }
-    aliases
-}
-
-fn bzlmod_archive_override_from_call(
-    current_module_file: &str,
-    call: &str,
-    constants: &[(String, String)],
-) -> buck2_error::Result<BzlmodArchiveOverride> {
-    let module_name =
-        bzl_string_expression_arg(call, "module_name", constants).ok_or_else(|| {
-            buck2_error!(
-                buck2_error::ErrorTag::Input,
-                "archive_override must have a literal string `module_name`: {}",
-                call
-            )
-        })?;
-    let mut urls = Vec::new();
-    if let Some(url) = bzl_string_expression_arg(call, "url", constants) {
-        urls.push(url);
-    }
-    urls.extend(
-        bzl_call_named_arg_value(call, "urls")
-            .as_deref()
-            .and_then(|value| bzl_string_sequence_expression_raw_values(value, constants))
-            .unwrap_or_default(),
-    );
-    if urls.is_empty() {
-        return Err(buck2_error!(
-            buck2_error::ErrorTag::Input,
-            "archive_override for module `{}` must have a literal `url` or non-empty `urls`",
-            module_name
-        ));
-    }
-    let integrity = bzl_string_expression_arg(call, "integrity", constants).unwrap_or_default();
-    let strip_prefix = bzl_string_expression_arg(call, "strip_prefix", constants);
-    let archive_type = bzl_string_expression_arg(call, "type", constants)
-        .or_else(|| bzl_string_expression_arg(call, "archive_type", constants));
-    let patches = bzlmod_override_patch_paths_from_call(current_module_file, call, constants)?;
-    let patch_strip =
-        bzlmod_override_patch_strip_from_call("archive_override", &module_name, call)?;
-    Ok(BzlmodArchiveOverride {
-        module_name,
-        urls,
-        integrity,
-        strip_prefix,
-        archive_type,
-        patches,
-        patch_strip,
-    })
-}
-
-fn bzlmod_single_version_override_from_call(
-    current_module_file: &str,
-    call: &str,
-    constants: &[(String, String)],
-) -> buck2_error::Result<Option<(String, BzlmodSingleVersionOverride)>> {
-    let Some(module_name) = bzl_string_expression_arg(call, "module_name", constants) else {
-        return Ok(None);
-    };
-    reject_unsupported_bzlmod_override_arg(
-        "single_version_override",
-        &module_name,
-        call,
-        "registry",
-        "Bazel uses `registry` to fetch the module from a non-default registry.",
-    )?;
-    reject_unsupported_bzlmod_override_arg(
-        "single_version_override",
-        &module_name,
-        call,
-        "patch_cmds",
-        "Bazel runs `patch_cmds` after applying patch files.",
-    )?;
-    let version = bzl_string_expression_arg(call, "version", constants);
-    let patches = bzlmod_override_patch_paths_from_call(current_module_file, call, constants)?;
-    let patch_strip =
-        bzlmod_override_patch_strip_from_call("single_version_override", &module_name, call)?;
-    Ok(Some((
-        module_name,
-        BzlmodSingleVersionOverride {
-            version,
-            patches,
-            patch_strip,
-        },
-    )))
-}
-
-fn reject_unsupported_bzlmod_override_arg(
-    directive: &str,
-    module_name: &str,
-    call: &str,
-    arg: &str,
-    bazel_behavior: &str,
-) -> buck2_error::Result<()> {
-    let Some(value) = bzl_call_named_arg_value(call, arg) else {
-        return Ok(());
-    };
-    if bzl_is_default_override_value(&value) {
-        return Ok(());
-    }
-    Err(buck2_error!(
-        buck2_error::ErrorTag::Input,
-        "{} for module `{}` uses unsupported `{}`. {} Buck2 does not implement that behavior yet, so refusing to ignore it: {}",
-        directive,
-        module_name,
-        arg,
-        bazel_behavior,
-        call
-    ))
-}
-
-fn bzl_is_default_override_value(value: &str) -> bool {
-    matches!(value.trim(), "\"\"" | "''" | "[]")
-}
-
-fn bzlmod_local_path_override_from_call(
-    cell_path: &CellRootPath,
-    call: &str,
-) -> buck2_error::Result<BzlmodLocalPathOverride> {
-    let module_name = bzl_string_arg(call, "module_name").ok_or_else(|| {
-        buck2_error!(
-            buck2_error::ErrorTag::Input,
-            "local_path_override must have a literal string `module_name`: {}",
-            call
-        )
-    })?;
-    let path = bzl_string_arg(call, "path").ok_or_else(|| {
-        buck2_error!(
-            buck2_error::ErrorTag::Input,
-            "local_path_override for module `{}` must have a literal string `path`",
-            module_name
-        )
-    })?;
-    let path = cell_path
-        .as_project_relative_path()
-        .join_normalized(RelativePath::new(&path))
-        .with_buck_error_context(|| {
-            format!(
-                "local_path_override for module `{}` has invalid path `{}`",
-                module_name, path
-            )
-        })?;
-    Ok(BzlmodLocalPathOverride {
-        module_name,
-        path: path.as_str().to_owned(),
-        module_text: String::new(),
-    })
-}
-
-fn bzlmod_override_patch_paths_from_call(
-    current_module_file: &str,
-    call: &str,
-    constants: &[(String, String)],
-) -> buck2_error::Result<Vec<BzlmodRootPatch>> {
-    let patches = bzl_call_named_arg_value(call, "patches")
-        .as_deref()
-        .and_then(|value| bzl_string_sequence_expression_raw_values(value, constants))
-        .unwrap_or_default();
-    patches
-        .into_iter()
-        .map(|label| {
-            let path = module_include_to_path(current_module_file, &label).ok_or_else(|| {
-                buck2_error!(
-                    buck2_error::ErrorTag::Input,
-                    "bzlmod override patch must be a root-module label, got `{}`",
-                    label
-                )
-            })?;
-            Ok(BzlmodRootPatch {
-                path,
-                content: Arc::from(""),
-            })
-        })
-        .collect()
-}
-
-fn bzlmod_override_patch_strip_from_call(
-    function: &str,
-    module_name: &str,
-    call: &str,
-) -> buck2_error::Result<Option<u32>> {
-    bzl_call_named_arg_value(call, "patch_strip")
-        .as_deref()
-        .and_then(bzl_integer_expression_value)
-        .map(|value| {
-            u32::try_from(value).map_err(|_| {
-                buck2_error!(
-                    buck2_error::ErrorTag::Input,
-                    "{} for module `{}` has negative patch_strip `{}`",
-                    function,
-                    module_name,
-                    value
-                )
-            })
-        })
-        .transpose()
-}
-
-fn bzlmod_root_module_from_lines(lines: &[String]) -> buck2_error::Result<RootBzlmodModule> {
-    let mut name = "root".to_owned();
-    let mut version = String::new();
-    let mut repo_name = "root".to_owned();
-    for call in collect_bzl_calls(lines, "module(") {
-        if let Some(module_name) = bzl_string_arg(&call, "name") {
-            if !module_name.is_empty() {
-                name = module_name;
-            }
-        }
-        if let Some(module_version) = bzl_string_arg(&call, "version") {
-            version = module_version;
-        }
-        if let Some(module_repo_name) = bzl_repo_name_arg(&call, &name) {
-            if !module_repo_name.is_empty() {
-                repo_name = module_repo_name;
-            }
-        }
-    }
-    let constants = bzlmod_module_constants_from_lines(lines);
-    let extension_usages = bzlmod_extension_usages_from_lines(lines, &constants, false);
-    let use_repo_rule_invocations =
-        bzlmod_use_repo_rule_invocations_from_lines(lines, &constants, false)?;
-    let registered_toolchains = bzlmod_registered_toolchains_from_lines(lines, false);
-    Ok(RootBzlmodModule {
-        name,
-        version,
-        repo_name,
-        canonical_repo_name: String::new(),
-        lockfile_extension_generated_repos: BTreeMap::new(),
-        lockfile_extension_facts: BTreeSet::new(),
-        constants,
-        extension_usages,
-        use_repo_rule_invocations,
-        registered_toolchains,
-    })
-}
-
-fn validate_bzlmod_module_lines(module_file: &str, lines: &[String]) -> buck2_error::Result<()> {
-    let mut depth = 0i32;
-    for (idx, line) in lines.iter().enumerate() {
-        let without_comment = strip_bzl_comment(line);
-        let trimmed = without_comment.trim_start();
-        if depth == 0 && !trimmed.is_empty() {
-            let invalid = if trimmed.starts_with("load(") || trimmed.starts_with("load ") {
-                Some("load statements are not allowed")
-            } else if trimmed.starts_with("def ") {
-                Some("def statements are not allowed")
-            } else if trimmed.starts_with("if ") {
-                Some("if statements are not allowed")
-            } else if trimmed.starts_with("for ") {
-                Some("for statements are not allowed")
-            } else if trimmed.starts_with("while ") {
-                Some("while statements are not allowed")
-            } else if trimmed == "return" || trimmed.starts_with("return ") {
-                Some("return statements are not allowed")
-            } else {
-                None
-            };
-            if let Some(message) = invalid {
-                return Err(buck2_error!(
-                    buck2_error::ErrorTag::Input,
-                    "Invalid MODULE.bazel syntax in `{}` at line {}: {}",
-                    module_file,
-                    idx + 1,
-                    message
-                ));
-            }
-        }
-        depth += delimiter_delta(&without_comment);
-        if depth < 0 {
-            return Err(buck2_error!(
-                buck2_error::ErrorTag::Input,
-                "Invalid MODULE.bazel syntax in `{}` at line {}: unmatched closing delimiter",
-                module_file,
-                idx + 1
-            ));
-        }
-    }
-    if depth != 0 {
-        return Err(buck2_error!(
-            buck2_error::ErrorTag::Input,
-            "Invalid MODULE.bazel syntax in `{}`: unclosed delimiter",
-            module_file
-        ));
-    }
-    Ok(())
-}
-
 fn bzlmod_use_repo_aliases_from_usages(usages: &[BzlmodExtensionUsage]) -> Vec<String> {
     usages
         .iter()
         .flat_map(|usage| usage.imports.iter())
         .map(|import| import.alias.clone())
         .collect()
-}
-
-fn bzlmod_registered_toolchains_from_lines(
-    lines: &[String],
-    ignore_dev_dependency: bool,
-) -> Vec<String> {
-    let constants = bzlmod_module_constants_from_lines(lines);
-    let mut toolchains = collect_bzl_calls(lines, "register_toolchains(")
-        .into_iter()
-        .filter(|call| !(ignore_dev_dependency && bzl_bool_arg(call, "dev_dependency")))
-        .flat_map(|call| {
-            bzl_call_args(&call)
-                .into_iter()
-                .filter_map(|arg| bzl_string_expression_value(arg.trim(), &constants))
-                .collect::<Vec<_>>()
-        })
-        .collect::<Vec<_>>();
-    for collected_call in
-        collect_bzl_list_comprehension_calls(lines, "register_toolchains(", &constants)
-    {
-        if ignore_dev_dependency && bzl_bool_arg(&collected_call.call, "dev_dependency") {
-            continue;
-        }
-        let constants = bzl_constants_with_bindings(&constants, &collected_call.bindings);
-        toolchains.extend(
-            bzl_call_args(&collected_call.call)
-                .into_iter()
-                .filter_map(|arg| bzl_string_expression_value(arg.trim(), &constants)),
-        );
-    }
-    dedup_preserve_order(&mut toolchains);
-    toolchains
 }
 
 fn bzlmod_extension_imports_from_usages(
@@ -7001,1195 +8119,9 @@ fn bzlmod_extension_imports_from_usages(
         .collect()
 }
 
-fn bzlmod_extension_usages_from_lines(
-    lines: &[String],
-    constants: &[(String, String)],
-    ignore_dev_dependency: bool,
-) -> Vec<BzlmodExtensionUsage> {
-    let mut usages = bzl_top_level_assignments(lines)
-        .into_iter()
-        .filter_map(|(name, value)| {
-            let name = name.trim();
-            if !is_bzl_identifier(name) || !value.trim_start().starts_with("use_extension(") {
-                return None;
-            }
-            let dev_dependency = bzl_bool_arg(&value, "dev_dependency");
-            if ignore_dev_dependency && dev_dependency {
-                return None;
-            }
-            let args = bzl_call_args(&value);
-            let extension_bzl_file = args.first().and_then(|arg| bzl_string_value(arg.trim()))?;
-            let extension_name = args.get(1).and_then(|arg| bzl_string_value(arg.trim()))?;
-            Some(BzlmodExtensionUsage {
-                proxy_name: name.to_owned(),
-                extension_bzl_file,
-                extension_name,
-                dev_dependency,
-                imports: bzlmod_extension_imports(lines, name, constants),
-                repo_overrides: bzlmod_extension_repo_overrides(lines, name, constants),
-                tags: bzlmod_extension_tags(lines, name, constants),
-            })
-        })
-        .collect::<Vec<_>>();
-    let mut seen = BTreeSet::new();
-    usages.retain(|usage| {
-        seen.insert((
-            usage.proxy_name.clone(),
-            usage.extension_bzl_file.clone(),
-            usage.extension_name.clone(),
-        ))
-    });
-    usages
-}
-
-fn bzlmod_use_repo_rule_invocations_from_lines(
-    lines: &[String],
-    constants: &[(String, String)],
-    ignore_dev_dependency: bool,
-) -> buck2_error::Result<Vec<BzlmodUseRepoRuleInvocation>> {
-    let repo_rule_bindings = bzl_top_level_assignments(lines)
-        .into_iter()
-        .filter_map(|(name, value)| {
-            let name = name.trim();
-            if !is_bzl_identifier(name) || !value.trim_start().starts_with("use_repo_rule(") {
-                return None;
-            }
-            let args = bzl_call_args(&value);
-            let rule_bzl_file = args.first().and_then(|arg| bzl_string_value(arg.trim()))?;
-            let rule_name = args.get(1).and_then(|arg| bzl_string_value(arg.trim()))?;
-            Some((name.to_owned(), rule_bzl_file, rule_name))
-        })
-        .collect::<Vec<_>>();
-
-    let mut invocations = Vec::new();
-    for (proxy_name, rule_bzl_file, rule_name) in repo_rule_bindings {
-        let call_prefix = format!("{proxy_name}(");
-        let comprehension_calls =
-            collect_bzl_list_comprehension_calls(lines, &call_prefix, constants);
-        let comprehension_call_ranges = comprehension_calls
-            .iter()
-            .map(|call| (call.source_line, call.source_end_line))
-            .collect::<BTreeSet<_>>();
-        let normal_calls = collect_bzl_calls_with_order(lines, &call_prefix)
-            .into_iter()
-            .filter(|(source_line, _)| {
-                !comprehension_call_ranges
-                    .iter()
-                    .any(|(start, end)| *start <= *source_line && source_line < end)
-            })
-            .map(|(source_line, call)| BzlmodCollectedTagCall {
-                order: source_line * BZL_CALL_ORDER_STRIDE,
-                source_line,
-                source_end_line: source_line + 1,
-                call,
-                bindings: Vec::new(),
-            });
-        let mut calls = normal_calls.chain(comprehension_calls).collect::<Vec<_>>();
-        calls.sort_by_key(|call| call.order);
-        for collected_call in calls {
-            let constants = bzl_constants_with_bindings(constants, &collected_call.bindings);
-            if let Some(invocation) = bzlmod_use_repo_rule_invocation_from_call(
-                &rule_bzl_file,
-                &rule_name,
-                &collected_call.call,
-                &constants,
-                ignore_dev_dependency,
-            )? {
-                invocations.push(invocation);
-            }
-        }
-    }
-    invocations.sort_by(|left, right| {
-        (
-            &left.rule_bzl_file,
-            &left.rule_name,
-            &left.repo_name,
-            &left.attrs,
-        )
-            .cmp(&(
-                &right.rule_bzl_file,
-                &right.rule_name,
-                &right.repo_name,
-                &right.attrs,
-            ))
-    });
-    invocations.dedup_by(|left, right| {
-        left.rule_bzl_file == right.rule_bzl_file
-            && left.rule_name == right.rule_name
-            && left.repo_name == right.repo_name
-            && left.attrs == right.attrs
-    });
-    Ok(invocations)
-}
-
-fn bzlmod_use_repo_rule_invocation_from_call(
-    rule_bzl_file: &str,
-    rule_name: &str,
-    call: &str,
-    constants: &[(String, String)],
-    ignore_dev_dependency: bool,
-) -> buck2_error::Result<Option<BzlmodUseRepoRuleInvocation>> {
-    if ignore_dev_dependency && bzl_bool_arg(call, "dev_dependency") {
-        return Ok(None);
-    }
-    let repo_name = bzl_string_expression_arg(call, "name", constants).ok_or_else(|| {
-        buck2_error!(
-            buck2_error::ErrorTag::Input,
-            "use_repo_rule invocation must have a literal string `name`: {}",
-            call
-        )
-    })?;
-    let mut attrs = Vec::new();
-    for arg in bzl_call_args(call) {
-        let Some((name, value)) = bzl_top_level_assignment(&arg) else {
-            continue;
-        };
-        let name = name.trim();
-        if !is_bzl_identifier(name)
-            || name == "name"
-            || name == "dev_dependency"
-            || name == "visibility"
-        {
-            continue;
-        }
-        attrs.push((
-            name.to_owned(),
-            bzlmod_repository_rule_attr_expression(value.trim(), constants)?,
-        ));
-    }
-    attrs.sort_by(|left, right| left.0.cmp(&right.0));
-    Ok(Some(BzlmodUseRepoRuleInvocation {
-        rule_bzl_file: rule_bzl_file.to_owned(),
-        rule_name: rule_name.to_owned(),
-        repo_name,
-        attrs,
-    }))
-}
-
-fn bzlmod_repository_rule_attr_expression(
-    value: &str,
-    constants: &[(String, String)],
-) -> buck2_error::Result<String> {
-    let value = value.trim();
-    if let Some(string) = bzl_string_expression_value(value, constants) {
-        return bzlmod_repository_rule_string_attr_expression(&string);
-    }
-    if let Some(values) = bzlmod_repository_rule_string_list_attr_expression(value, constants)? {
-        return Ok(format!("[{}]", values.join(", ")));
-    }
-    Ok(value.to_owned())
-}
-
 fn bzlmod_repository_rule_string_attr_expression(value: &str) -> buck2_error::Result<String> {
     serde_json::to_string(value)
-        .buck_error_context("Error serializing use_repo_rule string repository-rule attribute")
-}
-
-fn bzlmod_repository_rule_string_list_attr_expression(
-    value: &str,
-    constants: &[(String, String)],
-) -> buck2_error::Result<Option<Vec<String>>> {
-    let value = if is_bzl_identifier(value) {
-        constants
-            .iter()
-            .find_map(|(name, constant_value)| (name == value).then_some(constant_value.as_str()))
-            .unwrap_or(value)
-    } else {
-        value
-    };
-    let value = value.trim();
-    let Some(inner) = value
-        .strip_prefix('[')
-        .and_then(|value| value.strip_suffix(']'))
-        .or_else(|| {
-            value
-                .strip_prefix('(')
-                .and_then(|value| value.strip_suffix(')'))
-        })
-    else {
-        return Ok(None);
-    };
-    let values = bzl_split_top_level(inner, ',')
-        .into_iter()
-        .filter(|item| !item.trim().is_empty())
-        .map(|item| {
-            let string = bzl_string_expression_value(item.trim(), constants)?;
-            bzlmod_repository_rule_string_attr_expression(&string).ok()
-        })
-        .collect::<Option<Vec<_>>>();
-    Ok(values)
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct BzlmodCollectedTagCall {
-    order: usize,
-    source_line: usize,
-    source_end_line: usize,
-    call: String,
-    bindings: Vec<(String, String)>,
-}
-
-fn bzlmod_extension_tags(
-    lines: &[String],
-    proxy_name: &str,
-    constants: &[(String, String)],
-) -> Vec<BzlmodExtensionTag> {
-    let call_prefix = format!("{proxy_name}.");
-    let comprehension_calls = collect_bzl_list_comprehension_calls(lines, &call_prefix, constants);
-    let comprehension_call_ranges = comprehension_calls
-        .iter()
-        .map(|call| (call.source_line, call.source_end_line))
-        .collect::<BTreeSet<_>>();
-    let normal_calls = collect_bzl_calls_with_order(lines, &call_prefix)
-        .into_iter()
-        .filter(|(source_line, _)| {
-            !comprehension_call_ranges
-                .iter()
-                .any(|(start, end)| *start <= *source_line && source_line < end)
-        })
-        .map(|(source_line, call)| BzlmodCollectedTagCall {
-            order: source_line * BZL_CALL_ORDER_STRIDE,
-            source_line,
-            source_end_line: source_line + 1,
-            call,
-            bindings: Vec::new(),
-        });
-    let mut calls = normal_calls.chain(comprehension_calls).collect::<Vec<_>>();
-    calls.sort_by_key(|call| call.order);
-    calls
-        .into_iter()
-        .filter_map(|collected_call| {
-            let call = collected_call.call;
-            let rest = call.strip_prefix(&call_prefix)?;
-            let (tag_name, _) = rest.split_once('(')?;
-            if !is_bzl_identifier(tag_name) {
-                return None;
-            }
-            let kwargs = bzl_call_args(&call)
-                .into_iter()
-                .filter_map(|arg| {
-                    let (name, value) = bzl_top_level_assignment(&arg)?;
-                    let name = name.trim();
-                    if is_bzl_identifier(name) {
-                        Some((name.to_owned(), value.trim().to_owned()))
-                    } else {
-                        None
-                    }
-                })
-                .collect::<Vec<_>>();
-            Some(BzlmodExtensionTag {
-                tag_name: tag_name.to_owned(),
-                bindings: collected_call.bindings,
-                kwargs,
-            })
-        })
-        .collect()
-}
-
-fn collect_bzl_list_comprehension_calls(
-    lines: &[String],
-    function: &str,
-    constants: &[(String, String)],
-) -> Vec<BzlmodCollectedTagCall> {
-    let mut calls = Vec::new();
-    let mut index = 0usize;
-    while index < lines.len() {
-        let block_start_line = index;
-        let line = strip_bzl_comment(&lines[index]);
-        if !line.trim_start().starts_with('[') {
-            index += 1;
-            continue;
-        }
-
-        let mut block = vec![line.clone()];
-        let mut depth = delimiter_delta(&line);
-        index += 1;
-        while depth > 0 && index < lines.len() {
-            let line = strip_bzl_comment(&lines[index]);
-            depth += delimiter_delta(&line);
-            block.push(line);
-            index += 1;
-        }
-        let block_end_line = index;
-
-        let Some(binding_groups) = bzl_list_comprehension_binding_groups(&block, constants) else {
-            continue;
-        };
-        let block_text = block.join("\n");
-        let block_calls = collect_bzl_calls_anywhere_with_order(&block_text, function);
-        let mut expanded_order = 0usize;
-        for bindings in &binding_groups {
-            for (_, call) in &block_calls {
-                calls.push(BzlmodCollectedTagCall {
-                    order: block_start_line * BZL_CALL_ORDER_STRIDE + expanded_order,
-                    source_line: block_start_line,
-                    source_end_line: block_end_line,
-                    call: call.clone(),
-                    bindings: bindings.clone(),
-                });
-                expanded_order += 1;
-            }
-        }
-    }
-    calls
-}
-
-fn collect_bzl_calls_anywhere_with_order(value: &str, function: &str) -> Vec<(usize, String)> {
-    let mut calls = Vec::new();
-    let mut in_string = false;
-    let mut quote = '\0';
-    let mut escaped = false;
-    let mut index = 0usize;
-    while index < value.len() {
-        let Some(ch) = value[index..].chars().next() else {
-            break;
-        };
-        if escaped {
-            escaped = false;
-            index += ch.len_utf8();
-            continue;
-        }
-        if in_string {
-            if ch == '\\' {
-                escaped = true;
-            } else if ch == quote {
-                in_string = false;
-            }
-            index += ch.len_utf8();
-            continue;
-        }
-        if ch == '"' || ch == '\'' {
-            in_string = true;
-            quote = ch;
-            index += ch.len_utf8();
-            continue;
-        }
-        if value[index..].starts_with(function)
-            && value[..index]
-                .chars()
-                .next_back()
-                .is_none_or(|ch| !is_bzl_ident(ch))
-        {
-            if let Some((call, end)) = bzl_call_from_offset(value, index) {
-                calls.push((index, call));
-                index = end;
-                continue;
-            }
-        }
-        index += ch.len_utf8();
-    }
-    calls
-}
-
-fn bzl_call_from_offset(value: &str, offset: usize) -> Option<(String, usize)> {
-    let mut in_string = false;
-    let mut quote = '\0';
-    let mut escaped = false;
-    let mut depth = 0i32;
-    let mut opened = false;
-    let mut index = offset;
-    while index < value.len() {
-        let ch = value[index..].chars().next()?;
-        if escaped {
-            escaped = false;
-            index += ch.len_utf8();
-            continue;
-        }
-        if in_string {
-            if ch == '\\' {
-                escaped = true;
-            } else if ch == quote {
-                in_string = false;
-            }
-            index += ch.len_utf8();
-            continue;
-        }
-        if ch == '"' || ch == '\'' {
-            in_string = true;
-            quote = ch;
-            index += ch.len_utf8();
-            continue;
-        }
-        match ch {
-            '(' => {
-                opened = true;
-                depth += 1;
-            }
-            ')' if opened => {
-                depth -= 1;
-                if depth == 0 {
-                    let end = index + ch.len_utf8();
-                    return Some((value[offset..end].trim().to_owned(), end));
-                }
-            }
-            _ => {}
-        }
-        index += ch.len_utf8();
-    }
-    None
-}
-
-struct BzlmodListComprehensionForClause {
-    names: Vec<String>,
-    expression: String,
-}
-
-fn bzl_list_comprehension_binding_groups(
-    block: &[String],
-    constants: &[(String, String)],
-) -> Option<Vec<Vec<(String, String)>>> {
-    let clauses = bzl_list_comprehension_for_clauses(block)?;
-    let mut groups = vec![Vec::new()];
-    for clause in clauses {
-        let mut next_groups = Vec::new();
-        for group in &groups {
-            let constants = bzl_constants_with_bindings(constants, group);
-            let options = bzl_list_comprehension_clause_bindings(
-                &clause.names,
-                &clause.expression,
-                &constants,
-            )?;
-            for option in &options {
-                let mut next_group = group.clone();
-                next_group.extend(option.iter().cloned());
-                next_groups.push(next_group);
-            }
-        }
-        groups = next_groups;
-    }
-    Some(groups)
-}
-
-fn bzl_list_comprehension_for_clauses(
-    block: &[String],
-) -> Option<Vec<BzlmodListComprehensionForClause>> {
-    let mut clauses = Vec::new();
-    let expression = block.join("\n");
-    let mut depth = 0i32;
-    let mut in_string = false;
-    let mut quote = '\0';
-    let mut escaped = false;
-    let mut index = 0usize;
-    while index < expression.len() {
-        let ch = expression[index..].chars().next()?;
-        if escaped {
-            escaped = false;
-            index += ch.len_utf8();
-            continue;
-        }
-        if in_string {
-            if ch == '\\' {
-                escaped = true;
-            } else if ch == quote {
-                in_string = false;
-            }
-            index += ch.len_utf8();
-            continue;
-        };
-        if ch == '"' || ch == '\'' {
-            in_string = true;
-            quote = ch;
-            index += ch.len_utf8();
-            continue;
-        }
-        if depth == 1 && bzl_keyword_at(&expression, index, "for") {
-            let mut cursor = index + "for".len();
-            cursor = bzl_skip_whitespace(&expression, cursor);
-            let name_start = cursor;
-            let in_index = bzl_find_top_level_keyword(&expression, cursor, "in", 1)?;
-            let names = bzl_list_comprehension_binding_names(&expression[name_start..in_index])?;
-            cursor = bzl_skip_whitespace(&expression, in_index + "in".len());
-            let expression_start = cursor;
-            let expression_end = bzl_list_comprehension_clause_expression_end(&expression, cursor)?;
-            let expression = expression[expression_start..expression_end]
-                .trim()
-                .trim_end_matches(',')
-                .trim()
-                .to_owned();
-            clauses.push(BzlmodListComprehensionForClause { names, expression });
-            index = expression_end;
-            continue;
-        }
-        match ch {
-            '(' | '[' | '{' => depth += 1,
-            ')' | ']' | '}' => depth -= 1,
-            _ => {}
-        }
-        index += ch.len_utf8();
-    }
-    (!clauses.is_empty()).then_some(clauses)
-}
-
-fn bzl_skip_whitespace(value: &str, mut index: usize) -> usize {
-    while index < value.len() {
-        let Some(ch) = value[index..].chars().next() else {
-            break;
-        };
-        if !ch.is_whitespace() {
-            break;
-        }
-        index += ch.len_utf8();
-    }
-    index
-}
-
-fn bzl_keyword_at(value: &str, index: usize, keyword: &str) -> bool {
-    value[index..].starts_with(keyword)
-        && value[..index]
-            .chars()
-            .next_back()
-            .is_none_or(|ch| !is_bzl_ident(ch))
-        && value[index + keyword.len()..]
-            .chars()
-            .next()
-            .is_none_or(|ch| !is_bzl_ident(ch))
-}
-
-fn bzl_find_top_level_keyword(
-    value: &str,
-    mut index: usize,
-    keyword: &str,
-    target_depth: i32,
-) -> Option<usize> {
-    let mut depth = target_depth;
-    let mut in_string = false;
-    let mut quote = '\0';
-    let mut escaped = false;
-    while index < value.len() {
-        let ch = value[index..].chars().next()?;
-        if escaped {
-            escaped = false;
-            index += ch.len_utf8();
-            continue;
-        }
-        if in_string {
-            if ch == '\\' {
-                escaped = true;
-            } else if ch == quote {
-                in_string = false;
-            }
-            index += ch.len_utf8();
-            continue;
-        }
-        if ch == '"' || ch == '\'' {
-            in_string = true;
-            quote = ch;
-            index += ch.len_utf8();
-            continue;
-        }
-        if depth == target_depth && bzl_keyword_at(value, index, keyword) {
-            return Some(index);
-        }
-        match ch {
-            '(' | '[' | '{' => depth += 1,
-            ')' | ']' | '}' => depth -= 1,
-            _ => {}
-        }
-        index += ch.len_utf8();
-    }
-    None
-}
-
-fn bzl_list_comprehension_clause_expression_end(value: &str, mut index: usize) -> Option<usize> {
-    let mut depth = 1i32;
-    let mut in_string = false;
-    let mut quote = '\0';
-    let mut escaped = false;
-    while index < value.len() {
-        let ch = value[index..].chars().next()?;
-        if escaped {
-            escaped = false;
-            index += ch.len_utf8();
-            continue;
-        }
-        if in_string {
-            if ch == '\\' {
-                escaped = true;
-            } else if ch == quote {
-                in_string = false;
-            }
-            index += ch.len_utf8();
-            continue;
-        }
-        if ch == '"' || ch == '\'' {
-            in_string = true;
-            quote = ch;
-            index += ch.len_utf8();
-            continue;
-        }
-        if depth == 1 && bzl_keyword_at(value, index, "for") {
-            return Some(index);
-        }
-        if depth == 1 && ch == ']' {
-            return Some(index);
-        }
-        match ch {
-            '(' | '[' | '{' => depth += 1,
-            ')' | ']' | '}' => depth -= 1,
-            _ => {}
-        }
-        index += ch.len_utf8();
-    }
-    None
-}
-
-fn bzl_constants_with_bindings(
-    constants: &[(String, String)],
-    bindings: &[(String, String)],
-) -> Vec<(String, String)> {
-    let mut merged = bindings.to_vec();
-    merged.extend(constants.iter().cloned());
-    merged
-}
-
-fn bzl_list_comprehension_binding_names(binding: &str) -> Option<Vec<String>> {
-    let binding = binding.trim();
-    let binding = binding
-        .strip_prefix('(')
-        .and_then(|binding| binding.strip_suffix(')'))
-        .unwrap_or(binding);
-    let names = bzl_split_top_level(binding, ',')
-        .into_iter()
-        .map(|name| name.trim().to_owned())
-        .collect::<Vec<_>>();
-    if names.is_empty() || names.iter().any(|name| !is_bzl_identifier(name)) {
-        return None;
-    }
-    Some(names)
-}
-
-fn bzl_list_comprehension_clause_bindings(
-    names: &[String],
-    expression: &str,
-    constants: &[(String, String)],
-) -> Option<Vec<Vec<(String, String)>>> {
-    if names.len() == 1 {
-        let values = bzl_iterable_string_expression_values(expression, constants)?;
-        return Some(
-            values
-                .into_iter()
-                .map(|value| vec![(names[0].clone(), value)])
-                .collect(),
-        );
-    }
-
-    let values = bzl_split_string_list_comprehension_values(expression, constants)
-        .or_else(|| bzl_dict_items_expression_values(expression, constants))?;
-    values
-        .into_iter()
-        .map(|value| {
-            if value.len() != names.len() {
-                return None;
-            }
-            Some(names.iter().cloned().zip(value).collect::<Vec<_>>())
-        })
-        .collect()
-}
-
-fn bzl_split_string_list_comprehension_values(
-    expression: &str,
-    constants: &[(String, String)],
-) -> Option<Vec<Vec<String>>> {
-    let inner = expression
-        .trim()
-        .strip_prefix('[')
-        .and_then(|expression| expression.strip_suffix(']'))?
-        .trim();
-    let (map_expression, rest) = inner.split_once(" for ")?;
-    let (binding_name, values_expression) = rest.split_once(" in ")?;
-    let binding_name = binding_name.trim();
-    if !is_bzl_identifier(binding_name) {
-        return None;
-    }
-    let (receiver, args) = bzl_top_level_method_call(map_expression.trim(), "split")?;
-    if receiver.trim() != binding_name {
-        return None;
-    }
-    let delimiter = bzl_string_expression_value(args.trim(), constants)?;
-    if delimiter.is_empty() {
-        return None;
-    }
-    let values = bzl_string_sequence_expression_values(values_expression.trim(), constants)?;
-    values
-        .into_iter()
-        .map(|value| {
-            let value = serde_json::from_str::<String>(&value).ok()?;
-            value
-                .split(&delimiter)
-                .map(|part| serde_json::to_string(part).ok())
-                .collect()
-        })
-        .collect()
-}
-
-fn bzl_dict_items_expression_values(
-    expression: &str,
-    constants: &[(String, String)],
-) -> Option<Vec<Vec<String>>> {
-    let receiver = expression.trim().strip_suffix(".items()")?.trim();
-    let dict = if is_bzl_identifier(receiver) {
-        constants
-            .iter()
-            .find_map(|(name, value)| (name == receiver).then_some(value.as_str()))?
-    } else {
-        receiver
-    };
-    bzl_string_dict_literal_items(dict)?
-        .into_iter()
-        .map(|(key, value)| {
-            Some(vec![
-                serde_json::to_string(&key).ok()?,
-                bzl_supported_module_literal_expression(value.trim())?,
-            ])
-        })
-        .collect()
-}
-
-fn bzl_string_dict_literal_items(value: &str) -> Option<Vec<(String, String)>> {
-    let inner = value
-        .trim()
-        .strip_prefix('{')
-        .and_then(|value| value.strip_suffix('}'))?;
-    bzl_split_top_level(inner, ',')
-        .into_iter()
-        .filter(|item| !item.trim().is_empty())
-        .map(|item| {
-            let parts = bzl_split_top_level(&item, ':');
-            if parts.len() != 2 {
-                return None;
-            }
-            let key = bzl_string_literal_value(parts[0].trim())?;
-            Some((key, parts[1].trim().to_owned()))
-        })
-        .collect()
-}
-
-fn bzl_string_dict_expression_items(
-    expression: &str,
-    constants: &[(String, String)],
-) -> Option<Vec<(String, String)>> {
-    bzl_string_dict_expression_raw_items(expression, constants)?
-        .into_iter()
-        .map(|(key, value)| Some((key, bzl_string_expression_value(value.trim(), constants)?)))
-        .collect()
-}
-
-fn bzl_string_dict_expression_raw_items(
-    expression: &str,
-    constants: &[(String, String)],
-) -> Option<Vec<(String, String)>> {
-    let expression = expression.trim();
-    let dict = if is_bzl_identifier(expression) {
-        constants
-            .iter()
-            .find_map(|(name, value)| (name == expression).then_some(value.as_str()))?
-    } else {
-        expression
-    };
-    bzl_string_dict_literal_items(dict)
-}
-
-fn bzl_supported_module_literal_expression(value: &str) -> Option<String> {
-    let value = value.trim();
-    if bzl_string_literal_value(value).is_some()
-        || bzl_string_sequence_literal_raw_values(value).is_some()
-        || bzl_string_dict_literal_items(value).is_some()
-        || bzl_module_constant_expression_is_supported(value)
-    {
-        return Some(value.to_owned());
-    }
-    None
-}
-
-fn bzl_string_sequence_expression_values(
-    expression: &str,
-    constants: &[(String, String)],
-) -> Option<Vec<String>> {
-    bzl_string_sequence_expression_raw_values(expression, constants)?
-        .into_iter()
-        .map(|value| serde_json::to_string(&value).ok())
-        .collect()
-}
-
-fn bzl_iterable_string_expression_values(
-    expression: &str,
-    constants: &[(String, String)],
-) -> Option<Vec<String>> {
-    if let Some(values) = bzl_string_sequence_expression_values(expression, constants) {
-        return Some(values);
-    }
-    bzl_string_dict_expression_raw_items(expression, constants)?
-        .into_iter()
-        .map(|(key, _)| serde_json::to_string(&key).ok())
-        .collect()
-}
-
-fn bzl_string_sequence_literal_raw_values(value: &str) -> Option<Vec<String>> {
-    let value = value.trim();
-    let inner = if let Some(inner) = value
-        .strip_prefix('[')
-        .and_then(|value| value.strip_suffix(']'))
-    {
-        inner
-    } else if let Some(inner) = value
-        .strip_prefix('(')
-        .and_then(|value| value.strip_suffix(')'))
-    {
-        inner
-    } else {
-        return None;
-    };
-    bzl_split_top_level(inner, ',')
-        .into_iter()
-        .filter(|item| !item.trim().is_empty())
-        .map(|item| bzl_string_literal_value(item.trim()))
-        .collect()
-}
-
-fn bzl_string_sequence_expression_raw_values(
-    expression: &str,
-    constants: &[(String, String)],
-) -> Option<Vec<String>> {
-    let expression = bzl_strip_balanced_outer_parens(expression);
-    if let Some(values) = bzl_string_sequence_literal_raw_values(expression) {
-        return Some(values);
-    }
-    if let Some(values) = bzl_string_sequence_list_expression_raw_values(expression, constants) {
-        return Some(values);
-    }
-    if let Some(values) = bzl_string_list_comprehension_raw_values(expression, constants) {
-        return Some(values);
-    }
-    if let Some((receiver, index)) = bzl_top_level_index(expression) {
-        let key = bzl_string_expression_value(index.trim(), constants)?;
-        let (_, value) = bzl_string_dict_expression_raw_items(receiver, constants)?
-            .into_iter()
-            .find(|(item_key, _)| item_key == &key)?;
-        return bzl_string_sequence_expression_raw_values(&value, constants);
-    }
-    if is_bzl_identifier(expression) {
-        let (_, value) = constants.iter().find(|(name, _)| name == expression)?;
-        return bzl_string_sequence_expression_raw_values(value, constants);
-    }
-    None
-}
-
-fn bzl_string_sequence_list_expression_raw_values(
-    expression: &str,
-    constants: &[(String, String)],
-) -> Option<Vec<String>> {
-    let expression = expression.trim();
-    let inner = if let Some(inner) = expression
-        .strip_prefix('[')
-        .and_then(|expression| expression.strip_suffix(']'))
-    {
-        inner
-    } else if let Some(inner) = expression
-        .strip_prefix('(')
-        .and_then(|expression| expression.strip_suffix(')'))
-    {
-        inner
-    } else {
-        return None;
-    };
-    bzl_split_top_level(inner, ',')
-        .into_iter()
-        .filter(|item| !item.trim().is_empty())
-        .map(|item| bzl_string_expression_value(item.trim(), constants))
-        .collect()
-}
-
-fn bzl_string_list_comprehension_raw_values(
-    expression: &str,
-    constants: &[(String, String)],
-) -> Option<Vec<String>> {
-    let expression = expression.trim();
-    if !expression.starts_with('[') || !expression.ends_with(']') {
-        return None;
-    }
-    let first_for = bzl_list_comprehension_first_for(expression)?;
-    let map_expression = expression[1..first_for].trim().trim_end_matches(',').trim();
-    if map_expression.is_empty() {
-        return None;
-    }
-    let block = expression.lines().map(str::to_owned).collect::<Vec<_>>();
-    bzl_list_comprehension_binding_groups(&block, constants)?
-        .into_iter()
-        .map(|bindings| {
-            let constants = bzl_constants_with_bindings(constants, &bindings);
-            bzl_string_expression_value(map_expression, &constants)
-        })
-        .collect()
-}
-
-fn bzl_list_comprehension_first_for(value: &str) -> Option<usize> {
-    let mut depth = 0i32;
-    let mut in_string = false;
-    let mut quote = '\0';
-    let mut escaped = false;
-    let mut index = 0usize;
-    while index < value.len() {
-        let ch = value[index..].chars().next()?;
-        if escaped {
-            escaped = false;
-            index += ch.len_utf8();
-            continue;
-        }
-        if in_string {
-            if ch == '\\' {
-                escaped = true;
-            } else if ch == quote {
-                in_string = false;
-            }
-            index += ch.len_utf8();
-            continue;
-        }
-        if ch == '"' || ch == '\'' {
-            in_string = true;
-            quote = ch;
-            index += ch.len_utf8();
-            continue;
-        }
-        if depth == 1 && bzl_keyword_at(value, index, "for") {
-            return Some(index);
-        }
-        match ch {
-            '(' | '[' | '{' => depth += 1,
-            ')' | ']' | '}' => depth -= 1,
-            _ => {}
-        }
-        index += ch.len_utf8();
-    }
-    None
-}
-
-fn bzlmod_module_constants_from_lines(lines: &[String]) -> Vec<(String, String)> {
-    bzl_top_level_assignments(lines)
-        .into_iter()
-        .filter_map(|(name, value)| {
-            let name = name.trim();
-            let value = value.trim();
-            if !is_bzl_identifier(name) {
-                return None;
-            }
-            if !bzl_module_constant_expression_is_supported(value) {
-                return None;
-            }
-            Some((name.to_owned(), value.to_owned()))
-        })
-        .collect()
-}
-
-fn bzl_top_level_assignments(lines: &[String]) -> Vec<(String, String)> {
-    let mut assignments = Vec::new();
-    let mut current_name: Option<String> = None;
-    let mut current_value = String::new();
-    let mut depth = 0i32;
-
-    for line in lines {
-        let line = strip_bzl_comment(line);
-        if current_name.is_none() {
-            if line.chars().next().is_some_and(|ch| ch.is_whitespace()) {
-                continue;
-            }
-            let Some((name, value)) = bzl_top_level_assignment(&line) else {
-                continue;
-            };
-            current_name = Some(name.trim().to_owned());
-            current_value = value.trim().to_owned();
-            depth = delimiter_delta(value);
-        } else {
-            if !current_value.is_empty() {
-                current_value.push('\n');
-            }
-            current_value.push_str(&line);
-            depth += delimiter_delta(&line);
-        }
-
-        if depth <= 0 {
-            let name = current_name.take().expect("assignment name should be set");
-            assignments.push((name, std::mem::take(&mut current_value)));
-            depth = 0;
-        }
-    }
-
-    assignments
-}
-
-fn bzl_module_constant_expression_is_supported(value: &str) -> bool {
-    let trimmed = value.trim_start();
-    if trimmed.starts_with("use_extension(") || trimmed.starts_with("use_repo_rule(") {
-        return false;
-    }
-    value.chars().all(|ch| {
-        ch.is_ascii_alphanumeric()
-            || matches!(
-                ch,
-                '_' | ' '
-                    | '\n'
-                    | '\t'
-                    | '"'
-                    | '\''
-                    | '\\'
-                    | '.'
-                    | ','
-                    | ':'
-                    | '/'
-                    | '-'
-                    | '+'
-                    | '%'
-                    | '='
-                    | '('
-                    | ')'
-                    | '['
-                    | ']'
-                    | '{'
-                    | '}'
-            )
-    })
-}
-
-fn bzlmod_extension_imports(
-    lines: &[String],
-    proxy_name: &str,
-    constants: &[(String, String)],
-) -> Vec<BzlmodUseRepoImport> {
-    let comprehension_calls = collect_bzl_list_comprehension_calls(lines, "use_repo(", constants);
-    let comprehension_call_strings = comprehension_calls
-        .iter()
-        .map(|call| call.call.clone())
-        .collect::<BTreeSet<_>>();
-    let mut imports = collect_bzl_calls(lines, "use_repo(")
-        .into_iter()
-        .filter(|call| !comprehension_call_strings.contains(call))
-        .filter(|call| {
-            bzl_call_args(call)
-                .first()
-                .is_some_and(|arg| arg.trim() == proxy_name)
-        })
-        .flat_map(|call| bzl_use_repo_imports(&call, constants))
-        .collect::<Vec<_>>();
-    for collected_call in comprehension_calls {
-        if !bzl_call_args(&collected_call.call)
-            .first()
-            .is_some_and(|arg| arg.trim() == proxy_name)
-        {
-            continue;
-        }
-        let constants = bzl_constants_with_bindings(constants, &collected_call.bindings);
-        imports.extend(bzl_use_repo_imports(&collected_call.call, &constants));
-    }
-    imports
-}
-
-fn bzlmod_extension_repo_overrides(
-    lines: &[String],
-    proxy_name: &str,
-    constants: &[(String, String)],
-) -> Vec<BzlmodRepoOverride> {
-    let mut repo_overrides = Vec::new();
-    for (function, must_exist) in [("override_repo(", true), ("inject_repo(", false)] {
-        repo_overrides.extend(
-            collect_bzl_calls(lines, function)
-                .into_iter()
-                .filter(|call| {
-                    bzl_call_args(call)
-                        .first()
-                        .is_some_and(|arg| arg.trim() == proxy_name)
-                })
-                .flat_map(|call| bzl_repo_overrides_from_call(&call, constants, must_exist)),
-        );
-    }
-    repo_overrides.sort_by(|left, right| {
-        (
-            &left.repo_name,
-            &left.overriding_repo_name,
-            &left.must_exist,
-        )
-            .cmp(&(
-                &right.repo_name,
-                &right.overriding_repo_name,
-                &right.must_exist,
-            ))
-    });
-    repo_overrides.dedup_by(|left, right| {
-        left.repo_name == right.repo_name
-            && left.overriding_repo_name == right.overriding_repo_name
-            && left.must_exist == right.must_exist
-    });
-    repo_overrides
-}
-
-fn bzl_repo_overrides_from_call(
-    call: &str,
-    constants: &[(String, String)],
-    must_exist: bool,
-) -> Vec<BzlmodRepoOverride> {
-    let args = bzl_call_args(call);
-    let mut repo_overrides = Vec::new();
-    for arg in args.into_iter().skip(1) {
-        let arg = arg.trim();
-        if arg.is_empty() {
-            continue;
-        }
-        if let Some(dict) = arg.strip_prefix("**") {
-            if let Some(items) = bzl_string_dict_expression_items(dict.trim(), constants) {
-                repo_overrides.extend(items.into_iter().map(
-                    |(repo_name, overriding_repo_name)| BzlmodRepoOverride {
-                        repo_name,
-                        overriding_repo_name,
-                        must_exist,
-                    },
-                ));
-            }
-        } else if let Some((repo_name, overriding_repo_name)) = bzl_top_level_assignment(arg) {
-            let repo_name = repo_name.trim();
-            if is_bzl_identifier(repo_name) {
-                if let Some(overriding_repo_name) =
-                    bzl_string_expression_value(overriding_repo_name.trim(), constants)
-                {
-                    repo_overrides.push(BzlmodRepoOverride {
-                        repo_name: repo_name.to_owned(),
-                        overriding_repo_name,
-                        must_exist,
-                    });
-                }
-            }
-        } else if let Some(repo_name) = bzl_string_expression_value(arg, constants) {
-            repo_overrides.push(BzlmodRepoOverride {
-                overriding_repo_name: repo_name.clone(),
-                repo_name,
-                must_exist,
-            });
-        }
-    }
-    repo_overrides
-}
-
-async fn read_bzlmod_root_patch_contents(
-    cell_path: &CellRootPath,
-    file_ops: &mut dyn ConfigParserFileOps,
-    patches: &mut [BzlmodRootPatch],
-) -> buck2_error::Result<()> {
-    for patch in patches {
-        let path = cell_path
-            .as_project_relative_path()
-            .join(ForwardRelativePath::new(&patch.path)?);
-        let config_path = ConfigPath::Project(path);
-        let Some(lines) = file_ops.read_file_lines_if_exists(&config_path).await? else {
-            return Err(buck2_error!(
-                buck2_error::ErrorTag::Input,
-                "bzlmod override patch `{}` does not exist",
-                patch.path
-            ));
-        };
-        patch.content = if lines.is_empty() {
-            Arc::from("")
-        } else {
-            Arc::from(format!("{}\n", lines.join("\n")))
-        };
-    }
-    Ok(())
+        .buck_error_context("Error serializing use_repo_rule string attribute")
 }
 
 fn bzlmod_patch_configs(
@@ -8561,8 +8493,6 @@ fn bzlmod_identifier_cmp(a: &BzlmodVersionIdentifier, b: &BzlmodVersionIdentifie
     }
 }
 
-const BZL_CALL_ORDER_STRIDE: usize = 1_000_000;
-
 fn collect_bzl_calls(lines: &[String], function: &str) -> Vec<String> {
     collect_bzl_calls_with_order(lines, function)
         .into_iter()
@@ -8669,6 +8599,7 @@ fn paren_delta(s: &str) -> i32 {
         .sum()
 }
 
+#[cfg(any())]
 fn delimiter_delta(s: &str) -> i32 {
     let mut in_string = false;
     let mut quote = '\0';
@@ -8703,11 +8634,13 @@ fn delimiter_delta(s: &str) -> i32 {
     delta
 }
 
+#[cfg(any())]
 fn bzl_string_arg(call: &str, arg: &str) -> Option<String> {
     let value = bzl_arg_value(call, arg)?;
     bzl_string_value(value)
 }
 
+#[cfg(any())]
 fn bzl_string_expression_arg(
     call: &str,
     arg: &str,
@@ -8717,6 +8650,7 @@ fn bzl_string_expression_arg(
     bzl_string_expression_value(&value, constants)
 }
 
+#[cfg(any())]
 fn bzl_bool_arg(call: &str, arg: &str) -> bool {
     bzl_arg_value(call, arg).is_some_and(|value| {
         let value = value.trim_start();
@@ -8726,6 +8660,7 @@ fn bzl_bool_arg(call: &str, arg: &str) -> bool {
     })
 }
 
+#[cfg(any())]
 fn bzl_repo_name_arg(call: &str, module_name: &str) -> Option<String> {
     if bzl_arg_is_none(call, "repo_name") {
         None
@@ -8738,11 +8673,13 @@ fn bzl_repo_name_arg(call: &str, module_name: &str) -> Option<String> {
     }
 }
 
+#[cfg(any())]
 fn bzl_first_string_arg(call: &str) -> Option<String> {
     let (_, args) = call.split_once('(')?;
     bzl_string_value(args.trim_start())
 }
 
+#[cfg(any())]
 fn bzl_use_repo_imports(call: &str, constants: &[(String, String)]) -> Vec<BzlmodUseRepoImport> {
     let args = bzl_call_args(call);
     let mut imports = Vec::new();
@@ -8780,6 +8717,7 @@ fn bzl_call_args(call: &str) -> Vec<String> {
     bzl_split_top_level(args, ',')
 }
 
+#[cfg(any())]
 fn bzl_top_level_assignment(arg: &str) -> Option<(&str, &str)> {
     let mut in_string = false;
     let mut quote = '\0';
@@ -8880,6 +8818,7 @@ fn bzl_string_value(value: &str) -> Option<String> {
     None
 }
 
+#[cfg(any())]
 fn bzl_string_expression_value(value: &str, constants: &[(String, String)]) -> Option<String> {
     let value = bzl_strip_balanced_outer_parens(value);
     if let Some(literal) = bzl_string_literal_value(value) {
@@ -8952,6 +8891,7 @@ fn bzl_string_expression_value(value: &str, constants: &[(String, String)]) -> O
     None
 }
 
+#[cfg(any())]
 fn bzl_strip_balanced_outer_parens(value: &str) -> &str {
     let mut value = value.trim();
     loop {
@@ -9003,12 +8943,14 @@ fn bzl_strip_balanced_outer_parens(value: &str) -> &str {
     }
 }
 
+#[cfg(any())]
 fn bzl_top_level_if_else(value: &str) -> Option<(usize, usize)> {
     let if_index = bzl_find_top_level_keyword(value, 0, "if", 0)?;
     let else_index = bzl_find_top_level_keyword(value, if_index + "if".len(), "else", 0)?;
     Some((if_index, else_index))
 }
 
+#[cfg(any())]
 fn bzl_bool_expression_value(value: &str, constants: &[(String, String)]) -> Option<bool> {
     let value = bzl_strip_balanced_outer_parens(value);
     if value == "True" {
@@ -9042,6 +8984,7 @@ fn bzl_bool_expression_value(value: &str, constants: &[(String, String)]) -> Opt
     None
 }
 
+#[cfg(any())]
 fn bzl_find_top_level_operator(value: &str, operator: &str) -> Option<usize> {
     let mut in_string = false;
     let mut quote = '\0';
@@ -9083,6 +9026,7 @@ fn bzl_find_top_level_operator(value: &str, operator: &str) -> Option<usize> {
     None
 }
 
+#[cfg(any())]
 fn bzl_format_string(
     template: &str,
     values: &[String],
@@ -9111,6 +9055,7 @@ fn bzl_format_string(
     Some(result)
 }
 
+#[cfg(any())]
 fn bzl_top_level_method_call<'a>(value: &'a str, method: &str) -> Option<(&'a str, &'a str)> {
     let value = value.trim();
     let suffix_prefix = format!(".{method}(");
@@ -9154,6 +9099,7 @@ fn bzl_top_level_method_call<'a>(value: &'a str, method: &str) -> Option<(&'a st
     None
 }
 
+#[cfg(any())]
 fn bzl_matching_closing_delimiter(value: &str, open_index: usize) -> Option<usize> {
     let open = value[open_index..].chars().next()?;
     let close = match open {
@@ -9202,6 +9148,7 @@ fn bzl_matching_closing_delimiter(value: &str, open_index: usize) -> Option<usiz
     None
 }
 
+#[cfg(any())]
 fn bzl_top_level_index(value: &str) -> Option<(&str, &str)> {
     let value = value.trim();
     if !value.ends_with(']') {
@@ -9247,10 +9194,12 @@ fn bzl_top_level_index(value: &str) -> Option<(&str, &str)> {
     None
 }
 
+#[cfg(any())]
 fn bzl_integer_expression_value(value: &str) -> Option<i32> {
     value.trim().parse::<i32>().ok()
 }
 
+#[cfg(any())]
 fn bzl_string_literal_value(value: &str) -> Option<String> {
     let mut chars = value.trim().chars();
     let quote = chars.next()?;
@@ -9279,10 +9228,12 @@ fn bzl_string_literal_value(value: &str) -> Option<String> {
     None
 }
 
+#[cfg(any())]
 fn bzl_arg_is_none(call: &str, arg: &str) -> bool {
     bzl_arg_value(call, arg).is_some_and(|value| value.starts_with("None"))
 }
 
+#[cfg(any())]
 fn bzl_call_named_arg_value(call: &str, arg: &str) -> Option<String> {
     for call_arg in bzl_call_args(call) {
         let Some((name, value)) = bzl_top_level_assignment(&call_arg) else {
@@ -9295,6 +9246,7 @@ fn bzl_call_named_arg_value(call: &str, arg: &str) -> Option<String> {
     None
 }
 
+#[cfg(any())]
 fn bzl_arg_value<'a>(call: &'a str, arg: &str) -> Option<&'a str> {
     let mut search_start = 0;
     while let Some(pos) = call[search_start..].find(arg) {
@@ -9313,10 +9265,12 @@ fn bzl_arg_value<'a>(call: &'a str, arg: &str) -> Option<&'a str> {
     None
 }
 
+#[cfg(any())]
 fn is_bzl_ident(ch: char) -> bool {
     ch == '_' || ch.is_ascii_alphanumeric()
 }
 
+#[cfg(any())]
 fn is_bzl_identifier(s: &str) -> bool {
     let mut chars = s.chars();
     match chars.next() {
@@ -9440,6 +9394,7 @@ mod tests {
     use crate::file_ops::delegate::FileOpsDelegate;
     use crate::legacy_configs::args::ResolvedConfigFlag;
     use crate::legacy_configs::cells::BuckConfigBasedCells;
+    use crate::legacy_configs::cells::bzlmod_cell_name;
     use crate::legacy_configs::configs::testing::TestConfigParserFileOps;
     use crate::legacy_configs::configs::tests::assert_config_value;
     use crate::legacy_configs::key::BuckconfigKeyRef;
@@ -9464,13 +9419,49 @@ mod tests {
         Ok(())
     }
 
+    fn eval_bzlmod_module_for_test(
+        module_text: &str,
+        ignore_dev_dependency: bool,
+    ) -> buck2_error::Result<super::BzlmodEvaluatedModuleFile> {
+        let compiled =
+            super::compile_bzlmod_module_file("MODULE.bazel".to_owned(), module_text.to_owned())?;
+        super::eval_bzlmod_module_file(
+            &compiled,
+            super::BzlmodModuleEvalOptions {
+                is_root: true,
+                allow_include: false,
+                ignore_dev_dependency,
+                default_name: "root".to_owned(),
+                default_version: String::new(),
+                default_repo_name: "root".to_owned(),
+                cell_project_path: Some(
+                    buck2_core::fs::project_rel_path::ProjectRelativePathBuf::testing_new(""),
+                ),
+                included_modules: std::collections::BTreeMap::new(),
+            },
+        )
+    }
+
+    fn eval_bzlmod_module(
+        module_text: &str,
+    ) -> buck2_error::Result<super::BzlmodEvaluatedModuleFile> {
+        eval_bzlmod_module_for_test(module_text, false)
+    }
+
     #[test]
     fn test_bzlmod_module_validation_rejects_load() {
-        let lines = vec![
-            "module(name = \"demo\")".to_owned(),
-            "load(\"//:defs.bzl\", \"dep\")".to_owned(),
-        ];
-        assert!(super::validate_bzlmod_module_lines("MODULE.bazel", &lines).is_err());
+        let error = eval_bzlmod_module(indoc!(
+            r#"
+            module(name = "demo")
+            load("//:defs.bzl", "dep")
+            "#
+        ))
+        .unwrap_err();
+        let error = format!("{error:?}");
+        assert!(
+            error.contains("`load` statements may not be used"),
+            "error: {error}"
+        );
     }
 
     #[test]
@@ -9978,25 +9969,21 @@ mod tests {
     }
 
     #[test]
-    fn test_bzlmod_single_version_override_allows_patches_without_version() {
-        let (_, override_config) = super::bzlmod_single_version_override_from_call(
-            "MODULE.bazel",
-            indoc!(
-                r#"
-                single_version_override(
-                    module_name = "grpc-java",
-                    patch_strip = 1,
-                    patches = [
-                        "//third_party:grpc-java.patch",
-                        "//third_party:grpc-java-addloads.patch",
-                    ],
-                )
-                "#
-            ),
-            &[],
-        )
-        .unwrap()
-        .unwrap();
+    fn test_bzlmod_single_version_override_allows_patches_without_version()
+    -> buck2_error::Result<()> {
+        let evaluated = eval_bzlmod_module(indoc!(
+            r#"
+            single_version_override(
+                module_name = "grpc-java",
+                patch_strip = 1,
+                patches = [
+                    "//third_party:grpc-java.patch",
+                    "//third_party:grpc-java-addloads.patch",
+                ],
+            )
+            "#
+        ))?;
+        let override_config = evaluated.single_version_overrides.get("grpc-java").unwrap();
 
         assert_eq!(override_config.version, None);
         assert_eq!(override_config.patch_strip, Some(1));
@@ -10011,27 +9998,24 @@ mod tests {
                 "third_party/grpc-java-addloads.patch",
             ]
         );
+        Ok(())
     }
 
     #[test]
-    fn test_bzlmod_archive_override_preserves_url_mirror_order() {
-        let archive_override = super::bzlmod_archive_override_from_call(
-            "MODULE.bazel",
-            indoc!(
-                r#"
-                archive_override(
-                    module_name = "example",
-                    url = "https://primary.example.com/source.tar.gz",
-                    urls = [
-                        "https://mirror1.example.com/source.tar.gz",
-                        "https://mirror2.example.com/source.tar.gz",
-                    ],
-                )
-                "#
-            ),
-            &[],
-        )
-        .unwrap();
+    fn test_bzlmod_archive_override_preserves_url_mirror_order() -> buck2_error::Result<()> {
+        let evaluated = eval_bzlmod_module(indoc!(
+            r#"
+            archive_override(
+                module_name = "example",
+                url = "https://primary.example.com/source.tar.gz",
+                urls = [
+                    "https://mirror1.example.com/source.tar.gz",
+                    "https://mirror2.example.com/source.tar.gz",
+                ],
+            )
+            "#
+        ))?;
+        let archive_override = evaluated.archive_overrides.get("example").unwrap();
 
         assert_eq!(
             archive_override.urls,
@@ -10041,28 +10025,26 @@ mod tests {
                 "https://mirror2.example.com/source.tar.gz",
             ]
         );
+        Ok(())
     }
 
     #[test]
-    fn test_bzlmod_archive_override_infers_kind_from_url_without_type() {
-        let archive_override = super::bzlmod_archive_override_from_call(
-            "MODULE.bazel",
-            indoc!(
-                r#"
-                archive_override(
-                    module_name = "rules_webtesting",
-                    url = "https://github.com/bazelbuild/rules_webtesting/archive/e09c04b7d4d1e91ac1cd6f08283246d350c65379.tar.gz",
-                )
-                "#
-            ),
-            &[],
-        )
-        .unwrap();
+    fn test_bzlmod_archive_override_infers_kind_from_url_without_type() -> buck2_error::Result<()> {
+        let evaluated = eval_bzlmod_module(indoc!(
+            r#"
+            archive_override(
+                module_name = "rules_webtesting",
+                url = "https://github.com/bazelbuild/rules_webtesting/archive/e09c04b7d4d1e91ac1cd6f08283246d350c65379.tar.gz",
+            )
+            "#
+        ))?;
+        let archive_override = evaluated.archive_overrides.get("rules_webtesting").unwrap();
 
         assert_eq!(
             super::bzlmod_archive_override_kind(&archive_override),
             Some(crate::bzlmod_archive::ArchiveKind::TarGz)
         );
+        Ok(())
     }
 
     #[test]
@@ -10083,8 +10065,8 @@ mod tests {
     }
 
     #[test]
-    fn test_bzlmod_archive_override_resolves_module_constants() {
-        let lines = indoc!(
+    fn test_bzlmod_archive_override_resolves_module_constants() -> buck2_error::Result<()> {
+        let evaluated = eval_bzlmod_module(indoc!(
             r#"
             COMMIT = "abc123"
 
@@ -10094,18 +10076,8 @@ mod tests {
                 urls = ["https://example.com/{}.tar.gz".format(COMMIT)],
             )
             "#
-        )
-        .lines()
-        .map(str::to_owned)
-        .collect::<Vec<_>>();
-        let constants = super::bzlmod_module_constants_from_lines(&lines);
-        let call = super::collect_bzl_calls(&lines, "archive_override(")
-            .into_iter()
-            .next()
-            .unwrap();
-
-        let archive_override =
-            super::bzlmod_archive_override_from_call("MODULE.bazel", &call, &constants).unwrap();
+        ))?;
+        let archive_override = evaluated.archive_overrides.get("example").unwrap();
 
         assert_eq!(
             archive_override.strip_prefix.as_deref(),
@@ -10115,22 +10087,19 @@ mod tests {
             archive_override.urls,
             vec!["https://example.com/abc123.tar.gz"]
         );
+        Ok(())
     }
 
     #[test]
     fn test_bzlmod_single_version_override_rejects_patch_cmds() {
-        let error = super::bzlmod_single_version_override_from_call(
-            "MODULE.bazel",
-            indoc!(
-                r#"
-                single_version_override(
-                    module_name = "example",
-                    patch_cmds = ["echo patched"],
-                )
-                "#
-            ),
-            &[],
-        )
+        let error = eval_bzlmod_module(indoc!(
+            r#"
+            single_version_override(
+                module_name = "example",
+                patch_cmds = ["echo patched"],
+            )
+            "#
+        ))
         .unwrap_err();
 
         let error = format!("{error:?}");
@@ -10139,18 +10108,14 @@ mod tests {
 
     #[test]
     fn test_bzlmod_single_version_override_rejects_registry() {
-        let error = super::bzlmod_single_version_override_from_call(
-            "MODULE.bazel",
-            indoc!(
-                r#"
-                single_version_override(
-                    module_name = "example",
-                    registry = "https://registry.example.com",
-                )
-                "#
-            ),
-            &[],
-        )
+        let error = eval_bzlmod_module(indoc!(
+            r#"
+            single_version_override(
+                module_name = "example",
+                registry = "https://registry.example.com",
+            )
+            "#
+        ))
         .unwrap_err();
 
         let error = format!("{error:?}");
@@ -10172,9 +10137,11 @@ mod tests {
             ),
         )])?;
 
-        let error = BuckConfigBasedCells::testing_parse_with_file_ops(&mut file_ops, &[])
-            .await
-            .unwrap_err();
+        let error =
+            match BuckConfigBasedCells::testing_parse_with_file_ops(&mut file_ops, &[]).await {
+                Ok(_) => panic!("expected multiple_version_override to be rejected"),
+                Err(error) => error,
+            };
         let error = format!("{error:?}");
         assert!(
             error.contains("multiple_version_override is not implemented"),
@@ -10184,8 +10151,9 @@ mod tests {
     }
 
     #[test]
-    fn test_bzlmod_extension_usages_are_parsed_without_extension_name_special_cases() {
-        let lines = indoc!(
+    fn test_bzlmod_extension_usages_are_parsed_without_extension_name_special_cases()
+    -> buck2_error::Result<()> {
+        let usages = eval_bzlmod_module(indoc!(
             r#"
             sdk = use_extension("//go:extensions.bzl", "go_sdk")
             _GO_MOD = "//:go.mod"
@@ -10224,38 +10192,26 @@ mod tests {
                 "com_github_jetbrains_kotlin",
             )
             "#
-        )
-        .lines()
-        .map(str::to_owned)
-        .collect::<Vec<_>>();
-
-        assert_eq!(
-            super::bzlmod_module_constants_from_lines(&lines),
-            vec![
-                ("_GO_MOD".to_owned(), "\"//:go.mod\"".to_owned()),
-                (
-                    "SUPPORTED_PYTHON_VERSIONS".to_owned(),
-                    "[\n    \"3.11\",\n    \"3.12\",\n]".to_owned()
-                ),
-                (
-                    "INJECTED_REPOS".to_owned(),
-                    "{\n    \"non_identifier.repo\": \"actual_repo\",\n}".to_owned()
-                )
-            ]
-        );
-        let constants = super::bzlmod_module_constants_from_lines(&lines);
-        let usages = super::bzlmod_extension_usages_from_lines(&lines, &constants, false);
+        ))?
+        .extension_usages;
         assert_eq!(usages.len(), 3);
         assert_eq!(usages[0].proxy_name, "sdk");
         assert_eq!(usages[0].extension_bzl_file, "//go:extensions.bzl");
         assert_eq!(usages[0].extension_name, "go_sdk");
-        assert_eq!(usages[0].tags.len(), 1);
+        assert_eq!(usages[0].tags.len(), 2);
         assert_eq!(usages[0].tags[0].tag_name, "from_file");
         assert_eq!(
             usages[0].tags[0].kwargs,
             vec![
                 ("go_mod".to_owned(), "\"//:go.mod\"".to_owned()),
                 ("name".to_owned(), "\"go_default_sdk\"".to_owned()),
+            ]
+        );
+        assert_eq!(
+            usages[0].tags[1].kwargs,
+            vec![
+                ("go_mod".to_owned(), "\"//:go.mod\"".to_owned()),
+                ("name".to_owned(), "\"ignored\"".to_owned()),
             ]
         );
         assert_eq!(usages[0].imports.len(), 3);
@@ -10295,7 +10251,7 @@ mod tests {
         assert!(!usages[0].repo_overrides[3].must_exist);
         assert_eq!(
             super::bzlmod_extension_tag_repo_names(&usages[0]),
-            vec!["go_default_sdk".to_owned()]
+            vec!["go_default_sdk".to_owned(), "ignored".to_owned()]
         );
 
         assert_eq!(usages[1].proxy_name, "features");
@@ -10320,11 +10276,12 @@ mod tests {
             usages[2].imports[0].repo_name,
             "com_github_jetbrains_kotlin"
         );
+        Ok(())
     }
 
     #[test]
-    fn test_bzlmod_extension_tags_expand_simple_list_comprehensions() {
-        let lines = indoc!(
+    fn test_bzlmod_extension_tags_expand_simple_list_comprehensions() -> buck2_error::Result<()> {
+        let usages = eval_bzlmod_module(indoc!(
             r#"
             SUPPORTED_PYTHON_VERSIONS = [
                 "3.11",
@@ -10341,35 +10298,30 @@ mod tests {
                 for python_version in SUPPORTED_PYTHON_VERSIONS
             ]
             "#
-        )
-        .lines()
-        .map(str::to_owned)
-        .collect::<Vec<_>>();
-
-        let constants = super::bzlmod_module_constants_from_lines(&lines);
-        assert_eq!(
-            constants,
-            vec![(
-                "SUPPORTED_PYTHON_VERSIONS".to_owned(),
-                "[\n    \"3.11\",\n    \"3.12\",\n]".to_owned()
-            )]
-        );
-        let usages = super::bzlmod_extension_usages_from_lines(&lines, &constants, false);
+        ))?
+        .extension_usages;
         assert_eq!(usages.len(), 1);
         assert_eq!(usages[0].tags.len(), 2);
         assert_eq!(
-            usages[0].tags[0].bindings,
-            vec![("python_version".to_owned(), "\"3.11\"".to_owned())]
+            usages[0].tags[0].kwargs,
+            vec![
+                ("is_default".to_owned(), "False".to_owned()),
+                ("python_version".to_owned(), "\"3.11\"".to_owned()),
+            ]
         );
         assert_eq!(
-            usages[0].tags[1].bindings,
-            vec![("python_version".to_owned(), "\"3.12\"".to_owned())]
+            usages[0].tags[1].kwargs,
+            vec![
+                ("is_default".to_owned(), "True".to_owned()),
+                ("python_version".to_owned(), "\"3.12\"".to_owned()),
+            ]
         );
+        Ok(())
     }
 
     #[test]
-    fn test_bzlmod_extension_tags_preserve_bazel_evaluation_order() {
-        let lines = indoc!(
+    fn test_bzlmod_extension_tags_preserve_bazel_evaluation_order() -> buck2_error::Result<()> {
+        let usages = eval_bzlmod_module(indoc!(
             r#"
             ext = use_extension("//:extensions.bzl", "ext")
 
@@ -10382,13 +10334,8 @@ mod tests {
 
             ext.beta(name = "last")
             "#
-        )
-        .lines()
-        .map(str::to_owned)
-        .collect::<Vec<_>>();
-
-        let constants = super::bzlmod_module_constants_from_lines(&lines);
-        let usages = super::bzlmod_extension_usages_from_lines(&lines, &constants, false);
+        ))?
+        .extension_usages;
         assert_eq!(usages.len(), 1);
         assert_eq!(
             usages[0]
@@ -10405,19 +10352,22 @@ mod tests {
                 ("first".to_owned(), "\"1\"".to_owned()),
             ]
         );
+        assert_eq!(usages[0].tags[1].bindings, Vec::<(String, String)>::new());
         assert_eq!(
-            usages[0].tags[1].bindings,
+            usages[0].tags[1].kwargs,
             vec![("version".to_owned(), "\"3.11\"".to_owned())]
         );
         assert_eq!(
-            usages[0].tags[2].bindings,
+            usages[0].tags[2].kwargs,
             vec![("version".to_owned(), "\"3.12\"".to_owned())]
         );
+        Ok(())
     }
 
     #[test]
-    fn test_bzlmod_extension_tags_expand_split_tuple_list_comprehensions() {
-        let lines = indoc!(
+    fn test_bzlmod_extension_tags_expand_split_tuple_list_comprehensions() -> buck2_error::Result<()>
+    {
+        let usages = eval_bzlmod_module(indoc!(
             r#"
             maven = use_extension("@rules_jvm_external//:extensions.bzl", "maven")
 
@@ -10433,13 +10383,8 @@ mod tests {
                 ]]
             ]
             "#
-        )
-        .lines()
-        .map(str::to_owned)
-        .collect::<Vec<_>>();
-
-        let constants = super::bzlmod_module_constants_from_lines(&lines);
-        let usages = super::bzlmod_extension_usages_from_lines(&lines, &constants, false);
+        ))?
+        .extension_usages;
         assert_eq!(usages.len(), 1);
         assert_eq!(usages[0].tags.len(), 2);
         assert!(usages[0].tags.iter().any(|tag| {
@@ -10452,12 +10397,15 @@ mod tests {
                     .kwargs
                     .contains(&("version".to_owned(), "\"33.2.1-jre\"".to_owned()))
         }));
+        Ok(())
     }
 
     #[test]
-    fn test_bzlmod_extension_list_comprehensions_do_not_match_suffix_proxy_names() {
-        let lines = indoc!(
-            r#"
+    fn test_bzlmod_extension_list_comprehensions_do_not_match_suffix_proxy_names()
+    -> buck2_error::Result<()> {
+        let usages = eval_bzlmod_module_for_test(
+            indoc!(
+                r#"
             pip = use_extension("//python/extensions:pip.bzl", "pip")
 
             [pip.parse(hub_name = "prod_pip", python_version = version) for version in ["3.11"]]
@@ -10466,13 +10414,10 @@ mod tests {
 
             [dev_pip.parse(hub_name = "dev_pip", python_version = version) for version in ["3.14"]]
             "#
-        )
-        .lines()
-        .map(str::to_owned)
-        .collect::<Vec<_>>();
-
-        let constants = super::bzlmod_module_constants_from_lines(&lines);
-        let usages = super::bzlmod_extension_usages_from_lines(&lines, &constants, true);
+            ),
+            true,
+        )?
+        .extension_usages;
         assert_eq!(usages.len(), 1);
         assert_eq!(usages[0].proxy_name, "pip");
         assert_eq!(usages[0].tags.len(), 1);
@@ -10480,14 +10425,15 @@ mod tests {
             usages[0].tags[0].kwargs,
             vec![
                 ("hub_name".to_owned(), "\"prod_pip\"".to_owned()),
-                ("python_version".to_owned(), "version".to_owned()),
+                ("python_version".to_owned(), "\"3.11\"".to_owned()),
             ]
         );
+        Ok(())
     }
 
     #[test]
-    fn test_bzlmod_rules_java_repo_list_comprehensions() {
-        let lines = indoc!(
+    fn test_bzlmod_rules_java_repo_list_comprehensions() -> buck2_error::Result<()> {
+        let evaluated = eval_bzlmod_module(indoc!(
             r#"
             JDKS = {
                 "8": ["linux"],
@@ -10504,13 +10450,8 @@ mod tests {
             [use_repo(toolchains, repo + "_toolchain_config_repo") for repo in REMOTE_JDK_REPOS]
             [register_toolchains("@" + name + "_toolchain_config_repo//:all") for name in REMOTE_JDK_REPOS]
             "#
-        )
-        .lines()
-        .map(str::to_owned)
-        .collect::<Vec<_>>();
-
-        let constants = super::bzlmod_module_constants_from_lines(&lines);
-        let usages = super::bzlmod_extension_usages_from_lines(&lines, &constants, false);
+        ))?;
+        let usages = evaluated.extension_usages;
         assert_eq!(usages.len(), 1);
         let mut imports = usages[0]
             .imports
@@ -10533,17 +10474,18 @@ mod tests {
         );
 
         assert_eq!(
-            super::bzlmod_registered_toolchains_from_lines(&lines, false),
+            evaluated.registered_toolchains,
             vec![
                 "@remote_jdk8_linux_toolchain_config_repo//:all".to_owned(),
                 "@remotejdk25_macos_aarch64_toolchain_config_repo//:all".to_owned(),
             ]
         );
+        Ok(())
     }
 
     #[test]
-    fn test_bzlmod_use_repo_rule_attrs_resolve_module_constants() {
-        let lines = indoc!(
+    fn test_bzlmod_use_repo_rule_attrs_resolve_module_constants() -> buck2_error::Result<()> {
+        let invocations = eval_bzlmod_module(indoc!(
             r#"
             http_file = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_file")
 
@@ -10558,14 +10500,8 @@ mod tests {
                 urls = [URL],
             )
             "#
-        )
-        .lines()
-        .map(str::to_owned)
-        .collect::<Vec<_>>();
-
-        let constants = super::bzlmod_module_constants_from_lines(&lines);
-        let invocations =
-            super::bzlmod_use_repo_rule_invocations_from_lines(&lines, &constants, false).unwrap();
+        ))?
+        .use_repo_rule_invocations;
         assert_eq!(invocations.len(), 1);
         assert_eq!(
             invocations[0].attrs,
@@ -10577,11 +10513,12 @@ mod tests {
                 ),
             ]
         );
+        Ok(())
     }
 
     #[test]
-    fn test_bzlmod_use_repo_rule_expands_list_comprehensions() {
-        let lines = indoc!(
+    fn test_bzlmod_use_repo_rule_expands_list_comprehensions() -> buck2_error::Result<()> {
+        let invocations = eval_bzlmod_module(indoc!(
             r#"
             http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
 
@@ -10622,14 +10559,8 @@ mod tests {
                 for (target, sha256) in TOOLCHAIN_EXTRAS_SHA256.items()
             ]
             "#
-        )
-        .lines()
-        .map(str::to_owned)
-        .collect::<Vec<_>>();
-
-        let constants = super::bzlmod_module_constants_from_lines(&lines);
-        let invocations =
-            super::bzlmod_use_repo_rule_invocations_from_lines(&lines, &constants, false).unwrap();
+        ))?
+        .use_repo_rule_invocations;
 
         assert_eq!(
             invocations
@@ -10664,12 +10595,15 @@ mod tests {
                 .map(|(_, value)| value.as_str()),
             Some("\"//toolchain/llvm:llvm_release_windows.BUILD.bazel\"")
         );
+        Ok(())
     }
 
     #[test]
-    fn test_bzlmod_extension_usages_ignore_dev_dependency_when_requested() {
-        let lines = indoc!(
-            r#"
+    fn test_bzlmod_extension_usages_ignore_dev_dependency_when_requested() -> buck2_error::Result<()>
+    {
+        let usages = eval_bzlmod_module_for_test(
+            indoc!(
+                r#"
             dev_ext = use_extension(
                 "@dev_repo//:extensions.bzl",
                 "dev",
@@ -10680,16 +10614,14 @@ mod tests {
             prod_ext = use_extension("//:extensions.bzl", "prod")
             use_repo(prod_ext, "prod_repo")
             "#
-        )
-        .lines()
-        .map(str::to_owned)
-        .collect::<Vec<_>>();
-
-        let constants = super::bzlmod_module_constants_from_lines(&lines);
-        let usages = super::bzlmod_extension_usages_from_lines(&lines, &constants, true);
+            ),
+            true,
+        )?
+        .extension_usages;
         assert_eq!(usages.len(), 1);
         assert_eq!(usages[0].proxy_name, "prod_ext");
         assert_eq!(usages[0].imports[0].repo_name, "prod_repo");
+        Ok(())
     }
 
     #[test]
