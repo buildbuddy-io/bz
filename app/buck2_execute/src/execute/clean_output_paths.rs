@@ -8,6 +8,12 @@
  * above-listed licenses.
  */
 
+use std::process::Stdio;
+use std::sync::atomic::AtomicU64;
+use std::sync::atomic::Ordering;
+use std::time::SystemTime;
+use std::time::UNIX_EPOCH;
+
 use buck2_core::fs::project::ProjectRoot;
 use buck2_core::fs::project_rel_path::ProjectRelativePath;
 use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
@@ -16,11 +22,17 @@ use buck2_error::buck2_error;
 use buck2_fs::error::IoResultExt;
 use buck2_fs::fs_util;
 use buck2_fs::paths::abs_norm_path::AbsNormPath;
+use buck2_fs::paths::abs_norm_path::AbsNormPathBuf;
 
 use crate::execute::blocking::IoRequest;
 
 /// IoRequest we dispatch to the blocking executor to clear output paths.
 pub struct CleanOutputPaths {
+    pub paths: Vec<ProjectRelativePathBuf>,
+}
+
+/// IoRequest we dispatch to retire output paths and delete them in the background.
+pub struct BackgroundCleanOutputPaths {
     pub paths: Vec<ProjectRelativePathBuf>,
 }
 
@@ -32,6 +44,19 @@ impl CleanOutputPaths {
         for path in paths {
             cleanup_path(fs, path)
                 .with_buck_error_context(|| format!("Error cleaning up output path `{path}`"))?;
+        }
+        Ok(())
+    }
+}
+
+impl BackgroundCleanOutputPaths {
+    pub fn clean<'a>(
+        paths: impl IntoIterator<Item = &'a ProjectRelativePath>,
+        fs: &'a ProjectRoot,
+    ) -> buck2_error::Result<()> {
+        for path in paths {
+            background_cleanup_path(fs, path)
+                .with_buck_error_context(|| format!("Error retiring output path `{path}`"))?;
         }
         Ok(())
     }
@@ -123,7 +148,105 @@ pub fn cleanup_path(fs: &ProjectRoot, path: &ProjectRelativePath) -> buck2_error
     }
 }
 
+static BACKGROUND_CLEAN_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+fn background_cleanup_path(
+    fs: &ProjectRoot,
+    path: &ProjectRelativePath,
+) -> buck2_error::Result<()> {
+    let path = fs.resolve(path);
+    if fs_util::symlink_metadata_if_exists(&path)?.is_none() {
+        return Ok(());
+    }
+
+    let parent = path.parent().ok_or_else(|| {
+        buck2_error!(
+            buck2_error::ErrorTag::CleanOutputs,
+            "Internal Error: output path `{path}` has no parent"
+        )
+    })?;
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| {
+            buck2_error!(
+                buck2_error::ErrorTag::CleanOutputs,
+                "Internal Error: output path `{path}` has no file name"
+            )
+        })?;
+
+    let retired = retired_path(parent, file_name)?;
+    fs_util::rename(&path, &retired).categorize_internal()?;
+    spawn_background_cleaner(&retired)?;
+    Ok(())
+}
+
+fn retired_path(parent: &AbsNormPath, file_name: &str) -> buck2_error::Result<AbsNormPathBuf> {
+    let now_nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    let counter = BACKGROUND_CLEAN_COUNTER.fetch_add(1, Ordering::Relaxed);
+    AbsNormPathBuf::new(parent.as_path().join(format!(
+        ".{file_name}.buck2-clean-{}-{now_nanos}-{counter}",
+        std::process::id()
+    )))
+    .map_err(Into::into)
+}
+
+fn spawn_background_cleaner(path: &AbsNormPathBuf) -> buck2_error::Result<()> {
+    #[cfg(unix)]
+    {
+        let child = std::process::Command::new("/bin/sh")
+            .arg("-c")
+            .arg(
+                "/usr/bin/find \"$1\" -type d -not -perm -u=rwx -exec /bin/chmod -f u=rwx {} + 2>/dev/null; /bin/rm -rf \"$1\"",
+            )
+            .arg("buck2-background-clean")
+            .arg(path.as_path())
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .buck_error_context("Failed to start background clean process")?;
+        tracing::info!(
+            path = %path.display(),
+            pid = child.id(),
+            "started background clean process"
+        );
+        drop(child);
+        Ok(())
+    }
+    #[cfg(windows)]
+    {
+        let child = std::process::Command::new("cmd")
+            .arg("/C")
+            .arg("rmdir")
+            .arg("/S")
+            .arg("/Q")
+            .arg(path.as_path())
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .buck_error_context("Failed to start background clean process")?;
+        tracing::info!(
+            path = %path.display(),
+            pid = child.id(),
+            "started background clean process"
+        );
+        drop(child);
+        Ok(())
+    }
+}
+
 impl IoRequest for CleanOutputPaths {
+    fn execute(self: Box<Self>, project_fs: &ProjectRoot) -> buck2_error::Result<()> {
+        Self::clean(self.paths.iter().map(AsRef::as_ref), project_fs)
+    }
+}
+
+impl IoRequest for BackgroundCleanOutputPaths {
     fn execute(self: Box<Self>, project_fs: &ProjectRoot) -> buck2_error::Result<()> {
         Self::clean(self.paths.iter().map(AsRef::as_ref), project_fs)
     }
