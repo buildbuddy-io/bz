@@ -12,6 +12,7 @@ use std::fmt;
 use std::fmt::Debug;
 use std::fmt::Display;
 use std::fmt::Write;
+use std::mem;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -32,6 +33,8 @@ use chrono::TimeZone;
 use chrono::Utc;
 use derivative::Derivative;
 use dupe::Dupe;
+use futures::FutureExt;
+use futures::future::BoxFuture;
 use futures::stream::BoxStream;
 use futures::stream::StreamExt;
 use tokio::sync::mpsc;
@@ -48,11 +51,13 @@ use crate::materializers::deferred::DeferredMaterializerCommandProcessor;
 use crate::materializers::deferred::MaterializerCommand;
 use crate::materializers::deferred::Processing;
 use crate::materializers::deferred::ProcessingFuture;
+use crate::materializers::deferred::artifact_tree::ArtifactTree;
 use crate::materializers::deferred::artifact_tree::artifact_metadata_size;
 use crate::materializers::deferred::clean_stale::CleanStaleArtifactsCommand;
 use crate::materializers::deferred::clean_stale::CleanStaleArtifactsExtensionCommand;
 use crate::materializers::deferred::io_handler::IoHandler;
 use crate::materializers::deferred::io_handler::create_ttl_refresh;
+use crate::materializers::deferred::join_all_existing_futs;
 use crate::materializers::deferred::subscriptions::MaterializerSubscriptionOperation;
 
 pub(super) trait ExtensionCommand<T>: Debug + Sync + Send + 'static {
@@ -177,6 +182,42 @@ impl<T: IoHandler> ExtensionCommand<T> for Iterate {
                 Err(..) => break, // No use sending more if the client disconnected.
             }
         }
+    }
+}
+
+#[derive(Derivative)]
+#[derivative(Debug)]
+struct ClearAllArtifacts {
+    #[derivative(Debug = "ignore")]
+    sender: Sender<BoxFuture<'static, buck2_error::Result<()>>>,
+}
+
+impl<T: IoHandler> ExtensionCommand<T> for ClearAllArtifacts {
+    fn execute(self: Box<Self>, processor: &mut DeferredMaterializerCommandProcessor<T>) {
+        let tree = mem::replace(&mut processor.tree, ArtifactTree::new());
+        processor.declared_artifact_values.clear();
+
+        let sqlite_result = processor
+            .sqlite_db
+            .as_mut()
+            .map(|db| db.materializer_state_table().clear())
+            .transpose()
+            .map(|_| ());
+
+        let mut existing_futs = Vec::new();
+        for (path, data) in tree.into_iter_with_paths() {
+            if let Processing::Active { future, .. } = data.processing {
+                existing_futs.push((ProjectRelativePathBuf::from(path), future));
+            }
+        }
+
+        let fut = async move {
+            sqlite_result?;
+            join_all_existing_futs(existing_futs).await
+        }
+        .boxed();
+
+        let _ignored = self.sender.send(fut);
     }
 }
 
@@ -426,7 +467,6 @@ impl<T: IoHandler> DeferredMaterializerExtensions for DeferredMaterializerAccess
                         keep_since_time,
                         dry_run,
                         tracked_only,
-                        delete_all: false,
                         dispatcher,
                     },
                     sender,
@@ -435,26 +475,15 @@ impl<T: IoHandler> DeferredMaterializerExtensions for DeferredMaterializerAccess
         recv.await?.await.map(|res| res.into())
     }
 
-    async fn clean_all_artifacts(
-        &self,
-        dry_run: bool,
-    ) -> buck2_error::Result<buck2_cli_proto::CleanStaleResponse> {
-        let dispatcher = get_dispatcher();
+    async fn clear_all_artifacts(&self) -> buck2_error::Result<()> {
         let (sender, recv) = oneshot::channel();
         self.command_sender
             .send(MaterializerCommand::Extension(Box::new(
-                CleanStaleArtifactsExtensionCommand {
-                    cmd: CleanStaleArtifactsCommand {
-                        keep_since_time: DateTime::<Utc>::MAX_UTC,
-                        dry_run,
-                        tracked_only: false,
-                        delete_all: true,
-                        dispatcher,
-                    },
-                    sender,
-                },
+                ClearAllArtifacts { sender },
             )))?;
-        recv.await?.await.map(|res| res.into())
+        recv.await
+            .buck_error_context("No response from materializer")?
+            .await
     }
 
     async fn test_iter(&self, count: usize) -> buck2_error::Result<String> {

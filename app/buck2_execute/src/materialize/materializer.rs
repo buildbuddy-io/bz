@@ -770,10 +770,7 @@ pub trait DeferredMaterializerExtensions: Send + Sync {
         tracked_only: bool,
     ) -> buck2_error::Result<buck2_cli_proto::CleanStaleResponse>;
 
-    async fn clean_all_artifacts(
-        &self,
-        dry_run: bool,
-    ) -> buck2_error::Result<buck2_cli_proto::CleanStaleResponse>;
+    async fn clear_all_artifacts(&self) -> buck2_error::Result<()>;
 
     async fn test_iter(&self, count: usize) -> buck2_error::Result<String>;
     async fn flush_all_access_times(&self) -> buck2_error::Result<String>;

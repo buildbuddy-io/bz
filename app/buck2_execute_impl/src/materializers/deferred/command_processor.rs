@@ -643,7 +643,6 @@ impl<T: IoHandler> DeferredMaterializerCommandProcessor<T> {
                             keep_since_time: chrono::Utc::now() - artifact_ttl,
                             dry_run: config.dry_run,
                             tracked_only: false,
-                            delete_all: false,
                             dispatcher,
                         };
                         stream.clean_stale_fut =

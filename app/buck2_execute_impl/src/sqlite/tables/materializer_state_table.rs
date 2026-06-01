@@ -610,6 +610,19 @@ impl MaterializerStateSqliteTable {
         .with_buck_error_context(|| format!("reading from sqlite table {STATE_TABLE_NAME}"))
     }
 
+    pub(crate) fn clear(&self) -> buck2_error::Result<usize> {
+        let sql = format!("DELETE FROM {STATE_TABLE_NAME}");
+
+        tracing::trace!(sql = %sql, "clearing materializer state table");
+
+        self.connection
+            .lock()
+            .execute(&sql, [])
+            .with_buck_error_context(|| {
+                format!("clearing artifact rows from sqlite table {STATE_TABLE_NAME}")
+            })
+    }
+
     pub(crate) fn delete(&self, paths: Vec<ProjectRelativePathBuf>) -> buck2_error::Result<usize> {
         if paths.is_empty() {
             return Ok(0);

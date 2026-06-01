@@ -10,9 +10,12 @@
 use buck2_cli_proto::CleanRequest;
 use buck2_cli_proto::CleanStaleResponse;
 use buck2_common::file_ops::metadata::clear_computed_file_digest_cache;
+use buck2_core::fs::buck_out_path::BazelOutputRoot;
+use buck2_core::fs::project_rel_path::ProjectRelativePathBuf;
 use buck2_error::BuckErrorContext;
 use buck2_error::internal_error;
 use buck2_events::dispatch::span_async;
+use buck2_execute::execute::clean_output_paths::BackgroundCleanOutputPaths;
 use buck2_execute::execute::clean_output_paths::CleanOutputPaths;
 use buck2_fs::paths::forward_rel_path::ForwardRelativePath;
 use buck2_server_ctx::commands::command_end;
@@ -44,6 +47,21 @@ async fn clean_impl(
     context: &ServerCommandContext<'_>,
     req: CleanRequest,
 ) -> buck2_error::Result<CleanStaleResponse> {
+    let output_roots = normal_clean_output_roots(context);
+    if req.dry_run {
+        return Ok(CleanStaleResponse {
+            message: Some(format!(
+                "Would clean output roots:\n{}",
+                output_roots
+                    .iter()
+                    .map(|path| format!("  {path}"))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            )),
+            stats: None,
+        });
+    }
+
     if !req.dry_run {
         context
             .base_context
@@ -76,33 +94,56 @@ async fn clean_impl(
         .as_deferred_materializer_extension()
         .ok_or_else(|| internal_error!("Deferred materializer is not in use"))?;
 
-    let response = extension
-        .clean_all_artifacts(req.dry_run)
+    extension
+        .clear_all_artifacts()
         .await
-        .buck_error_context("Failed to clean output artifacts")?;
+        .buck_error_context("Failed to clear materializer artifact state")?;
 
-    if !req.dry_run {
-        clean_bazel_execroot(context)
-            .await
-            .buck_error_context("Failed to clean Bazel execroot")?;
-    }
+    clean_output_roots(context, output_roots, req.background)
+        .await
+        .buck_error_context("Failed to clean output roots")?;
 
-    Ok(response)
+    Ok(CleanStaleResponse {
+        message: None,
+        stats: None,
+    })
 }
 
-async fn clean_bazel_execroot(context: &ServerCommandContext<'_>) -> buck2_error::Result<()> {
-    let bazel_execroot = context
-        .buck_out_dir
-        .join(ForwardRelativePath::unchecked_new("__bazel_execroot"));
+fn normal_clean_output_roots(context: &ServerCommandContext<'_>) -> Vec<ProjectRelativePathBuf> {
+    let mut roots = ["art", "gen", "test", "__bazel_execroot"]
+        .into_iter()
+        .map(|path| {
+            context
+                .buck_out_dir
+                .join(ForwardRelativePath::unchecked_new(path))
+        })
+        .collect::<Vec<_>>();
+
+    roots.push(ProjectRelativePathBuf::unchecked_new(
+        BazelOutputRoot::Bin.exec_root().to_owned(),
+    ));
+    roots.push(ProjectRelativePathBuf::unchecked_new(
+        BazelOutputRoot::Genfiles.exec_root().to_owned(),
+    ));
+
+    roots
+}
+
+async fn clean_output_roots(
+    context: &ServerCommandContext<'_>,
+    paths: Vec<ProjectRelativePathBuf>,
+    background: bool,
+) -> buck2_error::Result<()> {
+    let cleaner: Box<dyn buck2_execute::execute::blocking::IoRequest> = if background {
+        Box::new(BackgroundCleanOutputPaths { paths })
+    } else {
+        Box::new(CleanOutputPaths { paths })
+    };
+
     context
         .base_context
         .daemon
         .blocking_executor
-        .execute_io(
-            Box::new(CleanOutputPaths {
-                paths: vec![bazel_execroot],
-            }),
-            context.cancellation_context(),
-        )
+        .execute_io(cleaner, context.cancellation_context())
         .await
 }
