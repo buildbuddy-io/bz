@@ -33,10 +33,10 @@ use dupe::Dupe;
 use pagable::Pagable;
 use pagable::pagable_typetag;
 
+use crate::bazel::bzlmod::bzlmod_resolution_enabled_on_dice;
+use crate::bazel::bzlmod::get_bazel_module_resolution_on_dice;
 use crate::external_cells::EXTERNAL_CELLS_IMPL;
 use crate::legacy_configs::cells::BuckConfigBasedCells;
-use crate::legacy_configs::cells::bzlmod_resolution_enabled_on_dice;
-use crate::legacy_configs::cells::get_bazel_module_resolution_on_dice;
 use crate::legacy_configs::configs::BazelCompatBazelrcOptions;
 use crate::legacy_configs::configs::LegacyBuckConfig;
 use crate::legacy_configs::dice::HasLegacyConfigs;

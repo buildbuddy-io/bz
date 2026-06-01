@@ -20,12 +20,10 @@
 #![feature(try_blocks)]
 
 pub mod argv;
+pub mod bazel;
 pub mod buckd_connection;
 pub mod build_count;
 pub mod buildfiles;
-pub mod bzlmod_archive;
-pub mod bzlmod_integrity;
-pub mod bzlmod_patch;
 pub mod cas_digest;
 pub mod chunk_reader;
 pub mod client_utils;

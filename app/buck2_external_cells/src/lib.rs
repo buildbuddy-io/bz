@@ -15,11 +15,11 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use buck2_common::bazel::bzlmod::BZLMOD_MODULE_EXTENSION_EVALUATOR;
+use buck2_common::bazel::bzlmod::BzlmodModuleExtensionEvaluator;
 use buck2_common::dice::data::HasIoProvider;
 use buck2_common::file_ops::delegate::FileOpsDelegate;
 use buck2_common::file_ops::metadata::RawPathMetadata;
-use buck2_common::legacy_configs::cells::BZLMOD_MODULE_EXTENSION_EVALUATOR;
-use buck2_common::legacy_configs::cells::BzlmodModuleExtensionEvaluator;
 use buck2_core::cells::cell_root_path::CellRootPath;
 use buck2_core::cells::external::BzlmodModuleExtensionRepoSetup;
 use buck2_core::cells::external::ExternalCellOrigin;

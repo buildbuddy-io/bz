@@ -1090,7 +1090,7 @@ mod tests {
         tar.append_data(&mut header, "pkg/file.txt", "content".as_bytes())
             .unwrap();
         let encoder = tar.into_inner().unwrap();
-        encoder.into_inner().unwrap();
+        encoder.into_inner();
 
         let output = dir.path().join("out");
         extract_archive(&archive, &output, ArchiveKind::TarBr, "", 1, &[])?;
@@ -1222,7 +1222,7 @@ mod tests {
         let file = fs::File::create(&archive).unwrap();
         let mut encoder = CompressorWriter::new(file, 4096, 5, 22);
         std::io::Write::write_all(&mut encoder, b"content").unwrap();
-        encoder.into_inner().unwrap();
+        encoder.into_inner();
 
         let output = dir.path().join("out");
         extract_archive(
