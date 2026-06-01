@@ -6773,18 +6773,140 @@ async fn bzlmod_vendor_file_data(
 }
 
 fn bzlmod_vendor_repos_from_calls(lines: &[String], function: &str) -> Vec<String> {
-    let mut repos = collect_bzl_calls(lines, function)
+    let mut repos = vendor_bzl_calls(lines, function)
         .into_iter()
         .flat_map(|call| {
-            bzl_call_args(&call)
+            vendor_bzl_call_args(&call)
                 .into_iter()
-                .filter_map(|arg| bzl_string_value(arg.trim()))
+                .filter_map(|arg| bzlmod_string_literal_prefix(arg.trim()))
                 .collect::<Vec<_>>()
         })
         .collect::<Vec<_>>();
     repos.sort_unstable();
     repos.dedup();
     repos
+}
+
+fn vendor_bzl_calls(lines: &[String], function: &str) -> Vec<String> {
+    let mut calls = Vec::new();
+    let mut current = String::new();
+    let mut depth = 0i32;
+
+    for line in lines {
+        if current.is_empty() {
+            let rest = line.trim_start();
+            if !rest.starts_with(function) {
+                continue;
+            };
+            let line = vendor_strip_bzl_comment(line);
+            let rest = line.trim_start();
+            depth = vendor_paren_delta(rest);
+            current.push_str(rest);
+        } else {
+            let line = vendor_strip_bzl_comment(line);
+            current.push('\n');
+            current.push_str(&line);
+            depth += vendor_paren_delta(&line);
+        }
+
+        if depth <= 0 {
+            calls.push(std::mem::take(&mut current));
+            depth = 0;
+        }
+    }
+
+    calls
+}
+
+fn vendor_bzl_call_args(call: &str) -> Vec<String> {
+    let Some((_, args)) = call.split_once('(') else {
+        return Vec::new();
+    };
+    let args = args.trim();
+    let args = args.strip_suffix(')').unwrap_or(args);
+    vendor_bzl_split_top_level(args, ',')
+}
+
+fn vendor_bzl_split_top_level(s: &str, delimiter: char) -> Vec<String> {
+    let mut parts = Vec::new();
+    let mut start = 0;
+    let mut in_string = false;
+    let mut quote = '\0';
+    let mut escaped = false;
+    let mut depth = 0i32;
+
+    for (idx, ch) in s.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if in_string {
+            if ch == '\\' {
+                escaped = true;
+            } else if ch == quote {
+                in_string = false;
+            }
+            continue;
+        }
+        if ch == '"' || ch == '\'' {
+            in_string = true;
+            quote = ch;
+            continue;
+        }
+        match ch {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth -= 1,
+            _ if ch == delimiter && depth == 0 => {
+                parts.push(s[start..idx].to_owned());
+                start = idx + ch.len_utf8();
+            }
+            _ => {}
+        }
+    }
+
+    parts.push(s[start..].to_owned());
+    parts
+}
+
+fn vendor_strip_bzl_comment(line: &str) -> String {
+    let mut in_string = false;
+    let mut quote = '\0';
+    let mut escaped = false;
+
+    for (idx, ch) in line.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if in_string {
+            if ch == '\\' {
+                escaped = true;
+            } else if ch == quote {
+                in_string = false;
+            }
+            continue;
+        }
+        if ch == '"' || ch == '\'' {
+            in_string = true;
+            quote = ch;
+            continue;
+        }
+        if ch == '#' {
+            return line[..idx].to_owned();
+        }
+    }
+
+    line.to_owned()
+}
+
+fn vendor_paren_delta(s: &str) -> i32 {
+    s.chars()
+        .map(|ch| match ch {
+            '(' => 1,
+            ')' => -1,
+            _ => 0,
+        })
+        .sum()
 }
 
 fn bzlmod_lockfile_data_from_str(contents: &str) -> buck2_error::Result<BzlmodModuleLockfileData> {
@@ -7073,7 +7195,7 @@ fn bzlmod_extension_tag_repo_names(usage: &BzlmodExtensionUsage) -> Vec<String> 
         .flat_map(|tag| tag.kwargs.iter())
         .filter_map(|(name, value)| {
             if name == "name" || name == "repo_name" {
-                bzl_string_value(value.trim())
+                bzlmod_string_literal_prefix(value.trim())
             } else {
                 None
             }
@@ -7082,6 +7204,31 @@ fn bzlmod_extension_tag_repo_names(usage: &BzlmodExtensionUsage) -> Vec<String> 
     repo_names.sort_unstable();
     repo_names.dedup();
     repo_names
+}
+
+fn bzlmod_string_literal_prefix(value: &str) -> Option<String> {
+    let mut chars = value.chars();
+    let quote = chars.next()?;
+    if quote != '"' && quote != '\'' {
+        return None;
+    }
+
+    let mut result = String::new();
+    let mut escaped = false;
+    for ch in chars {
+        if escaped {
+            result.push(ch);
+            escaped = false;
+        } else if ch == '\\' {
+            escaped = true;
+        } else if ch == quote {
+            return Some(result);
+        } else {
+            result.push(ch);
+        }
+    }
+
+    None
 }
 
 fn bzlmod_extension_unique_names(
@@ -8493,46 +8640,6 @@ fn bzlmod_identifier_cmp(a: &BzlmodVersionIdentifier, b: &BzlmodVersionIdentifie
     }
 }
 
-fn collect_bzl_calls(lines: &[String], function: &str) -> Vec<String> {
-    collect_bzl_calls_with_order(lines, function)
-        .into_iter()
-        .map(|(_, call)| call)
-        .collect()
-}
-
-fn collect_bzl_calls_with_order(lines: &[String], function: &str) -> Vec<(usize, String)> {
-    let mut calls = Vec::new();
-    let mut current = String::new();
-    let mut depth = 0i32;
-    let mut start_line = 0usize;
-
-    for (line_index, line) in lines.iter().enumerate() {
-        if current.is_empty() {
-            let rest = line.trim_start();
-            if !rest.starts_with(function) {
-                continue;
-            };
-            start_line = line_index;
-            let line = strip_bzl_comment(line);
-            let rest = line.trim_start();
-            depth = paren_delta(rest);
-            current.push_str(rest);
-        } else {
-            let line = strip_bzl_comment(line);
-            current.push('\n');
-            current.push_str(&line);
-            depth += paren_delta(&line);
-        }
-
-        if depth <= 0 {
-            calls.push((start_line, std::mem::take(&mut current)));
-            depth = 0;
-        }
-    }
-
-    calls
-}
-
 fn module_include_to_path(current_module_file: &str, label: &str) -> Option<String> {
     if label.starts_with('@') {
         return None;
@@ -8556,728 +8663,6 @@ fn module_include_to_path(current_module_file: &str, label: &str) -> Option<Stri
     }
 
     None
-}
-
-fn strip_bzl_comment(line: &str) -> String {
-    let mut in_string = false;
-    let mut quote = '\0';
-    let mut escaped = false;
-
-    for (idx, ch) in line.char_indices() {
-        if escaped {
-            escaped = false;
-            continue;
-        }
-        if in_string {
-            if ch == '\\' {
-                escaped = true;
-            } else if ch == quote {
-                in_string = false;
-            }
-            continue;
-        }
-        if ch == '"' || ch == '\'' {
-            in_string = true;
-            quote = ch;
-            continue;
-        }
-        if ch == '#' {
-            return line[..idx].to_owned();
-        }
-    }
-
-    line.to_owned()
-}
-
-fn paren_delta(s: &str) -> i32 {
-    s.chars()
-        .map(|ch| match ch {
-            '(' => 1,
-            ')' => -1,
-            _ => 0,
-        })
-        .sum()
-}
-
-#[cfg(any())]
-fn delimiter_delta(s: &str) -> i32 {
-    let mut in_string = false;
-    let mut quote = '\0';
-    let mut escaped = false;
-    let mut delta = 0i32;
-
-    for ch in s.chars() {
-        if escaped {
-            escaped = false;
-            continue;
-        }
-        if in_string {
-            if ch == '\\' {
-                escaped = true;
-            } else if ch == quote {
-                in_string = false;
-            }
-            continue;
-        }
-        if ch == '"' || ch == '\'' {
-            in_string = true;
-            quote = ch;
-            continue;
-        }
-        match ch {
-            '(' | '[' | '{' => delta += 1,
-            ')' | ']' | '}' => delta -= 1,
-            _ => {}
-        }
-    }
-
-    delta
-}
-
-#[cfg(any())]
-fn bzl_string_arg(call: &str, arg: &str) -> Option<String> {
-    let value = bzl_arg_value(call, arg)?;
-    bzl_string_value(value)
-}
-
-#[cfg(any())]
-fn bzl_string_expression_arg(
-    call: &str,
-    arg: &str,
-    constants: &[(String, String)],
-) -> Option<String> {
-    let value = bzl_call_named_arg_value(call, arg)?;
-    bzl_string_expression_value(&value, constants)
-}
-
-#[cfg(any())]
-fn bzl_bool_arg(call: &str, arg: &str) -> bool {
-    bzl_arg_value(call, arg).is_some_and(|value| {
-        let value = value.trim_start();
-        value
-            .strip_prefix("True")
-            .is_some_and(|rest| rest.chars().next().is_none_or(|ch| !is_bzl_ident(ch)))
-    })
-}
-
-#[cfg(any())]
-fn bzl_repo_name_arg(call: &str, module_name: &str) -> Option<String> {
-    if bzl_arg_is_none(call, "repo_name") {
-        None
-    } else {
-        match bzl_string_arg(call, "repo_name") {
-            Some(repo_name) if repo_name.is_empty() => Some(module_name.to_owned()),
-            Some(repo_name) => Some(repo_name),
-            None => Some(module_name.to_owned()),
-        }
-    }
-}
-
-#[cfg(any())]
-fn bzl_first_string_arg(call: &str) -> Option<String> {
-    let (_, args) = call.split_once('(')?;
-    bzl_string_value(args.trim_start())
-}
-
-#[cfg(any())]
-fn bzl_use_repo_imports(call: &str, constants: &[(String, String)]) -> Vec<BzlmodUseRepoImport> {
-    let args = bzl_call_args(call);
-    let mut imports = Vec::new();
-    for arg in args.into_iter().skip(1) {
-        let arg = arg.trim();
-        if arg.is_empty() {
-            continue;
-        }
-        if let Some((alias, actual)) = bzl_top_level_assignment(arg) {
-            let alias = alias.trim();
-            if alias != "dev_dependency" && is_bzl_identifier(alias) {
-                if let Some(repo_name) = bzl_string_expression_value(actual.trim(), constants) {
-                    imports.push(BzlmodUseRepoImport {
-                        alias: alias.to_owned(),
-                        repo_name,
-                    });
-                }
-            }
-        } else if let Some(alias) = bzl_string_expression_value(arg, constants) {
-            imports.push(BzlmodUseRepoImport {
-                alias: alias.clone(),
-                repo_name: alias,
-            });
-        }
-    }
-    imports
-}
-
-fn bzl_call_args(call: &str) -> Vec<String> {
-    let Some((_, args)) = call.split_once('(') else {
-        return Vec::new();
-    };
-    let args = args.trim();
-    let args = args.strip_suffix(')').unwrap_or(args);
-    bzl_split_top_level(args, ',')
-}
-
-#[cfg(any())]
-fn bzl_top_level_assignment(arg: &str) -> Option<(&str, &str)> {
-    let mut in_string = false;
-    let mut quote = '\0';
-    let mut escaped = false;
-    let mut depth = 0i32;
-
-    for (idx, ch) in arg.char_indices() {
-        if escaped {
-            escaped = false;
-            continue;
-        }
-        if in_string {
-            if ch == '\\' {
-                escaped = true;
-            } else if ch == quote {
-                in_string = false;
-            }
-            continue;
-        }
-        if ch == '"' || ch == '\'' {
-            in_string = true;
-            quote = ch;
-            continue;
-        }
-        match ch {
-            '(' | '[' | '{' => depth += 1,
-            ')' | ']' | '}' => depth -= 1,
-            '=' if depth == 0 => return Some((&arg[..idx], &arg[idx + 1..])),
-            _ => {}
-        }
-    }
-    None
-}
-
-fn bzl_split_top_level(s: &str, delimiter: char) -> Vec<String> {
-    let mut parts = Vec::new();
-    let mut start = 0;
-    let mut in_string = false;
-    let mut quote = '\0';
-    let mut escaped = false;
-    let mut depth = 0i32;
-
-    for (idx, ch) in s.char_indices() {
-        if escaped {
-            escaped = false;
-            continue;
-        }
-        if in_string {
-            if ch == '\\' {
-                escaped = true;
-            } else if ch == quote {
-                in_string = false;
-            }
-            continue;
-        }
-        if ch == '"' || ch == '\'' {
-            in_string = true;
-            quote = ch;
-            continue;
-        }
-        match ch {
-            '(' | '[' | '{' => depth += 1,
-            ')' | ']' | '}' => depth -= 1,
-            _ if ch == delimiter && depth == 0 => {
-                parts.push(s[start..idx].to_owned());
-                start = idx + ch.len_utf8();
-            }
-            _ => {}
-        }
-    }
-
-    parts.push(s[start..].to_owned());
-    parts
-}
-
-fn bzl_string_value(value: &str) -> Option<String> {
-    let mut chars = value.chars();
-    let quote = chars.next()?;
-    if quote != '"' && quote != '\'' {
-        return None;
-    }
-
-    let mut result = String::new();
-    let mut escaped = false;
-    for ch in chars {
-        if escaped {
-            result.push(ch);
-            escaped = false;
-        } else if ch == '\\' {
-            escaped = true;
-        } else if ch == quote {
-            return Some(result);
-        } else {
-            result.push(ch);
-        }
-    }
-
-    None
-}
-
-#[cfg(any())]
-fn bzl_string_expression_value(value: &str, constants: &[(String, String)]) -> Option<String> {
-    let value = bzl_strip_balanced_outer_parens(value);
-    if let Some(literal) = bzl_string_literal_value(value) {
-        return Some(literal);
-    }
-    if let Some((if_index, else_index)) = bzl_top_level_if_else(value) {
-        let condition = value[if_index + "if".len()..else_index].trim();
-        let branch = if bzl_bool_expression_value(condition, constants)? {
-            value[..if_index].trim()
-        } else {
-            value[else_index + "else".len()..].trim()
-        };
-        return bzl_string_expression_value(branch, constants);
-    }
-    let parts = bzl_split_top_level(value, '+');
-    if parts.len() > 1 {
-        let mut result = String::new();
-        for part in parts {
-            result.push_str(&bzl_string_expression_value(part.trim(), constants)?);
-        }
-        return Some(result);
-    }
-    if let Some((receiver, args)) = bzl_top_level_method_call(value, "format") {
-        let template = bzl_string_expression_value(receiver, constants)?;
-        let mut values = Vec::new();
-        let mut named_values = BTreeMap::new();
-        for arg in bzl_split_top_level(args, ',') {
-            let arg = arg.trim();
-            if arg.is_empty() {
-                continue;
-            }
-            if let Some((name, value)) = bzl_top_level_assignment(arg) {
-                let name = name.trim();
-                if is_bzl_identifier(name) {
-                    named_values.insert(
-                        name.to_owned(),
-                        bzl_string_expression_value(value.trim(), constants)?,
-                    );
-                }
-            } else {
-                values.push(bzl_string_expression_value(arg, constants)?);
-            }
-        }
-        return bzl_format_string(&template, &values, &named_values);
-    }
-    if let Some((receiver, args)) = bzl_top_level_method_call(value, "replace") {
-        let receiver = bzl_string_expression_value(receiver, constants)?;
-        let args = bzl_split_top_level(args, ',');
-        if args.len() != 2 {
-            return None;
-        }
-        let from = bzl_string_expression_value(args[0].trim(), constants)?;
-        let to = bzl_string_expression_value(args[1].trim(), constants)?;
-        return Some(receiver.replace(&from, &to));
-    }
-    if let Some((receiver, index)) = bzl_top_level_index(value) {
-        let values = bzl_string_sequence_expression_raw_values(receiver, constants)?;
-        let index = bzl_integer_expression_value(index.trim())?;
-        let len = values.len() as i32;
-        let index = if index < 0 { len + index } else { index };
-        if index < 0 || index >= len {
-            return None;
-        }
-        return values.get(index as usize).cloned();
-    }
-    if is_bzl_identifier(value) {
-        let (_, constant_value) = constants.iter().find(|(name, _)| name == value)?;
-        return bzl_string_expression_value(constant_value, constants);
-    }
-    None
-}
-
-#[cfg(any())]
-fn bzl_strip_balanced_outer_parens(value: &str) -> &str {
-    let mut value = value.trim();
-    loop {
-        let Some(inner) = value
-            .strip_prefix('(')
-            .and_then(|value| value.strip_suffix(')'))
-        else {
-            return value;
-        };
-        let mut depth = 0i32;
-        let mut in_string = false;
-        let mut quote = '\0';
-        let mut escaped = false;
-        let mut closes_at_end = false;
-        for (idx, ch) in value.char_indices() {
-            if escaped {
-                escaped = false;
-                continue;
-            }
-            if in_string {
-                if ch == '\\' {
-                    escaped = true;
-                } else if ch == quote {
-                    in_string = false;
-                }
-                continue;
-            }
-            if ch == '"' || ch == '\'' {
-                in_string = true;
-                quote = ch;
-                continue;
-            }
-            match ch {
-                '(' => depth += 1,
-                ')' => {
-                    depth -= 1;
-                    if depth == 0 {
-                        closes_at_end = idx + ch.len_utf8() == value.len();
-                        break;
-                    }
-                }
-                _ => {}
-            }
-        }
-        if !closes_at_end {
-            return value;
-        }
-        value = inner.trim();
-    }
-}
-
-#[cfg(any())]
-fn bzl_top_level_if_else(value: &str) -> Option<(usize, usize)> {
-    let if_index = bzl_find_top_level_keyword(value, 0, "if", 0)?;
-    let else_index = bzl_find_top_level_keyword(value, if_index + "if".len(), "else", 0)?;
-    Some((if_index, else_index))
-}
-
-#[cfg(any())]
-fn bzl_bool_expression_value(value: &str, constants: &[(String, String)]) -> Option<bool> {
-    let value = bzl_strip_balanced_outer_parens(value);
-    if value == "True" {
-        return Some(true);
-    }
-    if value == "False" {
-        return Some(false);
-    }
-    for (operator, equal_value) in [("==", true), ("!=", false)] {
-        if let Some(index) = bzl_find_top_level_operator(value, operator) {
-            let left = bzl_string_expression_value(value[..index].trim(), constants)?;
-            let right =
-                bzl_string_expression_value(value[index + operator.len()..].trim(), constants)?;
-            return Some((left == right) == equal_value);
-        }
-    }
-    if let Some(not_index) = bzl_find_top_level_keyword(value, 0, "not", 0) {
-        let in_index = bzl_skip_whitespace(value, not_index + "not".len());
-        if bzl_keyword_at(value, in_index, "in") {
-            let left = bzl_string_expression_value(value[..not_index].trim(), constants)?;
-            let right =
-                bzl_string_expression_value(value[in_index + "in".len()..].trim(), constants)?;
-            return Some(!right.contains(&left));
-        }
-    }
-    if let Some(in_index) = bzl_find_top_level_keyword(value, 0, "in", 0) {
-        let left = bzl_string_expression_value(value[..in_index].trim(), constants)?;
-        let right = bzl_string_expression_value(value[in_index + "in".len()..].trim(), constants)?;
-        return Some(right.contains(&left));
-    }
-    None
-}
-
-#[cfg(any())]
-fn bzl_find_top_level_operator(value: &str, operator: &str) -> Option<usize> {
-    let mut in_string = false;
-    let mut quote = '\0';
-    let mut escaped = false;
-    let mut depth = 0i32;
-    let mut index = 0usize;
-    while index < value.len() {
-        let ch = value[index..].chars().next()?;
-        if escaped {
-            escaped = false;
-            index += ch.len_utf8();
-            continue;
-        }
-        if in_string {
-            if ch == '\\' {
-                escaped = true;
-            } else if ch == quote {
-                in_string = false;
-            }
-            index += ch.len_utf8();
-            continue;
-        }
-        if ch == '"' || ch == '\'' {
-            in_string = true;
-            quote = ch;
-            index += ch.len_utf8();
-            continue;
-        }
-        if depth == 0 && value[index..].starts_with(operator) {
-            return Some(index);
-        }
-        match ch {
-            '(' | '[' | '{' => depth += 1,
-            ')' | ']' | '}' => depth -= 1,
-            _ => {}
-        }
-        index += ch.len_utf8();
-    }
-    None
-}
-
-#[cfg(any())]
-fn bzl_format_string(
-    template: &str,
-    values: &[String],
-    named_values: &BTreeMap<String, String>,
-) -> Option<String> {
-    let mut result = String::new();
-    let mut rest = template;
-    let mut next_value = 0usize;
-    while let Some(open) = rest.find('{') {
-        result.push_str(&rest[..open]);
-        let after_open = &rest[open + 1..];
-        let Some(close) = after_open.find('}') else {
-            return None;
-        };
-        let placeholder = &after_open[..close];
-        if placeholder.is_empty() {
-            let value = values.get(next_value)?;
-            next_value += 1;
-            result.push_str(value);
-        } else {
-            result.push_str(named_values.get(placeholder)?);
-        }
-        rest = &after_open[close + 1..];
-    }
-    result.push_str(rest);
-    Some(result)
-}
-
-#[cfg(any())]
-fn bzl_top_level_method_call<'a>(value: &'a str, method: &str) -> Option<(&'a str, &'a str)> {
-    let value = value.trim();
-    let suffix_prefix = format!(".{method}(");
-    let mut in_string = false;
-    let mut quote = '\0';
-    let mut escaped = false;
-    let mut depth = 0i32;
-
-    for (idx, ch) in value.char_indices() {
-        if escaped {
-            escaped = false;
-            continue;
-        }
-        if in_string {
-            if ch == '\\' {
-                escaped = true;
-            } else if ch == quote {
-                in_string = false;
-            }
-            continue;
-        }
-        if ch == '"' || ch == '\'' {
-            in_string = true;
-            quote = ch;
-            continue;
-        }
-        if depth == 0 && value[idx..].starts_with(&suffix_prefix) {
-            let open_index = idx + suffix_prefix.len() - 1;
-            let close_index = bzl_matching_closing_delimiter(value, open_index)?;
-            if close_index + 1 == value.len() {
-                return Some((value[..idx].trim(), &value[open_index + 1..close_index]));
-            }
-        }
-        match ch {
-            '(' | '[' | '{' => depth += 1,
-            ')' | ']' | '}' => depth -= 1,
-            _ => {}
-        }
-    }
-
-    None
-}
-
-#[cfg(any())]
-fn bzl_matching_closing_delimiter(value: &str, open_index: usize) -> Option<usize> {
-    let open = value[open_index..].chars().next()?;
-    let close = match open {
-        '(' => ')',
-        '[' => ']',
-        '{' => '}',
-        _ => return None,
-    };
-    let mut in_string = false;
-    let mut quote = '\0';
-    let mut escaped = false;
-    let mut depth = 0i32;
-    let mut index = open_index;
-    while index < value.len() {
-        let ch = value[index..].chars().next()?;
-        if escaped {
-            escaped = false;
-            index += ch.len_utf8();
-            continue;
-        }
-        if in_string {
-            if ch == '\\' {
-                escaped = true;
-            } else if ch == quote {
-                in_string = false;
-            }
-            index += ch.len_utf8();
-            continue;
-        }
-        if ch == '"' || ch == '\'' {
-            in_string = true;
-            quote = ch;
-            index += ch.len_utf8();
-            continue;
-        }
-        if ch == open {
-            depth += 1;
-        } else if ch == close {
-            depth -= 1;
-            if depth == 0 {
-                return Some(index);
-            }
-        }
-        index += ch.len_utf8();
-    }
-    None
-}
-
-#[cfg(any())]
-fn bzl_top_level_index(value: &str) -> Option<(&str, &str)> {
-    let value = value.trim();
-    if !value.ends_with(']') {
-        return None;
-    }
-    let mut in_string = false;
-    let mut quote = '\0';
-    let mut escaped = false;
-    let mut depth = 0i32;
-
-    for (idx, ch) in value.char_indices() {
-        if escaped {
-            escaped = false;
-            continue;
-        }
-        if in_string {
-            if ch == '\\' {
-                escaped = true;
-            } else if ch == quote {
-                in_string = false;
-            }
-            continue;
-        }
-        if ch == '"' || ch == '\'' {
-            in_string = true;
-            quote = ch;
-            continue;
-        }
-        if ch == '[' && depth == 0 {
-            let index = &value[idx + 1..value.len() - 1];
-            if delimiter_delta(index) == 0 {
-                return Some((value[..idx].trim(), index));
-            }
-            return None;
-        }
-        match ch {
-            '(' | '[' | '{' => depth += 1,
-            ')' | ']' | '}' => depth -= 1,
-            _ => {}
-        }
-    }
-
-    None
-}
-
-#[cfg(any())]
-fn bzl_integer_expression_value(value: &str) -> Option<i32> {
-    value.trim().parse::<i32>().ok()
-}
-
-#[cfg(any())]
-fn bzl_string_literal_value(value: &str) -> Option<String> {
-    let mut chars = value.trim().chars();
-    let quote = chars.next()?;
-    if quote != '"' && quote != '\'' {
-        return None;
-    }
-
-    let mut result = String::new();
-    let mut escaped = false;
-    while let Some(ch) = chars.next() {
-        if escaped {
-            result.push(ch);
-            escaped = false;
-        } else if ch == '\\' {
-            escaped = true;
-        } else if ch == quote {
-            if chars.as_str().trim().is_empty() {
-                return Some(result);
-            }
-            return None;
-        } else {
-            result.push(ch);
-        }
-    }
-
-    None
-}
-
-#[cfg(any())]
-fn bzl_arg_is_none(call: &str, arg: &str) -> bool {
-    bzl_arg_value(call, arg).is_some_and(|value| value.starts_with("None"))
-}
-
-#[cfg(any())]
-fn bzl_call_named_arg_value(call: &str, arg: &str) -> Option<String> {
-    for call_arg in bzl_call_args(call) {
-        let Some((name, value)) = bzl_top_level_assignment(&call_arg) else {
-            continue;
-        };
-        if name.trim() == arg {
-            return Some(value.trim().to_owned());
-        }
-    }
-    None
-}
-
-#[cfg(any())]
-fn bzl_arg_value<'a>(call: &'a str, arg: &str) -> Option<&'a str> {
-    let mut search_start = 0;
-    while let Some(pos) = call[search_start..].find(arg) {
-        let pos = search_start + pos;
-        let before = call[..pos].chars().next_back();
-        let after = call[pos + arg.len()..].chars().next();
-        if before.is_none_or(|ch| !is_bzl_ident(ch)) && after.is_none_or(|ch| !is_bzl_ident(ch)) {
-            let rest = call[pos + arg.len()..].trim_start();
-            if let Some(rest) = rest.strip_prefix('=') {
-                return Some(rest.trim_start());
-            }
-        }
-        search_start = pos + arg.len();
-    }
-
-    None
-}
-
-#[cfg(any())]
-fn is_bzl_ident(ch: char) -> bool {
-    ch == '_' || ch.is_ascii_alphanumeric()
-}
-
-#[cfg(any())]
-fn is_bzl_identifier(s: &str) -> bool {
-    let mut chars = s.chars();
-    match chars.next() {
-        Some(ch) if ch == '_' || ch.is_ascii_alphabetic() => {}
-        _ => return false,
-    }
-    chars.all(is_bzl_ident)
 }
 
 async fn get_external_buckconfig_paths(
