@@ -102,6 +102,7 @@ use sha2::Sha256;
 use starlark::any::ProvidesStaticType;
 use starlark::environment::Globals;
 use starlark::environment::GlobalsBuilder;
+use starlark::environment::LibraryExtension;
 use starlark::environment::Module;
 use starlark::eval::Arguments;
 use starlark::eval::Evaluator;
@@ -2764,7 +2765,7 @@ fn bzlmod_include_label_to_path(module_file: &str, label: &str) -> buck2_error::
 }
 
 fn bzlmod_module_globals() -> Globals {
-    GlobalsBuilder::new()
+    GlobalsBuilder::extended_by(&[LibraryExtension::Print])
         .with(bzlmod_module_globals_builder)
         .build()
 }
@@ -8847,6 +8848,25 @@ mod tests {
             error.contains("`load` statements may not be used"),
             "error: {error}"
         );
+    }
+
+    #[test]
+    fn test_bzlmod_module_accepts_starlark_intrinsic_constants() -> buck2_error::Result<()> {
+        let evaluated = eval_bzlmod_module(indoc!(
+            r#"
+            print("loading module")
+            module(name = "demo")
+            bazel_dep(name = "visible", version = "1.0", dev_dependency = False)
+            bazel_dep(name = "hidden", version = "1.0", repo_name = None)
+            register_toolchains("//:toolchain", dev_dependency = True)
+            "#
+        ))?;
+
+        assert_eq!(evaluated.deps.len(), 2);
+        assert_eq!(evaluated.deps[0].apparent_name.as_deref(), Some("visible"));
+        assert_eq!(evaluated.deps[1].apparent_name, None);
+        assert_eq!(evaluated.registered_toolchains, vec!["//:toolchain"]);
+        Ok(())
     }
 
     #[test]
