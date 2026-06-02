@@ -660,3 +660,39 @@ impl<'v> StarlarkValue<'v> for FrozenStarlarkRepositoryOs {
         }
     }
 }
+
+#[derive(Debug, Display, ProvidesStaticType, NoSerialize, Allocative)]
+#[display("<repo_metadata>")]
+pub(crate) struct StarlarkRepositoryMetadata {
+    #[allow(dead_code)]
+    pub(super) reproducible: bool,
+}
+
+impl StarlarkRepositoryMetadata {
+    pub(crate) fn reproducible(&self) -> bool {
+        self.reproducible
+    }
+}
+
+starlark_simple_value!(StarlarkRepositoryMetadata);
+
+#[starlark_value(type = "repo_metadata")]
+impl<'v> StarlarkValue<'v> for StarlarkRepositoryMetadata {}
+
+#[derive(Debug, Display, ProvidesStaticType, NoSerialize, Allocative)]
+#[display("<extension_metadata>")]
+pub(crate) struct StarlarkModuleExtensionMetadata {
+    #[allow(dead_code)]
+    pub(super) reproducible: bool,
+}
+
+impl StarlarkModuleExtensionMetadata {
+    pub(crate) fn reproducible(&self) -> bool {
+        self.reproducible
+    }
+}
+
+starlark_simple_value!(StarlarkModuleExtensionMetadata);
+
+#[starlark_value(type = "extension_metadata")]
+impl<'v> StarlarkValue<'v> for StarlarkModuleExtensionMetadata {}

@@ -226,6 +226,8 @@ pub(crate) use self::repository_path::StarlarkRepositoryPath;
 pub(crate) use self::starlark_types::FrozenStarlarkModuleExtension;
 pub(crate) use self::starlark_types::FrozenStarlarkRepositoryRule;
 pub(crate) use self::starlark_types::StarlarkModuleExtension;
+pub(crate) use self::starlark_types::StarlarkModuleExtensionMetadata;
+pub(crate) use self::starlark_types::StarlarkRepositoryMetadata;
 pub(crate) use self::starlark_types::StarlarkRepositoryRule;
 pub(crate) use self::starlark_types::StarlarkTagClass;
 use self::command_executor::RepositoryCommandOutput;
@@ -5346,42 +5348,6 @@ impl<'v> StarlarkValue<'v> for FrozenStarlarkBazelModuleTag {
         self.attrs.get(attribute).map(|value| value.to_value())
     }
 }
-
-#[derive(Debug, Display, ProvidesStaticType, NoSerialize, Allocative)]
-#[display("<repo_metadata>")]
-pub(crate) struct StarlarkRepositoryMetadata {
-    #[allow(dead_code)]
-    reproducible: bool,
-}
-
-impl StarlarkRepositoryMetadata {
-    pub(crate) fn reproducible(&self) -> bool {
-        self.reproducible
-    }
-}
-
-starlark_simple_value!(StarlarkRepositoryMetadata);
-
-#[starlark_value(type = "repo_metadata")]
-impl<'v> StarlarkValue<'v> for StarlarkRepositoryMetadata {}
-
-#[derive(Debug, Display, ProvidesStaticType, NoSerialize, Allocative)]
-#[display("<extension_metadata>")]
-pub(crate) struct StarlarkModuleExtensionMetadata {
-    #[allow(dead_code)]
-    reproducible: bool,
-}
-
-impl StarlarkModuleExtensionMetadata {
-    pub(crate) fn reproducible(&self) -> bool {
-        self.reproducible
-    }
-}
-
-starlark_simple_value!(StarlarkModuleExtensionMetadata);
-
-#[starlark_value(type = "extension_metadata")]
-impl<'v> StarlarkValue<'v> for StarlarkModuleExtensionMetadata {}
 
 fn bazel_module_tag_dev_dependency<'v>(tag: Value<'v>) -> starlark::Result<bool> {
     if let Some(tag) = tag.downcast_ref::<StarlarkBazelModuleTag>() {
