@@ -1,9 +1,3 @@
-# Copyright (c) Meta Platforms, Inc. and affiliates.
-#
-# This source code is dual-licensed under either the MIT license found in the
-# LICENSE-MIT file in the root directory or the Apache License, Version 2.0
-# found in the LICENSE-APACHE file in the root directory.
-
 load("@prelude//:alias.bzl", "alias_impl")
 load("@prelude//:bazel_cc_toolchain.bzl", "cc_toolchain_impl", "cc_toolchain_suite_impl")
 load("@prelude//:export_file.bzl", "export_file_impl")
