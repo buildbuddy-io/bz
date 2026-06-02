@@ -42,7 +42,7 @@ async def test_action_error(buck: Buck) -> None:
     # This test is unfortunately liable to break as a result of refactorings, since this is not
     # stable. Feel free to delete it if it becomes a problem.
     assert error["source_location"].startswith(
-        "buck2_build_api/src/actions/error.rs::ActionError::"
+        "bz_build_api/src/actions/error.rs::ActionError::"
     )
 
 
@@ -66,8 +66,8 @@ async def test_bad_url(buck: Buck) -> None:
     error = res.invocation_record().single_error()
     # Also liable to break as a result of refactorings, feel free to update
     # FIXME(minglunli): This is a regression from before, the commented line is better and we should fix this
-    assert "buck2_http/src/lib.rs" in error["source_location"]
-    # assert error["source_location"] == "buck2_http/src/lib.rs::HttpError::SendRequest"
+    assert "bz_http/src/lib.rs" in error["source_location"]
+    # assert error["source_location"] == "bz_http/src/lib.rs::HttpError::SendRequest"
 
 
 @buck_test(write_invocation_record=True)
@@ -91,7 +91,7 @@ async def test_buck2_fail(buck: Buck) -> None:
     # Just make sure that despite there being no context on the error, we still report the right
     # metadata
     assert error["source_location"].startswith(
-        "buck2_interpreter_for_build/src/interpreter/functions/internals.rs::BuckFail::"
+        "bz_interpreter_for_build/src/interpreter/functions/internals.rs::BuckFail::"
     )
 
 

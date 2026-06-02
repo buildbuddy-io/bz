@@ -2,99 +2,99 @@
 members = [
     "allocative/allocative",
     "allocative/allocative_derive",
-    "app/buck2",
-    "app/buck2_action_impl",
-    "app/buck2_action_impl_tests",
-    "app/buck2_action_metadata_proto",
-    "app/buck2_analysis",
-    "app/buck2_anon_target",
-    "app/buck2_cmd_audit_client",
-    "app/buck2_cmd_audit_server",
-    "app/buck2_bxl",
-    "app/buck2_build_info",
-    "app/buck2_certs",
-    "app/buck2_cfg_constructor",
-    "app/buck2_client",
-    "app/buck2_client_ctx",
-    "app/buck2_cmd_completion_client",
-    "app/buck2_cmd_debug_client",
-    "app/buck2_cmd_docs_client",
-    "app/buck2_cmd_docs_server",
-    "app/buck2_cmd_log_client",
-    "app/buck2_cmd_query_server",
-    "app/buck2_cmd_rage_client",
-    "app/buck2_common",
-    "app/buck2_env",
-    "app/buck2_configured",
-    "app/buck2_core",
-    "app/buck2_cli_proto",
-    "app/buck2_cmd_targets_server",
-    "app/buck2_daemon",
-    "app/buck2_directory",
-    "app/buck2_downward_api",
-    "app/buck2_downward_api_proto",
-    "app/buck2_error",
-    "app/buck2_error_derive",
-    "app/buck2_error_tests",
-    "app/buck2_errorformat",
-    "app/buck2_event_observer",
-    "app/buck2_events",
-    "app/buck2_event_log",
-    "app/buck2_execute",
-    "app/buck2_execute_impl",
-    "app/buck2_execute_local",
-    "app/buck2_external_cells",
-    "app/buck2_external_cells_bundled",
-    "app/buck2_grpc",
-    "app/buck2_health_check",
-    "app/buck2_health_check_proto",
-    "app/buck2_http",
-    "app/buck2_install_proto",
-    "app/buck2_interpreter",
-    "app/buck2_interpreter_for_build",
-    "app/buck2_interpreter_for_build_tests",
-    "app/buck2_miniperf",
-    "app/buck2_miniperf_proto",
-    "app/buck2_node",
-    "app/buck2_node_tests",
-    "app/buck2_offline_archive",
-    "app/buck2_artifact",
-    "app/buck2_cmd_starlark_client",
-    "app/buck2_cmd_starlark_server",
-    "app/buck2_test",
-    "app/buck2_test_api",
-    "app/buck2_test_proto",
-    "app/buck2_test_runner",
-    "app/buck2_forkserver",
-    "app/buck2_forkserver_proto",
-    "app/buck2_fs",
-    "app/buck2_profile",
-    "app/buck2_protoc_dev",
-    "app/buck2_query",
-    "app/buck2_query_impls",
-    "app/buck2_query_parser",
-    "app/buck2_query_derive",
-    "app/buck2_re_configuration",
-    "app/buck2_resource_control",
-    "app/buck2_server",
-    "app/buck2_server_commands",
-    "app/buck2_server_ctx",
-    "app/buck2_server_starlark_debug",
-    "app/buck2_transition",
-    "app/buck2_util",
-    "app/buck2_data",
-    "app/buck2_worker_proto",
-    "app/buck2_wrapper_common",
-    "app/buck2_build_api",
-    "app/buck2_build_api_derive",
-    "app/buck2_build_api_tests",
-    "app/buck2_subscription_proto",
-    "app/buck2_critical_path",
-    "app/buck2_build_signals",
-    "app/buck2_build_signals_impl",
-    "app/buck2_eden",
-    "app/buck2_validation",
-    "app/buck2_host_sharing_proto",
+    "app/bz",
+    "app/bz_action_impl",
+    "app/bz_action_impl_tests",
+    "app/bz_action_metadata_proto",
+    "app/bz_analysis",
+    "app/bz_anon_target",
+    "app/bz_cmd_audit_client",
+    "app/bz_cmd_audit_server",
+    "app/bz_bxl",
+    "app/bz_build_info",
+    "app/bz_certs",
+    "app/bz_cfg_constructor",
+    "app/bz_client",
+    "app/bz_client_ctx",
+    "app/bz_cmd_completion_client",
+    "app/bz_cmd_debug_client",
+    "app/bz_cmd_docs_client",
+    "app/bz_cmd_docs_server",
+    "app/bz_cmd_log_client",
+    "app/bz_cmd_query_server",
+    "app/bz_cmd_rage_client",
+    "app/bz_common",
+    "app/bz_env",
+    "app/bz_configured",
+    "app/bz_core",
+    "app/bz_cli_proto",
+    "app/bz_cmd_targets_server",
+    "app/bz_daemon",
+    "app/bz_directory",
+    "app/bz_downward_api",
+    "app/bz_downward_api_proto",
+    "app/bz_error",
+    "app/bz_error_derive",
+    "app/bz_error_tests",
+    "app/bz_errorformat",
+    "app/bz_event_observer",
+    "app/bz_events",
+    "app/bz_event_log",
+    "app/bz_execute",
+    "app/bz_execute_impl",
+    "app/bz_execute_local",
+    "app/bz_external_cells",
+    "app/bz_external_cells_bundled",
+    "app/bz_grpc",
+    "app/bz_health_check",
+    "app/bz_health_check_proto",
+    "app/bz_http",
+    "app/bz_install_proto",
+    "app/bz_interpreter",
+    "app/bz_interpreter_for_build",
+    "app/bz_interpreter_for_build_tests",
+    "app/bz_miniperf",
+    "app/bz_miniperf_proto",
+    "app/bz_node",
+    "app/bz_node_tests",
+    "app/bz_offline_archive",
+    "app/bz_artifact",
+    "app/bz_cmd_starlark_client",
+    "app/bz_cmd_starlark_server",
+    "app/bz_test",
+    "app/bz_test_api",
+    "app/bz_test_proto",
+    "app/bz_test_runner",
+    "app/bz_forkserver",
+    "app/bz_forkserver_proto",
+    "app/bz_fs",
+    "app/bz_profile",
+    "app/bz_protoc_dev",
+    "app/bz_query",
+    "app/bz_query_impls",
+    "app/bz_query_parser",
+    "app/bz_query_derive",
+    "app/bz_re_configuration",
+    "app/bz_resource_control",
+    "app/bz_server",
+    "app/bz_server_commands",
+    "app/bz_server_ctx",
+    "app/bz_server_starlark_debug",
+    "app/bz_transition",
+    "app/bz_util",
+    "app/bz_data",
+    "app/bz_worker_proto",
+    "app/bz_wrapper_common",
+    "app/bz_build_api",
+    "app/bz_build_api_derive",
+    "app/bz_build_api_tests",
+    "app/bz_subscription_proto",
+    "app/bz_critical_path",
+    "app/bz_build_signals",
+    "app/bz_build_signals_impl",
+    "app/bz_eden",
+    "app/bz_validation",
+    "app/bz_host_sharing_proto",
     "dice/dice",
     "dice/dice_error",
     "dice/dice_examples",
@@ -395,96 +395,96 @@ strong_hash.path = "gazebo/strong_hash"
 strong_hash_derive = { path = "gazebo/strong_hash_derive" }
 three_billion_instructions = { path = "shed/three_billion_instructions" }
 
-buck2_action_impl = { path = "app/buck2_action_impl" }
-buck2_action_metadata_proto = { path = "app/buck2_action_metadata_proto" }
-buck2_analysis = { path = "app/buck2_analysis" }
-buck2_anon_target = { path = "app/buck2_anon_target" }
-buck2_artifact = { path = "app/buck2_artifact" }
-buck2_build_api = { path = "app/buck2_build_api" }
-buck2_build_api_derive = { path = "app/buck2_build_api_derive" }
-buck2_build_info = { path = "app/buck2_build_info" }
-buck2_build_signals = { path = "app/buck2_build_signals" }
-buck2_build_signals_impl = { path = "app/buck2_build_signals_impl" }
-buck2_bxl = { path = "app/buck2_bxl" }
-buck2_certs = { path = "app/buck2_certs" }
-buck2_cfg_constructor = { path = "app/buck2_cfg_constructor" }
-buck2_cli_proto = { path = "app/buck2_cli_proto" }
-buck2_client = { path = "app/buck2_client" }
-buck2_client_ctx = { path = "app/buck2_client_ctx" }
-buck2_cmd_audit_client = { path = "app/buck2_cmd_audit_client" }
-buck2_cmd_audit_server = { path = "app/buck2_cmd_audit_server" }
-buck2_cmd_completion_client = { path = "app/buck2_cmd_completion_client" }
-buck2_cmd_debug_client = { path = "app/buck2_cmd_debug_client" }
-buck2_cmd_docs_client = { path = "app/buck2_cmd_docs_client" }
-buck2_cmd_docs_server = { path = "app/buck2_cmd_docs_server" }
-buck2_cmd_log_client = { path = "app/buck2_cmd_log_client" }
-buck2_cmd_query_server = { path = "app/buck2_cmd_query_server" }
-buck2_cmd_rage_client = { path = "app/buck2_cmd_rage_client" }
-buck2_cmd_starlark_client = { path = "app/buck2_cmd_starlark_client" }
-buck2_cmd_starlark_server = { path = "app/buck2_cmd_starlark_server" }
-buck2_cmd_targets_server = { path = "app/buck2_cmd_targets_server" }
-buck2_common = { path = "app/buck2_common" }
-buck2_configured = { path = "app/buck2_configured" }
-buck2_core = { path = "app/buck2_core" }
-buck2_critical_path = { path = "app/buck2_critical_path" }
-buck2_daemon = { path = "app/buck2_daemon" }
-buck2_data = { path = "app/buck2_data" }
-buck2_directory = { path = "app/buck2_directory" }
-buck2_downward_api = { path = "app/buck2_downward_api" }
-buck2_downward_api_proto = { path = "app/buck2_downward_api_proto" }
-buck2_eden = { path = "app/buck2_eden" }
-buck2_env = { path = "app/buck2_env" }
-buck2_error = { path = "app/buck2_error" }
-buck2_error_derive = { path = "app/buck2_error_derive" }
-buck2_errorformat = { path = "app/buck2_errorformat" }
-buck2_event_log = { path = "app/buck2_event_log" }
-buck2_event_observer = { path = "app/buck2_event_observer" }
-buck2_events = { path = "app/buck2_events" }
-buck2_execute = { path = "app/buck2_execute" }
-buck2_execute_impl = { path = "app/buck2_execute_impl" }
-buck2_execute_local = { path = "app/buck2_execute_local" }
-buck2_external_cells = { path = "app/buck2_external_cells" }
-buck2_external_cells_bundled = { path = "app/buck2_external_cells_bundled" }
-buck2_file_watcher = { path = "app/buck2_file_watcher" }
-buck2_forkserver = { path = "app/buck2_forkserver" }
-buck2_forkserver_proto = { path = "app/buck2_forkserver_proto" }
-buck2_fs = { path = "app/buck2_fs" }
-buck2_grpc = { path = "app/buck2_grpc" }
-buck2_health_check = { path = "app/buck2_health_check" }
-buck2_health_check_proto = { path = "app/buck2_health_check_proto" }
-buck2_host_sharing_proto = { path = "app/buck2_host_sharing_proto" }
-buck2_http = { path = "app/buck2_http" }
-buck2_install_proto = { path = "app/buck2_install_proto" }
-buck2_interpreter = { path = "app/buck2_interpreter" }
-buck2_interpreter_for_build = { path = "app/buck2_interpreter_for_build" }
-buck2_interpreter_for_build_tests = { path = "app/buck2_interpreter_for_build_tests" }
-buck2_miniperf = { path = "app/buck2_miniperf" }
-buck2_miniperf_proto = { path = "app/buck2_miniperf_proto" }
-buck2_node = { path = "app/buck2_node" }
-buck2_offline_archive = { path = "app/buck2_offline_archive" }
-buck2_profile = { path = "app/buck2_profile" }
-buck2_protoc_dev = { path = "app/buck2_protoc_dev" }
-buck2_query = { path = "app/buck2_query" }
-buck2_query_derive = { path = "app/buck2_query_derive" }
-buck2_query_impls = { path = "app/buck2_query_impls" }
-buck2_query_parser = { path = "app/buck2_query_parser" }
-buck2_re_configuration = { path = "app/buck2_re_configuration" }
-buck2_resource_control = { path = "app/buck2_resource_control" }
-buck2_server = { path = "app/buck2_server" }
-buck2_server_commands = { path = "app/buck2_server_commands" }
-buck2_server_ctx = { path = "app/buck2_server_ctx" }
-buck2_server_starlark_debug = { path = "app/buck2_server_starlark_debug" }
+buck2_action_impl = { path = "app/bz_action_impl" }
+buck2_action_metadata_proto = { path = "app/bz_action_metadata_proto" }
+buck2_analysis = { path = "app/bz_analysis" }
+buck2_anon_target = { path = "app/bz_anon_target" }
+buck2_artifact = { path = "app/bz_artifact" }
+buck2_build_api = { path = "app/bz_build_api" }
+buck2_build_api_derive = { path = "app/bz_build_api_derive" }
+buck2_build_info = { path = "app/bz_build_info" }
+buck2_build_signals = { path = "app/bz_build_signals" }
+buck2_build_signals_impl = { path = "app/bz_build_signals_impl" }
+buck2_bxl = { path = "app/bz_bxl" }
+buck2_certs = { path = "app/bz_certs" }
+buck2_cfg_constructor = { path = "app/bz_cfg_constructor" }
+buck2_cli_proto = { path = "app/bz_cli_proto" }
+buck2_client = { path = "app/bz_client" }
+buck2_client_ctx = { path = "app/bz_client_ctx" }
+buck2_cmd_audit_client = { path = "app/bz_cmd_audit_client" }
+buck2_cmd_audit_server = { path = "app/bz_cmd_audit_server" }
+buck2_cmd_completion_client = { path = "app/bz_cmd_completion_client" }
+buck2_cmd_debug_client = { path = "app/bz_cmd_debug_client" }
+buck2_cmd_docs_client = { path = "app/bz_cmd_docs_client" }
+buck2_cmd_docs_server = { path = "app/bz_cmd_docs_server" }
+buck2_cmd_log_client = { path = "app/bz_cmd_log_client" }
+buck2_cmd_query_server = { path = "app/bz_cmd_query_server" }
+buck2_cmd_rage_client = { path = "app/bz_cmd_rage_client" }
+buck2_cmd_starlark_client = { path = "app/bz_cmd_starlark_client" }
+buck2_cmd_starlark_server = { path = "app/bz_cmd_starlark_server" }
+buck2_cmd_targets_server = { path = "app/bz_cmd_targets_server" }
+buck2_common = { path = "app/bz_common" }
+buck2_configured = { path = "app/bz_configured" }
+buck2_core = { path = "app/bz_core" }
+buck2_critical_path = { path = "app/bz_critical_path" }
+buck2_daemon = { path = "app/bz_daemon" }
+buck2_data = { path = "app/bz_data" }
+buck2_directory = { path = "app/bz_directory" }
+buck2_downward_api = { path = "app/bz_downward_api" }
+buck2_downward_api_proto = { path = "app/bz_downward_api_proto" }
+buck2_eden = { path = "app/bz_eden" }
+buck2_env = { path = "app/bz_env" }
+buck2_error = { path = "app/bz_error" }
+buck2_error_derive = { path = "app/bz_error_derive" }
+buck2_errorformat = { path = "app/bz_errorformat" }
+buck2_event_log = { path = "app/bz_event_log" }
+buck2_event_observer = { path = "app/bz_event_observer" }
+buck2_events = { path = "app/bz_events" }
+buck2_execute = { path = "app/bz_execute" }
+buck2_execute_impl = { path = "app/bz_execute_impl" }
+buck2_execute_local = { path = "app/bz_execute_local" }
+buck2_external_cells = { path = "app/bz_external_cells" }
+buck2_external_cells_bundled = { path = "app/bz_external_cells_bundled" }
+buck2_file_watcher = { path = "app/bz_file_watcher" }
+buck2_forkserver = { path = "app/bz_forkserver" }
+buck2_forkserver_proto = { path = "app/bz_forkserver_proto" }
+buck2_fs = { path = "app/bz_fs" }
+buck2_grpc = { path = "app/bz_grpc" }
+buck2_health_check = { path = "app/bz_health_check" }
+buck2_health_check_proto = { path = "app/bz_health_check_proto" }
+buck2_host_sharing_proto = { path = "app/bz_host_sharing_proto" }
+buck2_http = { path = "app/bz_http" }
+buck2_install_proto = { path = "app/bz_install_proto" }
+buck2_interpreter = { path = "app/bz_interpreter" }
+buck2_interpreter_for_build = { path = "app/bz_interpreter_for_build" }
+buck2_interpreter_for_build_tests = { path = "app/bz_interpreter_for_build_tests" }
+buck2_miniperf = { path = "app/bz_miniperf" }
+buck2_miniperf_proto = { path = "app/bz_miniperf_proto" }
+buck2_node = { path = "app/bz_node" }
+buck2_offline_archive = { path = "app/bz_offline_archive" }
+buck2_profile = { path = "app/bz_profile" }
+buck2_protoc_dev = { path = "app/bz_protoc_dev" }
+buck2_query = { path = "app/bz_query" }
+buck2_query_derive = { path = "app/bz_query_derive" }
+buck2_query_impls = { path = "app/bz_query_impls" }
+buck2_query_parser = { path = "app/bz_query_parser" }
+buck2_re_configuration = { path = "app/bz_re_configuration" }
+buck2_resource_control = { path = "app/bz_resource_control" }
+buck2_server = { path = "app/bz_server" }
+buck2_server_commands = { path = "app/bz_server_commands" }
+buck2_server_ctx = { path = "app/bz_server_ctx" }
+buck2_server_starlark_debug = { path = "app/bz_server_starlark_debug" }
 buck2_sketches = { path = "buck2_sketches" }
-buck2_subscription_proto = { path = "app/buck2_subscription_proto" }
-buck2_test = { path = "app/buck2_test" }
-buck2_test_api = { path = "app/buck2_test_api" }
-buck2_test_proto = { path = "app/buck2_test_proto" }
-buck2_test_runner = { path = "app/buck2_test_runner" }
-buck2_transition = { path = "app/buck2_transition" }
-buck2_util = { path = "app/buck2_util" }
-buck2_validation = { path = "app/buck2_validation" }
-buck2_worker_proto = { path = "app/buck2_worker_proto" }
-buck2_wrapper_common = { path = "app/buck2_wrapper_common" }
+buck2_subscription_proto = { path = "app/bz_subscription_proto" }
+buck2_test = { path = "app/bz_test" }
+buck2_test_api = { path = "app/bz_test_api" }
+buck2_test_proto = { path = "app/bz_test_proto" }
+buck2_test_runner = { path = "app/bz_test_runner" }
+buck2_transition = { path = "app/bz_transition" }
+buck2_util = { path = "app/bz_util" }
+buck2_validation = { path = "app/bz_validation" }
+buck2_worker_proto = { path = "app/bz_worker_proto" }
+buck2_wrapper_common = { path = "app/bz_wrapper_common" }
 
 [profile.release]
 incremental = true

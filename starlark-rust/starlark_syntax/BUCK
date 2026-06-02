@@ -48,7 +48,7 @@ rust_library(
         "//buck2/starlark-rust/...",
         # For faster incremental compilation of buck2,
         # we pull `starlark::Error` from this crate rather than from `starlark`.
-        "//buck2/app/buck2_error/...",
+        "//buck2/app/bz_error/...",
     ],
     deps = [
         "fbsource//third-party/rust:annotate-snippets",

@@ -44,7 +44,7 @@ enum MyErrors {
 
 ## Error tags
 
-Tags are defined in `app/buck2_data/error.proto`. Common generic tags:
+Tags are defined in `app/bz_data/error.proto`. Common generic tags:
 
 - `Input` — user input errors (invalid arguments, malformed build files, ...)
 - `Tier0` — critical infrastructure failures

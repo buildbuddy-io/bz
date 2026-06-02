@@ -1,0 +1,17 @@
+load("@fbsource//tools/build_defs:rust_unittest.bzl", "rust_unittest")
+
+oncall("build_infra")
+
+rust_unittest(
+    name = "buck2_node_tests",
+    srcs = glob(["src/**/*.rs"]),
+    crate_root = "src/lib.rs",
+    deps = [
+        "//buck2/app/bz_core:buck2_core",
+        "//buck2/app/bz_error:buck2_error",
+        "//buck2/app/bz_fs:buck2_fs",
+        "//buck2/app/bz_node:buck2_node",
+        "//buck2/app/bz_util:buck2_util",
+        "//buck2/gazebo/dupe:dupe",
+    ],
+)

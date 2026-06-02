@@ -17,7 +17,7 @@ simply executes them. Exit code zero means the test passed, and one means it
 failed.
 
 Users can of course develop their own test runners. Look at
-`fbcode/buck2/app/buck2_test_runner` as a sample. For comparison, here's how
+`fbcode/buck2/app/bz_test_runner` as a sample. For comparison, here's how
 it's used at Meta:
 
 </OssOnly>

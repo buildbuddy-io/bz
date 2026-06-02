@@ -372,14 +372,14 @@ target's attributes with the configuration applied. The `uquery` command
 will not apply a configuration.
 
 Here is a heavily trimmed version of the outputs of invoking `uquery`
-and `cquery` on `//buck2/app/buck2_core:buck2_core`.
+and `cquery` on `//buck2/app/bz_core:buck2_core`.
 
 ```sh
-> buck2 uquery -A '"//buck2/app/buck2_core:buck2_core"'
+> buck2 uquery -A '"//buck2/app/bz_core:buck2_core"'
 {
-  "fbcode//buck2/app/buck2_core:buck2_core": {
+  "fbcode//buck2/app/bz_core:buck2_core": {
     "buck.type": "rust_library",
-    "buck.package": "fbcode//buck2/app/buck2_core:TARGETS",
+    "buck.package": "fbcode//buck2/app/bz_core:TARGETS",
     "name": "buck2_core",
     "visibility": [
       "PUBLIC"
@@ -414,11 +414,11 @@ and `cquery` on `//buck2/app/buck2_core:buck2_core`.
 ```
 
 ```sh
-> buck2 cquery -A '"//buck2/app/buck2_core:buck2_core"'
+> buck2 cquery -A '"//buck2/app/bz_core:buck2_core"'
 {
-  "fbcode//buck2/app/buck2_core:buck2_core (ovr_config//platform/linux:<OMITTED>)": {
+  "fbcode//buck2/app/bz_core:buck2_core (ovr_config//platform/linux:<OMITTED>)": {
     "buck.type": "rust_library",
-    "buck.package": "fbcode//buck2/app/buck2_core:TARGETS",
+    "buck.package": "fbcode//buck2/app/bz_core:TARGETS",
     "buck.target_configuration": "ovr_config//platform/linux:<OMITTED>",
     "buck.execution_platform": "fbcode//buck2/platform/<OMITTED>",
     "name": "buck2_core",

@@ -27,7 +27,7 @@ copy = rule(
 )
 
 def _download(ctx: AnalysisContext):
-    url = "https://interncache-all.fbcdn.net/manifold/buck_build_test/tree/buck2_test/http_archive/test.tgz"
+    url = "https://interncache-all.fbcdn.net/manifold/buck_build_test/tree/bz_test/http_archive/test.tgz"
     sha1 = "1a45666759704bf08fc670aa96118a0415c470fc"
 
     download = ctx.actions.declare_output("download", has_content_based_path = False)

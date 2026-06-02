@@ -35,7 +35,7 @@ buck2 test fbcode//buck2/tests/core/analysis:test_cmd_args
 # Discover more information about writing and executing integration tests
 cat tests/core/README.md
 # Run some unittests
-buck2 test fbcode//buck2/app/buck2_core:buck2_core
+buck2 test fbcode//buck2/app/bz_core:buck2_core
 ```
 
 In OSS, standard cargo tooling mostly applies. Exceptions are that integration tests do not run in

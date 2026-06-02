@@ -1,0 +1,92 @@
+load("@crates//:defs.bzl", "aliases", "all_crate_deps")
+load("@rules_rust//cargo:defs.bzl", "cargo_build_script")
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_proc_macro")
+
+package(default_visibility = ["//visibility:public"])
+
+COMMON_RUSTC_ENV = {
+    "CARGO_MANIFEST_DIR": "app/bz_health_check_proto",
+    "CARGO_PKG_AUTHORS": "",
+    "CARGO_PKG_DESCRIPTION": "",
+    "CARGO_PKG_HOMEPAGE": "",
+    "CARGO_PKG_LICENSE": "MIT OR Apache-2.0",
+    "CARGO_PKG_LICENSE_FILE": "",
+    "CARGO_PKG_NAME": "buck2_health_check_proto",
+    "CARGO_PKG_README": "",
+    "CARGO_PKG_REPOSITORY": "https://github.com/facebook/buck2",
+    "CARGO_PKG_VERSION": "0.1.0",
+    "CARGO_PKG_VERSION_MAJOR": "0",
+    "CARGO_PKG_VERSION_MINOR": "1",
+    "CARGO_PKG_VERSION_PATCH": "0",
+    "CARGO_PKG_VERSION_PRE": "",
+    }
+
+cargo_build_script(
+    name = "build_script",
+    crate_name = "buck2_health_check_proto_build_script",
+    crate_root = "build.rs",
+    srcs = ["build.rs"],
+    edition = "2024",
+    aliases = aliases(build = True, build_proc_macro = True),
+    deps = all_crate_deps(build = True) + [
+        "//app/bz_protoc_dev:buck2_protoc_dev",
+    ],
+    proc_macro_deps = all_crate_deps(build_proc_macro = True) + [],
+    rustc_env = COMMON_RUSTC_ENV,
+    build_script_env = {
+        "BUCK2_BUILD_PROTOC": "$(execpath //bazel_tools/tools/proto:buck2_protoc)",
+        "BUCK2_BUILD_PROTOC_INCLUDE": "$(execpath //bazel_tools/tools/proto:buck2_protoc_descriptor_proto)",
+    },
+    tools = [
+        "//bazel_tools/tools/proto:buck2_protoc",
+        "//bazel_tools/tools/proto:buck2_protoc_descriptor_proto",
+        "//bazel_tools/tools/proto:buck2_protoc_well_known_protos",
+    ],
+    data = glob(["**/*.proto", "**/*.lalrpop"], allow_empty = True) + [
+        "//app/bz_action_metadata_proto:action_metadata.proto",
+        "//app/bz_cli_proto:daemon.proto",
+        "//app/bz_data:data.proto",
+        "//app/bz_data:error.proto",
+        "//app/bz_downward_api_proto:downward_api.proto",
+        "//app/bz_forkserver_proto:forkserver.proto",
+        "//app/bz_host_sharing_proto:host_sharing.proto",
+        "//app/bz_install_proto:install.proto",
+        "//app/bz_subscription_proto:subscription.proto",
+        "//app/bz_test_proto:test.proto",
+        "//app/bz_worker_proto:worker.proto",
+        "//remote_execution/oss/re_grpc_proto:proto/build/bazel/remote/execution/v2/remote_execution.proto",
+        "//remote_execution/oss/re_grpc_proto:proto/build/bazel/semver/semver.proto",
+        "//remote_execution/oss/re_grpc_proto:proto/google/api/annotations.proto",
+        "//remote_execution/oss/re_grpc_proto:proto/google/api/client.proto",
+        "//remote_execution/oss/re_grpc_proto:proto/google/api/http.proto",
+        "//remote_execution/oss/re_grpc_proto:proto/google/api/launch_stage.proto",
+        "//remote_execution/oss/re_grpc_proto:proto/google/bytestream/bytestream.proto",
+        "//remote_execution/oss/re_grpc_proto:proto/google/longrunning/operations.proto",
+        "//remote_execution/oss/re_grpc_proto:proto/google/rpc/code.proto",
+        "//remote_execution/oss/re_grpc_proto:proto/google/rpc/status.proto",
+    ],
+)
+
+rust_library(
+    name = "buck2_health_check_proto",
+    crate_name = "buck2_health_check_proto",
+    crate_root = "src/lib.rs",
+    srcs = glob(["src/**/*.rs"]),
+    edition = "2024",
+    aliases = aliases(),
+    deps = all_crate_deps(normal = True) + [
+        ":build_script",
+        "//app/bz_data:buck2_data",
+        "//gazebo/gazebo:gazebo",
+    ],
+    proc_macro_deps = all_crate_deps(proc_macro = True) + [],
+    rustc_env = COMMON_RUSTC_ENV,
+    compile_data = glob([
+        "**/*",
+    ], allow_empty = True, exclude = [
+        "BUILD.bazel",
+        "BUCK",
+        "Cargo.toml",
+        "fuzz/**",
+    ]),
+)

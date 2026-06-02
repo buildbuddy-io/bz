@@ -211,7 +211,7 @@ A few different traversal orders are supported with the `ordering` attribute:
 
 For example:
 
-```python src=fbcode/buck2/app/buck2_build_api_tests/src/interpreter/transitive_set/tests.rs
+```python src=fbcode/buck2/app/bz_build_api_tests/src/interpreter/transitive_set/tests.rs
 F = ctx.actions.tset(MySet, value = "F")
 E = ctx.actions.tset(MySet, value = "E")
 D = ctx.actions.tset(MySet, value = "D", children = [E, F])
@@ -261,7 +261,7 @@ style df display:none
 
 This is verified by the test:
 
-```python src=fbcode/buck2/app/buck2_build_api_tests/src/interpreter/transitive_set/tests.rs title=fbcode/buck2/app/buck2_build_api_tests/src/interpreter/transitive_set/tests.rs
+```python src=fbcode/buck2/app/bz_build_api_tests/src/interpreter/transitive_set/tests.rs title=fbcode/buck2/app/bz_build_api_tests/src/interpreter/transitive_set/tests.rs
 # Test all orderings which show up in the table.
 assert_eq(["A", "B", "D", "F", "E", "C"], list(A.traverse()))
 assert_eq(["A", "B", "D", "F", "E", "C"], list(A.traverse(ordering = "preorder")))

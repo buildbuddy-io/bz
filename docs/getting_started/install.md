@@ -66,7 +66,7 @@ To hack on Buck2, build from a clone of the repo instead:
 ```sh
 git clone https://github.com/facebook/buck2.git
 cd buck2/
-cargo install --path=app/buck2
+cargo install --path=app/bz
 ```
 
 ### Using Nix

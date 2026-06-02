@@ -8,7 +8,7 @@
 
 # Avoid some copy-paste
 def _app(s):
-    return "//buck2/app/" + s + ":" + s
+    return "//buck2/app/" + s.replace("buck2", "bz") + ":" + s
 
 # These crates should only implement late bindings and not be depended on
 # directly
@@ -21,7 +21,7 @@ LATE_BINDING_ONLY_CRATES = [
     _app("buck2_query_impls"),
 ]
 
-# These crates may only be depended on from `app/buck2`
+# These crates may only be depended on from `app/bz`
 TOP_LEVEL_ONLY_CRATES = [
     _app("buck2_cmd_debug_client"),
     _app("buck2_cmd_log_client"),

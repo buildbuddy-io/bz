@@ -20,7 +20,7 @@ Documentation for shell_buck2_utils, ways to use
     cell_root/0,
     rebuild_modules/1,
     buck2_build_targets/1,
-    buck2_query/1, buck2_query/2, buck2_query/3,
+    bz_query/1, bz_query/2, bz_query/3,
     run_command/1, run_command/2,
     no_stderr/1,
     get_additional_paths/1,

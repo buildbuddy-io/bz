@@ -36,7 +36,7 @@ def _check_top_level_only(ctx: AnalysisContext):
     for all_paths in ctx.attrs.top_level_only_paths:
         all_paths = list(all_paths)
         target = all_paths.pop()
-        remainder = filter(lambda t: not str(t.label).startswith("fbcode//buck2/app/buck2:"), all_paths)
+        remainder = filter(lambda t: not str(t.label).startswith("fbcode//buck2/app/bz:"), all_paths)
 
         if len(remainder) != 0:
             m = "Top-level-only crate `" + str(target.label) + "` may not be depended on by:"
@@ -69,9 +69,9 @@ _test_buck2_dep_graph = rule(
     },
 )
 
-_CLIENT_BIN = "fbcode//buck2/app/buck2:buck2_client-bin"
+_CLIENT_BIN = "fbcode//buck2/app/bz:buck2_client-bin"
 
-_BUCK2_BIN = "fbcode//buck2/app/buck2:buck2-bin"
+_BUCK2_BIN = "fbcode//buck2/app/bz:buck2-bin"
 
 _RE_CLIENT_TARGET = "//remote_execution/client_lib/wrappers/rust:re_client_lib"
 

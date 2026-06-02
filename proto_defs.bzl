@@ -68,7 +68,7 @@ def _rust_protobuf_library(
         srcs = [build_script],
         crate_root = build_script,
         deps = [
-            "fbcode//buck2/app/buck2_protoc_dev:" + buck2_protoc_dev,
+            "fbcode//buck2/app/bz_protoc_dev:" + buck2_protoc_dev,
         ],
     )
 
