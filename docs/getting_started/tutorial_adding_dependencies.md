@@ -268,7 +268,7 @@ Imagine that as our application grows, we realize we want to log information
 about what's happening inside our functions. This is a common need for debugging
 or just understanding the flow. To help with this, let's say we've prepared a
 simple, shared logging library for you. <FbInternalOnly> The library is
-`fbcode//buck2/docs/buck2_lab/logging_lib:logging_lib`. </FbInternalOnly>
+`fbcode//bz/docs/buck2_lab/logging_lib:logging_lib`. </FbInternalOnly>
 <OssOnly> You can find it at
 https://github.com/facebook/buck2/tree/main/docs/buck2_lab/logging_lib and copy
 the folder into `buck2_lab` folder. </OssOnly>
@@ -291,7 +291,7 @@ rust_library(
     visibility = ["PUBLIC"],
     deps = [
         # Add the dep to our logging_lib
-        "fbcode//buck2/docs/buck2_lab/logging_lib:logging_lib",
+        "fbcode//bz/docs/buck2_lab/logging_lib:logging_lib",
     ],
 )
 ```
@@ -431,7 +431,7 @@ rust_binary(
     srcs = ["src/main.rs"],
     deps = [
         "fbcode//scripts/$USER/buck2_lab/greeter_lib:library",
-        "fbcode//buck2/docs/buck2_lab/logging_lib:logging_lib",  # Add this line
+        "fbcode//bz/docs/buck2_lab/logging_lib:logging_lib",  # Add this line
     ],
 )
 ```

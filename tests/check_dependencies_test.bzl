@@ -6,7 +6,7 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
-load("@fbcode//buck2/tests:buck_e2e.bzl", "buck2_e2e_test")
+load("@fbcode//bz/tests:buck_e2e.bzl", "buck2_e2e_test")
 load("@fbcode_macros//build_defs:native_rules.bzl", "buck_genrule")
 load("@fbsource//tools/build_defs/windows:powershell.bzl", "powershell_cmd_exe")
 load("@fbsource//tools/target_determinator/macros:ci.bzl", "ci")
@@ -26,7 +26,7 @@ def _check_dependencies_test(
     buck2_e2e_test(
         contacts = contacts,
         name = name,
-        srcs = {"fbcode//buck2/tests/e2e_util:test_bxl_check_dependencies_template.py": "test_bxl_check_dependencies_template.py"},
+        srcs = {"fbcode//bz/tests/e2e_util:test_bxl_check_dependencies_template.py": "test_bxl_check_dependencies_template.py"},
         env = env,
         labels = labels,
         test_with_compiled_buck2 = False,
@@ -99,7 +99,7 @@ def check_dependencies_test(
         (for example, allowlist: //testing/jest/.*).
     """
 
-    bxl_main = "fbcode//buck2/tests/check_dependencies_test.bxl:test"
+    bxl_main = "fbcode//bz/tests/check_dependencies_test.bxl:test"
     allowlist_patterns = ",".join(allowlist_patterns) if allowlist_patterns else ""
     blocklist_patterns = ",".join(blocklist_patterns) if blocklist_patterns else ""
     if not (expect_failure_msg == None or len(expect_failure_msg) > 0):
@@ -156,7 +156,7 @@ def assert_dependencies_test(
         labels = [],
         **kwargs):
     """
-    Creates a test target fromfbcode//buck2/tests/assert_dependencies_test.bxl:test bxl script.
+    Creates a test target fromfbcode//bz/tests/assert_dependencies_test.bxl:test bxl script.
 
     Parameters:
         name: Name of the test target.
@@ -169,7 +169,7 @@ def assert_dependencies_test(
         target = target,
         contacts = contacts,
         env = {
-            "BXL_MAIN": "fbcode//buck2/tests/assert_dependencies_test.bxl:test",
+            "BXL_MAIN": "fbcode//bz/tests/assert_dependencies_test.bxl:test",
             "DEPS": ",".join(expected_deps),
             "EXPECT_FAILURE_MSG": expect_failure_msg or "",
             "FLAVOR": "assert_dependencies_test",
@@ -207,7 +207,7 @@ def audit_dependents_test(
         contacts = contacts,
         env = {
             "ALLOWLIST": ",".join(allowlist_patterns) if allowlist_patterns else "",
-            "BXL_MAIN": "fbcode//buck2/tests/audit_dependents_test.bxl:test",
+            "BXL_MAIN": "fbcode//bz/tests/audit_dependents_test.bxl:test",
             "EXPECT_FAILURE_MSG": expect_failure_msg or "",
             "FLAVOR": "audit_dependents_test",
             "SOURCE_TARGET": source_target,
@@ -280,7 +280,7 @@ def check_mutually_exclusive_dependencies_test(
         contacts = contacts,
         env = {
             "BUILD_MODE_ARGFILE": build_mode_argfile,
-            "BXL_MAIN": "fbcode//buck2/tests/check_mutually_exclusive_dependencies_test.bxl:test",
+            "BXL_MAIN": "fbcode//bz/tests/check_mutually_exclusive_dependencies_test.bxl:test",
             "EXPECT_FAILURE_MSG": expect_failure_msg or "",
             "FLAVOR": "check_mutually_exclusive_dependencies_test",
             "MUTUALLY_EXCLUSIVE_GROUP": group_str,

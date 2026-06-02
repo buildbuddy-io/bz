@@ -45,10 +45,10 @@ rust_library(
         # If you need some feature requiring working with syntax tree, like a linter,
         # please implement it inside the `starlark` crate.
         # For codemods, use libCST.
-        "//buck2/starlark-rust/...",
+        "//bz/starlark-rust/...",
         # For faster incremental compilation of buck2,
         # we pull `starlark::Error` from this crate rather than from `starlark`.
-        "//buck2/app/bz_error/...",
+        "//bz/app/bz_error/...",
     ],
     deps = [
         "fbsource//third-party/rust:annotate-snippets",
@@ -63,9 +63,9 @@ rust_library(
         "fbsource//third-party/rust:num-traits",
         "fbsource//third-party/rust:once_cell",
         "fbsource//third-party/rust:thiserror",
-        "//buck2/allocative/allocative:allocative",
-        "//buck2/gazebo/dupe:dupe",
-        "//buck2/pagable:pagable",
-        "//buck2/starlark-rust/starlark_map:starlark_map",
+        "//bz/allocative/allocative:allocative",
+        "//bz/gazebo/dupe:dupe",
+        "//bz/pagable:pagable",
+        "//bz/starlark-rust/starlark_map:starlark_map",
     ],
 )

@@ -9,34 +9,34 @@ rust_library(
         ["src/*"],
     ),
     mapped_srcs = {
-        "//buck2/app/bz_explain/js:html": "src/explain.html",
-        "//buck2/app/bz_explain/output_format_js:html": "src/output_format.html",
+        "//bz/app/bz_explain/js:html": "src/explain.html",
+        "//bz/app/bz_explain/output_format_js:html": "src/output_format.html",
         ":output_format_schema_rust[output_format_generated.rs]": "src/output_format_generated.rs",
         ":schema_rust[explain_generated.rs]": "src/explain_generated.rs",
     },
     test_deps = [
-        "//buck2/app/bz_interpreter_for_build:buck2_interpreter_for_build",
-        "//buck2/app/bz_util:buck2_util",
-        "//buck2/gazebo/dupe:dupe",
-        "//buck2/starlark-rust/starlark:starlark",
+        "//bz/app/bz_interpreter_for_build:buck2_interpreter_for_build",
+        "//bz/app/bz_util:buck2_util",
+        "//bz/gazebo/dupe:dupe",
+        "//bz/starlark-rust/starlark:starlark",
     ],
     deps = [
         "fbsource//third-party/rust:base64",
         "fbsource//third-party/rust:flatbuffers",
-        "//buck2/app/bz_common:buck2_common",
-        "//buck2/app/bz_core:buck2_core",
-        "//buck2/app/bz_error:buck2_error",
-        "//buck2/app/bz_fs:buck2_fs",
-        "//buck2/app/bz_node:buck2_node",
-        "//buck2/app/bz_query:buck2_query",
-        "//buck2/shed/buck2_hash:buck2_hash",
+        "//bz/app/bz_common:buck2_common",
+        "//bz/app/bz_core:buck2_core",
+        "//bz/app/bz_error:buck2_error",
+        "//bz/app/bz_fs:buck2_fs",
+        "//bz/app/bz_node:buck2_node",
+        "//bz/app/bz_query:buck2_query",
+        "//bz/shed/buck2_hash:buck2_hash",
     ],
 )
 
 buck_genrule(
     name = "output_format_schema_rust",
     srcs = [
-        "//buck2/app/bz_explain/output_format_js:output_format.fbs",
+        "//bz/app/bz_explain/output_format_js:output_format.fbs",
     ],
     outs = {
         "output_format_generated.rs": ["output_format_generated.rs"],
@@ -48,7 +48,7 @@ buck_genrule(
 buck_genrule(
     name = "schema_rust",
     srcs = [
-        "//buck2/app/bz_explain/js:explain.fbs",
+        "//bz/app/bz_explain/js:explain.fbs",
     ],
     outs = {
         "explain_generated.rs": ["explain_generated.rs"],

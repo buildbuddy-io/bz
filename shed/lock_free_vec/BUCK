@@ -7,6 +7,6 @@ rust_library(
     srcs = glob(["src/**/*.rs"]),
     crate_root = "src/lib.rs",
     deps = [
-        "//buck2/allocative/allocative:allocative",
+        "//bz/allocative/allocative:allocative",
     ],
 )

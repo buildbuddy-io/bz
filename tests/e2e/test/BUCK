@@ -1,14 +1,14 @@
-load("@fbcode//buck2/tests:buck_e2e.bzl", "buck2_e2e_test")
+load("@fbcode//bz/tests:buck_e2e.bzl", "buck2_e2e_test")
 
 oncall("testing_frameworks")
 
 buck2_e2e_test(
     name = "test_test_inplace",
     srcs = ["test_test_inplace.py"],
-    data = "//buck2/tests/targets:isolated_targets",
+    data = "//bz/tests/targets:isolated_targets",
     test_with_deployed_buck2 = True,
     use_compiled_buck2_client_and_tpx = True,
-    deps = ["//buck2/tests/e2e_util:utils"],
+    deps = ["//bz/tests/e2e_util:utils"],
 )
 
 buck2_e2e_test(
@@ -25,7 +25,7 @@ buck2_e2e_test(
     test_with_deployed_buck2 = True,
     use_compiled_buck2_client_and_tpx = True,
     deps = [
-        "//buck2/tests/e2e_util:utils",
+        "//bz/tests/e2e_util:utils",
         "//remote_execution/client_lib/wrappers/python:py_re_client_lib",
         "//remote_execution/lib/if:common-py3-types",
         "//remote_execution/lib/if:common-python-types",
@@ -48,7 +48,7 @@ buck2_e2e_test(
     test_with_deployed_buck2 = False,
     use_compiled_buck2_client_and_tpx = True,
     deps = [
-        "//buck2/tests/e2e_util:utils",
+        "//bz/tests/e2e_util:utils",
         "//tae/testx:py",
     ],
 )
@@ -71,7 +71,7 @@ buck2_e2e_test(
 buck2_e2e_test(
     name = "test_test_remote_execution",
     srcs = ["test_test_remote_execution.py"],
-    data = "//buck2/tests/targets:isolated_targets",
+    data = "//bz/tests/targets:isolated_targets",
     test_with_deployed_buck2 = False,
     use_compiled_buck2_client_and_tpx = True,
 )
@@ -86,8 +86,8 @@ buck2_e2e_test(
     test_with_deployed_buck2 = False,
     use_compiled_buck2_client_and_tpx = True,
     deps = [
-        "//buck2/tests/e2e_util:utilities",
-        "//buck2/tests/e2e_util/api:api",
+        "//bz/tests/e2e_util:utilities",
+        "//bz/tests/e2e_util/api:api",
     ],
 )
 

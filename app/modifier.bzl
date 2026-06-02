@@ -6,7 +6,7 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
-load("@fbcode//buck2/cfg/experimental:modifiers.bzl", "modifiers")
+load("@fbcode//bz/cfg/experimental:modifiers.bzl", "modifiers")
 
 def buck2_modifiers():
     # **WARNING**: This is not vetted for correctness and should only be used in fbcode/buck2.

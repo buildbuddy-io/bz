@@ -474,7 +474,7 @@ impl LoadResolver for InterpreterLoadResolver {
             });
         }
 
-        // If you load the same .bzl file twice via different aliases (e.g. fbcode//buck2/prelude/foo.bzl and prelude.bzl)
+        // If you load the same .bzl file twice via different aliases (e.g. fbcode//bz/prelude/foo.bzl and prelude.bzl)
         // then anything doing pointer equality (t-sets, provider identities) will go wrong.
         let project_path = self
             .config

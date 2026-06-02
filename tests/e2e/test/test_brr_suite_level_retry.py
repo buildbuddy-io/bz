@@ -40,7 +40,7 @@ def read_brr_report(path: Path) -> dict[str, object]:
     return merged
 
 
-PYTHON_TEST_TARGET: str = "fbcode//buck2/tests/targets/rules/python/test:test"
+PYTHON_TEST_TARGET: str = "fbcode//bz/tests/targets/rules/python/test:test"
 
 
 @buck_test(inplace=True, skip_for_os=["darwin", "windows"])

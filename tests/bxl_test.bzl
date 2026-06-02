@@ -6,7 +6,7 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
-load("@fbcode//buck2/tests:buck_e2e.bzl", "buck2_e2e_test")
+load("@fbcode//bz/tests:buck_e2e.bzl", "buck2_e2e_test")
 load("@fbcode_macros//build_defs:export_files.bzl", "export_file")
 
 def bxl_test(src, name = None, labels = None, buck_args: list[str] | None = None, bxl_args: list[str] | None = None, env: dict[str, str] | None = None, **kwargs):
@@ -61,7 +61,7 @@ def bxl_test(src, name = None, labels = None, buck_args: list[str] | None = None
     buck2_e2e_test(
         name = name,
         env = merged_env,
-        srcs = {"fbcode//buck2/tests/e2e_util:test_bxl_template.py": "test_bxl_template.py"},
+        srcs = {"fbcode//bz/tests/e2e_util:test_bxl_template.py": "test_bxl_template.py"},
         labels = ["bxl_test"] + (labels if labels else []),
         test_with_compiled_buck2 = False,
         test_with_deployed_buck2 = True,

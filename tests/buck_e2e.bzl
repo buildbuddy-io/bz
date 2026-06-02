@@ -6,7 +6,7 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
-load("@fbcode//buck2/app:modifier.bzl", "buck2_modifiers")
+load("@fbcode//bz/app:modifier.bzl", "buck2_modifiers")
 load("@fbcode_macros//build_defs:native_rules.bzl", "buck_filegroup")
 load("@fbcode_macros//build_defs:python_pytest.bzl", "python_pytest")
 load("@fbsource//tools/target_determinator/macros:ci.bzl", "ci")
@@ -109,21 +109,21 @@ def buck_e2e_test(
     if require_nano_prelude == None:
         require_nano_prelude = data_dir != None
     if require_nano_prelude:
-        env["NANO_PRELUDE"] = "$(location fbcode//buck2/tests/e2e_util/nano_prelude:nano_prelude)"
+        env["NANO_PRELUDE"] = "$(location fbcode//bz/tests/e2e_util/nano_prelude:nano_prelude)"
 
     deps += [
         "fbsource//third-party/pypi/pytest:pytest",
         "fbsource//third-party/pypi/pytest-asyncio:pytest-asyncio",
-        "fbcode//buck2/tests/e2e_util:utilities",
+        "fbcode//bz/tests/e2e_util:utilities",
     ]
     if use_buck_api:
-        deps += ["fbcode//buck2/tests/e2e_util/api:api"]
+        deps += ["fbcode//bz/tests/e2e_util/api:api"]
     resources = resources or {}
 
     # Let users of the macro define their own configuration for pytest. This allow for reusing all
     # the fixture code for tools building e2e tests that also need a working buck environment.
     if not "conftest.py" in resources.values():
-        resources["fbcode//buck2/tests/e2e_util:conftest.py"] = "conftest.py"
+        resources["fbcode//bz/tests/e2e_util:conftest.py"] = "conftest.py"
 
     if "darwin" in skip_for_os:
         labels += ci.remove_labels(ci.mac(ci.aarch64(ci.opt())))
@@ -267,13 +267,13 @@ def buck2_e2e_test(
         compiled_env["BUCK2_TPX"] = "$BUCK2_BINARY_DIR/buck2-tpx"
 
         if use_compiled_buck2_client_and_tpx:
-            base_exe = "$(location fbcode//buck2:symlinked_buck2_and_tpx)/buck2"
+            base_exe = "$(location fbcode//bz:symlinked_buck2_and_tpx)/buck2"
             exe = select({
                 "DEFAULT": base_exe,
                 "ovr_config//os:windows": base_exe + ".exe",
             })
         else:
-            exe = "$(location fbcode//buck2:buck2)"
+            exe = "$(location fbcode//bz:bz)"
 
         buck_e2e_test(
             # deployed buck2 test target retains the original target name so that when user runs `buck test <test target>`,
@@ -364,8 +364,8 @@ def buck2_core_tests(
                 attrs["srcs"] = [item]
 
             IMPLICIT_DEPS = [
-                "//buck2/tests/e2e_util:utils",
-                "//buck2/tests/e2e_util:golden",
+                "//bz/tests/e2e_util:utils",
+                "//bz/tests/e2e_util:golden",
             ]
             attrs["deps"] = list(attrs.get("deps") or [])
             attrs["deps"].extend(IMPLICIT_DEPS)

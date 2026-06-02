@@ -13,8 +13,8 @@ rust_binary(
     resources = select({
         "DEFAULT": {},
         "ovr_config//os:linux": {
-            "fish": "//buck2/shed/completion_verify/packages:fish",
-            "zsh": "//buck2/shed/completion_verify/packages:zsh",
+            "fish": "//bz/shed/completion_verify/packages:fish",
+            "zsh": "//bz/shed/completion_verify/packages:zsh",
         },
     }),
     deps = [

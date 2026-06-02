@@ -24,7 +24,7 @@ audit` and `buck2 debug`, which can be helpful.
 is run in a different isolation dir, to prevent the command from stepping on your existing buck
 daemon. This means large builds will get no cache hits and be very slow.
 
-Alternatively, `buck2 build @fbcode//mode/opt fbcode//buck2:buck2 --out /tmp/buck2` to build buck2
+Alternatively, `buck2 build @fbcode//mode/opt fbcode//bz:bz --out /tmp/buck2` to build buck2
 on its own. Then, use `/tmp/buck2` to run builds in a *different* checkout of fbsource from the one
 you're editing code in.
 
@@ -68,7 +68,7 @@ own Tpx and then have Buck2 use it, as follows:
 
 ```bash
 # Build Tpx
-buck2 build @fbcode//mode/opt fbcode//buck2/buck2_tpx_cli:buck2_tpx_cli --out /tmp/tpx
+buck2 build @fbcode//mode/opt fbcode//bz/buck2_tpx_cli:buck2_tpx_cli --out /tmp/tpx
 
 # Use Tpx
 buck2 test -c test.v2_test_executor=/tmp/tpx

@@ -8,11 +8,11 @@ rust_library(
     test_deps = [],
     deps = [
         "fbsource//third-party/rust:inferno",
-        "//buck2/app/bz_cli_proto:buck2_cli_proto",
-        "//buck2/app/bz_core:buck2_core",
-        "//buck2/app/bz_error:buck2_error",
-        "//buck2/app/bz_fs:buck2_fs",
-        "//buck2/app/bz_interpreter:buck2_interpreter",
-        "//buck2/starlark-rust/starlark:starlark",
+        "//bz/app/bz_cli_proto:buck2_cli_proto",
+        "//bz/app/bz_core:buck2_core",
+        "//bz/app/bz_error:buck2_error",
+        "//bz/app/bz_fs:buck2_fs",
+        "//bz/app/bz_interpreter:buck2_interpreter",
+        "//bz/starlark-rust/starlark:starlark",
     ],
 )

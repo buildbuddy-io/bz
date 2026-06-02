@@ -30,7 +30,7 @@ async def test_health_check_with_request_hang(buck: Buck) -> None:
         "BUCK2_HEALTH_CHECK_STATE_INFO_PATH": health_check_state_file,
     }
     await buck.build(
-        "fbcode//buck2/tests/targets/rules/rust/hello_world:welcome",
+        "fbcode//bz/tests/targets/rules/rust/hello_world:welcome",
         env=env,
     )
     with open(server_output, "r") as f:
@@ -53,7 +53,7 @@ async def start_health_check_server(
     # Start the server before the build begins to ensure that the server is ready to accept requests.
     # This is necessary since the run_request_hang_server.sh script may need to build the server target.
     cmd = buck.run(
-        "fbcode//buck2/tests/e2e/health_check:health_check_server_bin",
+        "fbcode//bz/tests/e2e/health_check:health_check_server_bin",
         "--",
         "--isolation-dir",  # Avoids interference with the build of test target
         "health_check_server",

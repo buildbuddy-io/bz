@@ -6,7 +6,7 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
-load("@fbcode//buck2:buck_rust_binary.bzl", "buck_rust_binary")
+load("@fbcode//bz:buck_rust_binary.bzl", "buck_rust_binary")
 load("@fbcode_macros//build_defs:native_rules.bzl", "alias", "buck_genrule")
 load("@fbsource//tools/build_defs:rust_library.bzl", "rust_library")
 
@@ -68,7 +68,7 @@ def _rust_protobuf_library(
         srcs = [build_script],
         crate_root = build_script,
         deps = [
-            "fbcode//buck2/app/bz_protoc_dev:" + buck2_protoc_dev,
+            "fbcode//bz/app/bz_protoc_dev:" + buck2_protoc_dev,
         ],
     )
 

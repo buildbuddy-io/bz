@@ -21,18 +21,18 @@ rust_library(
         "fbsource//third-party/rust:tokio",
         "fbsource//third-party/rust:tokio-stream",
         "fbsource//third-party/rust:tonic",
-        "//buck2/allocative/allocative:allocative",
-        "//buck2/app/bz_common:buck2_common",
-        "//buck2/app/bz_core:buck2_core",
-        "//buck2/app/bz_data:buck2_data",
-        "//buck2/app/bz_error:buck2_error",
-        "//buck2/app/bz_execute_local:buck2_execute_local",
-        "//buck2/app/bz_forkserver_proto:buck2_forkserver_proto",
-        "//buck2/app/bz_fs:buck2_fs",
-        "//buck2/app/bz_grpc:buck2_grpc",
-        "//buck2/app/bz_resource_control:buck2_resource_control",
-        "//buck2/app/bz_util:buck2_util",
-        "//buck2/gazebo/dupe:dupe",
+        "//bz/allocative/allocative:allocative",
+        "//bz/app/bz_common:buck2_common",
+        "//bz/app/bz_core:buck2_core",
+        "//bz/app/bz_data:buck2_data",
+        "//bz/app/bz_error:buck2_error",
+        "//bz/app/bz_execute_local:buck2_execute_local",
+        "//bz/app/bz_forkserver_proto:buck2_forkserver_proto",
+        "//bz/app/bz_fs:buck2_fs",
+        "//bz/app/bz_grpc:buck2_grpc",
+        "//bz/app/bz_resource_control:buck2_resource_control",
+        "//bz/app/bz_util:buck2_util",
+        "//bz/gazebo/dupe:dupe",
     ] + select({
         "DEFAULT": [],
         "ovr_config//os:linux": [
@@ -44,5 +44,5 @@ rust_library(
 
 rust_linkable_symbol(
     name = "buck2_miniperf_data",
-    content_bytes = "//buck2/app/bz_miniperf:buck2_miniperf",
+    content_bytes = "//bz/app/bz_miniperf:buck2_miniperf",
 )

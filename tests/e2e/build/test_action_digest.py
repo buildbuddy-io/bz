@@ -34,7 +34,7 @@ from buck2.tests.e2e_util.helper.utils import read_what_ran
 async def test_action_digest(buck: Buck) -> None:
     await buck.build(
         get_mode_from_platform(),
-        "fbcode//buck2/tests/targets/rules/rust/hello_world:welcome",
+        "fbcode//bz/tests/targets/rules/rust/hello_world:welcome",
         "--remote-only",
     )
     compiled_out = await read_what_ran(buck)
@@ -47,7 +47,7 @@ async def test_action_digest(buck: Buck) -> None:
     buck.path_to_executable = Path("buck2")
     await buck.build(
         get_mode_from_platform(),
-        "fbcode//buck2/tests/targets/rules/rust/hello_world:welcome",
+        "fbcode//bz/tests/targets/rules/rust/hello_world:welcome",
         "--remote-only",
     )
     deployed_out = await read_what_ran(buck)

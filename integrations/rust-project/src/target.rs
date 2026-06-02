@@ -102,7 +102,7 @@ pub(crate) enum Kind {
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub(crate) struct TargetInfo {
     pub(crate) name: String,
-    /// The target identifier, e.g. `fbcode//buck2/integrations/rust-project:rust-project`.
+    /// The target identifier, e.g. `fbcode//bz/integrations/rust-project:rust-project`.
     ///
     /// See also <https://buck2.build/docs/concepts/labels/>
     pub(crate) label: String,

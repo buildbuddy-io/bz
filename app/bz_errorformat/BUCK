@@ -11,6 +11,6 @@ rust_library(
         "fbsource//third-party/rust:fancy-regex",
         "fbsource//third-party/rust:nom",
         "fbsource//third-party/rust:tracing",
-        "//buck2/app/bz_error:buck2_error",
+        "//bz/app/bz_error:buck2_error",
     ],
 )

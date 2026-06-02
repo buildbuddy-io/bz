@@ -9,6 +9,6 @@ rust_library(
         "fbsource//third-party/rust:dashmap",
         "fbsource//third-party/rust:fxhash",
         "fbsource//third-party/rust:indexmap",
-        "//buck2/gazebo/dupe:dupe",
+        "//bz/gazebo/dupe:dupe",
     ],
 )

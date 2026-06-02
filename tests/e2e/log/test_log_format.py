@@ -22,7 +22,7 @@ from buck2.tests.e2e_util.buck_workspace import buck_test
 # fbcode_build_infra oncall to ensure that log parsers are also migrated.
 @buck_test(inplace=True, skip_for_os=["windows"])
 async def test_log_format(buck: Buck) -> None:
-    await buck.build("fbcode//buck2/tests/targets/rules/cxx/hello_world:welcome")
+    await buck.build("fbcode//bz/tests/targets/rules/cxx/hello_world:welcome")
     out = await buck.log("show")
 
     lines = [line.strip() for line in out.stdout.splitlines()]

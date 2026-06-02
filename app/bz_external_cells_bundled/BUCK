@@ -13,7 +13,7 @@ bundled_cell(
 bundled_cell(
     name = "bazel_tools",
     include_from_file = "src/lib.rs",
-    source_listing = "//buck2/bazel_tools:source_listing",
+    source_listing = "//bz/bazel_tools:source_listing",
 )
 
 rust_library(

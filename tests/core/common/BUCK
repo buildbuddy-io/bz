@@ -6,7 +6,7 @@ python_library(
     name = "io",
     srcs = glob(["io/*.py"]),
     deps = [
-        "//buck2/tests/e2e_util:utils",
-        "//buck2/tests/e2e_util/api:api",
+        "//bz/tests/e2e_util:utils",
+        "//bz/tests/e2e_util/api:api",
     ],
 )

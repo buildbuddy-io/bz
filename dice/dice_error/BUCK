@@ -10,8 +10,8 @@ rust_library(
     deps = [
         "fbsource//third-party/rust:derive_more",
         "fbsource//third-party/rust:thiserror",
-        "//buck2/allocative/allocative:allocative",
-        "//buck2/gazebo/cmp_any:cmp_any",
-        "//buck2/gazebo/dupe:dupe",
+        "//bz/allocative/allocative:allocative",
+        "//bz/gazebo/cmp_any:cmp_any",
+        "//bz/gazebo/dupe:dupe",
     ],
 )

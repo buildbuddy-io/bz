@@ -337,7 +337,7 @@ impl<'a> BuckdLifecycle<'a> {
         // TODO(nga): We create too many backtraces during `attrs.source()` coercion. Can be
         //   reproduced with this command:
         //   ```
-        //   buck2 --isolation-dir=xx audit providers fbcode//buck2:buck2 --quiet
+        //   buck2 --isolation-dir=xx audit providers fbcode//bz:bz --quiet
         //   ```
         //   Which regresses from 15s to 80s when `RUST_LIB_BACKTRACE` is set. So we disable
         //   backtraces in the daemon unless the user has explicitly asked for them. We

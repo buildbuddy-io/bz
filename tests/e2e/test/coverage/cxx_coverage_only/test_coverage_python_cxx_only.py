@@ -21,7 +21,7 @@ async def test_python_coverage(buck: Buck) -> None:
     with tempfile.NamedTemporaryFile("w") as covfile:
         await buck.test(
             "@fbcode//mode/dbgo-cov",
-            "fbcode//buck2/tests/targets/rules/python/coverage:test",
+            "fbcode//bz/tests/targets/rules/python/coverage:test",
             "--",
             "--collect-coverage",
             f"--coverage-output={covfile.name}",
@@ -41,7 +41,7 @@ async def test_python_coverage_filtering_by_folder(buck: Buck) -> None:
     with tempfile.NamedTemporaryFile("w") as covfile:
         await buck.test(
             "@fbcode//mode/dbgo-cov",
-            "fbcode//buck2/tests/targets/rules/python/coverage:test",
+            "fbcode//bz/tests/targets/rules/python/coverage:test",
             "-c",
             f"fbcode.cxx_coverage_only={folder_to_collect}",
             "--",

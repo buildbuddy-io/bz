@@ -117,5 +117,5 @@ See [Bootstrapping](../about/bootstrapping.md) for details. The gist:
 
 ```sh
 reindeer --third-party-dir shim/third-party/rust buckify
-buck2 build //:buck2
+buck2 build //:bz
 ```

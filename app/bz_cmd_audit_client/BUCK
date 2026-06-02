@@ -10,8 +10,8 @@ rust_library(
         "fbsource//third-party/rust:clap",
         "fbsource//third-party/rust:serde",
         "fbsource//third-party/rust:serde_json",
-        "//buck2/app/bz_cli_proto:buck2_cli_proto",
-        "//buck2/app/bz_client_ctx:buck2_client_ctx",
-        "//buck2/gazebo/dupe:dupe",
+        "//bz/app/bz_cli_proto:buck2_cli_proto",
+        "//bz/app/bz_client_ctx:buck2_client_ctx",
+        "//bz/gazebo/dupe:dupe",
     ],
 )

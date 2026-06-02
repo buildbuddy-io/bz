@@ -16,9 +16,9 @@ rust_library(
     }),
     deps = [
         "fbsource//third-party/rust:serde",
-        "//buck2/app/bz_core:buck2_core",
-        "//buck2/app/bz_error:buck2_error",
-        "//buck2/app/bz_fs:buck2_fs",
-        "//buck2/app/bz_util:buck2_util",
+        "//bz/app/bz_core:buck2_core",
+        "//bz/app/bz_error:buck2_error",
+        "//bz/app/bz_fs:buck2_fs",
+        "//bz/app/bz_util:buck2_util",
     ],
 )

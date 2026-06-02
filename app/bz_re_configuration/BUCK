@@ -6,9 +6,9 @@ rust_library(
     name = "buck2_re_configuration",
     srcs = glob(["src/**/*.rs"]),
     deps = [
-        "//buck2/allocative/allocative:allocative",
-        "//buck2/app/bz_common:buck2_common",
-        "//buck2/app/bz_core:buck2_core",
-        "//buck2/app/bz_error:buck2_error",
+        "//bz/allocative/allocative:allocative",
+        "//bz/app/bz_common:buck2_common",
+        "//bz/app/bz_core:buck2_core",
+        "//bz/app/bz_error:buck2_error",
     ],
 )

@@ -253,7 +253,7 @@ def process_genrule(
     if type(ctx.attrs.srcs) == type([]):
         srcs = [src for src in ctx.attrs.srcs if not isinstance(src, str)]
         # FIXME: We should always use the short_path, but currently that is sometimes blank.
-        # See fbcode//buck2/tests/targets/rules/genrule:genrule-dot-input for a test that exposes it.
+        # See fbcode//bz/tests/targets/rules/genrule:genrule-dot-input for a test that exposes it.
         symlinks = {src.short_path: src for src in srcs}
 
         if len(symlinks) != len(srcs):

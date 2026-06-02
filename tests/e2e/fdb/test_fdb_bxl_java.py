@@ -21,7 +21,7 @@ async def test_java_test(buck: Buck) -> None:
         "prelude//debugging/fdb.bxl:inspect_target",
         "--",
         "--target",
-        "//buck2/tests/targets/rules/java/java_test:simple_junit_test_java11",
+        "//bz/tests/targets/rules/java/java_test:simple_junit_test_java11",
     )
 
     exec_info = ExecInfo.from_buck_result(result)
@@ -37,7 +37,7 @@ async def test_java_binary(buck: Buck) -> None:
         "prelude//debugging/fdb.bxl:inspect_target",
         "--",
         "--target",
-        "//buck2/tests/targets/rules/java/good/java_binary_with_native_libs:binary_with_native_lib",
+        "//bz/tests/targets/rules/java/good/java_binary_with_native_libs:binary_with_native_lib",
     )
     exec_info: ExecInfo = ExecInfo.from_buck_result(result)
     classmap = exec_info.read_class_map(root)
@@ -52,7 +52,7 @@ async def test_java_library(buck: Buck) -> None:
         "prelude//debugging/fdb.bxl:inspect_target",
         "--",
         "--target",
-        "//buck2/tests/targets/rules/java/good/java_binary_with_native_libs:lib",
+        "//bz/tests/targets/rules/java/good/java_binary_with_native_libs:lib",
     )
     exec_info: ExecInfo = ExecInfo.from_buck_result(result)
     classmap = exec_info.read_class_map(root)
@@ -67,7 +67,7 @@ async def test_kotlin_test(buck: Buck) -> None:
         "prelude//debugging/fdb.bxl:inspect_target",
         "--",
         "--target",
-        "//buck2/tests/targets/rules/kotlin/kotlin_test:simple_kotlin_test",
+        "//bz/tests/targets/rules/kotlin/kotlin_test:simple_kotlin_test",
     )
     exec_info: ExecInfo = ExecInfo.from_buck_result(result)
     classmap = exec_info.read_class_map(root)
@@ -82,7 +82,7 @@ async def test_kotlin_library(buck: Buck) -> None:
         "prelude//debugging/fdb.bxl:inspect_target",
         "--",
         "--target",
-        "//buck2/tests/targets/rules/kotlin/kotlin_library:lib_with_source_only_abi_generation",
+        "//bz/tests/targets/rules/kotlin/kotlin_library:lib_with_source_only_abi_generation",
     )
     exec_info: ExecInfo = ExecInfo.from_buck_result(result)
     classmap = exec_info.read_class_map(root)

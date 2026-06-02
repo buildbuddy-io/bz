@@ -10,7 +10,7 @@ rust_library(
     deps = [
         "fbsource//third-party/rust:atomic",
         "fbsource//third-party/rust:parking_lot",
-        "//buck2/allocative/allocative:allocative",
+        "//bz/allocative/allocative:allocative",
     ],
 )
 

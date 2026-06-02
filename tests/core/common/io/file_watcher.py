@@ -70,7 +70,7 @@ class FileWatcherEvent:
 #         {
 #           "event": 1,
 #           "kind": 0,
-#           "path": "fbcode//buck2/tests/core/io/test_watchman.py"
+#           "path": "fbcode//bz/tests/core/io/test_watchman.py"
 #         }
 #       ],
 #       "incomplete_events_reason": null,

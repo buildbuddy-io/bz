@@ -15,6 +15,6 @@ rust_library(
         "fbsource//third-party/rust:tokio",
         "fbsource//third-party/rust:tonic",
         "fbsource//third-party/rust:tower",
-        "//buck2/app/bz_error:buck2_error",
+        "//bz/app/bz_error:buck2_error",
     ],
 )

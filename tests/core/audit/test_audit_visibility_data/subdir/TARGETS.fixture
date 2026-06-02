@@ -30,12 +30,12 @@ foo_target(
 foo_target(
     name = "badpackage",
     # TODO(cjhopman): This should check a package that's a prefix of the dependent, but buck2 doesn't handle that correctly currently.
-    visibility = ["//buck2:"],
+    visibility = ["//bz:"],
 )
 
 foo_target(
     name = "badrecursive",
-    visibility = ["//buck2/..."],
+    visibility = ["//bz/..."],
 )
 
 foo_target(

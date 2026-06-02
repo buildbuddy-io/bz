@@ -10,6 +10,6 @@ rust_library(
         ["src/**/*.rs"],
     ),
     deps = [
-        "//buck2/starlark-rust/starlark:starlark",
+        "//bz/starlark-rust/starlark:starlark",
     ],
 )

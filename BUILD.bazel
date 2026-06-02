@@ -23,7 +23,7 @@ filegroup(
 )
 
 alias(
-    name = "buck2",
-    actual = "//app/bz:bz_bin",
+    name = "bz",
+    actual = "//app/bz:bz",
     visibility = ["//visibility:public"],
 )

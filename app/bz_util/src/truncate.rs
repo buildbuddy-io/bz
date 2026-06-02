@@ -84,7 +84,7 @@ pub fn truncate_container<T: AsRef<str>, Iter: IntoIterator<Item = T>>(
 mod tests {
     use super::*;
 
-    const MSG: &str = "rdeps(set(fbcode//buck2/... fbsource//xplat/buck2/..., fbsource//fbobjc/buck2/...), fbcode//buck2/cli:buck2)";
+    const MSG: &str = "rdeps(set(fbcode//bz/... fbsource//xplat/buck2/..., fbsource//fbobjc/buck2/...), fbcode//bz/cli:buck2)";
 
     #[test]
     fn test_truncate() {
@@ -93,7 +93,7 @@ mod tests {
         assert_eq!(&truncate(MSG, 30), "rdeps(set<<omitted>>li:buck2)");
         assert_eq!(
             &truncate(MSG, 50),
-            "rdeps(set(fbcode//b<<omitted>>e//buck2/cli:buck2)"
+            "rdeps(set(fbcode//b<<omitted>>e//bz/cli:buck2)"
         );
     }
 

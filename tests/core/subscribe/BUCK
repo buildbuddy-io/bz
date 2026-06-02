@@ -1,4 +1,4 @@
-load("@fbcode//buck2/tests:buck_e2e.bzl", "buck2_core_tests")
+load("@fbcode//bz/tests:buck_e2e.bzl", "buck2_core_tests")
 
 oncall("build_infra")
 
@@ -6,7 +6,7 @@ buck2_core_tests(
     target_extra_attrs = {
         "test_subscribe": {
             "env": {
-                "BUCK2_EXPECT": "$(exe_target fbcode//buck2/tests/core/subscribe/buck2_expect:buck2_expect)",
+                "BUCK2_EXPECT": "$(exe_target fbcode//bz/tests/core/subscribe/buck2_expect:buck2_expect)",
             },
         },
     },

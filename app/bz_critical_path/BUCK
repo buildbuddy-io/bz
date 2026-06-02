@@ -13,7 +13,7 @@ rust_library(
     deps = [
         "fbsource//third-party/rust:crossbeam",
         "fbsource//third-party/rust:derive_more",
-        "//buck2/app/bz_error:buck2_error",
-        "//buck2/starlark-rust/starlark_map:starlark_map",
+        "//bz/app/bz_error:buck2_error",
+        "//bz/starlark-rust/starlark_map:starlark_map",
     ],
 )

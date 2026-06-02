@@ -96,7 +96,7 @@ fn check_unoptimized() {
         eprintln!("WARNING: You are running an unoptimized Buck2 binary.");
         eprintln!("         Build and benchmark timings may be significantly slower.");
         eprintln!("         For performance-sensitive runs, rebuild with:");
-        eprintln!("             bazel build -c opt //app/bz:bz_bin");
+        eprintln!("             bazel build -c opt //app/bz:bz");
         eprintln!("=====================================================================");
         eprintln!();
     }

@@ -1,4 +1,4 @@
-load("@fbcode//buck2:buck_rust_binary.bzl", "buck_rust_binary")
+load("@fbcode//bz:buck_rust_binary.bzl", "buck_rust_binary")
 
 oncall("build_infra")
 
@@ -22,8 +22,8 @@ buck_rust_binary(
         "fbsource//third-party/rust:serde_json",
         "fbsource//third-party/rust:thiserror",
         "fbsource//third-party/rust:walkdir",
-        "//buck2/gazebo/dupe:dupe",
-        "//buck2/starlark-rust/starlark:starlark",
-        "//buck2/starlark-rust/starlark_lsp:starlark_lsp",
+        "//bz/gazebo/dupe:dupe",
+        "//bz/starlark-rust/starlark:starlark",
+        "//bz/starlark-rust/starlark_lsp:starlark_lsp",
     ],
 )

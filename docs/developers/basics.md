@@ -18,9 +18,9 @@ changes:
 ```bash
 # Check that things compile
 # Required for LLMs making changes to `buck2/app`
-arc rust-check fbcode//buck2/app/...
+arc rust-check fbcode//bz/app/...
 # Run clippy
-arc rust-clippy fbcode//buck2/app/...
+arc rust-clippy fbcode//bz/app/...
 # Run lints and apply fixes
 arc lint -a
 # Format code. Usually unnecessary, performed by IDEs and hooks
@@ -31,11 +31,11 @@ Buck2 has standard Rust unittests and integration tests at `tests/core`.
 
 ```bash
 # Run an integration test
-buck2 test fbcode//buck2/tests/core/analysis:test_cmd_args
+buck2 test fbcode//bz/tests/core/analysis:test_cmd_args
 # Discover more information about writing and executing integration tests
 cat tests/core/README.md
 # Run some unittests
-buck2 test fbcode//buck2/app/bz_core:buck2_core
+buck2 test fbcode//bz/app/bz_core:buck2_core
 ```
 
 In OSS, standard cargo tooling mostly applies. Exceptions are that integration tests do not run in
@@ -100,7 +100,7 @@ At Meta, common third party Rust libraries are generally just available.
 
 ```bash
 # Build buck2
-buck2 build @fbcode//mode/opt fbcode//buck2:buck2 --out /tmp/buck2_dest
+buck2 build @fbcode//mode/opt fbcode//bz:bz --out /tmp/buck2_dest
 # Build buck2 from source and run a command with it in a different isolation dir
 ./buck2.py build :foo
 ```

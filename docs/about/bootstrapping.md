@@ -34,5 +34,5 @@ cd buck2/
 Build a copy of `buck2` with `buck2`:
 
 ```sh
-./bootstrap/buck2 build //:buck2
+./bootstrap/buck2 build //:bz
 ```

@@ -13,7 +13,7 @@ from buck2.tests.e2e_util.asserts import expect_failure
 from buck2.tests.e2e_util.buck_workspace import buck_test
 
 DATA_DIR = (
-    "fbcode//buck2/tests/e2e/configurations/cfg_constructor/test_cli_modifiers_data"
+    "fbcode//bz/tests/e2e/configurations/cfg_constructor/test_cli_modifiers_data"
 )
 TARGET = f"{DATA_DIR}:test_target"
 CONSTRAINT_A = f"{DATA_DIR}:A_1"

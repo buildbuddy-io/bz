@@ -26,7 +26,7 @@ def fbcode_linux_only() -> bool:
 # TODO(marwhal): Fix and enable on Windows
 @buck_test(inplace=True, skip_for_os=["windows"])
 async def test_what_ran_json_target_without_explicit_test_cases(buck: Buck) -> None:
-    await buck.test("fbcode//buck2/tests/targets/rules/sh_test:test")
+    await buck.test("fbcode//bz/tests/targets/rules/sh_test:test")
     out = await buck.log("what-ran", "--format", "json")
     out = [line.strip() for line in out.stdout.splitlines()]
     out = [json.loads(line) for line in out if line]
@@ -34,7 +34,7 @@ async def test_what_ran_json_target_without_explicit_test_cases(buck: Buck) -> N
 
     repro = out[0]
     assert repro["reason"] == "test.run"
-    assert repro["identity"] == "fbcode//buck2/tests/targets/rules/sh_test:test"
+    assert repro["identity"] == "fbcode//bz/tests/targets/rules/sh_test:test"
     assert repro["reproducer"]["executor"] == "Local"
     assert repro["reproducer"]["details"]["command"][1] == "arg1"
     assert repro["extra"]["testcases"] == []
@@ -44,11 +44,11 @@ if fbcode_linux_only():
 
     @buck_test(inplace=True)
     async def test_what_ran(buck: Buck) -> None:
-        await buck.build("fbcode//buck2/tests/targets/rules/cxx/hello_world:welcome")
+        await buck.build("fbcode//bz/tests/targets/rules/cxx/hello_world:welcome")
         out = await buck.log("what-ran")
         assert "welcome" in out.stdout
 
-        await buck.test("fbcode//buck2/tests/targets/rules/sh_test:test")
+        await buck.test("fbcode//bz/tests/targets/rules/sh_test:test")
         out = await buck.log("what-ran")
         assert "sh_test/test.py arg1" in out.stdout
 
@@ -71,7 +71,7 @@ if fbcode_linux_only():
     @buck_test(inplace=True)
     async def test_what_ran_show_std_err(buck: Buck) -> None:
         await expect_failure(
-            buck.build("fbcode//buck2/tests/targets/rules/genrule/bad/...")
+            buck.build("fbcode//bz/tests/targets/rules/genrule/bad/...")
         )
         out = await buck.log("what-ran", "--show-std-err", "--format", "json")
         out = [line.strip() for line in out.stdout.splitlines()]
@@ -95,7 +95,7 @@ if fbcode_linux_only():
 
     @buck_test(inplace=True)
     async def test_what_ran_json_target_with_test_cases(buck: Buck) -> None:
-        await buck.test("fbcode//buck2/tests/targets/rules/go/test:test")
+        await buck.test("fbcode//bz/tests/targets/rules/go/test:test")
         out = await buck.log("what-ran", "--format", "json")
         out = [line.strip() for line in out.stdout.splitlines()]
         out = [json.loads(line) for line in out if line]
@@ -106,18 +106,18 @@ if fbcode_linux_only():
 
         # test discovery
         discovery = repros["test.discovery"]
-        assert discovery["identity"] == "fbcode//buck2/tests/targets/rules/go/test:test"
+        assert discovery["identity"] == "fbcode//bz/tests/targets/rules/go/test:test"
 
         # test running
         repro = repros["test.run"]
         assert repro["reason"] == "test.run"
-        assert repro["identity"] == "fbcode//buck2/tests/targets/rules/go/test:test"
+        assert repro["identity"] == "fbcode//bz/tests/targets/rules/go/test:test"
         assert repro["reproducer"]["executor"] == "Local"
         assert repro["extra"]["testcases"] == ["TestFoo"]
 
     @buck_test(inplace=True)
     async def test_what_ran_csv_target_with_test_cases(buck: Buck) -> None:
-        await buck.test("fbcode//buck2/tests/targets/rules/go/test:test")
+        await buck.test("fbcode//bz/tests/targets/rules/go/test:test")
         out = await buck.log("what-ran", "--format", "csv")
         out = [line.strip() for line in out.stdout.splitlines()]
         header = ["reason", "identity", "executor", "reproducer"]
@@ -131,18 +131,18 @@ if fbcode_linux_only():
 
         # test discovery
         discovery = repros["test.discovery"]
-        assert discovery["identity"] == "fbcode//buck2/tests/targets/rules/go/test:test"
+        assert discovery["identity"] == "fbcode//bz/tests/targets/rules/go/test:test"
 
         # test running
         repro = repros["test.run"]
         assert repro["reason"] == "test.run"
-        assert repro["identity"] == "fbcode//buck2/tests/targets/rules/go/test:test"
+        assert repro["identity"] == "fbcode//bz/tests/targets/rules/go/test:test"
 
 
 # TODO: This would be more reliable if it were an isolated test.
 @buck_test(inplace=True)
 async def test_what_ran_local(buck: Buck) -> None:
-    target = "fbcode//buck2/tests/targets/rules/genrule:mktemp"
+    target = "fbcode//bz/tests/targets/rules/genrule:mktemp"
     await buck.build(
         target,
         "--no-remote-cache",

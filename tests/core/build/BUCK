@@ -1,4 +1,4 @@
-load("@fbcode//buck2/tests:buck_e2e.bzl", "buck2_core_tests")
+load("@fbcode//bz/tests:buck_e2e.bzl", "buck2_core_tests")
 
 oncall("build_infra")
 
@@ -8,11 +8,11 @@ buck2_core_tests(
             "use_compiled_buck2_client_and_tpx": True,
         },
         "test_paranoid": {
-            "data": "//buck2/tests/targets:isolated_targets",
+            "data": "//bz/tests/targets:isolated_targets",
         },
         "test_retained_analysis_memory_sketch": {
             "env": {
-                "SKETCH_SIZE_BIN": "$(location fbcode//buck2/shed/setsketch:sketch_size)",
+                "SKETCH_SIZE_BIN": "$(location fbcode//bz/shed/setsketch:sketch_size)",
             },
         },
         "test_uncategorized": {

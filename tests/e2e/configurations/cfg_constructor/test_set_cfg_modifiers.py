@@ -19,7 +19,7 @@ from buck2.tests.e2e_util.buck_workspace import buck_test
 @buck_test(inplace=True)
 async def test_set_cfg_modifiers(buck: Buck) -> None:
     result = await buck.targets(
-        "fbcode//buck2/tests/e2e/configurations/cfg_constructor/test_clear_package_modifiers_data/set_cfg_modifiers/dir:test",
+        "fbcode//bz/tests/e2e/configurations/cfg_constructor/test_clear_package_modifiers_data/set_cfg_modifiers/dir:test",
         "--package-values",
     )
     targets = json.loads(result.stdout)
@@ -31,7 +31,7 @@ async def test_set_cfg_modifiers(buck: Buck) -> None:
             "_type": "TaggedModifiers",
             "location": {
                 "_type": "ModifierPackageLocation",
-                "package_path": "fbcode//buck2/tests/e2e/configurations/cfg_constructor/test_clear_package_modifiers_data/set_cfg_modifiers/PACKAGE",
+                "package_path": "fbcode//bz/tests/e2e/configurations/cfg_constructor/test_clear_package_modifiers_data/set_cfg_modifiers/PACKAGE",
             },
             "modifiers": [
                 {
@@ -50,7 +50,7 @@ async def test_set_cfg_modifiers(buck: Buck) -> None:
             "_type": "TaggedModifiers",
             "location": {
                 "_type": "ModifierPackageLocation",
-                "package_path": "fbcode//buck2/tests/e2e/configurations/cfg_constructor/test_clear_package_modifiers_data/set_cfg_modifiers/PACKAGE",
+                "package_path": "fbcode//bz/tests/e2e/configurations/cfg_constructor/test_clear_package_modifiers_data/set_cfg_modifiers/PACKAGE",
             },
             "modifiers": [
                 "ovr_config//cpu/constraints:x86_64",
@@ -61,7 +61,7 @@ async def test_set_cfg_modifiers(buck: Buck) -> None:
             "_type": "TaggedModifiers",
             "location": {
                 "_type": "ModifierPackageLocation",
-                "package_path": "fbcode//buck2/tests/e2e/configurations/cfg_constructor/test_clear_package_modifiers_data/set_cfg_modifiers/dir/PACKAGE",
+                "package_path": "fbcode//bz/tests/e2e/configurations/cfg_constructor/test_clear_package_modifiers_data/set_cfg_modifiers/dir/PACKAGE",
             },
             "modifiers": [
                 {
@@ -81,7 +81,7 @@ async def test_set_cfg_modifiers_from_package_file_only(
 ) -> None:
     await expect_failure(
         buck.targets(
-            "fbcode//buck2/tests/e2e/configurations/cfg_constructor/test_clear_package_modifiers_data/set_cfg_modifiers/package_file_check:test",
+            "fbcode//bz/tests/e2e/configurations/cfg_constructor/test_clear_package_modifiers_data/set_cfg_modifiers/package_file_check:test",
             "-c",
             "buck_e2e.testing_failure=true",
         ),

@@ -1,4 +1,4 @@
-load("@fbcode//buck2:buck_rust_binary.bzl", "buck_rust_binary")
+load("@fbcode//bz:buck_rust_binary.bzl", "buck_rust_binary")
 
 oncall("build_infra")
 
@@ -10,8 +10,8 @@ buck_rust_binary(
     crate_root = "src/main.rs",
     deps = [
         "fbsource//third-party/rust:clap",
-        "//buck2/starlark-rust/starlark:starlark",
-        "//buck2/starlark-rust/starlark_syntax:starlark_syntax",
+        "//bz/starlark-rust/starlark:starlark",
+        "//bz/starlark-rust/starlark_syntax:starlark_syntax",
     ] + select({
         "DEFAULT": [],
         "ovr_config//os:linux": [

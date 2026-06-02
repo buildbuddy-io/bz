@@ -19,12 +19,12 @@ from buck2.tests.e2e_util.buck_workspace import buck_test, get_mode_from_platfor
 
 @buck_test(inplace=True)
 async def test_targets(buck: Buck) -> None:
-    result = await buck.targets("fbcode//buck2/tests/targets/commands:")
+    result = await buck.targets("fbcode//bz/tests/targets/commands:")
 
     targets = [
-        "fbcode//buck2/tests/targets/commands:dynamic",
-        "fbcode//buck2/tests/targets/commands:exported",
-        "fbcode//buck2/tests/targets/commands:lib",
+        "fbcode//bz/tests/targets/commands:dynamic",
+        "fbcode//bz/tests/targets/commands:exported",
+        "fbcode//bz/tests/targets/commands:lib",
     ]
 
     for target in targets:
@@ -35,8 +35,8 @@ async def test_targets(buck: Buck) -> None:
 async def test_targets_errors(buck: Buck) -> None:
     await expect_failure(
         buck.targets(
-            "fbcode//buck2/tests/targets/commands:",
-            "fbcode//buck2/tests/targets/non_existent_path:",
+            "fbcode//bz/tests/targets/commands:",
+            "fbcode//bz/tests/targets/non_existent_path:",
         ),
         exit_code=ExitCodeV2.USER_ERROR,
     )
@@ -46,10 +46,10 @@ async def test_targets_errors(buck: Buck) -> None:
 async def test_explicit_targets_errors(buck: Buck) -> None:
     await expect_failure(
         buck.targets(
-            "fbcode//buck2/tests/targets/commands:notarealtarget",
+            "fbcode//bz/tests/targets/commands:notarealtarget",
         ),
         exit_code=ExitCodeV2.USER_ERROR,
-        stderr_regex="Unknown target `notarealtarget` from package `fbcode//buck2/tests/targets/commands`",
+        stderr_regex="Unknown target `notarealtarget` from package `fbcode//bz/tests/targets/commands`",
     )
 
 
@@ -58,39 +58,39 @@ async def test_targets_with_config_value(buck: Buck) -> None:
     targets_enabled_result = await buck.targets(
         "--config",
         "user.targets_enabled=true",
-        "fbcode//buck2/tests/targets/commands:",
+        "fbcode//bz/tests/targets/commands:",
     )
     assert (
-        "fbcode//buck2/tests/targets/commands:config_defined_target"
+        "fbcode//bz/tests/targets/commands:config_defined_target"
         in targets_enabled_result.stdout
     )
 
     targets_disabled_result = await buck.targets(
         "--config",
         "user.targets_enabled=false",
-        "fbcode//buck2/tests/targets/commands:",
+        "fbcode//bz/tests/targets/commands:",
     )
     assert (
-        "fbcode//buck2/tests/targets/commands:config_defined_target"
+        "fbcode//bz/tests/targets/commands:config_defined_target"
         not in targets_disabled_result.stdout
     )
 
     targets_cell_rel_result = await buck.targets(
         "--config",
         "fbsource//user.targets_enabled=true",
-        "fbcode//buck2/tests/targets/commands:",
+        "fbcode//bz/tests/targets/commands:",
     )
     assert targets_cell_rel_result.stdout == targets_disabled_result.stdout
 
 
 @buck_test(inplace=True)
 async def test_targets_root_relative_from_fbcode(buck: Buck) -> None:
-    result = await buck.targets("//buck2/tests/targets/commands:")
+    result = await buck.targets("//bz/tests/targets/commands:")
 
     targets = [
-        "fbcode//buck2/tests/targets/commands:dynamic",
-        "fbcode//buck2/tests/targets/commands:exported",
-        "fbcode//buck2/tests/targets/commands:lib",
+        "fbcode//bz/tests/targets/commands:dynamic",
+        "fbcode//bz/tests/targets/commands:exported",
+        "fbcode//bz/tests/targets/commands:lib",
     ]
 
     for target in targets:
@@ -100,8 +100,8 @@ async def test_targets_root_relative_from_fbcode(buck: Buck) -> None:
 @buck_test(inplace=True)
 async def test_targets_show_output(buck: Buck) -> None:
     for target in [
-        "fbcode//buck2/tests/targets/rules/genrule:executable_helper",
-        "fbcode//buck2/tests/targets/rules/export_file:exported.txt",
+        "fbcode//bz/tests/targets/rules/genrule:executable_helper",
+        "fbcode//bz/tests/targets/rules/export_file:exported.txt",
     ]:
         build_result = await buck.build(target, "--show-output")
         targets_result = await buck.targets(target, "--show-output")
@@ -120,10 +120,10 @@ async def test_targets_show_output(buck: Buck) -> None:
 
 @buck_test(inplace=True)
 async def test_targets_show_output_subtargets(buck: Buck) -> None:
-    TARGET = "fbcode//buck2/tests/targets/rules/cxx:my_cpp1"
+    TARGET = "fbcode//bz/tests/targets/rules/cxx:my_cpp1"
     SUBTARGET = "compilation-database"
     TARGET_WITH_SUBTARGET = (
-        "fbcode//buck2/tests/targets/rules/cxx:my_cpp1[compilation-database]"
+        "fbcode//bz/tests/targets/rules/cxx:my_cpp1[compilation-database]"
     )
 
     build_result = await buck.build(
@@ -149,8 +149,8 @@ async def test_targets_show_output_subtargets(buck: Buck) -> None:
 @buck_test(inplace=True)
 async def test_targets_show_full_output(buck: Buck) -> None:
     for target in [
-        "fbcode//buck2/tests/targets/rules/genrule:executable_helper",
-        "fbcode//buck2/tests/targets/rules/export_file:exported.txt",
+        "fbcode//bz/tests/targets/rules/genrule:executable_helper",
+        "fbcode//bz/tests/targets/rules/export_file:exported.txt",
     ]:
         build_result = await buck.build(target, "--show-full-output")
         targets_result = await buck.targets(target, "--show-full-output")

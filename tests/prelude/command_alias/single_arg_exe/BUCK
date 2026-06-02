@@ -1,4 +1,4 @@
-load("@fbcode//buck2/tests/prelude:py_assertion.bzl", "py_assertion")
+load("@fbcode//bz/tests/prelude:py_assertion.bzl", "py_assertion")
 
 # Test that the use of env vars, platform_exe, executable_name, or
 # run_using_single_arg don't make `$(exe ...)` expand to multiple args. Even

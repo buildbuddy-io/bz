@@ -23,7 +23,7 @@ conditional_modifier(
     modifier = {
         # Test different types of relative target labels for modifiers
         "DEFAULT": ":test1",
-        "ovr_config//os:linux": "//buck2/tests/e2e/configurations/cfg_constructor/conditional_modifier:test2",
+        "ovr_config//os:linux": "//bz/tests/e2e/configurations/cfg_constructor/conditional_modifier:test2",
     },
 )
 

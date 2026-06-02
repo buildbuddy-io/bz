@@ -13,9 +13,9 @@ rust_library(
         "fbsource//third-party/rust:futures",
         "fbsource//third-party/rust:parking_lot",
         "fbsource//third-party/rust:tokio",
-        "//buck2/app/bz_error:buck2_error",
-        "//buck2/app/bz_grpc:buck2_grpc",
-        "//buck2/app/bz_test_api:buck2_test_api",
-        "//buck2/host_sharing:host_sharing",
+        "//bz/app/bz_error:buck2_error",
+        "//bz/app/bz_grpc:buck2_grpc",
+        "//bz/app/bz_test_api:buck2_test_api",
+        "//bz/host_sharing:host_sharing",
     ],
 )

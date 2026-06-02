@@ -21,8 +21,8 @@ rust_unittest(
     },
     deps = [
         "fbsource//third-party/rust:anyhow",
-        "//buck2/app/bz_error:buck2_error",
-        "//buck2/app/bz_util:buck2_util",
-        "//buck2/starlark-rust/starlark:starlark",
+        "//bz/app/bz_error:buck2_error",
+        "//bz/app/bz_util:buck2_util",
+        "//bz/starlark-rust/starlark:starlark",
     ],
 )

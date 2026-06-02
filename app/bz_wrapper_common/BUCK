@@ -7,7 +7,7 @@ rust_library(
     srcs = glob(["src/**/*.rs"]),
     test_deps = [
         "fbsource//third-party/rust:serde_json",
-        "//buck2/app/bz_util:buck2_util",
+        "//bz/app/bz_util:buck2_util",
     ],
     deps = [
         "fbsource//third-party/rust:derive_more",
@@ -15,10 +15,10 @@ rust_library(
         "fbsource//third-party/rust:shlex",
         "fbsource//third-party/rust:sysinfo",
         "fbsource//third-party/rust:uuid",
-        "//buck2/allocative/allocative:allocative",
-        "//buck2/app/bz_error:buck2_error",
-        "//buck2/gazebo/dupe:dupe",
-        "//buck2/shed/buck2_hash:buck2_hash",
+        "//bz/allocative/allocative:allocative",
+        "//bz/app/bz_error:buck2_error",
+        "//bz/gazebo/dupe:dupe",
+        "//bz/shed/buck2_hash:buck2_hash",
     ] + select({
         "DEFAULT": [],
         "ovr_config//os:linux": [

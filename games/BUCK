@@ -18,7 +18,7 @@ rust_library(
         "fbsource//third-party/rust:serde",
         "fbsource//third-party/rust:serde_json",
         "fbsource//third-party/rust:tokio",
-        "//buck2/superconsole:superconsole",
+        "//bz/superconsole:superconsole",
     ] + select({
         "DEFAULT": [],
         "ovr_config//os:linux": [
@@ -39,7 +39,7 @@ rust_binary(
         "fbsource//third-party/rust:clap",
         "fbsource//third-party/rust:tokio",
         ":games",
-        "//buck2/superconsole:superconsole",
+        "//bz/superconsole:superconsole",
     ],
 )
 
@@ -52,7 +52,7 @@ rust_binary(
         "fbsource//third-party/rust:clap",
         "fbsource//third-party/rust:tokio",
         ":games",
-        "//buck2/superconsole:superconsole",
+        "//bz/superconsole:superconsole",
     ],
 )
 
@@ -65,7 +65,7 @@ rust_binary(
         "fbsource//third-party/rust:clap",
         "fbsource//third-party/rust:tokio",
         ":games",
-        "//buck2/superconsole:superconsole",
+        "//bz/superconsole:superconsole",
     ],
 )
 
@@ -78,7 +78,7 @@ rust_binary(
         "fbsource//third-party/rust:clap",
         "fbsource//third-party/rust:tokio",
         ":games",
-        "//buck2/superconsole:superconsole",
+        "//bz/superconsole:superconsole",
     ],
 )
 
@@ -92,7 +92,7 @@ rust_binary(
         "fbsource//third-party/rust:futures",
         "fbsource//third-party/rust:tokio",
         ":games",
-        "//buck2/superconsole:superconsole",
+        "//bz/superconsole:superconsole",
     ],
 )
 
@@ -105,7 +105,7 @@ rust_binary(
         "fbsource//third-party/rust:clap",
         "fbsource//third-party/rust:tokio",
         ":games",
-        "//buck2/superconsole:superconsole",
+        "//bz/superconsole:superconsole",
     ],
 )
 
@@ -118,7 +118,7 @@ rust_binary(
         "fbsource//third-party/rust:clap",
         "fbsource//third-party/rust:tokio",
         ":games",
-        "//buck2/superconsole:superconsole",
+        "//bz/superconsole:superconsole",
     ],
 )
 
@@ -131,7 +131,7 @@ rust_binary(
         "fbsource//third-party/rust:clap",
         "fbsource//third-party/rust:tokio",
         ":games",
-        "//buck2/superconsole:superconsole",
+        "//bz/superconsole:superconsole",
     ],
 )
 
@@ -154,7 +154,7 @@ rust_binary(
         "fbsource//third-party/rust:clap",
         "fbsource//third-party/rust:tokio",
         ":games",
-        "//buck2/superconsole:superconsole",
+        "//bz/superconsole:superconsole",
     ],
 )
 
@@ -167,6 +167,6 @@ rust_binary(
         "fbsource//third-party/rust:clap",
         "fbsource//third-party/rust:tokio",
         ":games",
-        "//buck2/superconsole:superconsole",
+        "//bz/superconsole:superconsole",
     ],
 )

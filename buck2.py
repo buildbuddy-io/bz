@@ -68,7 +68,7 @@ def build_command(
     cmd = [
         "buck2",
         "run",
-        # @oss-disable[end= ]: "fbcode//buck2:buck2_bundle",
+        # @oss-disable[end= ]: "fbcode//bz:buck2_bundle",
         "//:buck2_bundle", # @oss-enable
     ]
     inner_buck_isolation_dir = (

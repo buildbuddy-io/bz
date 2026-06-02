@@ -22,7 +22,7 @@ COMMON_RUSTC_ENV = {
     }
 
 rust_library(
-    name = "bz",
+    name = "bz_lib",
     crate_name = "bz",
     crate_root = "src/lib.rs",
     srcs = glob(["src/**/*.rs"]),
@@ -94,14 +94,14 @@ rust_library(
 )
 
 rust_binary(
-    name = "bz_bin",
+    name = "bz",
     crate_name = "bz",
     crate_root = "bin/bz.rs",
     srcs = ["bin/bz.rs"],
     edition = "2024",
     aliases = aliases(),
     deps = all_crate_deps(normal = True) + [
-        ":bz",
+        ":bz_lib",
         "//app/bz_action_impl:buck2_action_impl",
         "//app/bz_analysis:buck2_analysis",
         "//app/bz_anon_target:buck2_anon_target",

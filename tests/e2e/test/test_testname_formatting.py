@@ -35,7 +35,7 @@ async def testname_formatting(
 
     await expect_failure(
         buck.test(
-            f"fbcode//buck2/tests/targets/rules/python/test_name_formatting:{target}",
+            f"fbcode//bz/tests/targets/rules/python/test_name_formatting:{target}",
         )
     )
     log = (await buck.log("show")).stdout.strip().splitlines()

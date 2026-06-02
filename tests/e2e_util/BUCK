@@ -12,7 +12,7 @@ python_library(
     name = "utils",
     srcs = ["helper/utils.py"],
     deps = [
-        "//buck2/tests/e2e_util/api:api",
+        "//bz/tests/e2e_util/api:api",
     ],
 )
 
@@ -33,7 +33,7 @@ python_library(
     deps = [
         "fbsource//third-party/pypi/decorator:decorator",
         "fbsource//third-party/pypi/pytest:pytest",
-        "//buck2/tests/e2e_util/api:api",
+        "//bz/tests/e2e_util/api:api",
     ],
 )
 
@@ -58,7 +58,7 @@ python_library(
     typing = True,
     deps = [
         "fbsource//third-party/pypi/pytest:pytest",
-        "//buck2/tests/e2e_util:utilities",
-        "//buck2/tests/e2e_util/api:api",
+        "//bz/tests/e2e_util:utilities",
+        "//bz/tests/e2e_util/api:api",
     ],
 )

@@ -18,7 +18,7 @@ def _impl(ctx: bxl.Context):
     # With --config test.use_platform=linux_x86_64, the entry matches and injects
     # the test_linux_x86_64_platform's constraints (os:linux, cpu:x86_64)
     # as pre_platform modifiers.
-    bbm_label = "fbcode//buck2/tests/e2e/configurations/cfg_constructor/bxl:test_platform_modifiers"
+    bbm_label = "fbcode//bz/tests/e2e/configurations/cfg_constructor/bxl:test_platform_modifiers"
     bbm_node = ctx.configured_targets(bbm_label)
     bbm_providers = ctx.analysis(bbm_node).providers()
     info = bbm_providers[BuckconfigBackedModifierInfo]

@@ -1,4 +1,4 @@
-load("@fbcode//buck2:proto_defs.bzl", "proto_srcs", "rust_protobuf_library")
+load("@fbcode//bz:proto_defs.bzl", "proto_srcs", "rust_protobuf_library")
 load("@fbcode_macros//build_defs:export_files.bzl", "export_file")
 load("@fbcode_macros//build_defs/lib:oss.bzl", "translate_target")
 
@@ -14,11 +14,11 @@ rust_protobuf_library(
         "fbsource//third-party/rust:hex",
         "fbsource//third-party/rust:prost-types",
         "fbsource//third-party/rust:serde",
-        "//buck2/allocative/allocative:allocative",
-        "//buck2/app/bz_host_sharing_proto:buck2_host_sharing_proto",
-        "//buck2/gazebo/dupe:dupe",
-        "//buck2/gazebo/gazebo:gazebo",
-        "//buck2/pagable:pagable",
+        "//bz/allocative/allocative:allocative",
+        "//bz/app/bz_host_sharing_proto:buck2_host_sharing_proto",
+        "//bz/gazebo/dupe:dupe",
+        "//bz/gazebo/gazebo:gazebo",
+        "//bz/pagable:pagable",
     ],
 )
 
@@ -30,7 +30,7 @@ proto_srcs(
     ],
     visibility = ["PUBLIC"],
     deps = [
-        translate_target("//buck2/app/bz_host_sharing_proto:host_sharing.proto"),
+        translate_target("//bz/app/bz_host_sharing_proto:host_sharing.proto"),
     ],
 )
 

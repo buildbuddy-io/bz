@@ -52,7 +52,7 @@ applies to all of the following situations:
 load("@prelude//rust:link_info.bzl", "RustLinkInfo") # @oss-enable
 load("@prelude//prelude.bzl", prelude = "native") # @oss-enable
 load("@prelude//rust:sources.bzl", "RustSources") # @oss-enable
-# @oss-disable[end= ]: load("@fbcode//buck2/facebook:autodeps_hacks.bzl", "RustLinkInfo", "RustSources", "prelude")
+# @oss-disable[end= ]: load("@fbcode//bz/facebook:autodeps_hacks.bzl", "RustLinkInfo", "RustSources", "prelude")
 
 def _remove_rust_providers_impl(ctx: AnalysisContext) -> list[Provider]:
     out = []

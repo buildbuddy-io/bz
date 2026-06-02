@@ -14,7 +14,7 @@ rust_binary(
         "fbsource//third-party/rust:prost",
         "fbsource//third-party/rust:tokio",
         "fbsource//third-party/rust:tokio-util",
-        "//buck2/app/bz_cli_proto:buck2_cli_proto",
-        "//buck2/app/bz_subscription_proto:buck2_subscription_proto",
+        "//bz/app/bz_cli_proto:buck2_cli_proto",
+        "//bz/app/bz_subscription_proto:buck2_subscription_proto",
     ],
 )

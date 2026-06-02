@@ -37,7 +37,7 @@ async def test_rust_test_coverage(buck: Buck, tmp_path: Path) -> None:
     coverage_file = tmp_path / "coverage.txt"
     await buck.test(
         "@fbcode//mode/dbgo-cov",
-        "fbcode//buck2/tests/targets/rules/rust:tests_pass",
+        "fbcode//bz/tests/targets/rules/rust:tests_pass",
         "--",
         "--collect-coverage",
         f"--coverage-output={coverage_file}",
@@ -57,7 +57,7 @@ async def test_rust_test_coverage_filtering_by_path_of_target(
     paths = await collect_coverage_for(
         buck,
         tmp_path,
-        "fbcode//buck2/tests/targets/rules/rust:tests_pass",
+        "fbcode//bz/tests/targets/rules/rust:tests_pass",
         folder_filter=["fbcode/buck2/tests"],
         file_filter=[],
     )
@@ -71,7 +71,7 @@ async def test_rust_test_coverage_filtering_by_path_of_files(
     buck: Buck,
     tmp_path: Path,
 ) -> None:
-    target = "fbcode//buck2/tests/targets/rules/rust:tests_pass"
+    target = "fbcode//bz/tests/targets/rules/rust:tests_pass"
     file_path = "fbcode/buck2/tests/targets/rules/rust/tests_pass.rs"
     paths = await collect_coverage_for(
         buck,

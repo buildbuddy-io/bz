@@ -7,6 +7,6 @@ rust_unittest(
     srcs = glob(["src/**/*.rs"]),
     deps = [
         "fbsource//third-party/rust:blake3",
-        "//buck2/gazebo/strong_hash:strong_hash",
+        "//bz/gazebo/strong_hash:strong_hash",
     ],
 )

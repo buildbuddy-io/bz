@@ -52,7 +52,7 @@ async def test_configured_target_hashing(
     unmodified: List[str],
     src_changed: str,
 ) -> None:
-    target = "fbcode//buck2/tests/targets/target_hashing:rule{}".format(rule)
+    target = "fbcode//bz/tests/targets/target_hashing:rule{}".format(rule)
     result = await buck.targets(
         target,
         "--show-target-hash",
@@ -85,7 +85,7 @@ async def test_configured_target_hashing(
 
 @buck_test(inplace=True)
 async def test_configured_ignores_unconfigured(buck: Buck) -> None:
-    target = "fbcode//buck2/tests/targets/target_hashing:rule8"
+    target = "fbcode//bz/tests/targets/target_hashing:rule8"
     pre_unconfigured = await buck.targets(
         target, "--show-unconfigured-target-hash", "--json"
     )
@@ -110,7 +110,7 @@ async def test_configured_ignores_unconfigured(buck: Buck) -> None:
 
 @buck_test(inplace=True)
 async def test_non_recursive_target_hash(buck: Buck) -> None:
-    target = "fbcode//buck2/tests/targets/target_hashing:rule9"
+    target = "fbcode//bz/tests/targets/target_hashing:rule9"
     pre_recursive = await buck.targets(
         target, "--show-target-hash", "--json", "--target-hash-recursive=true"
     )
@@ -137,14 +137,14 @@ async def test_non_recursive_target_hash(buck: Buck) -> None:
 
 @buck_test(inplace=True)
 async def test_show_inputs(buck: Buck) -> None:
-    target = "fbcode//buck2/tests/targets/target_hashing:rule1"
+    target = "fbcode//bz/tests/targets/target_hashing:rule1"
     result = await buck.targets(target, "--json")
     assert (
-        "fbcode//buck2/tests/targets/target_hashing:rule5"
+        "fbcode//bz/tests/targets/target_hashing:rule5"
         in json.loads(result.stdout)[0]["buck.deps"]
     )
     assert json.loads(result.stdout)[0]["buck.inputs"] == [
-        "fbcode//buck2/tests/targets/target_hashing/foo.txt"
+        "fbcode//bz/tests/targets/target_hashing/foo.txt"
     ]
 
 
@@ -153,7 +153,7 @@ async def test_streaming_uncached(buck: Buck) -> None:
     # This test aims to check the kind of things TD might do - the streaming plus other related features
     with tempfile.NamedTemporaryFile() as file:
         await buck.targets(
-            "fbcode//buck2:buck2",
+            "fbcode//bz:bz",
             "--json-lines",
             "--streaming",
             "--imports",
@@ -179,12 +179,12 @@ async def test_streaming_uncached(buck: Buck) -> None:
 @buck_test(inplace=True)
 async def test_compression(buck: Buck) -> None:
     with tempfile.TemporaryDirectory() as name:
-        await buck.targets("fbcode//buck2:", "--output=" + name + "/out.txt")
+        await buck.targets("fbcode//bz:", "--output=" + name + "/out.txt")
         await buck.targets(
-            "fbcode//buck2:", "--output=" + name + "/out.txt.gz", "--compression=gzip"
+            "fbcode//bz:", "--output=" + name + "/out.txt.gz", "--compression=gzip"
         )
         await buck.targets(
-            "fbcode//buck2:", "--output=" + name + "/out.txt.zst", "--compression=zstd"
+            "fbcode//bz:", "--output=" + name + "/out.txt.zst", "--compression=zstd"
         )
         with open(name + "/out.txt", "rb") as file:
             out_uncompressed = file.read()

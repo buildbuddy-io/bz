@@ -462,7 +462,7 @@ fn json_args_pass() {
     .expect("Unable to parse args");
     assert_eq!(actual, expected);
 
-    let args = JsonArguments::Label("//buck2/integrations/rust-project:rust-project".to_owned());
+    let args = JsonArguments::Label("//bz/integrations/rust-project:rust-project".to_owned());
     let expected = Opt {
         command: Some(Command::DevelopJson {
             args,
@@ -477,7 +477,7 @@ fn json_args_pass() {
     let actual = Opt::try_parse_from([
         "rust-project",
         "develop-json",
-        "{\"label\":\"//buck2/integrations/rust-project:rust-project\"}",
+        "{\"label\":\"//bz/integrations/rust-project:rust-project\"}",
     ])
     .expect("Unable to parse args");
     assert_eq!(actual, expected);

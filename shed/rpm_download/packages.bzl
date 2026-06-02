@@ -38,7 +38,7 @@ def download_rpm(**kwargs):
     dtp = platform_utils.get_cxx_platform_for_base_path(prelude.package_name()).target_platform if platform_utils else None
 
     download_rpm_impl(
-        download_tool = "fbcode//buck2/shed/rpm_download:download.sh",
+        download_tool = "fbcode//bz/shed/rpm_download:download.sh",
         default_target_platform = dtp,
         visibility = ["PUBLIC"],
         labels = ci.remove_labels(

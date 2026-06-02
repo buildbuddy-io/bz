@@ -48,12 +48,12 @@ pub(crate) fn resolve_buckconfig_sysroot(
         // TODO(diliopoulos): remove hardcoded path to toolchain sysroot and replace with something
         // derived from buck, e.g.
         //
-        // $ buck cquery -u fbcode//buck2/integrations/rust-project:rust-project -a compiler fbcode//buck2/platform/rust:rust_bootstrap
+        // $ buck cquery -u fbcode//bz/integrations/rust-project:rust-project -a compiler fbcode//bz/platform/rust:rust_bootstrap
         // ...
-        //     "compiler": "fbcode//tools/build/buck/wrappers:rust-platform010-clang-17-nosan-compiler (fbcode//buck2/platform/execution:linux-x86_64#54c5d1cbad5316cb)"
-        // $ buck cquery -u fbcode//buck2/integrations/rust-project:rust-project -a exe fbcode//tools/build/buck/wrappers:rust-platform010-clang-17-nosan-compiler
+        //     "compiler": "fbcode//tools/build/buck/wrappers:rust-platform010-clang-17-nosan-compiler (fbcode//bz/platform/execution:linux-x86_64#54c5d1cbad5316cb)"
+        // $ buck cquery -u fbcode//bz/integrations/rust-project:rust-project -a exe fbcode//tools/build/buck/wrappers:rust-platform010-clang-17-nosan-compiler
         // ...
-        //     "exe": "fbcode//third-party-buck/platform010/build/rust/llvm-fb-17:bin/rustc (fbcode//buck2/platform/execution:linux-x86_64#54c5d1cbad5316cb)",
+        //     "exe": "fbcode//third-party-buck/platform010/build/rust/llvm-fb-17:bin/rustc (fbcode//bz/platform/execution:linux-x86_64#54c5d1cbad5316cb)",
         let fbsource_rustc = project_root.join("xplat/rust/toolchain/current/basic/bin/rustc");
         let mut sysroot_cmd = Command::new(fbsource_rustc);
         sysroot_cmd

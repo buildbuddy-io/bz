@@ -10,9 +10,9 @@ rust_library(
         "fbsource//third-party/rust:enum-map",
         "fbsource//third-party/rust:nom",
         "fbsource//third-party/rust:nom-language",
-        "//buck2/app/bz_error:buck2_error",
-        "//buck2/app/bz_util:buck2_util",
-        "//buck2/gazebo/dupe:dupe",
-        "//buck2/gazebo/gazebo:gazebo",
+        "//bz/app/bz_error:buck2_error",
+        "//bz/app/bz_util:buck2_util",
+        "//bz/gazebo/dupe:dupe",
+        "//bz/gazebo/gazebo:gazebo",
     ],
 )

@@ -16,7 +16,7 @@ from buck2.tests.e2e_util.buck_workspace import buck_test
 
 @buck_test(inplace=True)
 async def test_what_failed(buck: Buck) -> None:
-    pkg = "fbcode//buck2/tests/targets/rules/genrule/bad"
+    pkg = "fbcode//bz/tests/targets/rules/genrule/bad"
     bad = "my_genrule_bad_with_dep"
     good = "stub"
 

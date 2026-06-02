@@ -8,7 +8,7 @@
 
 load("@prelude//:asserts.bzl", "asserts")
 
-TEST_TARGET_PATH = "fbcode//buck2/tests/e2e/configurations/configuration_alias/test"
+TEST_TARGET_PATH = "fbcode//bz/tests/e2e/configurations/configuration_alias/test"
 
 def _impl(ctx: bxl.Context):
     config = ctx.analysis(ctx.configured_targets(TEST_TARGET_PATH + ":config", modifiers = ctx.modifiers)).providers()

@@ -88,7 +88,7 @@ rust_library(
     srcs = ["src/lib.rs"],
     visibility = ["PUBLIC"],
     deps = [
-        "fbcode//buck2/docs/buck2_lab/logging_lib:logging_lib",
+        "fbcode//bz/docs/buck2_lab/logging_lib:logging_lib",
     ],
 )
 

@@ -24,7 +24,7 @@ from buck2.tests.e2e_util.helper.utils import json_get, read_what_ran
 
 @buck_test(inplace=True)
 async def test_sh_binary_no_append_extension(buck: Buck) -> None:
-    target = "fbcode//buck2/tests/targets/rules/shell:no_extension"
+    target = "fbcode//bz/tests/targets/rules/shell:no_extension"
     args = [target, "--show-full-output", get_mode_from_platform()]
     result = await buck.build(*args)
     output_dict = result.get_target_to_build_output()
@@ -43,7 +43,7 @@ async def test_sh_binary_no_append_extension(buck: Buck) -> None:
 
 @buck_test(inplace=True)
 async def test_build_test_dependencies(buck: Buck) -> None:
-    target = "fbcode//buck2/tests/targets/rules/sh_test:test_with_env"
+    target = "fbcode//bz/tests/targets/rules/sh_test:test_with_env"
     build = await buck.build(
         target,
         "--build-test-info",
@@ -69,7 +69,7 @@ async def test_missing_outputs_error(buck: Buck) -> None:
     # Check that we a) say what went wrong, b) show the command
     await expect_failure(
         buck.build(
-            "fbcode//buck2/tests/targets/rules/genrule/bad:my_genrule_bad",
+            "fbcode//bz/tests/targets/rules/genrule/bad:my_genrule_bad",
             # We really should make this an isolated test to avoid having to set this.
             "-c",
             "build.use_limited_hybrid=True",
@@ -81,7 +81,7 @@ async def test_missing_outputs_error(buck: Buck) -> None:
     # Same, but locally.
     await expect_failure(
         buck.build(
-            "fbcode//buck2/tests/targets/rules/genrule/bad:my_genrule_bad_local"
+            "fbcode//bz/tests/targets/rules/genrule/bad:my_genrule_bad_local"
         ),
         stderr_regex="Action failed to produce outputs.*Stdout:\nHELLO_STDOUT.*Stderr:\nHELLO_STDERR",
     )
@@ -89,7 +89,7 @@ async def test_missing_outputs_error(buck: Buck) -> None:
 
 @buck_test(inplace=True)
 async def test_local_execution(buck: Buck) -> None:
-    target = "fbcode//buck2/tests/targets/rules/genrule:echo_pythonpath"
+    target = "fbcode//bz/tests/targets/rules/genrule:echo_pythonpath"
 
     await buck.kill()
     res = await buck.build(target, env={"PYTHONPATH": "foobar"})
@@ -102,7 +102,7 @@ async def test_local_execution(buck: Buck) -> None:
 # In case of timeouts and failures, best would be to just disable this test.
 @buck_test(inplace=True, skip_for_os=["windows"])
 async def test_asic_platforms(buck: Buck) -> None:
-    target = "fbcode//buck2/tests/targets/asic_platforms:uses_asic_tool"
+    target = "fbcode//bz/tests/targets/asic_platforms:uses_asic_tool"
     result = await buck.build(
         target,
         "--show-full-output",
@@ -119,7 +119,7 @@ async def test_asic_platforms(buck: Buck) -> None:
 async def test_genrule_with_remote_execution_dependencies(buck: Buck) -> None:
     result = await buck.build(
         get_mode_from_platform(),
-        "fbcode//buck2/tests/targets/rules/genrule/re_dependencies:remote_execution_dependencies",
+        "fbcode//bz/tests/targets/rules/genrule/re_dependencies:remote_execution_dependencies",
         "--config",
         "build.default_remote_execution_use_case=buck2-testing",
         "--no-remote-cache",
@@ -173,7 +173,7 @@ if False:
         },
     )
     async def test_source_hashing_blake3_only(buck: Buck) -> None:
-        target = "fbcode//buck2/tests/targets/rules/rust/hello_world:welcome"
+        target = "fbcode//bz/tests/targets/rules/rust/hello_world:welcome"
 
         await buck.build(target, "--no-remote-cache", "--remote-only")
         run1 = await read_what_ran(buck)
@@ -224,7 +224,7 @@ if False:
         # isn't just always skipping.
         assert io_provider == "eden"
 
-        target = "fbcode//buck2/tests/targets/rules/rust/hello_world:welcome"
+        target = "fbcode//bz/tests/targets/rules/rust/hello_world:welcome"
 
         await buck.build(target, "--no-remote-cache", "--remote-only")
         run1 = await read_what_ran(buck)
@@ -265,7 +265,7 @@ if False:
         if not os.path.exists(buck.cwd / ".eden"):
             pytest.skip("This test is meaningless if not using Eden")  # pyre-ignore
 
-        target = "fbcode//buck2/tests/targets/rules/rust/hello_world:welcome"
+        target = "fbcode//bz/tests/targets/rules/rust/hello_world:welcome"
 
         await buck.build(target, "--no-remote-cache", "--remote-only")
         run1 = await read_what_ran(buck)

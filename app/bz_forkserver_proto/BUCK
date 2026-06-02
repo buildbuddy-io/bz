@@ -1,4 +1,4 @@
-load("@fbcode//buck2:proto_defs.bzl", "proto_srcs", "rust_protobuf_library")
+load("@fbcode//bz:proto_defs.bzl", "proto_srcs", "rust_protobuf_library")
 load("@fbcode//grpc_fb/codegen:buck_macros.bzl", "grpc_library")
 load("@fbcode_macros//build_defs/lib:oss.bzl", "translate_target")
 
@@ -12,8 +12,8 @@ rust_protobuf_library(
     deps = [
         "fbsource//third-party/rust:derive_more",
         "fbsource//third-party/rust:prost-types",
-        "//buck2/app/bz_data:buck2_data",
-        "//buck2/gazebo/gazebo:gazebo",
+        "//bz/app/bz_data:buck2_data",
+        "//bz/gazebo/gazebo:gazebo",
     ],
 )
 
@@ -22,7 +22,7 @@ proto_srcs(
     srcs = ["forkserver.proto"],
     visibility = ["PUBLIC"],
     deps = [
-        translate_target("//buck2/app/bz_data:data_proto"),
+        translate_target("//bz/app/bz_data:data_proto"),
     ],
 )
 
@@ -30,9 +30,9 @@ grpc_library(
     name = "forkserver",
     srcs = [
         "forkserver.proto",
-        "//buck2/app/bz_data:data.proto",
-        "//buck2/app/bz_data:error.proto",
-        "//buck2/app/bz_host_sharing_proto:host_sharing_proto",
+        "//bz/app/bz_data:data.proto",
+        "//bz/app/bz_data:error.proto",
+        "//bz/app/bz_host_sharing_proto:host_sharing_proto",
     ],
     languages = [
         "py",

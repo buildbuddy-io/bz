@@ -26,7 +26,7 @@ rust_binary(
             "fbsource//third-party/rust:perf-event",
             "fbsource//third-party/rust:smallvec",
             "fbsource//third-party/rust:thiserror",
-            "//buck2/app/bz_miniperf_proto:buck2_miniperf_proto",
+            "//bz/app/bz_miniperf_proto:buck2_miniperf_proto",
         ],
     }),
 )
@@ -44,11 +44,11 @@ rust_library(
             "fbsource//third-party/rust:anyhow",
             "fbsource//third-party/rust:bincode",
             "fbsource//third-party/rust:tempfile",
-            "//buck2/app/bz_miniperf_proto:buck2_miniperf_proto",
+            "//bz/app/bz_miniperf_proto:buck2_miniperf_proto",
         ],
     }),
     test_env = {
         "MINIPERF": "$(exe_target :buck2_miniperf)",
-        "THREE_BILLION_INSTRUCTIONS": "$(exe_target //buck2/shed/three_billion_instructions:three_billion_instructions-bin)",
+        "THREE_BILLION_INSTRUCTIONS": "$(exe_target //bz/shed/three_billion_instructions:three_billion_instructions-bin)",
     },
 )

@@ -6,14 +6,14 @@ rust_library(
     name = "a",
     srcs = ["lib_a.rs"],
     crate_root = "lib_a.rs",
-    deps = ["//buck2/integrations/rust-project/tests/targets/bar:c"],
+    deps = ["//bz/integrations/rust-project/tests/targets/bar:c"],
 )
 
 rust_library(
     name = "b",
     srcs = ["lib_b.rs"],
     crate_root = "lib_b.rs",
-    deps = ["//buck2/integrations/rust-project/tests/targets/bar:d"],
+    deps = ["//bz/integrations/rust-project/tests/targets/bar:d"],
 )
 
 rust_library(

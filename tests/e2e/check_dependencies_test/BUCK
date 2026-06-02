@@ -13,11 +13,11 @@ BLOCK_LIST = [
     "//this_target_will_never_exist_at_least_we_hope.*",
 ]
 
-TARGET1 = "fbcode//buck2/tests/targets/check_dependencies_test:useless_target_1"
+TARGET1 = "fbcode//bz/tests/targets/check_dependencies_test:useless_target_1"
 
-TARGET2 = "fbcode//buck2/tests/targets/check_dependencies_test:useless_target_2"
+TARGET2 = "fbcode//bz/tests/targets/check_dependencies_test:useless_target_2"
 
-TARGET3 = "fbcode//buck2/tests/targets/check_dependencies_test:useless_target_3"
+TARGET3 = "fbcode//bz/tests/targets/check_dependencies_test:useless_target_3"
 
 CONTACTS = ["build_infra"]
 
@@ -161,8 +161,8 @@ check_mutually_exclusive_dependencies_test(
     name = "mutually_exclusive_exact_targets_no_regex",
     contacts = CONTACTS,
     mutually_exclusive_group = [
-        "fbcode//buck2/tests/targets/check_dependencies_test:useless_target_1",
-        "fbcode//buck2/tests/targets/check_dependencies_test:useless_target_999_nonexistent",
+        "fbcode//bz/tests/targets/check_dependencies_test:useless_target_1",
+        "fbcode//bz/tests/targets/check_dependencies_test:useless_target_999_nonexistent",
     ],
     target = TARGET2,
 )
@@ -182,7 +182,7 @@ check_mutually_exclusive_dependencies_test(
 
 # Target with platform-specific deps that uses useless_target_1 on Linux (DEFAULT)
 # and useless_target_2 on Android
-PLATFORM_SPECIFIC_TARGET = "fbcode//buck2/tests/targets/check_dependencies_test:platform_specific_deps_target"
+PLATFORM_SPECIFIC_TARGET = "fbcode//bz/tests/targets/check_dependencies_test:platform_specific_deps_target"
 
 # Test: Without build_mode (default Linux), should see useless_target_1 but NOT useless_target_2
 # useless_target_1 is present (matches first pattern), useless_target_2 is NOT present (no match for second pattern)
@@ -220,5 +220,5 @@ check_dependencies_test(
     blocklist_patterns = [".*clang_rt\\.profile.*"],
     contacts = CONTACTS,
     mode = "blocklist",
-    target = "fbcode//buck2:buck2",
+    target = "fbcode//bz:bz",
 )

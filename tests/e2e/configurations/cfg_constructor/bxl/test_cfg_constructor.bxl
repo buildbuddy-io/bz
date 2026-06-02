@@ -6,7 +6,7 @@
 # of this source tree. You may select, at your option, one of the
 # above-listed licenses.
 
-load("@fbcode//buck2/cfg/experimental:modifiers.bzl", "modifiers")
+load("@fbcode//bz/cfg/experimental:modifiers.bzl", "modifiers")
 load("@prelude//:asserts.bzl", "asserts")
 load("@prelude//cfg/modifier:cfg_constructor.bzl", "cfg_constructor_post_constraint_analysis", "cfg_constructor_pre_constraint_analysis")
 load("@prelude//cfg/modifier:common.bzl", "tagged_modifiers_to_json")

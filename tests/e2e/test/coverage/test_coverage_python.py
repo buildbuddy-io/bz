@@ -18,7 +18,7 @@ from buck2.tests.e2e_util.buck_workspace import buck_test
 
 from .test_coverage_utils import collect_coverage_for
 
-PYTHON_TEST_EXAMPLE_TARGET = "fbcode//buck2/tests/targets/rules/python/coverage:test"
+PYTHON_TEST_EXAMPLE_TARGET = "fbcode//bz/tests/targets/rules/python/coverage:test"
 
 
 @buck_test(inplace=True)
@@ -89,7 +89,7 @@ async def test_python_coverage_filtering_by_file_with_base_module_remap(
     result = await collect_coverage_for(
         buck,
         tmp_path,
-        target="fbcode//buck2/tests/targets/rules/python/coverage:test_using_base_module_remapped_lib",
+        target="fbcode//bz/tests/targets/rules/python/coverage:test_using_base_module_remapped_lib",
         folder_filter=[],
         file_filter=[file_to_collect_coverage],
     )
@@ -170,7 +170,7 @@ async def test_python_coverage_filtering_by_file_on_cinder_target(
     result = await collect_coverage_for(
         buck,
         tmp_path,
-        target="fbcode//buck2/tests/targets/rules/python/coverage:simple_cinder_unittest",
+        target="fbcode//bz/tests/targets/rules/python/coverage:simple_cinder_unittest",
         folder_filter=[],
         file_filter=[file_to_collect_coverage],
     )
@@ -190,7 +190,7 @@ async def test_python_coverage_filtering_by_source_file_on_cpp_dep(
     result = await collect_coverage_for(
         buck,
         tmp_path,
-        target="fbcode//buck2/tests/targets/rules/python/coverage:test_with_cpp_dep",
+        target="fbcode//bz/tests/targets/rules/python/coverage:test_with_cpp_dep",
         folder_filter=[],
         file_filter=[file_to_collect_coverage],
     )
@@ -209,7 +209,7 @@ async def test_python_coverage_filtering_by_header_file_on_cpp_dep(
     result = await collect_coverage_for(
         buck,
         tmp_path,
-        target="fbcode//buck2/tests/targets/rules/python/coverage:test_with_cpp_dep",
+        target="fbcode//bz/tests/targets/rules/python/coverage:test_with_cpp_dep",
         folder_filter=[],
         file_filter=[header_file],
     )
@@ -229,7 +229,7 @@ async def test_python_coverage_filtering_by_file_on_ligen_cpp_dep(
     result = await collect_coverage_for(
         buck,
         tmp_path,
-        target="fbcode//buck2/tests/targets/rules/python/coverage:test_with_ligen_cpp_dep",
+        target="fbcode//bz/tests/targets/rules/python/coverage:test_with_ligen_cpp_dep",
         folder_filter=[],
         file_filter=[file_to_collect_coverage],
     )

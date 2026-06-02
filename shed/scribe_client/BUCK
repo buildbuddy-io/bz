@@ -15,7 +15,7 @@ rust_library(
         "//scribe/api/producer/thrift:producer_service-rust-mocks",
     ],
     visibility = [
-        "//buck2/...",
+        "//bz/...",
     ],
     deps = [
         "fbsource//third-party/rust:anyhow",

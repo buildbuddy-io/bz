@@ -25,7 +25,7 @@ async def test_cfg_constructor_without_modifiers_returns_same_configuration(
     buck: Buck,
 ) -> None:
     result = await buck.cquery(
-        "fbcode//buck2/tests/e2e/configurations/cfg_constructor/test_clear_package_modifiers_data/test_cfg_constructor_data:no_modifiers",
+        "fbcode//bz/tests/e2e/configurations/cfg_constructor/test_clear_package_modifiers_data/test_cfg_constructor_data:no_modifiers",
         "-A",
     )
     result = json.loads(result.stdout)
@@ -39,7 +39,7 @@ async def test_cfg_constructor_without_modifiers_returns_same_configuration(
 @buck_test(inplace=True)
 async def test_cfg_constructor_with_target_modifiers(buck: Buck) -> None:
     result = await buck.cquery(
-        "fbcode//buck2/tests/e2e/configurations/cfg_constructor/test_clear_package_modifiers_data/test_cfg_constructor_data:has_target_modifier",
+        "fbcode//bz/tests/e2e/configurations/cfg_constructor/test_clear_package_modifiers_data/test_cfg_constructor_data:has_target_modifier",
         "-A",
     )
     result = json.loads(result.stdout)
@@ -58,13 +58,13 @@ async def test_cfg_constructor_with_target_modifiers(buck: Buck) -> None:
 )
 async def test_invoke_cfg_constructors_with_cli_modifier_validation(buck: Buck) -> None:
     await buck.cquery(
-        "fbcode//buck2/tests/e2e/configurations/cfg_constructor/test_clear_package_modifiers_data/test_cfg_constructor_data:has_target_modifier",
+        "fbcode//bz/tests/e2e/configurations/cfg_constructor/test_clear_package_modifiers_data/test_cfg_constructor_data:has_target_modifier",
         "--modifier=ovr_config//os:linux",
     )
     await expect_failure(
         buck.cquery(
-            "fbcode//buck2/tests/e2e/configurations/cfg_constructor/test_clear_package_modifiers_data/test_cfg_constructor_data:has_target_modifier",
-            "--modifier=fbcode//buck2/tests/e2e/configurations/cfg_constructor/test_clear_package_modifiers_data/test_cfg_constructor_data:some_constraint_value",
+            "fbcode//bz/tests/e2e/configurations/cfg_constructor/test_clear_package_modifiers_data/test_cfg_constructor_data:has_target_modifier",
+            "--modifier=fbcode//bz/tests/e2e/configurations/cfg_constructor/test_clear_package_modifiers_data/test_cfg_constructor_data:some_constraint_value",
         ),
         stderr_regex="Only a select number of modifiers are allowed to be set from CLI on CI",
     )

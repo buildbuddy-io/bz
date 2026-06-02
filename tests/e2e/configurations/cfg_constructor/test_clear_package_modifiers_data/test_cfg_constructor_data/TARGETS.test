@@ -11,7 +11,7 @@ test_rule(
     metadata = {
         "buck.cfg_modifiers": [
             "ovr_config//os:linux",
-            "fbcode//buck2/tests/e2e/configurations/cfg_constructor/test_clear_package_modifiers_data/test_cfg_constructor_data:some_constraint_value",
+            "fbcode//bz/tests/e2e/configurations/cfg_constructor/test_clear_package_modifiers_data/test_cfg_constructor_data:some_constraint_value",
         ],
     }
 )

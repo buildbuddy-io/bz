@@ -20,7 +20,7 @@ constraint(
 
 alias(
     name = "starlark-bin",
-    actual = "//buck2/starlark-rust/starlark_bin:starlark_bin",
+    actual = "//bz/starlark-rust/starlark_bin:starlark_bin",
 )
 
 buck_filegroup(
@@ -89,13 +89,13 @@ rust_library(
         "fbsource//third-party/rust:strsim",
         "fbsource//third-party/rust:textwrap",
         "fbsource//third-party/rust:thiserror",
-        "//buck2/allocative/allocative:allocative",
-        "//buck2/gazebo/cmp_any:cmp_any",
-        "//buck2/gazebo/display_container:display_container",
-        "//buck2/gazebo/dupe:dupe",
-        "//buck2/pagable:pagable",
-        "//buck2/starlark-rust/starlark_derive:starlark_derive",
-        "//buck2/starlark-rust/starlark_map:starlark_map",
-        "//buck2/starlark-rust/starlark_syntax:starlark_syntax",
+        "//bz/allocative/allocative:allocative",
+        "//bz/gazebo/cmp_any:cmp_any",
+        "//bz/gazebo/display_container:display_container",
+        "//bz/gazebo/dupe:dupe",
+        "//bz/pagable:pagable",
+        "//bz/starlark-rust/starlark_derive:starlark_derive",
+        "//bz/starlark-rust/starlark_map:starlark_map",
+        "//bz/starlark-rust/starlark_syntax:starlark_syntax",
     ],
 )

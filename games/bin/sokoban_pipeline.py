@@ -45,8 +45,8 @@ def find_buck2_root():
 
 
 FBCODE = find_buck2_root()
-GEN_TARGET = "fbcode//buck2/games:sokoban_gen"
-SOKOBAN_TARGET = "fbcode//buck2/games:sokoban"
+GEN_TARGET = "fbcode//bz/games:sokoban_gen"
+SOKOBAN_TARGET = "fbcode//bz/games:sokoban"
 
 
 def run_buck(target, args, capture=True):
